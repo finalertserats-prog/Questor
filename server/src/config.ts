@@ -7,6 +7,14 @@ function env(key: string, fallback = ''): string {
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: parseInt(env('PORT', '4000'), 10),
+  /**
+   * Network interface to listen on. Defaults to loopback: the app is reached
+   * through a reverse proxy that terminates TLS, so binding to every interface
+   * publishes a SECOND, unencrypted way in on the app port — candidate
+   * transcripts and session cookies in cleartext, bypassing the certificate
+   * entirely. Set BIND_HOST=0.0.0.0 only when nothing sits in front.
+   */
+  bindHost: env('BIND_HOST', '127.0.0.1'),
   webOrigin: env('WEB_ORIGIN', 'http://localhost:5173'),
   authSecret: env('AUTH_SECRET', 'dev-questor-secret-change-me-please-32chars'),
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
