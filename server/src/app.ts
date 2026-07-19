@@ -46,6 +46,13 @@ export function createApp() {
     return m ? `t:${m[1]}` : `ip:${req.ip ?? 'unknown'}`;
   };
   app.use('/api/portal/:token/turn', rateLimit({ name: 'portal-turn', windowMs: 60 * 60_000, max: 120, keyOf: portalKey }));
+  // Server-side TTS is billed per synthesis. The route already refuses to speak
+  // anything but an agent turn persisted for that session, so this is the
+  // second bound rather than the first: it caps how hard one token can hammer
+  // the vendor by re-requesting the same handful of questions. An interview has
+  // tens of agent turns, and repeats are served from cache, so 200/hour is
+  // slack for a real candidate and a ceiling for a script.
+  app.use('/api/portal/:token/speak', rateLimit({ name: 'portal-speak', windowMs: 60 * 60_000, max: 200, keyOf: portalKey }));
   app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey }));
 
   app.use('/api/auth', authRouter);

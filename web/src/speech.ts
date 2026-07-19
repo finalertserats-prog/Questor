@@ -95,3 +95,99 @@ export function createRecognizer(handlers: {
 if (ttsSupported()) {
   window.speechSynthesis.onvoiceschanged = () => { cachedVoice = null; pickVoice(); };
 }
+
+// ---------------------------------------------------------------------------
+// Server voice
+//
+// `speechSynthesis` uses whatever voices the operating system ships, which on
+// Windows means SAPI — recognisably synthetic no matter how the rate and pitch
+// are tuned. When a server-side neural voice is configured the interviewer
+// sounds like a person instead, which matters here: a candidate who feels they
+// are talking to a machine performs differently, and that difference lands in
+// the transcript we then score them on.
+//
+// The browser voice stays as the fallback, so the zero-key path still speaks.
+
+let currentAudio: HTMLAudioElement | null = null;
+
+/** Speak an agent turn, preferring the server voice and falling back locally. */
+export async function speakTurn(o: {
+  token: string;
+  turnId: string;
+  text: string;
+  onDone?: () => void;
+}): Promise<void> {
+  const finishLocally = () => speak(o.text, o.onDone);
+  try {
+    const res = await fetch(`/api/portal/${o.token}/speak`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ turnId: o.turnId, text: o.text }),
+    });
+    // 204 = no server voice configured. Anything non-OK: fall back rather than
+    // leave the candidate sitting in silence waiting for a question.
+    if (res.status === 204 || !res.ok) { finishLocally(); return; }
+
+    const url = URL.createObjectURL(await res.blob());
+    stopSpeaking();
+    const audio = new Audio(url);
+    currentAudio = audio;
+    let fired = false;
+    const finish = () => {
+      if (fired) return;
+      fired = true;
+      URL.revokeObjectURL(url);
+      if (currentAudio === audio) currentAudio = null;
+      o.onDone?.();
+    };
+    audio.onended = finish;
+    // A failed play (autoplay policy, decode error) must not strand the
+    // interview — fall through to the browser voice instead.
+    audio.onerror = () => { if (!fired) { fired = true; URL.revokeObjectURL(url); finishLocally(); } };
+    await audio.play().catch(() => { if (!fired) { fired = true; URL.revokeObjectURL(url); finishLocally(); } });
+  } catch {
+    finishLocally();
+  }
+}
+
+export function stopAllSpeech(): void {
+  stopSpeaking();
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+}
+
+// ---------------------------------------------------------------------------
+// Microphone level
+//
+// Drives the candidate's tile so it reacts to their actual voice. This is not
+// decoration: without it there is no feedback that the mic is live, and the
+// commonest failure in a voice interview is a candidate talking to a muted
+// input and only discovering it at the end.
+
+export interface MicMeter { level(): number; stop(): void }
+
+export async function createMicMeter(): Promise<MicMeter | null> {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    const buf = new Uint8Array(analyser.frequencyBinCount);
+    return {
+      level() {
+        analyser.getByteTimeDomainData(buf);
+        // RMS around the 128 midpoint, scaled to roughly 0..1 for speech.
+        let sum = 0;
+        for (const v of buf) { const d = (v - 128) / 128; sum += d * d; }
+        return Math.min(1, Math.sqrt(sum / buf.length) * 4);
+      },
+      stop() {
+        stream.getTracks().forEach((t) => t.stop());
+        void ctx.close();
+      },
+    };
+  } catch {
+    return null; // Permission denied or no device: the tile just stays static.
+  }
+}

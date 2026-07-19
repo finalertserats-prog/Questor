@@ -108,3 +108,171 @@ tr:hover td { background: var(--panel-2); }
 .markdown h1 { font-size: 22px; } .markdown h2 { font-size: 18px; margin-top: 20px; } .markdown h3 { font-size: 15px; margin-top: 14px; }
 .markdown table { margin: 10px 0; } .markdown blockquote { border-left: 3px solid var(--brand); margin: 8px 0; padding: 4px 12px; color: var(--muted); }
 .markdown code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; }
+
+/* ==========================================================================
+   Interview room
+   The candidate-facing call surface. Full-viewport and self-contained: it
+   deliberately shares almost nothing with the recruiter console chrome, since
+   a candidate is not "using an admin tool", they are attending an interview.
+   ========================================================================== */
+
+.room {
+  position: fixed; inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  background:
+    radial-gradient(1100px 600px at 20% -10%, #1b3358 0%, transparent 60%),
+    radial-gradient(900px 500px at 100% 110%, #16324a 0%, transparent 55%),
+    #0a1120;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.room-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid rgba(255,255,255,.06);
+  backdrop-filter: blur(8px);
+}
+.room-role { color: var(--muted); font-size: 13px; letter-spacing: .3px; }
+.room-timer { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
+
+.rec-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 700; letter-spacing: .8px;
+  color: #ff8b8b; background: rgba(229,72,77,.12);
+  border: 1px solid rgba(229,72,77,.35);
+  padding: 4px 9px; border-radius: 999px;
+}
+.rec-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--red); animation: recpulse 1.6s ease-in-out infinite; }
+@keyframes recpulse { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+
+/* --- stage / participant tiles --- */
+.stage {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px; padding: 22px; align-content: center; justify-items: center;
+  min-height: 0;
+}
+
+.tile {
+  position: relative;
+  width: 100%; max-width: 460px; aspect-ratio: 16 / 10;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 18px;
+  transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease;
+}
+/* The active speaker is the one visual priority on this screen — it is how a
+   candidate knows whether to listen or talk without reading anything. */
+.tile.is-active {
+  border-color: rgba(61,125,255,.55);
+  box-shadow: 0 0 0 1px rgba(61,125,255,.25), 0 18px 60px -20px rgba(61,125,255,.55);
+}
+
+.tile-ring {
+  position: absolute; width: 132px; height: 132px; border-radius: 50%;
+  border: 1px solid var(--brand);
+  transition: transform .12s linear, opacity .3s ease;
+  pointer-events: none;
+}
+.tile-ring.delayed { transition-delay: .06s; }
+
+.tile-avatar {
+  width: 92px; height: 92px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 30px; font-weight: 700; letter-spacing: .5px;
+  border: 1px solid rgba(255,255,255,.14);
+}
+.agent-avatar { background: linear-gradient(145deg, #2d5fd0, #6f4bd8); color: #fff; }
+.you-avatar   { background: linear-gradient(145deg, #23405f, #2b6b6b); color: #dfeaf5; }
+
+.tile-name { font-weight: 600; font-size: 15px; }
+.tile-tag {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+  color: var(--muted); border: 1px solid rgba(255,255,255,.12);
+  padding: 2px 7px; border-radius: 999px; margin-left: 6px;
+}
+.tile-status { font-size: 12.5px; color: var(--muted); }
+
+.mic-bars { display: flex; align-items: flex-end; gap: 3px; height: 40px; }
+.mic-bars span { width: 4px; border-radius: 2px; background: var(--brand); transition: height .08s linear; }
+
+/* --- captions --- */
+.captions {
+  margin: 0 22px 4px;
+  padding: 14px 18px;
+  background: rgba(6,12,24,.72);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 14px;
+  max-height: 22vh; overflow-y: auto;
+}
+.captions p { margin: 0; line-height: 1.55; font-size: 15.5px; }
+.cap-who {
+  display: inline-block; margin-right: 10px;
+  font-size: 11px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase;
+  color: var(--brand);
+}
+
+.room-error {
+  margin: 0 22px 8px; padding: 10px 14px; border-radius: 10px;
+  background: rgba(229,72,77,.12); border: 1px solid rgba(229,72,77,.35); color: #ffbcbc; font-size: 13.5px;
+}
+
+/* --- control bar --- */
+.controls {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  padding: 16px 22px 22px;
+  border-top: 1px solid rgba(255,255,255,.06);
+  flex-wrap: wrap;
+}
+.ctl {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 62px; padding: 8px 10px;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  border-radius: 12px; color: var(--text); font-size: 15px; cursor: pointer;
+  transition: background .18s ease, border-color .18s ease;
+}
+.ctl:hover { background: rgba(255,255,255,.1); border-color: rgba(255,255,255,.18); }
+.ctl span { font-size: 10.5px; color: var(--muted); letter-spacing: .3px; }
+
+.btn-join, .btn-done {
+  padding: 13px 30px; border-radius: 999px; border: none; cursor: pointer;
+  font-size: 15px; font-weight: 650; color: #fff;
+  background: linear-gradient(135deg, #2f6fe4, #5a44d6);
+  box-shadow: 0 10px 30px -10px rgba(61,125,255,.8);
+}
+.btn-join:hover, .btn-done:hover { filter: brightness(1.08); }
+.btn-done:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+
+.join-panel { display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.controls-hint { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 13.5px; }
+.done-panel { text-align: center; max-width: 560px; }
+.done-panel h3 { margin: 0 0 6px; }
+
+.type-row { display: flex; gap: 12px; width: min(860px, 100%); }
+.type-row textarea {
+  flex: 1; min-height: 78px; resize: vertical;
+  background: rgba(255,255,255,.05); color: var(--text);
+  border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 12px 14px; font: inherit;
+}
+.type-actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* --- transcript drawer --- */
+.transcript-panel {
+  position: fixed; top: 0; right: 0; height: 100%; width: min(400px, 92vw);
+  background: #0d1728; border-left: 1px solid rgba(255,255,255,.08);
+  padding: 18px; transform: translateX(100%); transition: transform .28s ease;
+  display: flex; flex-direction: column; z-index: 20;
+}
+.transcript-panel.open { transform: translateX(0); }
+.transcript-scroll { overflow-y: auto; flex: 1; }
+
+.room-note { position: absolute; bottom: 8px; width: 100%; text-align: center; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 760px) {
+  .stage { grid-template-columns: 1fr; gap: 12px; padding: 14px; }
+  .tile { aspect-ratio: 16 / 11; }
+  .tile-avatar { width: 72px; height: 72px; font-size: 24px; }
+  .captions { margin: 0 14px 4px; }
+}
