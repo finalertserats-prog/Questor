@@ -7,8 +7,8 @@ export function Login() {
   const { login, register, user } = useAuth();
   const nav = useNavigate();
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('demo@questor.local');
-  const [password, setPassword] = useState('questor123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [tenantName, setTenantName] = useState('');
   const [err, setErr] = useState('');
@@ -59,7 +59,14 @@ export function Login() {
             <>Have an account? <a onClick={() => setMode('login')} style={{ cursor: 'pointer' }}>Sign in</a></>
           )}
         </div>
-        {mode === 'login' && <div className="small muted" style={{ marginTop: 10, textAlign: 'center' }}>Demo: demo@questor.local / questor123 (run <code>npm run db:seed</code>)</div>}
+        {/* The seed credentials are a published default, so advertising them on a
+            reachable login page is an invitation to try them. Shown only in dev,
+            where the seed account is the point. */}
+        {mode === 'login' && import.meta.env.DEV && (
+          <div className="small muted" style={{ marginTop: 10, textAlign: 'center' }}>
+            Dev seed: <code>demo@questor.local</code> (run <code>npm run db:seed</code>)
+          </div>
+        )}
       </form>
     </div>
   );

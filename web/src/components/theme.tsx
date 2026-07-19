@@ -6,17 +6,18 @@ export type Theme = 'light' | 'dark';
 const STORAGE_KEY = 'questor-theme';
 
 /**
- * Light is the product default.
+ * Light is the product default, full stop.
  *
- * A stored choice always wins. Only when nothing has been stored do we consult
- * the OS, and only a positive dark signal moves us off light — "no signal
- * either way" resolves to light rather than to whatever the browser guesses.
+ * A stored choice always wins — once someone picks dark, they keep it. Beyond
+ * that the OS preference is deliberately NOT consulted: it was, and the result
+ * was that anyone running Windows in dark mode saw a dark console despite light
+ * being the specified default. "Default to light unless the operating system
+ * disagrees" is not a light default, it is an OS default.
  */
 export function resolveInitialTheme(): Theme {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === 'dark' || stored === 'light') return stored;
-    if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark';
   } catch {
     // Private mode / blocked storage: fall through to the light default.
   }
