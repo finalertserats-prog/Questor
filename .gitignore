@@ -26,3 +26,10 @@ artifacts/
 
 # Local AI-harness session memory (not part of the project)
 notebook/
+
+# Operator credential drops. These land in the repo root by habit and are one
+# `git add .` away from a public commit — see the 2026-04-23 incident.
+App.txt
+*.app-password
+*credential*.txt
+*secret*.txt

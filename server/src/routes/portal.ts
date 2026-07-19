@@ -88,6 +88,19 @@ async function loadByToken(token: string, opts?: { requireUnconsumed?: boolean }
 portalRouter.get('/:token', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token);
   const s = inv.session;
+
+  // Record the first open. SMTP acceptance only proves a provider took the
+  // message — this is the first evidence a human actually received it, and it
+  // is what lets a recruiter tell "they haven't got round to it" apart from
+  // "it went to spam and they never saw it". Recorded once so a candidate
+  // revisiting the page does not overwrite when they first saw it.
+  if (!inv.openedAt) {
+    await prisma.invitation.update({
+      where: { id: inv.id },
+      data: { openedAt: new Date(), status: inv.status === 'sent' ? 'opened' : inv.status },
+    });
+  }
+
   const consent = parseJson<any>(s.consentJson, {});
   res.json({
     candidateName: s.candidate.fullName,

@@ -124,7 +124,12 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     plan: plan ? parseJson(plan.planJson, {}) : null,
     turns: turns.map((t) => ({ id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId })),
     assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJson(assessment.resultJson, {}) } : null,
-    invitation: invitation ? { token: invitation.token, status: invitation.status, portalUrl: `${config.webOrigin}/portal/${invitation.token}` } : null,
+    invitation: invitation ? {
+      token: invitation.token, status: invitation.status,
+      portalUrl: `${config.webOrigin}/portal/${invitation.token}`,
+      // Both timestamps, so the recruiter can tell "we sent it" from "they saw it".
+      sentAt: invitation.sentAt, openedAt: invitation.openedAt,
+    } : null,
   });
 }));
 
@@ -185,6 +190,53 @@ interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyn
 
 // Schedule (FR-013)
 //
+/**
+ * Resend an existing invitation.
+ *
+ * Separate from /invite because that one only accepts PROVISIONED — once a
+ * session is INVITED there was no way to reach the candidate again, and
+ * "I never got it" is the single most common thing a recruiter has to answer.
+ *
+ * Reuses the existing link rather than minting a new one. Rotating the token
+ * would kill any copy already sent by hand, which is exactly what someone does
+ * while waiting for a resend to exist.
+ */
+interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
+  const invitation = await prisma.invitation.findUnique({ where: { sessionId: session.id } });
+  if (!invitation) throw new HttpError(404, 'This interview has no invitation yet — send one first.');
+  if (invitation.status === 'consumed') throw new HttpError(409, 'This interview is already complete.');
+  if (invitation.expiresAt && invitation.expiresAt < new Date()) {
+    throw new HttpError(410, 'This invitation has expired. Create a new interview for this candidate.');
+  }
+
+  const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
+  const role = await prisma.role.findUnique({ where: { id: session.roleId } });
+  const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
+  const email = getEmail();
+
+  if (!email.delivers) {
+    throw new HttpError(503, `Email is not configured to deliver (provider "${email.name}"). Copy the candidate's link and send it yourself.`);
+  }
+
+  try {
+    await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl), to: candidate!.email });
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation resend failed');
+    throw new HttpError(502, 'The email could not be sent. Copy the link and send it yourself, or try again.');
+  }
+
+  const events = parseJson<Array<Record<string, unknown>>>(invitation.eventsJson, []);
+  events.push({ type: 'resent', at: new Date().toISOString(), by: req.auth!.userId });
+  await prisma.invitation.update({
+    where: { id: invitation.id },
+    data: { status: invitation.status === 'created' ? 'sent' : invitation.status, sentAt: new Date(), eventsJson: JSON.stringify(events) },
+  });
+
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'invitation.resent', entityType: 'InterviewSession', entityId: session.id });
+  res.json({ resent: true, to: candidate!.email, portalUrl, deliveryNote: `Sent again to ${candidate!.email}.` });
+}));
+
 // Gated on interview:invite as the nearest existing scheduling-lane capability
 // (recruiter, manager, admin — not reviewer or auditor). There is no
 // `interview:schedule` capability yet; when one is added this and /cancel

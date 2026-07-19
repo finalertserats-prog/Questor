@@ -188,8 +188,12 @@ model Invitation {
   session       InterviewSession @relation(fields: [sessionId], references: [id])
   token         String   @unique
   channel       String   @default("email")
-  status        String   @default("created") // created | sent | opened | accepted | expired | cancelled
+  status        String   @default("created") // created | sent | opened | accepted | consumed | expired | cancelled
   sentAt        DateTime?
+  // First time the candidate actually loaded their portal link. The closest
+  // thing to delivery confirmation available: SMTP acceptance only proves the
+  // mail was handed to a provider, not that a person ever saw it.
+  openedAt      DateTime?
   acceptedAt    DateTime?
   expiresAt     DateTime?
   eventsJson    String   @default("[]")

@@ -5,7 +5,7 @@ import { Badge, recBadge, stateBadge, Banner } from '../components/ui';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null; }
-interface Invitation { token: string; status: string; portalUrl: string; }
+interface Invitation { token: string; status: string; portalUrl: string; sentAt: string | null; openedAt: string | null; }
 interface Session {
   id: string; state: string; provider: string; language: string; durationMinutes: number;
   scheduledAt: string | null; persona: { name: string; tone: string }; consent: unknown;
@@ -58,6 +58,7 @@ export function InterviewDetail() {
   };
 
   const invite = () => doAction(() => api.post(`/interviews/${id}/invite`, {}), 'Invitation created.');
+  const resend = () => doAction(() => api.post(`/interviews/${id}/resend`, {}), 'Invitation email sent again.');
   const schedule = () => {
     if (!scheduleAt) return;
     doAction(() => api.post(`/interviews/${id}/schedule`, { scheduledAt: new Date(scheduleAt).toISOString() }), 'Interview scheduled.');
@@ -128,17 +129,38 @@ export function InterviewDetail() {
         <h2>Invitation</h2>
         {invitation ? (
           <div>
-            <div className="row" style={{ marginBottom: 6 }}>
-              <Badge kind="blue">{invitation.status}</Badge>
+            {/* Delivery is reported in three distinct states, because "sent"
+                alone told recruiters nothing useful: a mail provider accepting
+                a message is not the same as a candidate seeing it. */}
+            <div className="row" style={{ marginBottom: 6, gap: 8 }}>
+              <Badge kind={invitation.openedAt ? 'green' : invitation.sentAt ? 'blue' : 'amber'}>
+                {invitation.openedAt ? 'opened by candidate' : invitation.sentAt ? 'email sent' : 'not sent'}
+              </Badge>
+              {invitation.sentAt && (
+                <span className="muted small">
+                  {invitation.openedAt
+                    ? `opened ${new Date(invitation.openedAt).toLocaleString()}`
+                    : `sent ${new Date(invitation.sentAt).toLocaleString()} — not opened yet`}
+                </span>
+              )}
             </div>
+            {invitation.sentAt && !invitation.openedAt && (
+              <div className="muted small" style={{ marginBottom: 8 }}>
+                Delivered to the mail provider, but the candidate hasn’t opened the link.
+                If it’s been a day, ask them to check their spam folder.
+              </div>
+            )}
             <label>Candidate portal link</label>
             <div className="row">
               <input readOnly value={invitation.portalUrl} style={{ flex: 1 }} />
               <button className="btn secondary" type="button" onClick={copyUrl}>{copied ? 'Copied!' : 'Copy'}</button>
             </div>
             <div className="muted small" style={{ marginTop: 6 }}>Share this link with the candidate.</div>
-            <div className="row" style={{ marginTop: 14 }}>
+            <div className="row" style={{ marginTop: 14, gap: 8 }}>
               <Link className="btn" to={`/room/${invitation.token}`}>Open interview room (recruiter preview)</Link>
+              <button className="btn secondary" type="button" onClick={resend} disabled={busy}>
+                {busy ? 'Sending…' : 'Resend email'}
+              </button>
             </div>
           </div>
         ) : (
