@@ -49,16 +49,65 @@ export function AssessmentView() {
   const [showReport, setShowReport] = useState(false);
   const [report, setReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  const [skipReason, setSkipReason] = useState('');
 
   const load = () => {
     api.get<AssessmentResp>(`/assessments/${id}`)
-      .then((d) => { setData(d); setDisposition((d.result?.recommendation as Disposition) ?? 'CONSIDER'); })
-      .catch((err) => setError(err.message))
+      .then((d) => { setData(d); setDisposition((d.result?.recommendation as Disposition) ?? 'CONSIDER'); setBlocked(false); })
+      .catch((err: Error) => {
+        // The server withholds this page from a reviewer who has not yet
+        // recorded their own verdict. That is a workflow state, not a failure,
+        // so it gets a route forward rather than a red error box.
+        if (/independent verdict/i.test(err.message)) setBlocked(true);
+        else setError(err.message);
+      })
       .finally(() => setLoading(false));
   };
   useEffect(() => { setLoading(true); load(); }, [id]);
 
+  const skipBlind = async () => {
+    if (skipReason.trim().length < 10) return;
+    setError('');
+    try {
+      await api.post(`/assessments/${id}/skip-blind-review`, { reason: skipReason.trim() });
+      setLoading(true);
+      load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   if (loading) return <div className="muted">Loading…</div>;
+
+  if (blocked) {
+    return (
+      <div className="stack">
+        <h2>Independent review required</h2>
+        <Banner kind="info">
+          The AI's recommendation and scores are hidden until you record your own judgement.
+          This keeps your read independent — which is both the point of a second opinion and
+          what keeps the AI advisory rather than the decision-maker.
+        </Banner>
+        <div className="card">
+          <Link className="btn" to={`/assessments/${id}/review`}>Review the evidence blind</Link>
+        </div>
+        <details className="card">
+          <summary>I need to open it without reviewing</summary>
+          <p className="muted">
+            Legitimate sometimes — re-reading a candidate you already decided on, a compliance
+            check, investigating a bad report. It is recorded against your name and shown in the
+            shadow-mode metrics, so skipping habitually is visible rather than assumed fine.
+          </p>
+          <label htmlFor="skip-reason">Reason</label>
+          <textarea id="skip-reason" rows={3} value={skipReason} onChange={(e) => setSkipReason(e.target.value)} />
+          <button className="btn secondary" disabled={skipReason.trim().length < 10} onClick={skipBlind}>
+            Open without blind review
+          </button>
+        </details>
+        {error && <Banner kind="error">{error}</Banner>}
+      </div>
+    );
+  }
+
   if (error && !data) return <Banner kind="error">{error}</Banner>;
   if (!data) return <Banner kind="info">Assessment not found.</Banner>;
 

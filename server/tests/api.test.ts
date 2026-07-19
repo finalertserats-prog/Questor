@@ -73,12 +73,42 @@ describe('Questor API end-to-end', () => {
     expect(assessmentId).toBeTruthy();
   });
 
-  it('returns a grounded assessment with a recommendation', async () => {
+  // Blind-first is enforced, not merely offered: a reviewer reaching the score
+  // by typing the URL would lose the independence that keeps the AI advisory.
+  it('withholds the assessment and its report until the reviewer records a verdict', async () => {
+    const full = await request(app).get(`/api/assessments/${assessmentId}`).set('Authorization', `Bearer ${token}`);
+    expect(full.status).toBe(409);
+    // The report is the same conclusions in prose, so it must be gated too.
+    const report = await request(app).get(`/api/assessments/${assessmentId}/report`).set('Authorization', `Bearer ${token}`);
+    expect(report.status).toBe(409);
+    // The blind view stays open — that is the way forward, not a locked door.
+    const blind = await request(app).get(`/api/assessments/${assessmentId}/blind`).set('Authorization', `Bearer ${token}`);
+    expect(blind.status).toBe(200);
+    expect(JSON.stringify(blind.body.competencies)).not.toContain('"level"');
+  });
+
+  it('returns a grounded assessment with a recommendation once the verdict is recorded', async () => {
+    const verdict = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ disposition: 'CONSIDER', reason: 'Independent read before seeing the machine output.' });
+    expect(verdict.status).toBe(201);
+
     const res = await request(app).get(`/api/assessments/${assessmentId}`).set('Authorization', `Bearer ${token}`);
     expect(res.status).toBe(200);
     expect(['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS']).toContain(res.body.result.recommendation);
     expect(res.body.result.competencies.length).toBeGreaterThan(0);
     expect(res.body.result.evidenceCoverage).toBeGreaterThan(0);
+  });
+
+  it('unlocks via an audited break-glass when a reason is given', async () => {
+    const other = await request(app).post('/api/auth/register')
+      .send({ email: 'breakglass@questor.local', password: 'a-long-enough-password', name: 'BG', tenantName: 'BG Org' });
+    const bgToken = other.body.token;
+    // Their own tenant's assessment does not exist, so scope returns 404 — the
+    // point here is that a weak reason is refused before anything else happens.
+    const weak = await request(app).post(`/api/assessments/${assessmentId}/skip-blind-review`)
+      .set('Authorization', `Bearer ${bgToken}`).send({ reason: 'nah' });
+    expect(weak.status).toBe(400);
   });
 
   it('records a human review override with a reason', async () => {

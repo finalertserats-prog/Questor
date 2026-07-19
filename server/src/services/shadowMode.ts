@@ -423,6 +423,53 @@ export async function assertBlindVerdictRecorded(assessmentId: string, reviewerI
   }
 }
 
+/** Audit action recording that a reviewer opened an assessment without blinding. */
+export const BLIND_BYPASS_ACTION = 'review.blind_bypassed';
+
+/**
+ * Has this user already earned unblinded access to this assessment — either by
+ * recording their independent verdict, or by explicitly bypassing with a reason?
+ *
+ * The bypass is stored as an audit event rather than a new table: the fact is
+ * inherently an audit fact, and keeping it there means a bypass cannot be
+ * removed without removing the audit trail that records it.
+ */
+export async function hasUnblindedAccess(assessmentId: string, reviewerId: string): Promise<boolean> {
+  const [verdict, bypass] = await Promise.all([
+    findBlindReview(assessmentId, reviewerId),
+    prisma.auditEvent.count({
+      where: { entityId: assessmentId, actorId: reviewerId, action: BLIND_BYPASS_ACTION },
+    }),
+  ]);
+  return Boolean(verdict) || bypass > 0;
+}
+
+/**
+ * Gate unblinded assessment reads for people who are going to judge.
+ *
+ * Applies ONLY to holders of `assessment:review`. Someone with plain
+ * `assessment:read` — typically the recruiter who ran the interview and needs
+ * the outcome — is not the decision-maker being protected from anchoring here,
+ * and gating them would lock them out permanently since they cannot file a
+ * verdict at all.
+ *
+ * A reviewer who has recorded a verdict, or consciously bypassed, keeps access
+ * for good: the anchoring risk exists once, before they form a view.
+ */
+export async function assertUnblindedReadAllowed(o: {
+  assessmentId: string;
+  userId: string;
+  canReview: boolean;
+}): Promise<void> {
+  if (!o.canReview) return;
+  if (await hasUnblindedAccess(o.assessmentId, o.userId)) return;
+  throw new HttpError(
+    409,
+    'Record your independent verdict first, or state a reason for skipping it. '
+    + 'The AI recommendation and scores stay hidden until then so your judgement is your own.',
+  );
+}
+
 async function findBlindReview(assessmentId: string, reviewerId: string) {
   return prisma.humanReview.findFirst({
     where: { assessmentId, reviewerId, status: BLIND_REVIEW_STATUS },
@@ -506,6 +553,16 @@ export interface AgreementReport {
     readonly statement: string;
   };
   readonly caveats: readonly string[];
+  /**
+   * How often blinding was skipped. Present only on the DB-backed report;
+   * `computeAgreementReport` is a pure function over observations and has no
+   * view of bypasses.
+   */
+  readonly blindingBypassed?: {
+    readonly events: number;
+    readonly assessments: number;
+    readonly note: string;
+  };
 }
 
 /**
@@ -716,7 +773,30 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
     });
   }
 
-  return computeAgreementReport(observations, assessmentsTotal);
+  const report = computeAgreementReport(observations, assessmentsTotal);
+
+  // Bypasses are reported alongside the agreement numbers deliberately. A team
+  // that habitually skips blinding still produces a clean-looking kappa from the
+  // few reviews it did blind, and the sample is no longer representative of how
+  // decisions are actually made. Showing the skip count next to the statistic is
+  // what stops that reading as compliance.
+  const bypasses = await prisma.auditEvent.findMany({
+    where: { tenantId, action: BLIND_BYPASS_ACTION },
+    select: { entityId: true, actorId: true },
+  });
+  const bypassedAssessments = new Set(bypasses.map((b) => b.entityId)).size;
+
+  return {
+    ...report,
+    blindingBypassed: {
+      events: bypasses.length,
+      assessments: bypassedAssessments,
+      note: bypassedAssessments === 0
+        ? 'No reviewer has opened an assessment without recording a blind verdict first.'
+        : `${bypassedAssessments} assessment(s) were opened without a blind verdict. Those reviews are `
+          + 'not in the sample above, so the agreement figure describes only the reviews that were blinded.',
+    },
+  };
 }
 
 function isDisposition(value: string): value is Disposition {

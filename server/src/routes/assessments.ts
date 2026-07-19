@@ -7,10 +7,10 @@ import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { getAts } from '../providers/ats/index.js';
-import { assertCanAccessAssessment, ranTheInterview } from '../services/access.js';
+import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import {
-  assertBlindVerdictRecorded, getAgreementReport, getBlindView, recordBlindVerdict,
-  DISPOSITIONS, SELF_REVIEW_NOTE,
+  assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
+  recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
 } from '../services/shadowMode.js';
 
 export const assessmentsRouter = Router();
@@ -95,6 +95,12 @@ assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asy
 
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
+  // Blind-first is enforced here, not just offered in the UI. Otherwise a
+  // reviewer reaches the score by typing the URL, and the independence that
+  // keeps this advisory rather than automated is lost without anyone noticing.
+  await assertUnblindedReadAllowed({
+    assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
+  });
   const reviews = await prisma.humanReview.findMany({ where: { assessmentId: a.id }, orderBy: { createdAt: 'desc' } });
   res.json({
     id: a.id,
@@ -108,10 +114,38 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
 
 assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
+  // The report is the same conclusions in prose — gating /:id but not this would
+  // leave the front door locked and the back door open.
+  await assertUnblindedReadAllowed({
+    assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
+  });
   const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
   const md = renderReportMarkdown({ candidateName: a.session.candidate.fullName, roleTitle: a.session.role.title, assessment: result });
   if (req.query.format === 'json') return res.json({ report: md, result });
   res.type('text/markdown').send(md);
+}));
+
+/**
+ * Break glass: open the assessment without recording a blind verdict first.
+ *
+ * A lock with no escape does not produce blind reviews — it produces a shared
+ * admin login, which costs the audit trail as well as the independence. There
+ * are legitimate reasons to skip (re-reading a candidate you already decided on
+ * elsewhere, a compliance check, debugging a bad report), so the escape exists.
+ *
+ * What it does NOT do is happen quietly: it demands a reason, records it against
+ * the user, and surfaces in shadow-metrics as a review that skipped blinding, so
+ * a team that bypasses habitually is visible rather than assumed compliant.
+ */
+assessmentsRouter.post('/:id/skip-blind-review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const { reason } = z.object({ reason: z.string().min(10, 'Give a real reason (at least 10 characters).') }).parse(req.body);
+  const a = await getAssessment(req.auth!, req.params.id);
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
+    action: BLIND_BYPASS_ACTION, entityType: 'AssessmentVersion', entityId: a.id,
+    after: { reason },
+  });
+  res.status(201).json({ ok: true, bypassed: true });
 }));
 
 // Human review / override (FR-033)
