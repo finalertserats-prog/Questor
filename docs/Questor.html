@@ -1,0 +1,969 @@
+<title>Questor — Team Guide and Readiness Assessment</title>
+<style>
+  :root {
+    --paper:      #f6f7f9;
+    --card:       #ffffff;
+    --ink:        #131f2e;
+    --ink-soft:   #47586c;
+    --muted:      #6b7c90;
+    --rule:       #dde3ea;
+    --accent:     #2f6fe4;
+    --accent-dim: #e8f0fd;
+    --warn:       #8a5a06;
+    --warn-bg:    #fdf3e0;
+    --crit:       #9c2f34;
+    --crit-bg:    #fbeaea;
+    --ok:         #1f6b47;
+    --ok-bg:      #e6f4ed;
+
+    --measure: 68ch;
+    --step-1: 0.82rem;
+    --step0:  1rem;
+    --step1:  1.22rem;
+    --step2:  1.6rem;
+    --step3:  2.15rem;
+    --step4:  2.9rem;
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
+    --sans:  "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --mono:  ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d1520; --card: #131e2c; --ink: #e6edf6; --ink-soft: #b3c1d1;
+      --muted: #8598ab; --rule: #24344a; --accent: #6da2ff; --accent-dim: #16263d;
+      --warn: #e0aa5a; --warn-bg: #2d2416; --crit: #f0888c; --crit-bg: #2e1a1c;
+      --ok: #6cc79b; --ok-bg: #14291f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0d1520; --card: #131e2c; --ink: #e6edf6; --ink-soft: #b3c1d1;
+    --muted: #8598ab; --rule: #24344a; --accent: #6da2ff; --accent-dim: #16263d;
+    --warn: #e0aa5a; --warn-bg: #2d2416; --crit: #f0888c; --crit-bg: #2e1a1c;
+    --ok: #6cc79b; --ok-bg: #14291f;
+  }
+  :root[data-theme="light"] {
+    --paper: #f6f7f9; --card: #ffffff; --ink: #131f2e; --ink-soft: #47586c;
+    --muted: #6b7c90; --rule: #dde3ea; --accent: #2f6fe4; --accent-dim: #e8f0fd;
+    --warn: #8a5a06; --warn-bg: #fdf3e0; --crit: #9c2f34; --crit-bg: #fbeaea;
+    --ok: #1f6b47; --ok-bg: #e6f4ed;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 78ch; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+
+  h1, h2, h3 { font-family: var(--serif); font-weight: 600; text-wrap: balance; line-height: 1.2; }
+  h1 { font-size: var(--step4); margin: 0 0 .4rem; letter-spacing: -.015em; }
+  h2 {
+    font-size: var(--step2); margin: 3.5rem 0 1rem;
+    padding-bottom: .5rem; border-bottom: 1px solid var(--rule);
+  }
+  h3 { font-size: var(--step1); margin: 2rem 0 .5rem; }
+  p, li { max-width: var(--measure); color: var(--ink-soft); }
+  p { margin: 0 0 1rem; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); }
+
+  .eyebrow {
+    font-size: var(--step-1); text-transform: uppercase; letter-spacing: .12em;
+    color: var(--muted); font-weight: 600; margin: 0 0 .75rem;
+  }
+  .lede { font-size: var(--step1); color: var(--ink-soft); max-width: var(--measure); }
+
+  code, .mono { font-family: var(--mono); font-size: .9em; }
+  code:not(pre code) {
+    background: var(--accent-dim); color: var(--ink);
+    padding: .12em .4em; border-radius: 3px; word-break: break-word;
+  }
+  pre {
+    background: var(--card); border: 1px solid var(--rule);
+    padding: 1rem 1.1rem; overflow-x: auto; font-size: .9rem; line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; }
+
+  /* Callouts. Tinted block + uppercase label rather than a rounded card with an
+     accent rail — the label states the severity in words, so the colour is
+     reinforcement rather than the only signal. */
+  .note { padding: 1.1rem 1.25rem; margin: 1.5rem 0; border: 1px solid var(--rule); background: var(--card); }
+  .note > :last-child { margin-bottom: 0; }
+  .note .label {
+    display: block; font-size: var(--step-1); font-weight: 700;
+    text-transform: uppercase; letter-spacing: .1em; margin-bottom: .5rem;
+  }
+  .note.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+  .note.warn .label { color: var(--warn); }
+  .note.crit { background: var(--crit-bg); border-color: color-mix(in srgb, var(--crit) 32%, transparent); }
+  .note.crit .label { color: var(--crit); }
+  .note.ok { background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .note.ok .label { color: var(--ok); }
+
+  /* The workflow genuinely is a sequence, so it is numbered. */
+  .steps { list-style: none; counter-reset: step; padding: 0; margin: 1.5rem 0; display: flex; flex-direction: column; gap: 1.75rem; }
+  .steps > li { counter-increment: step; display: grid; grid-template-columns: 2.4rem 1fr; gap: 1rem; max-width: none; }
+  .steps > li::before {
+    content: counter(step);
+    font-family: var(--mono); font-size: .95rem; font-weight: 600;
+    color: var(--accent); border: 1px solid var(--rule); background: var(--card);
+    width: 2.4rem; height: 2.4rem; display: grid; place-items: center;
+  }
+  .steps h3 { margin: .2rem 0 .35rem; }
+  .steps p { margin-bottom: .5rem; }
+
+  .field { display: grid; grid-template-columns: 8.5rem 1fr; gap: .5rem 1rem; margin: 1.25rem 0; }
+  .field dt { font-size: var(--step-1); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 600; padding-top: .15rem; }
+  .field dd { margin: 0; font-family: var(--mono); font-size: .92rem; word-break: break-all; color: var(--ink); }
+
+  table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; font-size: .94rem; }
+  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-size: var(--step-1); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  td:first-child { font-weight: 600; color: var(--ink); white-space: nowrap; }
+  /* Part Two's tables carry prose in the first column, where nowrap would force
+     a horizontal scroll on every row rather than only the wide ones. */
+  table.prose td:first-child { white-space: normal; }
+  .scroll { overflow-x: auto; }
+
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 3rem 0; }
+  footer { margin-top: 4rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: .9rem; }
+  ul { padding-left: 1.2rem; }
+  li { margin-bottom: .4rem; }
+
+  /* Part divider. The document has two audiences and the boundary between them
+     is load-bearing — half of this should not be forwarded to a candidate — so
+     it gets a full-width marker rather than another h2. */
+  .part {
+    margin: 5rem 0 2rem; padding: 1.5rem 0 1.25rem;
+    border-top: 3px solid var(--ink); border-bottom: 1px solid var(--rule);
+  }
+  .part .eyebrow { margin-bottom: .35rem; }
+  .part h2 { border: 0; padding: 0; margin: 0 0 .5rem; font-size: var(--step3); }
+  .part p { margin: 0; }
+
+  @media print {
+    :root {
+      --paper: #fff; --card: #fff; --ink: #000; --ink-soft: #1c1c1c; --muted: #444;
+      --rule: #bbb; --accent: #1a4fa8;
+      --warn: #6b4400; --warn-bg: #fbf4e6; --crit: #8a1f24; --crit-bg: #fbedee;
+      --ok: #14512f; --ok-bg: #eaf4ee;
+    }
+    body { font-size: 11pt; line-height: 1.5; }
+    .wrap { max-width: none; padding: 0; }
+    @page { margin: 18mm 16mm; }
+
+    /* Keep a heading with the text it introduces, and never split a warning
+       across a page break — half a caveat is worse than none. */
+    h2 { break-after: avoid; margin-top: 1.6rem; }
+    h3 { break-after: avoid; }
+    .note, .steps > li, table { break-inside: avoid; }
+    p, li { orphans: 3; widows: 3; }
+
+    /* The internal half starts on its own sheet, so the HR-facing part can be
+       detached and handed over without the roadmap trailing off the last page. */
+    .part { break-before: page; break-after: avoid; margin-top: 0; }
+
+    a { color: var(--accent); text-decoration: none; }
+    a[href^="http"]::after { content: " (" attr(href) ")"; font-size: .82em; color: #555; word-break: break-all; }
+    .steps > li::before { border-color: #999; }
+  }
+</style>
+
+<div class="wrap">
+
+  <p class="eyebrow">Internal pilot · Schranders</p>
+  <h1>Questor</h1>
+  <p class="lede">
+    An AI interviewer that runs first-round screens, transcribes them, and scores the
+    evidence against the role. You decide. It doesn't.
+  </p>
+
+  <p>
+    This document has two halves. <strong>Part One</strong> is for anyone running screens —
+    how to use it and what to distrust. <strong>Part Two</strong> is the engineering and
+    readiness assessment: what is actually built, what is missing, and what it would take to
+    sell this to anyone outside the company. Part Two is internal.
+  </p>
+
+  <div class="part">
+    <p class="eyebrow">Part One</p>
+    <h2>Using Questor</h2>
+    <p>For recruiters, hiring managers and reviewers.</p>
+  </div>
+
+  <div class="note crit">
+    <span class="label">Read this before you use it on a real candidate</span>
+    <p>
+      This is a <strong>pilot</strong>. The scoring has not yet been shown to agree with human
+      judgement — that is what this pilot exists to measure. Treat every score as a
+      <strong>suggestion from a colleague who sat in on the call</strong>, not as a result.
+      Do not reject or advance anyone because of the number.
+    </p>
+  </div>
+
+  <h2>Getting in</h2>
+
+  <dl class="field">
+    <dt>Address</dt>
+    <dd><a href="https://questor.187-127-166-193.sslip.io">https://questor.187-127-166-193.sslip.io</a></dd>
+    <dt>Your login</dt>
+    <dd>Ask Vishnu — you get your own account</dd>
+    <dt>Browser</dt>
+    <dd>Chrome or Edge</dd>
+  </dl>
+
+  <p>
+    Everyone gets a personal login. Don't share one: Questor records who opened each
+    candidate and who made each decision, and a shared account makes that record useless —
+    which matters if a candidate ever asks who saw their interview.
+  </p>
+
+  <p>There are four kinds of account. Ask for the one that matches what you actually do.</p>
+
+  <div class="scroll">
+    <table>
+      <thead>
+        <tr><th>Account</th><th>Can do</th><th>Deliberately cannot</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Recruiter</td>
+          <td>Create roles and candidates, send invitations, run interviews</td>
+          <td>Approve their own scorecard, or sign off an assessment</td>
+        </tr>
+        <tr>
+          <td>Manager</td>
+          <td>Approve scorecards, review and decide on candidates</td>
+          <td>Drive the interview itself</td>
+        </tr>
+        <tr>
+          <td>Reviewer</td>
+          <td>Read transcripts and record decisions</td>
+          <td>Create roles or invite candidates</td>
+        </tr>
+        <tr>
+          <td>Auditor</td>
+          <td>See that things happened, and when</td>
+          <td>Read candidate detail</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    A recruiter approving the scorecard they wrote, or signing off the interview they ran,
+    is the check this is designed to prevent. It isn't bureaucracy — it's what keeps a
+    human genuinely in the loop rather than nominally.
+  </p>
+
+  <h2>Running a screen</h2>
+
+  <ol class="steps">
+    <li>
+      <div>
+        <h3>Create the role</h3>
+        <p>
+          Paste the job description. Questor reads it and proposes the competencies it will
+          interview against, with a required level for each.
+        </p>
+        <p>
+          <strong>Read what it proposes.</strong> A vague JD produces vague competencies, and
+          every question in the interview comes from this list. Five minutes here is worth
+          more than anything else you can do.
+        </p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Approve the scorecard</h3>
+        <p>
+          Nothing can be interviewed until a human approves the competencies. Edit the levels
+          if they're wrong for your role — "required 4/5" on something you'd actually accept
+          a 3 on will skew every screen after it.
+        </p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Add the candidate</h3>
+        <p>
+          Name, email, and paste or upload their CV. You'll get a fit score against the role
+          with the CV lines that justified it. That's a reading aid for you, not a filter — nobody
+          is excluded by it.
+        </p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Create the interview and send the invitation</h3>
+        <p>
+          Pick a duration; 45 minutes is the default. Questor builds a time-boxed plan across
+          the competencies, generates a private link for that candidate, and emails it to them.
+        </p>
+        <p>
+          The interview screen then tells you whether it was sent and whether they've opened it.
+          There's a <strong>Resend email</strong> button for when they say it never arrived.
+        </p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>The candidate takes it</h3>
+        <p>
+          They open the link, see what's being recorded and consent, do a mic check, then talk
+          to Schranders — the AI interviewer. It asks follow-ups based on what they actually say.
+          They can ask it to repeat, or type instead of speaking.
+        </p>
+        <p>
+          The link works once and expires after 14 days.
+        </p>
+      </div>
+    </li>
+    <li>
+      <div>
+        <h3>Review it — properly</h3>
+        <p>
+          This is the part that matters most, and it works differently to what you'd expect.
+          See below.
+        </p>
+      </div>
+    </li>
+  </ol>
+
+  <h2>Practical questions and work samples</h2>
+
+  <p>
+    Questor no longer only asks people to narrate their experience. On technical competencies
+    it now puts a small <strong>artefact</strong> in front of the candidate and asks them to
+    react to it — read this Flow and say what breaks at volume, look at this query, explain
+    what this configuration will do.
+  </p>
+
+  <p>Who gets one is decided by the kind of competency, not by seniority or by the role title:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Competency type</th><th>What they get</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Technical</td>
+          <td>An artefact from that competency's own domain — a Flow, a query, a config, a pipeline</td>
+        </tr>
+        <tr>
+          <td>Domain or situational</td>
+          <td>A realistic scenario to reason through</td>
+        </tr>
+        <tr>
+          <td>Communication or behavioural</td>
+          <td><strong>Never an artefact.</strong> There is nothing meaningful to hand someone</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    A maximum of two per interview. The artefact always comes from the candidate's own world:
+    a Salesforce administrator gets a Flow or a sharing model, never a Python function. That
+    distinction is deliberate and enforced in the product, not left to the AI's discretion.
+  </p>
+
+  <div class="note warn">
+    <span class="label">On asking people to write code</span>
+    <p>
+      Writing actual code is <strong>off by default</strong> and has to be switched on per
+      interview. Nobody gets a coding exercise by accident.
+    </p>
+    <p>
+      When it is on, be aware there is <strong>no code editor</strong> — the candidate types into
+      the same answer box they speak into. That is fine for five lines and poor for anything
+      real. Treat it as a way to see how someone thinks, not as a substitute for a proper
+      technical round.
+    </p>
+  </div>
+
+  <h2>Reviewing: you judge first</h2>
+
+  <p>
+    When you open a finished interview you will <strong>not</strong> see the AI's score. You'll get
+    the transcript, the exact things the candidate said against each competency, and the
+    rating scale. You score it yourself and say why.
+  </p>
+
+  <p>Only then does it show you what the AI thought, side by side, and highlight where you disagreed.</p>
+
+  <div class="note">
+    <span class="label">Why it's built this way</span>
+    <p>
+      If you read "Proceed, 76/100" first, you can't un-read it — your judgement bends toward
+      it without you noticing. That costs the independent read that made a second opinion worth
+      having in the first place.
+    </p>
+    <p>
+      It also matters legally. An AI screening tool is treated as advisory only while a human is
+      genuinely deciding. If reviewers habitually rubber-stamp the machine, regulators treat it as
+      an automated decision — and the protection you were relying on is gone.
+    </p>
+  </div>
+
+  <p>
+    You can skip the blind step if you have a real reason — re-reading a candidate you already
+    decided on, checking something. It asks for the reason and records it. Skipping occasionally
+    is fine; skipping every time tells us the flow is wrong, and we'd rather know.
+  </p>
+
+  <p>
+    <strong>Your decision is the decision.</strong> Disagreeing with the AI is a useful outcome, not
+    a problem to resolve. Every one of those comparisons is data on whether this thing can be
+    trusted yet.
+  </p>
+
+  <h2>What to expect — and what not to</h2>
+
+  <h3>"Not enough evidence" is a real answer</h3>
+  <p>
+    Competencies come back unscored when the transcript doesn't support a judgement. That's the
+    system refusing to guess, which is what you want. Those are exactly the areas to probe in
+    round two — it's telling you where to spend your time.
+  </p>
+
+  <div class="note warn">
+    <span class="label">A limitation to know about</span>
+    <p>
+      Evidence is currently matched to whichever competency the <em>question</em> was about. If a
+      candidate answers question three with a great story that actually belongs to question five,
+      that credit can be missed. So a strong candidate can show lower coverage than they deserve.
+    </p>
+    <p>
+      In practice: <strong>if coverage looks low, read the transcript before concluding anything.</strong>
+      We tried a content-based fix and measured it as <em>worse</em> — it marked a deliberately
+      weak transcript as a clear pass. It is switched off until it beats the current behaviour on
+      a test we trust.
+    </p>
+  </div>
+
+  <h3>If a candidate wants to stop, it stops</h3>
+  <p>
+    Saying they're done, want to stop, or want to leave now ends the interview. The candidate gets
+    a clean close, and <strong>no assessment is produced</strong> — there is no partial score sitting
+    on their record. If someone walks out, you'll see that they withdrew, not a low mark.
+  </p>
+
+  <h3>You can go back to a candidate any time</h3>
+  <p>
+    Candidates and their assessments stay open from the candidates list. You can reread a
+    transcript, revisit a decision, or send a fresh invitation to someone who never took theirs
+    or whose link expired.
+  </p>
+
+  <h3>The voice is turn-based</h3>
+  <p>
+    The candidate speaks, it finishes listening, then replies. It won't interrupt or overlap the
+    way a person does. Candidates should know it's an AI and take their time — that's in the
+    invitation.
+  </p>
+
+  <h3>Things it does not do</h3>
+  <ul>
+    <li>It doesn't decide. There is no auto-reject anywhere in the product.</li>
+    <li>It doesn't watch or judge faces, accent, or appearance — audio and words only.</li>
+    <li>It doesn't use anything scraped from the web. Only what the candidate gives us and what they say.</li>
+    <li>It doesn't check fairness across groups yet. That monitoring isn't built, so we can't yet prove it scores different groups evenly.</li>
+  </ul>
+
+  <h2>Invitations and how to tell if they arrived</h2>
+
+  <p>
+    Invitation emails now send for real, from <code>finalerts.erats@gmail.com</code>. The interview
+    screen shows one of three states:
+  </p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>What it says</th><th>What it means</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Not sent</td>
+          <td>The link exists but no email went out.</td>
+          <td>Press <strong>Resend email</strong>, or copy the link and send it yourself.</td>
+        </tr>
+        <tr>
+          <td>Email sent</td>
+          <td>Gmail accepted it. That is not proof it reached them.</td>
+          <td>Give it a day. Then resend, or ask them to check spam.</td>
+        </tr>
+        <tr>
+          <td>Opened by candidate</td>
+          <td>They loaded the link. It definitely arrived.</td>
+          <td>Nothing — wait for them to finish.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    <strong>"Email sent" is not delivery.</strong> It means the mail provider took the message.
+    Spam filters, full mailboxes and typos all happen after that point, and we don't get told.
+    "Opened by candidate" is the only state that proves it landed.
+  </p>
+
+  <p>
+    We deliberately don't use tracking pixels, so there's no way to know they <em>read</em> it — only
+    that they opened the link.
+  </p>
+
+  <div class="note warn">
+    <span class="label">Expect some to land in spam</span>
+    <p>
+      Invitations currently come from a <code>gmail.com</code> address and link to
+      <code>questor.187-127-166-193.sslip.io</code> — a temporary address while we pilot. The
+      connection is properly encrypted and browsers trust it, but that combination is exactly what
+      spam filters and cautious candidates distrust.
+    </p>
+    <p>
+      <strong>Tell candidates to expect the email</strong>, ideally on the call or message where you
+      agree to interview them. A company address is coming.
+    </p>
+  </div>
+
+  <div class="note ok">
+    <span class="label">Fixed 19 July — links used to fail on some networks</span>
+    <p>
+      Until this evening Questor answered on port <code>8443</code>, a non-standard port that some
+      corporate networks, guest wi-fi and mobile carriers drop. A candidate on one of those networks
+      got <em>"this site can't be reached"</em> on a link that worked perfectly for everyone else —
+      and because the connection never arrived, nothing appeared in our logs to explain it. One real
+      candidate hit this before we found it.
+    </p>
+    <p>
+      It now answers on the standard HTTPS port, and older <code>:8443</code> links redirect there
+      automatically. <strong>If a candidate still reports not being able to connect, tell us</strong> —
+      that would be a different fault, and we'd want to see it immediately.
+    </p>
+  </div>
+
+  <h2>What we need from you</h2>
+
+  <p>Use it on real screens where you'd have done a first round anyway, then tell us:</p>
+  <ul>
+    <li><strong>Did you agree with it?</strong> Especially where you didn't — that's the most valuable thing you can report.</li>
+    <li><strong>Were the questions any good?</strong> Would you have asked them?</li>
+    <li><strong>Did anything feel unfair</strong> to a candidate, or would you be uncomfortable if they saw it?</li>
+    <li><strong>What did candidates say</strong> about the experience?</li>
+    <li>Anything confusing, broken, or slow.</li>
+  </ul>
+
+  <p>
+    Agreement between your calls and the AI's is being tracked automatically. Every review you
+    complete is one data point toward knowing whether this can be trusted. Until there are enough
+    of them the honest position is: we don't know yet whether it scores well, and nobody should
+    act as if we do. <em>How</em> many is enough is covered in Part Two, and the number is larger
+    than we first thought.
+  </p>
+
+  <div class="part">
+    <p class="eyebrow">Part Two · Internal</p>
+    <h2>Engineering and enterprise readiness</h2>
+    <p>Not for circulation to candidates, customers or prospects.</p>
+  </div>
+
+  <div class="note crit">
+    <span class="label">Why this half exists</span>
+    <p>
+      Part One describes a product that works. This part describes what is holding it up, and it
+      is thinner than the first half implies. Everything below was found by reading the running
+      code and the live server, not by inference.
+    </p>
+  </div>
+
+  <h2>Where it actually stands</h2>
+
+  <div class="scroll">
+    <table class="prose">
+      <thead><tr><th>Claim</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Interview runs end to end by text</td><td>Verified live on the deployed instance</td></tr>
+        <tr><td>Withdrawal produces no score</td><td>Verified live</td></tr>
+        <tr><td>Blind-first review enforced</td><td>Enforced at the route, not just the UI</td></tr>
+        <tr><td>Test suite</td><td>242 passing, five consecutive clean runs from committed state</td></tr>
+        <tr><td>Voice path, end to end, by a human</td><td><strong>Never completed.</strong> Every verification so far drove the API with text</td></tr>
+        <tr><td>Scoring agrees with human judgement</td><td><strong>Unproven.</strong> n ≈ 1</td></tr>
+        <tr><td>Fairness across groups</td><td><strong>Not computed.</strong> The monitoring is a stub</td></tr>
+        <tr><td>Candidates invited</td><td>Five, live now</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The gap between rows one to four and rows five to seven is the whole risk. The machinery is
+    sound; nothing yet says the output is right.
+  </p>
+
+  <h2>Architecture gaps</h2>
+
+  <p>
+    None of these are sloppiness. They are the seams of a well-built single-tenant appliance that
+    was never cut into a product. Ordered by whether they would block a sale.
+  </p>
+
+  <div class="scroll">
+    <table class="prose">
+      <thead><tr><th>Gap</th><th>What breaks</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>No migrations directory — <code>db:push</code> is the deploy model</td>
+          <td>A customer's database cannot be upgraded deterministically or rolled back, and <code>db:push</code> silently drops columns. One bad release is unrecoverable data loss. Everything else on this list needs this fixed first</td>
+        </tr>
+        <tr>
+          <td>No ATS integration, and no <code>externalId</code> field on Candidate or Role</td>
+          <td>Deal-ending. No HR organisation buys a screening tool that cannot write back to their system of record. The Greenhouse connector is an empty subclass; there is nowhere to store a Workday worker id</td>
+        </tr>
+        <tr>
+          <td>Assessments are mutable; no unique constraint on <code>(sessionId, version)</code></td>
+          <td>In a discrimination claim, "can you prove this assessment was not altered after the decision?" has no answer. Two concurrent finalises can both claim version 1</td>
+        </tr>
+        <tr>
+          <td>No timeout on the LLM call</td>
+          <td>Node's default is 300 seconds. A hung provider leaves a candidate on a blank screen for five minutes. The pattern exists elsewhere in the codebase — it was just never applied to the candidate-facing path</td>
+        </tr>
+        <tr>
+          <td>Silent fallback to template questions</td>
+          <td>When the model is unavailable the interview quietly continues on a canned question bank and <em>nothing records that it did</em>. Two candidates for the same role, one interviewed by the model and one during an outage, produce assessments that look identical. That is an adverse-impact problem, not a quality one</td>
+        </tr>
+        <tr>
+          <td>SQLite in rollback-journal mode, no <code>busy_timeout</code></td>
+          <td>Every write locks the whole file. Under contention the error surfaces as a generic failure and <strong>the candidate's answer is discarded</strong> — silently, with no recruiter-visible trace</td>
+        </tr>
+        <tr>
+          <td>Turn index race, no unique constraint</td>
+          <td>Both the socket and HTTP paths write turns with no mutual exclusion. A double-click can produce duplicate indices and a permanently scrambled transcript — which is the evidence record behind a hiring decision</td>
+        </tr>
+        <tr>
+          <td>No index on <code>Turn.sessionId</code></td>
+          <td>Every candidate answer full-scans the turn table, twice. Degrades with history, not just concurrency</td>
+        </tr>
+        <tr>
+          <td>The 999-variable <code>IN</code>-clause ceiling</td>
+          <td>List endpoints materialise every id in the tenant. A customer with more than ~999 sessions gets 500s on every page — broken, not slow. The correct pattern already exists elsewhere in the same file</td>
+        </tr>
+        <tr>
+          <td>Multi-tenancy enforced only in application code</td>
+          <td>No row-level security, no middleware. Consistently applied today, but every query is one forgotten clause from a cross-tenant leak, and the only guard is developer memory</td>
+        </tr>
+        <tr>
+          <td><code>User.email</code> is globally unique</td>
+          <td>One person cannot exist in two tenants — a functional blocker for staffing agencies and consultancies, and a schema change that gets harder with every customer</td>
+        </tr>
+        <tr>
+          <td><code>ModelExecution</code> has no <code>tenantId</code></td>
+          <td>AI cost cannot be attributed to a customer. No usage billing, no per-customer spend reporting, no answer to "who is burning the budget"</td>
+        </tr>
+        <tr>
+          <td>In-memory state: no Socket.IO adapter, rate limiter is a module-level map</td>
+          <td>The app is structurally single-process and <em>nothing fails loudly</em> if it is scaled out. Two workers means observers see nothing and every spend limit doubles</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Operations gaps</h2>
+
+  <div class="note crit">
+    <span class="label">The backup has never run</span>
+    <p>
+      The cron entry exists and the script itself is well written — it uses SQLite's own backup
+      API, verifies integrity before trusting the file, and prunes on a retention window. But
+      <code>backup.log</code> does not exist on the server, and shell redirection creates that file
+      the instant the job fires <em>even when it fails</em>. Its absence is proof the job has never
+      executed.
+    </p>
+    <p>
+      The only backup that exists is a single manual one, taken before any of the current
+      candidates were invited. <strong>Every interview recorded since then exists in exactly one
+      place.</strong> There is also no offsite copy — the backup directory is on the same disk as
+      the live database — and no restore has ever been tested.
+    </p>
+  </div>
+
+  <div class="scroll">
+    <table class="prose">
+      <thead><tr><th>Gap</th><th>Consequence</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>No error tracking or alerting of any kind</td>
+          <td>If a candidate's interview fails at 2am, nobody finds out. The only detection path is a person opening the logs by hand</td>
+        </tr>
+        <tr>
+          <td>No <code>uncaughtException</code> handler</td>
+          <td>A synchronous crash kills the process with a stack trace in a local file and no notification</td>
+        </tr>
+        <tr>
+          <td>Health endpoint returns a hardcoded "ok"</td>
+          <td>It does not check the database, so it reports healthy while the app is unable to serve a single interview. Nothing external polls it anyway</td>
+        </tr>
+        <tr>
+          <td>Deploy is stop-then-start with no <code>SIGTERM</code> handler</td>
+          <td>Deploying kills every live interview outright — no drain, no warning, no resume. There is no repeatable deploy script and no rollback mechanism</td>
+        </tr>
+        <tr>
+          <td>No aggregate spend cap</td>
+          <td>Per-candidate rate limits are good, but nothing bounds total AI spend and nothing alerts on it. A bulk hiring push has no ceiling</td>
+        </tr>
+        <tr>
+          <td>Deploy knowledge lives in one person's head</td>
+          <td>Several operational scripts exist only on that one disk, untracked. Nobody else can reproduce the deployment</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Single points of failure</h3>
+  <ul>
+    <li>One machine holds the app, the live database, <em>and</em> the only backup.</li>
+    <li>One process, no redundancy, no graceful drain — any crash or deploy drops every active interview.</li>
+    <li>SQLite is single-writer with no replica.</li>
+    <li>One API key drives the model, speech-to-text and speech — one outage stops everything. Alternative providers exist in the code but are not wired as automatic failover.</li>
+    <li>Routing depends on a third-party IP-to-hostname convenience service, on a non-standard port, not an owned domain.</li>
+    <li>Detection of any failure depends entirely on a human deciding to look.</li>
+  </ul>
+
+  <h2>What blocks a sale</h2>
+
+  <p>
+    A vendor-security review at any large company would stop at the first page. In rough order of
+    how early it comes up:
+  </p>
+
+  <ul>
+    <li><strong>No SOC 2.</strong> The Type II report needs an observation window of six to twelve months. It cannot be compressed by spending more.</li>
+    <li><strong>No independent penetration test</strong>, and no remediation letter to show afterwards.</li>
+    <li><strong>No Data Processing Agreement</strong>, no subprocessor list, no data-flow diagram, no incident-response policy.</li>
+    <li><strong>No SSO.</strong> No SAML or OIDC, no SCIM provisioning, no enforced MFA. Enterprises do not accept per-user passwords for a system holding candidate data.</li>
+    <li><strong>No data residency story.</strong> EU buyers will ask where candidate data physically sits before they ask anything else.</li>
+    <li><strong>No trust centre, no references, no SLA, no cyber insurance.</strong></li>
+  </ul>
+
+  <h2>Regulatory position</h2>
+
+  <p>
+    Some of this is materially better than we assumed, and one part is worse. The dates below
+    reflect changes through 2026 and are worth re-checking before anything is committed
+    contractually.
+  </p>
+
+  <div class="scroll">
+    <table class="prose">
+      <thead><tr><th>Regime</th><th>Where it stands</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>EU AI Act</strong></td>
+          <td>Employment screening is high-risk regardless of the tool being advisory. But the deadline for these obligations was deferred to <strong>2 December 2027</strong>, and employment systems qualify for <strong>internal conformity assessment</strong> — self-declared, with no notified body required. Far cheaper and slower-moving than feared. Still needs a quality management system, risk management, technical documentation, logging, human oversight and post-market monitoring</td>
+        </tr>
+        <tr>
+          <td><strong>NYC Local Law 144</strong></td>
+          <td><strong>Live now, and the one that bites.</strong> Requires an annual bias audit by an independent assessor, published publicly, plus ten business days' notice to candidates. Penalties run <strong>$500–$1,500 per day, per tool</strong>. Enforcement scrutiny increased after a 2025 audit found city oversight ineffective. Applies the moment a New York candidate is screened</td>
+        </tr>
+        <tr>
+          <td><strong>Colorado</strong></td>
+          <td>SB 24-205 was <strong>repealed and replaced</strong> by SB 26-189, effective <strong>1 January 2027</strong> and scaled back — disclosure, transparency, and a right to human review, rather than a full risk-management programme</td>
+        </tr>
+        <tr>
+          <td><strong>Illinois</strong></td>
+          <td>HB 3773 took effect <strong>1 January 2026</strong>: bans ZIP code as a proxy for race and mandates candidate notice. AIVIA additionally applies if video is ever used — it is not today</td>
+        </tr>
+        <tr>
+          <td><strong>India (DPDP)</strong></td>
+          <td>Consent, purpose limitation and security obligations on candidate data. Large customers will push impact-assessment and audit duties down to us contractually</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note warn">
+    <span class="label">Two cases worth watching</span>
+    <p>
+      <strong>Mobley v. Workday</strong> is in discovery on the theory that the <em>vendor</em> — not
+      only the employer — is liable for discriminatory screening. That is the case that makes this
+      a product risk rather than a customer risk.
+    </p>
+    <p>
+      <strong>Kistler v. Eightfold</strong> (filed January 2026) opens a different front entirely:
+      that a screening vendor scraping web and social data is acting as an unregistered consumer
+      reporting agency under the FCRA. Questor is well positioned here by construction — it uses
+      <em>no scraped data at all</em>. That is worth keeping true deliberately.
+    </p>
+  </div>
+
+  <h2>Validity: the number was wrong</h2>
+
+  <p>
+    We have been working to "about 30 reviewed interviews". That figure is too low for what it was
+    being used to claim.
+  </p>
+
+  <p>
+    A defensible <strong>criterion validity</strong> study — showing scores actually predict job
+    performance — needs <strong>N = 100 to 150</strong> under the federal selection guidelines.
+    Below 50 the result is not statistically meaningful, and a study that small is worse than none
+    because it invites a claim it cannot support.
+  </p>
+
+  <p>
+    The realistic route at our volume is <strong>content validity</strong> instead: a formal job
+    analysis for each role family, mapping every rubric competency to documented task and knowledge
+    requirements. That is achievable now, does not depend on candidate volume, and is a recognised
+    basis for defending a selection procedure.
+  </p>
+
+  <p>
+    Thirty paired blind reviews remains worth collecting — it gives inter-rater reliability and
+    tells us whether reviewers agree with the machine and with each other. It just is not a
+    validation study, and should never be described as one. Separately, <strong>adverse impact</strong>
+    monitoring under the four-fifths rule needs building; it is currently a stub, and computing it
+    honestly requires demographic data we do not lawfully hold today.
+  </p>
+
+  <h2>Competitive position</h2>
+
+  <p>
+    Trying to beat HireVue, Sapia or Karat at being an enterprise AI interview platform would fail.
+    They have SOC 2 Type II, years of validation data, published external bias audits, industrial
+    psychology positioning, and procurement collateral. On enterprise trust and validation corpus
+    this is not a contest.
+  </p>
+
+  <p>The defensible position is narrower and genuinely available:</p>
+
+  <ul>
+    <li><strong>Zero scraped data.</strong> Only what the candidate provides and says. Directly relevant given the FCRA line of attack now open against scraping vendors.</li>
+    <li><strong>Explainable rubrics with quoted evidence</strong>, rather than an opaque match percentage — which is also what the emerging right-to-explanation rules ask for.</li>
+    <li><strong>Human decides, structurally.</strong> Blind-first review is enforced in the routes, not a setting. That is a real differentiator, and it is already built.</li>
+    <li><strong>Self-auditing.</strong> A tool that computes adverse impact for the customer on their own applicant pool, and warns them before a regulator does, is something smaller employers will pay for and incumbents sell as a consulting add-on.</li>
+  </ul>
+
+  <p>
+    The honest one-line positioning today: <em>a controlled pilot system for structured candidate
+    evidence collection with advisory review</em>. The sellable version: <em>compliance-conscious,
+    human-first work-sample screening for employers who want structure and auditability without
+    handing hiring judgement to a black box</em>. What must never be claimed is that it ranks
+    candidates fairly — nothing supports that yet.
+  </p>
+
+  <h2>The dissenting view on fixing this quickly</h2>
+
+  <p>
+    An initial plan proposed fixing the most dangerous items immediately — switch the database to
+    write-ahead logging, add a timeout, add the missing unique constraint, reschedule the retention
+    sweep. Adversarial review took that plan apart, and the objections were right:
+  </p>
+
+  <div class="scroll">
+    <table class="prose">
+      <thead><tr><th>Proposed fix</th><th>Why it is not that simple</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Set write-ahead logging and a busy timeout at startup</td>
+          <td>Both settings are <strong>per connection</strong>, not global. Applying them once at boot may not survive the pooled connections the query engine opens later, so the fix can appear applied and do nothing. Write-ahead mode also creates sidecar files that a naive file-level backup will miss — meaning recent interview turns could silently vanish from backups</td>
+        </tr>
+        <tr>
+          <td>Add the unique constraint on turn index</td>
+          <td>The deploy model is <code>db:push</code> with no migration history. On SQLite, adding a constraint can mean recreating the table underneath — which can lock or fail midway on a live database. It also fails outright if duplicates already exist, so it needs a preflight duplicate check. <strong>Schema surgery cannot be deferred-and-also-performed:</strong> either migrations get baselined first, or this waits</td>
+        </tr>
+        <tr>
+          <td>Twenty-second timeout plus one retry</td>
+          <td>That is a forty-second wait, not twenty. Worse, a request that times out locally may still have completed upstream, so the retry can produce a different next question and leave the transcript holding an answer to a question nobody sees</td>
+        </tr>
+        <tr>
+          <td>Give the retention sweep a window and jitter</td>
+          <td>Jitter solves a distributed problem we do not have. On one machine the sweep either collides with a live interview or it does not. The correct immediate action is to <strong>disable it</strong>, not reschedule it</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note crit">
+    <span class="label">The largest immediate risk is deploying the fix</span>
+    <p>
+      With no drain handler, <strong>a deploy terminates every interview in progress</strong>. While
+      candidates hold live links, shipping five changes at once — a storage-mode switch, a schema
+      constraint, timeout logic, new metadata and a scheduler change — risks doing more damage than
+      the bugs would, and leaves no way to tell which change caused what. Rolling back is not clean
+      once the database schema has been altered.
+    </p>
+    <p>
+      The safer immediate set is smaller and touches no schema: disable the retention sweep, add a
+      per-session lock in the application to serialise turn writes, put a total deadline on the
+      model call with a visible "still working" state, and confirm the backup actually runs.
+    </p>
+  </div>
+
+  <h2>Sequenced roadmap</h2>
+
+  <h3>A · Safe to do now, no schema changes</h3>
+  <ul>
+    <li>Confirm the backup cron fires, then take one immediately by hand and copy it <strong>off the machine</strong>.</li>
+    <li>Set a hard monthly spend cap and alert on the AI provider's dashboard. Five minutes, no code, no deploy.</li>
+    <li>Disable the retention sweep in production.</li>
+    <li>Add error tracking and an external uptime check against a health endpoint that actually queries the database.</li>
+    <li>Add an <code>uncaughtException</code> handler so a crash restarts cleanly instead of hanging broken.</li>
+    <li>Move to the standard HTTPS port so blocked corporate and mobile networks can reach it.</li>
+  </ul>
+
+  <h3>B · Before the next batch of candidates</h3>
+  <ul>
+    <li>A drain handler, so a deploy stops accepting new sessions and lets live interviews finish.</li>
+    <li>A per-session lock serialising turn writes across both transports.</li>
+    <li>A total deadline on the model call, with a visible waiting state, plus a circuit breaker.</li>
+    <li>Record when an interview ran on fallback questions, and surface that in the assessment's limitations.</li>
+    <li>Baseline migrations. Nothing structural can be fixed safely until this exists.</li>
+    <li>Test a restore. A backup nobody has restored is a hypothesis.</li>
+    <li>Have someone complete the voice path end to end — still the outstanding condition.</li>
+  </ul>
+
+  <h3>C · Before selling to a first customer</h3>
+  <ul>
+    <li>Assessment immutability: content hashes, unique version constraints, an append-only audit trail.</li>
+    <li>One real ATS connector built properly, plus <code>externalId</code> on candidates and roles. One deep integration beats three shallow ones.</li>
+    <li>Move to a managed database with encrypted volumes and point-in-time recovery, off the shared machine. The schema was deliberately written to be portable, so this is mostly operations work.</li>
+    <li>SSO, role-based access, exportable per-candidate audit trail.</li>
+    <li>An owned domain and a transactional email provider with proper sender authentication.</li>
+    <li>The procurement pack: DPA, subprocessor list, data-flow diagram, retention policy, incident response, lawyer-reviewed candidate notices.</li>
+    <li>An independent penetration test, with the findings fixed and a retest letter.</li>
+    <li>Content-validity job analyses for the role families in use.</li>
+  </ul>
+
+  <h3>D · Before an enterprise buyer</h3>
+  <ul>
+    <li>SOC 2 Type II. The observation window is six to twelve months and cannot be shortened, so this is the item that sets the calendar — start the controls early even if the audit starts late.</li>
+    <li>ISO 27001, and ISO 42001 for AI management if selling into Europe.</li>
+    <li>Real adverse-impact reporting, and an independent bias audit if any New York candidate is ever screened.</li>
+    <li>Multi-tenancy enforced structurally rather than by convention; per-tenant cost attribution.</li>
+    <li>Horizontal scale: shared session state, distributed rate limiting, externalised scheduling.</li>
+    <li>An EU AI Act technical file, self-declared under internal conformity assessment, ahead of December 2027.</li>
+  </ul>
+
+  <div class="note">
+    <span class="label">Rough shape of the effort</span>
+    <p>
+      Tier A is an evening. Tier B is days. Tier C is the better part of a quarter of focused work
+      plus external spend on the penetration test and legal review. Tier D is six to twelve months,
+      governed almost entirely by the audit observation window rather than by engineering.
+    </p>
+  </div>
+
+  <footer>
+    <p>
+      Questor pilot · questions and access requests to Vishnu.<br>
+      Part One may be shared with the hiring team. Part Two is internal — it should not go to
+      candidates, customers or prospects.<br>
+      Candidate transcripts and CVs are real personal data — don't copy them out of the tool.
+    </p>
+  </footer>
+
+</div>
