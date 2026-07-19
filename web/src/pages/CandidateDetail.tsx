@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { stateBadge, Banner, Meter, Stat } from '../components/ui';
+import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
+import { isInFlight } from './CandidatesList';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -21,19 +22,31 @@ interface CandidateResp {
   profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
 }
 
+/**
+ * /candidates/:id lists a candidate's interviews but not whether any of them
+ * produced an assessment, so on its own this page can only offer "open the
+ * interview and look". /interviews carries assessmentId and invited, so we join
+ * the two and put the assessment — the thing the recruiter actually wants — one
+ * click away instead of two.
+ */
+interface SessionSummary {
+  id: string; recommendation: string | null; assessmentId: string | null; invited: boolean;
+}
+
 const MODULES = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
 export function CandidateDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const [data, setData] = useState<CandidateResp | null>(null);
+  const [sessions, setSessions] = useState<Record<string, SessionSummary>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   // interview setup form
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [personaName, setPersonaName] = useState('Schranders');
-  const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
+  const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
   const [provider, setProvider] = useState<'hosted' | 'teams' | 'zoom' | 'meet'>('hosted');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -43,6 +56,13 @@ export function CandidateDetail() {
       .then(setData)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+
+    // Deliberately not awaited with the call above and its failure is swallowed:
+    // this only enriches the interviews table with assessment links. Losing it
+    // must not cost the operator the profile itself.
+    api.get<{ sessions: SessionSummary[] }>('/interviews')
+      .then((d) => setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s]))))
+      .catch(() => undefined);
   }, [id]);
 
   if (loading) return <div className="muted">Loading…</div>;
@@ -82,7 +102,10 @@ export function CandidateDetail() {
           <h1 style={{ margin: 0 }}>{candidate.fullName}</h1>
           <div className="muted small">{candidate.email}{candidate.phone ? ` · ${candidate.phone}` : ''}</div>
         </div>
-        <Link className="btn secondary" to={`/roles/${candidate.roleId}`}>View role</Link>
+        <div className="row">
+          <Link className="btn secondary" to="/candidates">All candidates</Link>
+          <Link className="btn secondary" to={`/roles/${candidate.roleId}`}>View role</Link>
+        </div>
       </div>
 
       {fit && (
@@ -231,16 +254,48 @@ export function CandidateDetail() {
           <div className="muted small">No interviews yet.</div>
         ) : (
           <table>
-            <thead><tr><th>State</th><th>Scheduled</th><th>Created</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>State</th><th>Recommendation</th><th>Scheduled</th><th>Created</th><th>Open</th>
+              </tr>
+            </thead>
             <tbody>
-              {interviews.map((iv) => (
-                <tr key={iv.id}>
-                  <td>{stateBadge(iv.state)}</td>
-                  <td>{iv.scheduledAt ? new Date(iv.scheduledAt).toLocaleString() : <span className="muted">—</span>}</td>
-                  <td>{new Date(iv.createdAt).toLocaleString()}</td>
-                  <td><Link to={`/interviews/${iv.id}`}>Open</Link></td>
-                </tr>
-              ))}
+              {interviews.map((iv) => {
+                const s = sessions[iv.id];
+                return (
+                  <tr key={iv.id} className={isInFlight(iv.state) ? 'in-flight' : undefined}>
+                    <td>
+                      <span className="row" style={{ gap: 6 }}>
+                        {stateBadge(iv.state)}
+                        {isInFlight(iv.state) && <span className="inflight-note">in progress</span>}
+                      </span>
+                    </td>
+                    <td>{recBadge(s?.recommendation)}</td>
+                    <td>{iv.scheduledAt ? new Date(iv.scheduledAt).toLocaleString() : <span className="muted">—</span>}</td>
+                    <td>{new Date(iv.createdAt).toLocaleString()}</td>
+                    <td>
+                      {/* Both routes are always offered. The assessment is what the
+                          recruiter came for when it exists; the interview page is
+                          where the invitation lives — resend, portal link, schedule —
+                          and that is the only thing that helps when it does not. */}
+                      <span className="row" style={{ gap: 10 }}>
+                        <Link to={`/interviews/${iv.id}`}>Interview</Link>
+                        {s?.assessmentId
+                          ? <Link to={`/assessments/${s.assessmentId}`}>Assessment</Link>
+                          : <Link
+                              className="muted"
+                              to={`/interviews/${iv.id}`}
+                              title={s && !s.invited
+                                ? 'No invitation has been sent yet — send one from the interview page.'
+                                : 'Resend the invitation email or copy the portal link from the interview page.'}
+                            >
+                              {s && !s.invited ? 'Invitation (not sent)' : 'Invitation'}
+                            </Link>}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

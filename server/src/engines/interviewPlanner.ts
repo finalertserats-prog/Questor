@@ -1,4 +1,5 @@
-import type { FitScore, InterviewPlan, PlanBlock, RoleSuccessProfile } from '../domain/types.js';
+import type { Competency, FitScore, InterviewPlan, PlanBlock, RoleSuccessProfile } from '../domain/types.js';
+import { isWorkSampleEligible } from './workSample.js';
 
 // Interview plan builder (BRD FR-016, Appendix 25.1). Produces comparable
 // competency coverage while reserving process, warmup, resume-validation and
@@ -84,7 +85,7 @@ export function buildInterviewPlan(opts: {
 function intentFor(c: { name: string; category: string }): string {
   switch (c.category) {
     case 'technical':
-      return `Assess depth in ${c.name}: ask the candidate to reason through a real design or debugging scenario.`;
+      return `Assess depth in ${c.name}: ask the candidate to reason through a real design or debugging scenario, using an artefact drawn from ${c.name} itself rather than a generic programming exercise.`;
     case 'domain':
       return `Assess applied ${c.name}: probe a concrete decision and its business impact.`;
     case 'communication':
@@ -96,8 +97,23 @@ function intentFor(c: { name: string; category: string }): string {
   }
 }
 
-function pickModule(c: { category: string }, modules: string[]): PlanBlock['module'] {
+/**
+ * Decide what kind of hands-on module, if any, this block can carry.
+ *
+ * An explicit operator opt-in still wins — if a tenant configured a coding
+ * module, technical blocks get one. What changed is the default: rather than
+ * "no module unless someone flipped a global switch", a block whose competency
+ * admits work-sample evidence now carries a `document_review` module, and the
+ * conversation runtime turns that into a small artefact drawn from the
+ * competency's own domain.
+ *
+ * That distinction is the whole point. A Salesforce Administrator's blocks are
+ * eligible for a work sample but never for `coding`, so they get a Flow, a
+ * query or a sharing model to react to — not a Python function.
+ */
+function pickModule(c: Competency, modules: string[]): PlanBlock['module'] {
   if (modules.includes('coding') && c.category === 'technical') return 'coding';
-  if (modules.includes('case') && c.category === 'domain') return 'case';
+  if (modules.includes('case') && (c.category === 'domain' || c.category === 'situational')) return 'case';
+  if (isWorkSampleEligible(c)) return 'document_review';
   return undefined;
 }

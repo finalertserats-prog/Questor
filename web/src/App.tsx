@@ -5,6 +5,7 @@ import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
 import { RoleDetail } from './pages/RoleDetail';
 import { CandidateCreate } from './pages/CandidateCreate';
+import { CandidatesList } from './pages/CandidatesList';
 import { CandidateDetail } from './pages/CandidateDetail';
 import { InterviewsList } from './pages/InterviewsList';
 import { InterviewDetail } from './pages/InterviewDetail';
@@ -25,6 +26,10 @@ function Layout({ children }: { children: React.ReactNode }) {
         <nav>
           <NavLink to="/" end>▚ Dashboard</NavLink>
           <NavLink to="/roles/new">✎ New Role</NavLink>
+          {/* Candidates sits above "Add Candidate" because finding an existing
+              one is the far more frequent errand — and for a long time it was
+              the impossible one: creation had a nav entry, retrieval had none. */}
+          <NavLink to="/candidates" end>☰ Candidates</NavLink>
           <NavLink to="/candidates/new">＋ Add Candidate</NavLink>
           <NavLink to="/interviews">🎙 Interviews</NavLink>
           <NavLink to="/admin">⚙ Admin & Connectors</NavLink>
@@ -56,6 +61,7 @@ export function App() {
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/roles/new" element={<Protected><RoleCreate /></Protected>} />
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />
+      <Route path="/candidates" element={<Protected><CandidatesList /></Protected>} />
       <Route path="/candidates/new" element={<Protected><CandidateCreate /></Protected>} />
       <Route path="/candidates/:id" element={<Protected><CandidateDetail /></Protected>} />
       <Route path="/interviews" element={<Protected><InterviewsList /></Protected>} />

@@ -8,6 +8,13 @@ import type { DirectorSignal, InterviewPlan, PlanBlock, TurnRecord } from '../do
 /** Below this answer-quality score the candidate is probed once more before moving on. */
 const WEAK_ANSWER_SCORE = 45;
 
+/**
+ * At or above this, the answer is good enough that the interesting information
+ * lies past it — so it earns an extra turn to be pushed on, exactly as a weak
+ * answer earns one to be rescued.
+ */
+const STRONG_ANSWER_SCORE = 65;
+
 export function answersNeeded(block: PlanBlock): number {
   if (block.competencyId.startsWith('__')) return 1;
   return Math.max(1, Math.min(3, Math.round(block.targetMinutes / 2.5)));
@@ -50,11 +57,35 @@ export function directorDecide(opts: {
   const timeRemaining = Math.max(0, plan.durationMinutes - elapsedMinutes);
   const cover = coverageState(plan, turns);
 
+  const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate');
+  const q = lastCandidate ? answerQuality(lastCandidate.text) : { score: 0, hasSituation: false, hasAction: false, hasResult: false, specific: false };
+
+  // One bonus turn on the block the candidate just answered, when the answer was
+  // either weak enough to be worth rescuing or strong enough to be worth pushing.
+  //
+  // This has to be applied HERE, in block selection, not only when choosing an
+  // action inside the selected block. The loop below picks the first block that
+  // has not met `answersNeeded`, so a block already at quota is never selected
+  // as current at all — and the action logic that grants the extra turn is never
+  // reached. That made the pre-existing weak-answer allowance dead code, and it
+  // is why answering a one-answer block well used to buy an immediate change of
+  // subject: the candidate's best material ended the block.
+  //
+  // Scoped to competency blocks, and self-limiting: once the bonus answer lands,
+  // coverage equals the raised quota and the block closes.
+  const bonusBlockId =
+    lastCandidate?.competencyId &&
+    !lastCandidate.competencyId.startsWith('__') &&
+    (q.score < WEAK_ANSWER_SCORE || q.score >= STRONG_ANSWER_SCORE)
+      ? lastCandidate.competencyId
+      : undefined;
+  const quotaFor = (b: PlanBlock): number => answersNeeded(b) + (b.competencyId === bonusBlockId ? 1 : 0);
+
   // Find the first block whose answer quota is not yet met.
   const assessableBlocks = plan.blocks.filter((b) => b.competencyId !== '__candidate_questions__');
   let current: PlanBlock | undefined;
   for (const b of assessableBlocks) {
-    if ((cover[b.competencyId] ?? 0) < answersNeeded(b)) { current = b; break; }
+    if ((cover[b.competencyId] ?? 0) < quotaFor(b)) { current = b; break; }
   }
 
   // Out of time (reserve the candidate-questions block) or everything covered -> close.
@@ -72,25 +103,17 @@ export function directorDecide(opts: {
 
   // Determine action within the current block.
   const answersHere = cover[current.competencyId] ?? 0;
-  const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate');
   const lastWasThisBlock = lastCandidate?.competencyId === current.competencyId;
-  const q = lastCandidate ? answerQuality(lastCandidate.text) : { score: 0, hasSituation: false, hasAction: false, hasResult: false, specific: false };
-
-  // A weak answer earns one probing turn beyond the block's quota. Without this
-  // a block whose quota is 1 (short blocks, or many competencies in a fixed
-  // budget) always falls straight through to move_on, so a vague answer is
-  // silently accepted and the follow-up ladder below is never reached.
-  const needed = answersNeeded(current);
-  const allowance = lastWasThisBlock && q.score < WEAK_ANSWER_SCORE ? needed + 1 : needed;
+  const allowance = quotaFor(current);
 
   let action: DirectorSignal['action'];
   let depth: DirectorSignal['depthInstruction'] = 'hold';
   if (answersHere === 0 || !lastWasThisBlock) {
     action = 'ask';
-  } else if (answersHere < allowance && q.score < 65) {
+  } else if (answersHere < allowance && q.score < STRONG_ANSWER_SCORE) {
     action = 'followup';
     depth = 'hold';
-  } else if (answersHere < allowance && q.score >= 65) {
+  } else if (answersHere < allowance) {
     action = 'followup';
     depth = 'increase'; // strong answer -> push deeper
   } else {

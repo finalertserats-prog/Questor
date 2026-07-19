@@ -34,7 +34,7 @@ export function sttCapability(): SpeechCapability {
 export function ttsCapability(): SpeechCapability {
   switch (config.tts.provider) {
     case 'elevenlabs':
-      return { provider: 'elevenlabs', mode: 'server', configured: !!config.tts.elevenKey, streaming: true, languages: ['multi'], notes: 'ElevenLabs neural voices. Set ELEVENLABS_API_KEY.' };
+      return { provider: 'elevenlabs', mode: 'server', configured: elevenLabsConfigured(), streaming: true, languages: ['multi'], notes: 'ElevenLabs neural voices. Set ELEVENLABS_API_KEY. Materially pricier than OpenAI TTS.' };
     case 'openai':
       return { provider: 'openai', mode: 'server', configured: !!config.llm.openaiKey, streaming: true, languages: ['multi'], notes: 'OpenAI TTS voices.' };
     case 'azure':
@@ -44,19 +44,111 @@ export function ttsCapability(): SpeechCapability {
   }
 }
 
+// --------------------------------------------------------------------------
+// ElevenLabs TTS
+// --------------------------------------------------------------------------
+
+// Model and voice are read lazily from the environment rather than added to
+// config.ts, matching the OpenAI connector below so this connector stays
+// self-contained. The env is consulted BEFORE `config.tts`, which snapshots the
+// same variable at import: reading it live keeps a late override honoured
+// instead of frozen at process start.
+//
+// Model: eleven_multilingual_v2. This connector shipped with eleven_turbo_v2,
+// which ElevenLabs' own model docs now list as DEPRECATED; their changelog
+// makes eleven_multilingual_v2 the default model for the text-to-speech
+// endpoints, and it is the model in their current API examples. Of the live
+// tiers, the flash/turbo models trade fidelity for ~75ms latency at half the
+// credit price, while multilingual_v2 is documented as the long-form-stable,
+// high-fidelity tier. An interview question is synthesized ONCE and then served
+// from the cache below on every repeat, so latency is a one-off cost on first
+// play whereas the timbre is heard by every candidate — that trade favours
+// fidelity. Set ELEVENLABS_MODEL_ID=eleven_flash_v2_5 to take the cheaper,
+// faster tier instead.
+const DEFAULT_ELEVENLABS_MODEL = 'eleven_multilingual_v2';
+
+// Voice: George. ElevenLabs uses this id throughout its own current
+// text-to-speech examples, so it is a premade voice present on every account
+// rather than one a tenant has to add to their library first — a default that
+// 404s on a fresh account would look like the connector is broken. It reads as
+// a warm, measured, mid-range narrator rather than a bright announcer or a
+// newsreader, which is what an interview wants: the candidate is already
+// nervous, and an over-energetic voice reads as a sales bot. Same reasoning as
+// the OpenAI `marin` default below. Tenants who want a different persona set
+// ELEVENLABS_VOICE_ID; operators should audition it before going live, since
+// voice choice is a product decision, not a technical one.
+const DEFAULT_ELEVENLABS_VOICE = 'JBFqnCBsd6RMkjVDRZzb';
+
+/**
+ * MP3 at 44.1kHz/128kbps — the endpoint's own default, sent explicitly because
+ * `contentType` is hardcoded to audio/mpeg downstream. If the vendor ever moves
+ * its default to another codec, an implicit format would leave us serving
+ * mislabelled bytes that the browser silently refuses to play.
+ */
+const ELEVENLABS_OUTPUT_FORMAT = 'mp3_44100_128';
+
+/** The model's documented input ceiling; callers cap far below this for spend reasons. */
+const ELEVENLABS_MAX_INPUT_CHARS = 10_000;
+
+function elevenLabsModel(): string {
+  return process.env.ELEVENLABS_MODEL_ID || DEFAULT_ELEVENLABS_MODEL;
+}
+
+function elevenLabsVoice(): string {
+  return process.env.ELEVENLABS_VOICE_ID || config.tts.elevenVoice || DEFAULT_ELEVENLABS_VOICE;
+}
+
+/**
+ * True when ElevenLabs actually has its credential.
+ *
+ * Read live rather than off the import-time snapshot because the admin
+ * Connectors screen renders this: a stale `false` there tells an operator their
+ * key did not take when it did, and a stale `true` promises a voice that will
+ * 401 on the first question.
+ */
+function elevenLabsConfigured(): boolean {
+  return !!(process.env.ELEVENLABS_API_KEY || config.tts.elevenKey);
+}
+
 /**
  * Server-side ElevenLabs TTS connector (returns audio bytes). Only used when
  * TTS_PROVIDER=elevenlabs and a key is present; the browser falls back to
  * speechSynthesis otherwise.
  */
 export async function synthesizeElevenLabs(text: string): Promise<Buffer> {
-  if (!config.tts.elevenKey) throw new Error('ElevenLabs not configured');
-  const voice = config.tts.elevenVoice || '21m00Tcm4TlvDq8ikWAM';
-  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
+  const apiKey = process.env.ELEVENLABS_API_KEY || config.tts.elevenKey;
+  if (!apiKey) throw new Error('ElevenLabs not configured');
+
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(elevenLabsVoice())}`
+    + `?output_format=${ELEVENLABS_OUTPUT_FORMAT}`;
+
+  const res = await fetch(url, {
     method: 'POST',
-    headers: { 'xi-api-key': config.tts.elevenKey, 'content-type': 'application/json', accept: 'audio/mpeg' },
-    body: JSON.stringify({ text, model_id: 'eleven_turbo_v2' }),
+    headers: { 'xi-api-key': apiKey, 'content-type': 'application/json', accept: 'audio/mpeg' },
+    body: JSON.stringify({
+      text: text.slice(0, ELEVENLABS_MAX_INPUT_CHARS),
+      model_id: elevenLabsModel(),
+      // ElevenLabs has no equivalent of OpenAI's `instructions` prompt, so
+      // delivery is steered through these instead. Vendor-documented starting
+      // points (stability 0.5, similarity 0.75, style 0); style is left at 0
+      // because amplifying a voice's own style is what pushes it towards
+      // performance, and it costs latency. speaker boost is off for the same
+      // latency reason — it sharpens similarity to the source recording, which
+      // buys nothing on a premade voice.
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.75,
+        style: 0,
+        use_speaker_boost: false,
+        // Slightly under real-time, matching the OpenAI path: interview
+        // questions land better with a beat of space, and it gives the
+        // candidate time to parse a long question.
+        speed: 0.95,
+      },
+    }),
   });
+  // Same reasoning as synthesizeOpenAI: the upstream body never enters the
+  // thrown message, because this is reached from an unauthenticated route.
   if (!res.ok) throw new Error(`ElevenLabs error ${res.status}`);
   return Buffer.from(await res.arrayBuffer());
 }
@@ -344,8 +436,21 @@ export function serverTtsReady(): boolean {
  */
 function speechKey(text: string): string {
   const provider = config.tts.provider;
-  const voice = provider === 'openai' ? openAiTtsVoice() : config.tts.elevenVoice;
-  const model = provider === 'openai' ? openAiTtsModel() : 'eleven_turbo_v2';
+  // Resolved through the same accessors the connectors use, never through a
+  // literal. The ElevenLabs arm previously hardcoded its model id and read the
+  // raw config value for the voice, so it described a request the connector had
+  // stopped making: changing ELEVENLABS_MODEL_ID left the key identical, and an
+  // unset ELEVENLABS_VOICE_ID hashed an empty voice while the connector
+  // actually synthesized with its default. Either way a voice or model swap
+  // kept serving the previous rendering under the same ETag, which looks
+  // exactly like the setting silently not working.
+  const { model, voice } = provider === 'openai'
+    ? { model: openAiTtsModel(), voice: openAiTtsVoice() }
+    : provider === 'elevenlabs'
+      ? { model: elevenLabsModel(), voice: elevenLabsVoice() }
+      // Providers with no connector never reach synthesis, so their key only
+      // has to stay distinct from the two that do.
+      : { model: '', voice: '' };
   return createHash('sha256').update(`${provider}\u0000${model}\u0000${voice}\u0000${text}`).digest('hex').slice(0, 32);
 }
 
