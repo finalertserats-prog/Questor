@@ -153,3 +153,36 @@ describe('interviews that stopped part-way', () => {
     expect(after).toBe(before);
   });
 });
+
+describe('a candidate who never got a word in', () => {
+  it('is closed out too, rather than stranded for ever', async () => {
+    // A real candidate reached the disclosure and stopped, because the "Done
+    // answering" button did nothing. An earlier version of this sweep skipped
+    // sessions with no candidate turns, which left exactly the person our own
+    // bug had harmed sitting in ASSESSING with no transcript.
+    await wipe();
+    const ids = await createDemoData();
+    await request(app).post(`/api/portal/${ids.token}/accept`).send({});
+    await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: true, accepted: true });
+    await request(app).post(`/api/portal/${ids.token}/start`).send({});
+
+    // No answer ever arrives; the session simply goes quiet.
+    await prisma.interviewSession.update({
+      where: { id: ids.sessionId },
+      data: { startedAt: new Date(Date.now() - INACTIVITY_MS - 60_000) },
+    });
+    await prisma.turn.updateMany({
+      where: { sessionId: ids.sessionId },
+      data: { createdAt: new Date(Date.now() - INACTIVITY_MS - 60_000) },
+    });
+
+    const outcomes = await sweepIncompleteInterviews();
+
+    expect(outcomes).toHaveLength(1);
+    expect(outcomes[0].candidateAnswers).toBe(0);
+    const session = await prisma.interviewSession.findUnique({ where: { id: ids.sessionId } });
+    expect(session?.state).toBe('INCOMPLETE');
+    // Still not scored — least of all someone who never answered.
+    expect(await prisma.assessmentVersion.count({ where: { sessionId: ids.sessionId } })).toBe(0);
+  });
+});

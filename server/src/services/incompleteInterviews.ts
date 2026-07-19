@@ -65,10 +65,18 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
       select: { createdAt: true },
     });
 
-    // Never spoke. Either the invitation was not opened, or they left during
-    // the disclosure — that is the invitation's business, not this sweep's.
-    if (!lastCandidateTurn) continue;
-    if (lastCandidateTurn.createdAt > cutoff) continue;
+    // A candidate who never got a word in still needs closing out, and an
+    // earlier version of this skipped them entirely — which stranded exactly
+    // the person our own bug had harmed: he reached the disclosure, the "Done
+    // answering" button did nothing, and he was left in ASSESSING for ever with
+    // no transcript because he had "not spoken".
+    //
+    // Reaching a live state means the interview was opened and started, so
+    // `startedAt` is a sound fallback clock. An unopened invitation is still
+    // untouched here, because INVITED and PROVISIONED are not live states.
+    const lastActivity = lastCandidateTurn?.createdAt ?? session.startedAt;
+    if (!lastActivity) continue;
+    if (lastActivity > cutoff) continue;
 
     try {
       const turns = await prisma.turn.findMany({
@@ -89,7 +97,8 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
         where: { sessionId: session.id, speaker: 'candidate' },
         orderBy: { index: 'desc' }, select: { createdAt: true },
       });
-      if (!newest || newest.createdAt > cutoff) continue;
+      const freshActivity = newest?.createdAt ?? session.startedAt;
+      if (!freshActivity || freshActivity > cutoff) continue;
 
       // The transcript is the whole point: something a reviewer can open, and
       // something the candidate could be shown if they query what happened.
