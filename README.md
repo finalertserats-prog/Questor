@@ -32,7 +32,9 @@ by setting an environment variable once you have a license — no code changes r
 | Analytics funnel/quality; policy & prompt-injection guardrails (FR-042, §16.5) | ✅ |
 | Interview session state machine (§14.3) | ✅ |
 
-See [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) for the full requirement-to-code traceability map.
+See [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) for the full requirement-to-code traceability map,
+and [`docs/BUILD_STATUS.md`](docs/BUILD_STATUS.md) for an honest gap analysis (what's working vs.
+simplified vs. still-to-build) and the recommended next-build roadmap.
 
 ---
 
