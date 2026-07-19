@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm install
+      - name: Prisma generate + db
+        run: |
+          cp .env.example server/.env
+          npm run db:generate -w server
+          npm run db:push -w server
+        env:
+          DATABASE_URL: 'file:./data/questor.db'
+      - name: Typecheck server
+        run: npm run lint -w server
+      - name: Typecheck web
+        run: npm run lint -w web
+      - name: Unit + API tests
+        run: npm test -w server
+      - name: Headless interview E2E
+        run: npm run test:e2e -w server
+      - name: Build web
+        run: npm run build -w web

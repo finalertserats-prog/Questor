@@ -1,0 +1,32 @@
+{
+  "name": "questor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Questor - Autonomous AI First-Round Interview Agent (open-source build with pluggable paid connectors)",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "db:generate": "npm run db:generate -w server",
+    "db:migrate": "npm run db:migrate -w server",
+    "db:seed": "npm run db:seed -w server",
+    "setup": "npm install && npm run db:generate -w server && npm run db:push -w server && npm run db:seed -w server",
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev -w server",
+    "dev:web": "npm run dev -w web",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "npm run start -w server",
+    "test": "npm run test -w server",
+    "test:e2e": "npm run test:e2e -w server",
+    "lint": "npm run lint -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,178 @@
+import { Router } from 'express';
+import { z } from 'zod';
+import { nanoid } from 'nanoid';
+import { prisma, parseJson } from '../db.js';
+import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
+import { buildInterviewPlan } from '../engines/interviewPlanner.js';
+import type { FitScore, RoleSuccessProfile } from '../domain/types.js';
+import { assertTransition } from '../domain/stateMachine.js';
+import { getEmail } from '../providers/email/index.js';
+import { meetingCapability } from '../providers/meeting/index.js';
+import { config } from '../config.js';
+import { logAudit } from '../services/audit.js';
+import { emitEvent } from '../services/webhooks.js';
+import { startInterview, submitCandidateTurn, finalizeInterview } from '../realtime/interviewEngine.js';
+
+export const interviewsRouter = Router();
+interviewsRouter.use(authenticate);
+
+const createSchema = z.object({
+  candidateId: z.string(),
+  durationMinutes: z.number().int().min(10).max(120).default(45),
+  language: z.string().default('en'),
+  modules: z.array(z.string()).default([]),
+  persona: z.object({ name: z.string(), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ name: 'Alex', tone: 'warm' }),
+  provider: z.enum(['hosted', 'teams', 'zoom', 'meet']).default('hosted'),
+  recordingRequested: z.boolean().default(false),
+  humanReviewRequired: z.boolean().default(true),
+  approve: z.boolean().default(true),
+});
+
+// Approve interview + build plan (FR-011, FR-016)
+interviewsRouter.post('/', asyncHandler(async (req, res) => {
+  const body = createSchema.parse(req.body);
+  if (!body.approve) throw new HttpError(400, 'HR approval is required before an interview can be created');
+
+  const candidate = await prisma.candidate.findFirst({ where: { id: body.candidateId, tenantId: req.auth!.tenantId } });
+  if (!candidate?.roleId) throw new HttpError(404, 'Candidate or role not found');
+
+  const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: candidate.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
+  if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
+
+  const profile = parseJson<RoleSuccessProfile>(scorecard.profileJson, {} as RoleSuccessProfile);
+  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' } });
+  const fit = latestProfile ? parseJson<FitScore>(latestProfile.fitScoreJson, undefined as any) : undefined;
+
+  const plan = buildInterviewPlan({ role: profile, fit, durationMinutes: body.durationMinutes, language: body.language, modules: body.modules });
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
+  const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
+  const disclosureText = tenantPolicy.disclosureText ??
+    `Hello, I'm ${body.persona.name}, an AI interviewer for this first-round conversation. This session is transcribed${body.recordingRequested ? ' and recorded with your consent' : ''}. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+
+  const session = await prisma.interviewSession.create({
+    data: {
+      tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, scorecardId: scorecard.id,
+      state: 'PROVISIONED', provider: body.provider, language: body.language, durationMinutes: body.durationMinutes,
+      personaJson: JSON.stringify(body.persona),
+      consentJson: JSON.stringify({ disclosureText, recordingRequested: body.recordingRequested, humanReviewRequired: body.humanReviewRequired }),
+      recordingConsent: false,
+    },
+  });
+  await prisma.interviewPlanVersion.create({ data: { sessionId: session.id, version: 1, planJson: JSON.stringify(plan) } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.approved', entityType: 'InterviewSession', entityId: session.id });
+
+  res.status(201).json({ session: { id: session.id, state: session.state, provider: session.provider }, plan, meetingCapability: meetingCapability(body.provider) });
+}));
+
+// List sessions
+interviewsRouter.get('/', asyncHandler(async (req, res) => {
+  const sessions = await prisma.interviewSession.findMany({
+    where: { tenantId: req.auth!.tenantId }, orderBy: { createdAt: 'desc' },
+    include: { candidate: true, role: true, assessments: { orderBy: { version: 'desc' }, take: 1 }, invitation: true },
+  });
+  res.json({ sessions: sessions.map((s) => ({
+    id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt,
+    candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title },
+    recommendation: s.assessments[0]?.recommendation ?? null, assessmentId: s.assessments[0]?.id ?? null,
+    invited: !!s.invitation, createdAt: s.createdAt,
+  })) });
+}));
+
+// Session detail
+interviewsRouter.get('/:id', asyncHandler(async (req, res) => {
+  const session = await getSession(req.auth!.tenantId, req.params.id);
+  const [plan, turns, assessment, invitation] = await Promise.all([
+    prisma.interviewPlanVersion.findUnique({ where: { sessionId: session.id } }),
+    prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
+    prisma.assessmentVersion.findFirst({ where: { sessionId: session.id }, orderBy: { version: 'desc' } }),
+    prisma.invitation.findUnique({ where: { sessionId: session.id } }),
+  ]);
+  res.json({
+    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, persona: parseJson(session.personaJson, {}), consent: parseJson(session.consentJson, {}) },
+    plan: plan ? parseJson(plan.planJson, {}) : null,
+    turns: turns.map((t) => ({ id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId })),
+    assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJson(assessment.resultJson, {}) } : null,
+    invitation: invitation ? { token: invitation.token, status: invitation.status, portalUrl: `${config.webOrigin}/portal/${invitation.token}` } : null,
+  });
+}));
+
+// Send invitation (FR-012)
+interviewsRouter.post('/:id/invite', asyncHandler(async (req, res) => {
+  const session = await getSession(req.auth!.tenantId, req.params.id);
+  const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
+  const role = await prisma.role.findUnique({ where: { id: session.roleId } });
+  if (session.state !== 'PROVISIONED' && session.state !== 'RESCHEDULE_REQUIRED') throw new HttpError(409, `Cannot invite from state ${session.state}`);
+
+  const token = nanoid(24);
+  const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);
+  const invitation = await prisma.invitation.upsert({
+    where: { sessionId: session.id },
+    create: { sessionId: session.id, token, status: 'sent', sentAt: new Date(), expiresAt, eventsJson: JSON.stringify([{ type: 'sent', at: new Date().toISOString() }]) },
+    update: { token, status: 'sent', sentAt: new Date(), expiresAt },
+  });
+
+  const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
+  await getEmail().send({
+    to: candidate!.email,
+    subject: `Your first-round interview for ${role!.title}`,
+    text: `Hi ${candidate!.fullName},\n\nYou're invited to a first-round interview for ${role!.title}. This interview is conducted by Questor, an AI voice interviewer, and will be transcribed.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
+    html: `<p>Hi ${candidate!.fullName},</p><p>You're invited to a first-round interview for <b>${role!.title}</b>, conducted by <b>Questor</b>, an AI voice interviewer. It will be transcribed.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
+  });
+
+  assertTransition(session.state, 'INVITED');
+  await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'invitation.sent', entityType: 'InterviewSession', entityId: session.id });
+  await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId });
+  res.json({ invitation: { token: invitation.token, status: 'sent', portalUrl } });
+}));
+
+// Schedule (FR-013)
+interviewsRouter.post('/:id/schedule', asyncHandler(async (req, res) => {
+  const session = await getSession(req.auth!.tenantId, req.params.id);
+  const at = z.object({ scheduledAt: z.string() }).parse(req.body).scheduledAt;
+  await prisma.interviewSession.update({ where: { id: session.id }, data: { scheduledAt: new Date(at) } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at } });
+  res.json({ ok: true, scheduledAt: at });
+}));
+
+// Cancel / reschedule (FR-014)
+interviewsRouter.post('/:id/cancel', asyncHandler(async (req, res) => {
+  const session = await getSession(req.auth!.tenantId, req.params.id);
+  assertTransition(session.state, 'CANCELLED');
+  await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'CANCELLED' } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.cancelled', entityType: 'InterviewSession', entityId: session.id });
+  res.json({ ok: true });
+}));
+
+// Recruiter text-mode drive (also used for testing without voice)
+interviewsRouter.post('/:id/start', asyncHandler(async (req, res) => {
+  await getSession(req.auth!.tenantId, req.params.id);
+  const turn = await startInterview(req.params.id);
+  res.json({ turn });
+}));
+interviewsRouter.post('/:id/turn', asyncHandler(async (req, res) => {
+  await getSession(req.auth!.tenantId, req.params.id);
+  const { text } = z.object({ text: z.string().min(1) }).parse(req.body);
+  const turn = await submitCandidateTurn(req.params.id, text);
+  let assessmentId: string | null = null;
+  if (turn.done) ({ assessmentId } = await finalizeInterview(req.params.id));
+  res.json({ turn, assessmentId });
+}));
+interviewsRouter.post('/:id/finalize', asyncHandler(async (req, res) => {
+  await getSession(req.auth!.tenantId, req.params.id);
+  const { assessmentId } = await finalizeInterview(req.params.id);
+  res.json({ assessmentId });
+}));
+
+interviewsRouter.get('/:id/transcript', asyncHandler(async (req, res) => {
+  const session = await getSession(req.auth!.tenantId, req.params.id);
+  const turns = await prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } });
+  res.json({ transcript: turns.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs })) });
+}));
+
+async function getSession(tenantId: string, id: string) {
+  const s = await prisma.interviewSession.findFirst({ where: { id, tenantId } });
+  if (!s) throw new HttpError(404, 'Interview session not found');
+  return s;
+}
