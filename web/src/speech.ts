@@ -156,6 +156,65 @@ export function stopAllSpeech(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Recording + server transcription
+//
+// The browser's SpeechRecognition is not local: Chrome and Edge stream the
+// candidate's audio to Google's speech backend. When that is unreachable —
+// corporate network, firewall, an Edge quirk — recognition fails with
+// `network` and voice input dies entirely, which is exactly what happened on a
+// real run. It is also an uninstructed transfer of candidate audio to a third
+// party the employer never chose.
+//
+// Recording locally and transcribing on our own server removes both problems.
+// Browser recognition stays as the fallback for the zero-key build.
+
+export interface Recording { stop(): Promise<Blob | null> }
+
+/** Start capturing microphone audio. Returns null if unsupported or denied. */
+export async function startRecording(): Promise<Recording | null> {
+  if (typeof MediaRecorder === 'undefined') return null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Let the browser choose its own container: Chrome/Edge produce webm/opus,
+    // Safari mp4. Forcing one would fail on whichever browser lacks it, and the
+    // server accepts any of them.
+    const rec = new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    rec.start();
+    return {
+      stop: () => new Promise<Blob | null>((resolve) => {
+        rec.onstop = () => {
+          stream.getTracks().forEach((t) => t.stop());
+          resolve(chunks.length ? new Blob(chunks, { type: rec.mimeType || 'audio/webm' }) : null);
+        };
+        try { rec.stop(); } catch { resolve(null); }
+      }),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Transcribe recorded audio on the server. Returns null when the server has no
+ * STT configured (204) or the call fails, so the caller can fall back rather
+ * than losing the candidate's answer.
+ */
+export async function transcribeOnServer(token: string, audio: Blob): Promise<string | null> {
+  try {
+    const form = new FormData();
+    form.append('audio', audio, 'answer.webm');
+    const res = await fetch(`/api/portal/${token}/transcribe`, { method: 'POST', body: form });
+    if (res.status === 204 || !res.ok) return null;
+    const data = (await res.json()) as { text?: string };
+    return data.text?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Microphone level
 //
 // Drives the candidate's tile so it reacts to their actual voice. This is not

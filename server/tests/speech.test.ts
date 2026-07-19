@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { wipe, createDemoData } from '../src/seed/demoData.js';
+import { speechEtag, _resetSpeechCache, _speechCacheStats } from '../src/providers/speech.js';
 import type { SynthesizedSpeech } from '../src/providers/speech.js';
 
 // The portal /speak route is unauthenticated and every call spends money at a
@@ -18,6 +19,7 @@ import type { SynthesizedSpeech } from '../src/providers/speech.js';
 const ttsStub = vi.hoisted(() => ({
   ready: false,
   speech: null as SynthesizedSpeech | null,
+  onSynthesize: undefined as (() => void) | undefined,
 }));
 
 vi.mock('../src/providers/speech.js', async (importOriginal) => {
@@ -25,7 +27,10 @@ vi.mock('../src/providers/speech.js', async (importOriginal) => {
   return {
     ...actual,
     serverTtsReady: () => ttsStub.ready,
-    synthesizeServerSpeech: async () => ttsStub.speech,
+    synthesizeServerSpeech: async () => {
+      ttsStub.onSynthesize?.();
+      return ttsStub.speech;
+    },
   };
 });
 
@@ -52,6 +57,7 @@ beforeEach(() => {
   // Default to the zero-key build: the open path is the one that must never rot.
   ttsStub.ready = false;
   ttsStub.speech = null;
+  ttsStub.onSynthesize = undefined;
 });
 
 describe('POST /api/portal/:token/speak — invitation gate', () => {
@@ -204,16 +210,97 @@ describe('POST /api/portal/:token/speak — with a server provider configured', 
 
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toBe('audio/mpeg');
-    expect(res.headers['etag']).toBe(fake.etag);
+    expect(res.headers['etag']).toBe(speechEtag(AGENT_TURN_TEXT));
     expect(res.headers['cache-control']).toContain('max-age=');
   });
 
-  it('answers 304 to a conditional request so a replay is not re-billed', async () => {
+  it('answers 304 to a conditional request without synthesizing', async () => {
+    // The ETag must be derived from the turn text, not from a completed
+    // synthesis — checking it after the vendor call would save bandwidth but
+    // still pay for the audio.
+    const etag = speechEtag(AGENT_TURN_TEXT);
+    let synthesized = false;
+    ttsStub.onSynthesize = () => { synthesized = true; };
+
     const res = await request(app)
       .post(`/api/portal/${token}/speak`)
-      .set('If-None-Match', fake.etag)
+      .set('If-None-Match', etag)
       .send({ turnId: agentTurnId });
 
     expect(res.status).toBe(304);
+    expect(synthesized).toBe(false);
+  });
+});
+
+describe('speech cache accounting', () => {
+  // Drives the REAL provider module (the suite-wide mock only replaces the two
+  // functions the route calls). `config` is a plain mutable object, so the
+  // provider can be pointed at a stubbed fetch without touching the environment.
+  it('keeps the byte counter equal to what is actually held, across eviction churn', async () => {
+    const actual = await vi.importActual<typeof import('../src/providers/speech.js')>('../src/providers/speech.js');
+    const { config } = await vi.importActual<typeof import('../src/config.js')>('../src/config.js');
+
+    const originalProvider = config.tts.provider;
+    const originalKey = config.llm.openaiKey;
+    const originalFetch = globalThis.fetch;
+
+    config.tts.provider = 'openai';
+    config.llm.openaiKey = 'test-key-not-a-real-credential';
+    const audio = Buffer.alloc(200_000, 1);
+    globalThis.fetch = (async () => new Response(audio, { status: 200 })) as typeof fetch;
+
+    try {
+      actual._resetSpeechCache();
+      // 100 distinct 200KB items against an 8MB / 64-entry ceiling forces heavy
+      // eviction. The invariant that matters is that the tracked byte total
+      // still equals what the cache actually holds: any drift is permanent
+      // (the counter only ever ratchets up), and once it passes the ceiling
+      // every put self-evicts, leaving an empty cache that re-bills every
+      // request — the exact cost this cache exists to prevent.
+      for (let i = 0; i < 100; i++) {
+        await actual.synthesizeServerSpeech(`Question number ${i} for this interview.`);
+      }
+
+      const stats = actual._speechCacheStats();
+      expect(stats.entries).toBeGreaterThan(0);
+      expect(stats.entries).toBeLessThanOrEqual(64);
+      expect(stats.bytes).toBe(stats.entries * audio.byteLength);
+      expect(stats.bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    } finally {
+      actual._resetSpeechCache();
+      globalThis.fetch = originalFetch;
+      config.tts.provider = originalProvider;
+      config.llm.openaiKey = originalKey;
+    }
+  });
+
+  it('collapses concurrent misses for the same text onto one vendor call', async () => {
+    const actual = await vi.importActual<typeof import('../src/providers/speech.js')>('../src/providers/speech.js');
+    const { config } = await vi.importActual<typeof import('../src/config.js')>('../src/config.js');
+
+    const originalProvider = config.tts.provider;
+    const originalKey = config.llm.openaiKey;
+    const originalFetch = globalThis.fetch;
+
+    config.tts.provider = 'openai';
+    config.llm.openaiKey = 'test-key-not-a-real-credential';
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 10));
+      return new Response(Buffer.alloc(1024, 1), { status: 200 });
+    }) as typeof fetch;
+
+    try {
+      actual._resetSpeechCache();
+      // Without in-flight dedup all ten miss the cache and all ten are billed.
+      await Promise.all(Array.from({ length: 10 }, () => actual.synthesizeServerSpeech('Walk me through a tradeoff you made.')));
+      expect(calls).toBe(1);
+    } finally {
+      actual._resetSpeechCache();
+      globalThis.fetch = originalFetch;
+      config.tts.provider = originalProvider;
+      config.llm.openaiKey = originalKey;
+    }
   });
 });

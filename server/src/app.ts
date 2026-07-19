@@ -37,12 +37,18 @@ export function createApp() {
   // Key on the invitation token where present so one candidate cannot exhaust
   // the budget, and so several candidates behind one office NAT are not
   // throttled as a single client.
-  // Derive the token from the path rather than req.params: at the '/api/portal'
-  // mount point params are not populated, so a params-based key silently fell
-  // back to IP for every route except /turn — throttling a whole office behind
-  // one NAT as a single client.
+  // Derive the token from req.originalUrl rather than req.params or req.path.
+  // req.params is not populated at a mount point. req.path is worse than it
+  // looks: Express strips the entire matched mount prefix, so inside a limiter
+  // mounted at '/api/portal/:token/turn' req.path is just '/' and the regex
+  // below never matches — the key silently degraded to IP for exactly the two
+  // routes that cost money, while working at the generic '/api/portal' mount.
+  // That is the inverse of the bug this comment used to describe, and it meant
+  // one token behind rotating IPs evaded its per-token ceiling entirely while a
+  // NAT'd office shared a single bucket. originalUrl is never rewritten by
+  // mounting, so it is the only stable source here.
   const portalKey = (req: Request) => {
-    const m = /^\/([A-Za-z0-9_-]{8,64})(?:\/|$)/.exec(req.path);
+    const m = /^\/api\/portal\/([A-Za-z0-9_-]{8,64})(?:[/?]|$)/.exec(req.originalUrl);
     return m ? `t:${m[1]}` : `ip:${req.ip ?? 'unknown'}`;
   };
   app.use('/api/portal/:token/turn', rateLimit({ name: 'portal-turn', windowMs: 60 * 60_000, max: 120, keyOf: portalKey }));
@@ -53,6 +59,13 @@ export function createApp() {
   // tens of agent turns, and repeats are served from cache, so 200/hour is
   // slack for a real candidate and a ceiling for a script.
   app.use('/api/portal/:token/speak', rateLimit({ name: 'portal-speak', windowMs: 60 * 60_000, max: 200, keyOf: portalKey }));
+  // Stricter than every sibling, because this is the worst case in the app:
+  // unauthenticated, billed per MINUTE OF AUDIO rather than per call, and with
+  // no server-authored artefact to validate the payload against — a 10 MB clip
+  // costs real money on its own. A candidate speaks tens of answers in an
+  // interview and each upload is one answer, so 60/hour covers a real session
+  // with retries and still caps a script at a bounded hourly spend.
+  app.use('/api/portal/:token/transcribe', rateLimit({ name: 'portal-transcribe', windowMs: 60 * 60_000, max: 60, keyOf: portalKey }));
   app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey }));
 
   app.use('/api/auth', authRouter);

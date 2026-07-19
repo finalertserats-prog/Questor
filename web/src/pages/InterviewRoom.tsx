@@ -3,7 +3,8 @@ import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   speakTurn, stopAllSpeech, createRecognizer, createMicMeter,
-  sttSupported, ttsSupported, type Recognizer, type MicMeter,
+  startRecording, transcribeOnServer,
+  sttSupported, ttsSupported, type Recognizer, type MicMeter, type Recording,
 } from '../speech';
 
 // The interview room is the only screen a candidate ever sees, and it is the
@@ -59,6 +60,8 @@ export function InterviewRoom() {
 
   const recognizerRef = useRef<Recognizer | null>(null);
   const meterRef = useRef<MicMeter | null>(null);
+  const recordingRef = useRef<Recording | null>(null);
+  const recognizerFailedRef = useRef(false);
   const startTimeRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -103,19 +106,71 @@ export function InterviewRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  const beginListening = useCallback(() => {
+  const beginListening = useCallback(async () => {
     if (textMode) { setPhase('listening'); return; }
     setInterim('');
     setPhase('listening');
+
+    // Always record. The recording is what gets transcribed if the browser's
+    // own recognition fails — without it a `network` error loses the answer
+    // outright and the candidate has to repeat themselves.
+    recordingRef.current = await startRecording();
+
     const rec = createRecognizer({
       onInterim: setInterim,
-      onFinal: (t) => void submitAnswer(t),
-      onError: (e) => { if (e !== 'no-speech') setErr(`Speech error: ${e}. You can type your answer instead.`); },
+      onFinal: (t) => void finishAnswer(t),
+      onError: (e) => {
+        if (e === 'no-speech') return;
+        // Do not surface this as an error yet: if we captured audio, the server
+        // can still transcribe it and the candidate never needs to know.
+        recognizerFailedRef.current = true;
+        if (!recordingRef.current) setErr(`Speech error: ${e}. You can type your answer instead.`);
+      },
     });
-    if (!rec) { setTextMode(true); setPhase('listening'); return; }
+    if (!rec) {
+      // No browser recognition at all. Recording alone still works if the
+      // server can transcribe; otherwise fall back to typing.
+      if (!recordingRef.current) { setTextMode(true); setPhase('listening'); }
+      return;
+    }
     recognizerRef.current = rec;
     rec.start();
-  }, [textMode, submitAnswer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [textMode]);
+
+  /**
+   * Turn "the candidate stopped talking" into text, from whichever source
+   * actually produced any. Browser recognition is preferred when it worked
+   * (no upload, no cost); otherwise the recording goes to the server.
+   */
+  const finishAnswer = useCallback(async (recognised: string) => {
+    const rec = recordingRef.current;
+    recordingRef.current = null;
+    const audio = rec ? await rec.stop() : null;
+
+    if (recognised.trim()) { void submitAnswer(recognised); return; }
+
+    if (audio) {
+      setPhase('thinking');
+      setInterim('Transcribing your answer…');
+      const text = await transcribeOnServer(token, audio);
+      setInterim('');
+      if (text) { recognizerFailedRef.current = false; void submitAnswer(text); return; }
+    }
+
+    // Nothing usable from either path.
+    setPhase('listening');
+    setErr(recognizerFailedRef.current
+      ? 'We could not hear that. Please try again, or type your answer instead.'
+      : 'No speech detected. Please try again, or type your answer instead.');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  /** "Done answering" — stop recognition; finishAnswer runs on its end event. */
+  const doneAnswering = () => {
+    if (recognizerRef.current) recognizerRef.current.stop();
+    else void finishAnswer('');
+  };
 
   function sayAndListen(turn: AgentTurn) {
     setCurrentAgent(turn.text);
@@ -223,7 +278,7 @@ export function InterviewRoom() {
           <>
             <button className="ctl" onClick={repeat}>↻<span>Repeat</span></button>
             <button className="ctl" onClick={() => setCaptionsOn((c) => !c)}>CC<span>{captionsOn ? 'On' : 'Off'}</span></button>
-            <button className="btn btn-done" onClick={() => recognizerRef.current?.stop()}>Done answering</button>
+            <button className="btn btn-done" onClick={doneAnswering}>Done answering</button>
             <button className="ctl" onClick={() => setTextMode(true)}>⌨<span>Type</span></button>
             <button className="ctl" onClick={() => setShowTranscript((s) => !s)}>☰<span>Transcript</span></button>
           </>
