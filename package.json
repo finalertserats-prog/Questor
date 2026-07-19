@@ -19,9 +19,11 @@
     "dev:web": "npm run dev -w web",
     "build": "npm run build -w server && npm run build -w web",
     "start": "npm run start -w server",
-    "test": "npm run test -w server",
+    "test": "npm run test -w server && npm run test -w web",
     "test:e2e": "npm run test:e2e -w server",
-    "lint": "npm run lint -w server"
+    "lint": "npm run lint -w server",
+    "test:server": "npm run test -w server",
+    "test:web": "npm run test -w web"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
