@@ -118,6 +118,10 @@ export function AssessmentView() {
           {recBadge(result.recommendation)}
         </div>
         <div className="row">
+          {/* Offered here because this page shows the recommendation on sight —
+              once a reviewer has read it they cannot un-read it, so the blind
+              route has to be reachable before they form a view, not after. */}
+          <Link className="btn secondary" to={`/assessments/${id}/review`}>Review this blind</Link>
           <button className="btn secondary" onClick={doExport}>Export to ATS</button>
           <button className="btn ghost" onClick={toggleReport}>
             {showReport ? 'Hide full report' : 'View full report'}

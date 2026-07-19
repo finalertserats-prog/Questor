@@ -9,6 +9,7 @@ import { CandidateDetail } from './pages/CandidateDetail';
 import { InterviewsList } from './pages/InterviewsList';
 import { InterviewDetail } from './pages/InterviewDetail';
 import { AssessmentView } from './pages/AssessmentView';
+import BlindReview from './pages/BlindReview';
 import { Admin } from './pages/Admin';
 import { Portal } from './pages/Portal';
 import { InterviewRoom } from './pages/InterviewRoom';
@@ -60,6 +61,10 @@ export function App() {
       <Route path="/interviews" element={<Protected><InterviewsList /></Protected>} />
       <Route path="/interviews/:id" element={<Protected><InterviewDetail /></Protected>} />
       <Route path="/assessments/:id" element={<Protected><AssessmentView /></Protected>} />
+      {/* Declared before nothing else claims it; the blind view is a distinct
+          surface from the full assessment precisely so a reviewer cannot land on
+          the score by accident. */}
+      <Route path="/assessments/:id/review" element={<Protected><BlindReview /></Protected>} />
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
