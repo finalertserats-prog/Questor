@@ -1,22 +1,85 @@
 import mammoth from 'mammoth';
+import { HttpError } from '../middleware/index.js';
 import type { NormalizedProfile } from '../domain/types.js';
 
-/** Extract raw text from a resume buffer (PDF, DOCX, or plain text). */
-export async function extractResumeText(buffer: Buffer, filename: string, mimetype = ''): Promise<string> {
-  const name = filename.toLowerCase();
-  if (name.endsWith('.pdf') || mimetype.includes('pdf')) {
-    // Import the library file directly to avoid pdf-parse's debug harness.
-    const mod: any = await import('pdf-parse/lib/pdf-parse.js');
-    const pdfParse = mod.default ?? mod;
-    const data = await pdfParse(buffer);
-    return String(data.text ?? '').trim();
+export const PDF_MIME = 'application/pdf';
+export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const TEXT_MIME = 'text/plain';
+
+/** Single source of truth shared with the multer fileFilter so the upload gate
+ *  and the parser dispatch can never drift apart. */
+export const RESUME_MIME_TYPES = [PDF_MIME, DOCX_MIME, TEXT_MIME] as const;
+export type ResumeMimeType = (typeof RESUME_MIME_TYPES)[number];
+
+export function isResumeMimeType(value: string): value is ResumeMimeType {
+  return (RESUME_MIME_TYPES as readonly string[]).includes(value);
+}
+
+/** A resume that reaches this length is either machine-generated or hostile.
+ *  Both pdf-parse and mammoth can expand a few kilobytes into gigabytes of text,
+ *  so the cap is applied at extraction time — before the text reaches profile
+ *  normalization, storage, or any LLM call priced per token. */
+export const MAX_RESUME_TEXT_CHARS = 200_000;
+
+const PDF_MAGIC = Buffer.from('%PDF', 'ascii');
+// DOCX is an OOXML package, i.e. a ZIP archive, so it opens with the ZIP local
+// file header rather than anything Word-specific.
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+const UNREADABLE_MESSAGE =
+  'Could not read the uploaded file. Please upload a text-based PDF, DOCX, or paste the resume text.';
+
+function startsWith(buffer: Buffer, magic: Buffer): boolean {
+  return buffer.length >= magic.length && buffer.subarray(0, magic.length).equals(magic);
+}
+
+/** Classify by content. Anything that is not a PDF or a ZIP container is only
+ *  ever treated as plain text, which is the one branch that feeds no parser. */
+function sniffType(buffer: Buffer): ResumeMimeType {
+  if (startsWith(buffer, PDF_MAGIC)) return PDF_MIME;
+  if (startsWith(buffer, ZIP_MAGIC)) return DOCX_MIME;
+  return TEXT_MIME;
+}
+
+/**
+ * Extract raw text from a resume buffer.
+ *
+ * Dispatch is driven by the bytes, never by the filename or Content-Type: an
+ * uploader controls both, so trusting them lets a crafted file pick which
+ * parser it is handed to. The declared type must also agree with the sniffed
+ * type, so a PDF disguised as .txt is rejected rather than reinterpreted.
+ */
+export async function extractResumeText(buffer: Buffer, declaredType: string): Promise<string> {
+  if (!isResumeMimeType(declaredType)) throw new HttpError(400, UNREADABLE_MESSAGE);
+  if (sniffType(buffer) !== declaredType) {
+    throw new HttpError(400, 'The uploaded file does not match its declared file type.');
   }
-  if (name.endsWith('.docx') || mimetype.includes('officedocument')) {
-    const { value } = await mammoth.extractRawText({ buffer });
-    return value.trim();
+
+  try {
+    if (declaredType === PDF_MIME) {
+      // Import the library file directly to avoid pdf-parse's debug harness.
+      const mod = (await import('pdf-parse/lib/pdf-parse.js')) as {
+        default?: (input: Buffer) => Promise<{ text?: string }>;
+      };
+      const pdfParse = mod.default ?? (mod as unknown as (input: Buffer) => Promise<{ text?: string }>);
+      const data = await pdfParse(buffer);
+      return capped(String(data.text ?? ''));
+    }
+    if (declaredType === DOCX_MIME) {
+      const { value } = await mammoth.extractRawText({ buffer });
+      return capped(value);
+    }
+    return capped(buffer.toString('utf-8'));
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    // A malformed or deliberately hostile document must not surface parser
+    // internals or take the process down with it.
+    throw new HttpError(400, UNREADABLE_MESSAGE);
   }
-  // txt / md / unknown -> treat as utf-8 text
-  return buffer.toString('utf-8').trim();
+}
+
+function capped(text: string): string {
+  return text.slice(0, MAX_RESUME_TEXT_CHARS).trim();
 }
 
 const SKILL_HINTS = [

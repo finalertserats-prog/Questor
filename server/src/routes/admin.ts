@@ -32,8 +32,17 @@ adminRouter.get('/audit', asyncHandler(async (req, res) => {
 }));
 
 // Model execution log (FR-045 traceability)
-adminRouter.get('/model-executions', asyncHandler(async (req, res) => {
-  const rows = await prisma.modelExecution.findMany({ orderBy: { createdAt: 'desc' }, take: 200 });
+adminRouter.get('/model-executions', requireRole('admin'), asyncHandler(async (req, res) => {
+  // ModelExecution carries only a sessionId, so scope through this tenant's
+  // sessions. Without this the endpoint returned every tenant's executions,
+  // exposing other tenants' session ids.
+  const sessions = await prisma.interviewSession.findMany({
+    where: { tenantId: req.auth!.tenantId }, select: { id: true },
+  });
+  const rows = await prisma.modelExecution.findMany({
+    where: { sessionId: { in: sessions.map((s) => s.id) } },
+    orderBy: { createdAt: 'desc' }, take: 200,
+  });
   res.json({ executions: rows.map((r) => ({ id: r.id, provider: r.provider, model: r.model, function: r.function, latencyMs: r.latencyMs, inputTokens: r.inputTokens, outputTokens: r.outputTokens, createdAt: r.createdAt })) });
 }));
 

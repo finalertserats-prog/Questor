@@ -1,9 +1,12 @@
+import path from 'node:path';
 import { Router } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
-import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
-import { extractResumeText, normalizeProfile } from '../engines/resumeParser.js';
+import { asyncHandler, authenticate, requireRole, HttpError } from '../middleware/index.js';
+import { eraseCandidate } from '../services/dataRights.js';
+import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import type { RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
@@ -12,7 +15,44 @@ import { emitEvent } from '../services/webhooks.js';
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  // Buffers live in process memory, so the ceiling is deliberately far below
+  // anything a genuine resume needs; one file per request keeps a single upload
+  // from fanning out into repeated parses.
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (!isResumeMimeType(file.mimetype)) {
+      cb(new HttpError(400, 'Only PDF, DOCX, or plain-text resumes are accepted'));
+      return;
+    }
+    cb(null, true);
+  },
+});
+
+// Multer rejections (size cap, file count) are not HttpErrors, so without this
+// a rejected upload would be reported to the client as a 500.
+function uploadResume(req: Request, res: Response, next: NextFunction): void {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (err instanceof multer.MulterError) {
+      next(new HttpError(400, `Upload rejected: ${err.code === 'LIMIT_FILE_SIZE' ? 'file exceeds the 5 MB limit' : 'only a single resume file is accepted'}`));
+      return;
+    }
+    next(err);
+  });
+}
+
+// The stored filename is echoed back into the reviewer's browser, so strip any
+// path the client smuggled in and keep only characters that cannot be read as
+// markup or as a traversal segment.
+function sanitizeFilename(original: string): string {
+  const cleaned = path
+    .basename(original)
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .replace(/^\.+/, '')
+    .slice(0, 120);
+  return cleaned || 'resume.txt';
+}
 
 // List candidates (optionally by role)
 candidatesRouter.get('/', asyncHandler(async (req, res) => {
@@ -45,19 +85,24 @@ candidatesRouter.post('/', asyncHandler(async (req, res) => {
 }));
 
 // Upload + parse resume, compute fit score, build evidence graph (FR-006..010)
-candidatesRouter.post('/:id/resume', upload.single('file'), asyncHandler(async (req, res) => {
+candidatesRouter.post('/:id/resume', uploadResume, asyncHandler(async (req, res) => {
   const candidate = await getCandidate(req.auth!.tenantId, req.params.id);
   let rawText = '';
   let filename = 'pasted.txt';
   if (req.file) {
-    filename = req.file.originalname;
+    filename = sanitizeFilename(req.file.originalname);
     try {
-      rawText = await extractResumeText(req.file.buffer, req.file.originalname, req.file.mimetype);
-    } catch {
+      rawText = await extractResumeText(req.file.buffer, req.file.mimetype);
+    } catch (err) {
+      // extractResumeText already reports why it refused the file; only genuinely
+      // unexpected failures fall back to the generic FR-006 message.
+      if (err instanceof HttpError) throw err;
       throw new HttpError(422, 'Could not read the uploaded file. Please upload a text-based PDF, DOCX, or paste the resume text.');
     }
   } else if (typeof req.body.text === 'string') {
-    rawText = req.body.text;
+    // Pasted text bypasses the parsers but still lands in the same downstream
+    // path, so it gets the same ceiling.
+    rawText = req.body.text.slice(0, MAX_RESUME_TEXT_CHARS);
   }
   if (!rawText.trim()) throw new HttpError(400, 'No resume text found');
 
@@ -103,6 +148,21 @@ candidatesRouter.get('/:id', asyncHandler(async (req, res) => {
     rawText: profileVersion?.rawText ?? '',
     interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, createdAt: i.createdAt })),
   });
+}));
+
+// Right to erasure: GDPR Art. 17, India DPDP s.8, Illinois AIVIA s.20 (which
+// requires deletion within 30 days of request, including copies). Admin-only
+// and irreversible; the audit trail records that it happened.
+candidatesRouter.delete('/:id', requireRole('admin'), asyncHandler(async (req, res) => {
+  const { reason } = z.object({ reason: z.string().min(1).max(500) }).parse(req.body ?? {});
+  await getCandidate(req.auth!.tenantId, req.params.id);
+  const result = await eraseCandidate({
+    tenantId: req.auth!.tenantId,
+    candidateId: req.params.id,
+    actorId: req.auth!.userId,
+    reason,
+  });
+  res.json({ erased: true, ...result });
 }));
 
 async function getCandidate(tenantId: string, id: string) {

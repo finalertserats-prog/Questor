@@ -16,12 +16,15 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, tenantId: user.tenantId } });
 }));
 
+// `role` is deliberately NOT accepted from the request body. It previously was,
+// defaulting to 'admin', which let any unauthenticated caller mint an admin
+// account. The first user of a new tenant is its admin; everyone else is
+// created by an admin through user management.
 const registerSchema = z.object({
   email: z.string().email(),
-  password: z.string().min(6),
+  password: z.string().min(12, 'Password must be at least 12 characters'),
   name: z.string().min(1),
   tenantName: z.string().optional(),
-  role: z.string().optional(),
 });
 
 authRouter.post('/register', asyncHandler(async (req, res) => {
@@ -30,7 +33,7 @@ authRouter.post('/register', asyncHandler(async (req, res) => {
   if (existing) throw new HttpError(409, 'Email already registered');
   const tenant = await prisma.tenant.create({ data: { name: body.tenantName ?? `${body.name}'s Org` } });
   const user = await prisma.user.create({
-    data: { email: body.email, name: body.name, passwordHash: hashPassword(body.password), role: body.role ?? 'admin', tenantId: tenant.id },
+    data: { email: body.email, name: body.name, passwordHash: hashPassword(body.password), role: 'admin', tenantId: tenant.id },
   });
   const token = signToken({ userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
   res.status(201).json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, tenantId: user.tenantId } });

@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
+import { ZodError } from 'zod';
 import { nanoid } from 'nanoid';
 import { verifyToken, type AuthClaims } from '../services/auth.js';
 import { logger } from '../logger.js';
@@ -19,8 +20,11 @@ export function requestId(req: Request, _res: Response, next: NextFunction) {
 }
 
 export function authenticate(req: Request, res: Response, next: NextFunction) {
+  // Header only. Accepting a token from the query string leaked valid sessions
+  // into access logs, proxy logs, browser history and Referer headers — on a
+  // shared machine, browser history alone handed over a live session.
   const header = req.headers.authorization;
-  const token = header?.startsWith('Bearer ') ? header.slice(7) : (req.query.token as string | undefined);
+  const token = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
   if (!token) return res.status(401).json({ error: 'Missing authentication token' });
   const claims = verifyToken(token);
   if (!claims) return res.status(401).json({ error: 'Invalid or expired token' });
@@ -48,7 +52,19 @@ export function asyncHandler(fn: (req: Request, res: Response, next: NextFunctio
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   const status = err.status ?? err.statusCode ?? 500;
   logger.error({ err: err?.message ?? String(err), stack: err?.stack, requestId: req.requestId, path: req.path }, 'Request error');
-  res.status(status).json({ error: err?.message ?? 'Internal server error', requestId: req.requestId });
+
+  // Only messages we authored are safe to return. Everything else (upstream API
+  // bodies, Prisma errors, stack-bearing runtime errors) previously reached the
+  // client verbatim, including on unauthenticated portal routes.
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: 'Invalid request',
+      fields: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      requestId: req.requestId,
+    });
+  }
+  const safe = err instanceof HttpError ? err.message : 'Internal server error';
+  res.status(err instanceof HttpError ? status : 500).json({ error: safe, requestId: req.requestId });
 }
 
 export class HttpError extends Error {

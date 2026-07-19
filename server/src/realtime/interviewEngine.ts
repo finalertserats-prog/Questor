@@ -9,9 +9,25 @@ import { evaluate } from '../engines/evaluator.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { emitEvent } from '../services/webhooks.js';
 import { logAudit } from '../services/audit.js';
+import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
+
+// Every candidate turn costs a paid LLM call, and the portal turn endpoint is
+// unauthenticated by design. Without a ceiling, anyone holding a valid invite
+// link can loop it forever. A 45-minute interview lands near 60-80 turns, so
+// 200 is unreachable in good faith but bounds the spend and the row count.
+const MAX_TURNS_PER_SESSION = 200;
+
+// States in which the transcript is still being written. Outside these the
+// assessment has been generated (and possibly human-reviewed), so accepting a
+// turn would silently rewrite the evidence behind a completed hiring decision.
+const LIVE_STATES = ['ASSESSING', 'CANDIDATE_QUESTIONS'];
+
+// Terminal status stamped on an invitation once its interview finalises, so the
+// same link cannot restart or extend a finished interview.
+export const INVITATION_CONSUMED = 'consumed';
 
 export interface AgentTurnOut {
   turnId: string;
@@ -46,11 +62,12 @@ function elapsedMinutes(turns: TurnRecord[]): number {
   return (turns.length * AVG_MS_PER_TURN) / 60000;
 }
 
-async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id'>): Promise<TurnRecord> {
+async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id'>, meta?: Record<string, unknown>): Promise<TurnRecord> {
   const rec = await prisma.turn.create({
     data: {
       id: nanoid(10), sessionId, index: turn.index, speaker: turn.speaker, text: turn.text,
       startMs: turn.startMs, endMs: turn.endMs, confidence: turn.confidence, competencyId: turn.competencyId ?? '',
+      ...(meta ? { metaJson: JSON.stringify(meta) } : {}),
     },
   });
   return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
@@ -101,13 +118,26 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
 
 /** Ingest a candidate turn and return the next agent turn. */
 export async function submitCandidateTurn(sessionId: string, text: string, timing?: { startMs?: number; endMs?: number; confidence?: number }): Promise<AgentTurnOut> {
-  const { turns, plan } = await loadContext(sessionId);
+  const { session, turns } = await loadContext(sessionId);
+  // Both guards run before any LLM call so an abusive caller never reaches a
+  // billable path.
+  if (!LIVE_STATES.includes(session.state)) {
+    throw new HttpError(409, 'This interview is no longer accepting answers.');
+  }
+  if (turns.length >= MAX_TURNS_PER_SESSION) {
+    logger.warn({ sessionId, turns: turns.length }, 'Interview turn cap reached; refusing further turns');
+    throw new HttpError(429, 'This interview has reached its maximum length. Our team will follow up with you.');
+  }
+
   // Attribute this answer to whatever competency the last agent question targeted.
   const lastAgent = [...turns].reverse().find((t) => t.speaker === 'agent');
   const competencyId = lastAgent?.competencyId ?? '';
   const injection = detectInjection(text);
   if (injection.injection) {
-    logger.info({ sessionId, matched: injection.matched }, 'Prompt-injection attempt ignored');
+    // The interviewer never obeys the injected text, but a human reads the
+    // report — the attempt itself is signal about the candidate and must
+    // survive on the turn record rather than living only in the server log.
+    logger.warn({ sessionId, index: turns.length, matched: injection.matched, textLength: text.length }, 'Prompt-injection attempt flagged on candidate turn');
   }
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   await appendTurn(sessionId, {
@@ -116,7 +146,7 @@ export async function submitCandidateTurn(sessionId: string, text: string, timin
     endMs: timing?.endMs ?? lastEnd + 30_000,
     confidence: timing?.confidence ?? 0.9,
     competencyId,
-  });
+  }, injection.injection ? { flags: ['prompt_injection'], injectionMatched: injection.matched, flaggedAt: new Date().toISOString() } : undefined);
   return produceAgentTurn(sessionId);
 }
 
@@ -155,6 +185,9 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
   });
 
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { completedAt: new Date() } });
+  // Burn the invite link. updateMany (not update) because recruiter-driven
+  // sessions can finalise without an invitation ever being issued.
+  await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
   await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
   await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
   await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });

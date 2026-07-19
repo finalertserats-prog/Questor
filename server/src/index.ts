@@ -4,6 +4,12 @@ import { attachInterviewSocket } from './realtime/socket.js';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { getLlm } from './providers/llm/index.js';
+import { preflight } from './preflight.js';
+
+import { startRetentionSweep } from './services/dataRights.js';
+
+preflight();
+startRetentionSweep();
 
 const app = createApp();
 const httpServer = createServer(app);

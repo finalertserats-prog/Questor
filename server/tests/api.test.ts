@@ -17,7 +17,7 @@ beforeAll(async () => {
 
 describe('Questor API end-to-end', () => {
   it('registers a recruiter', async () => {
-    const res = await request(app).post('/api/auth/register').send({ email: 'api@questor.local', password: 'secret123', name: 'API Tester', tenantName: 'API Org' });
+    const res = await request(app).post('/api/auth/register').send({ email: 'api@questor.local', password: 'correct-horse-battery-staple', name: 'API Tester', tenantName: 'API Org' });
     expect(res.status).toBe(201);
     token = res.body.token;
     expect(token).toBeTruthy();

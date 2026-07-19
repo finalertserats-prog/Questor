@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { config } from '../config.js';
 import { prisma } from '../db.js';
 import { hashPassword } from '../services/auth.js';
 import { extractRoleHeuristic } from '../engines/roleIntelligence.js';
@@ -58,8 +59,24 @@ export interface DemoIds {
   candidateId: string; sessionId: string; token: string; email: string; password: string;
 }
 
+/**
+ * Refuse to run against a production database. `wipe()` deletes every row and
+ * `createDemoData()` provisions an admin account whose password is published in
+ * this repository — either one against real candidate data is catastrophic.
+ * Set ALLOW_DEMO_SEED=true only if you genuinely intend this on a live box.
+ */
+function assertNotProduction(op: string): void {
+  if (config.nodeEnv === 'production' && process.env.ALLOW_DEMO_SEED !== 'true') {
+    throw new Error(
+      `Refusing to ${op} with NODE_ENV=production. This would ${op === 'wipe' ? 'delete all real candidate data' : 'create an admin account with a publicly known password'}. ` +
+      'Set ALLOW_DEMO_SEED=true only if that is genuinely what you want.',
+    );
+  }
+}
+
 /** Delete all demo data (dev/test only). */
 export async function wipe(): Promise<void> {
+  assertNotProduction('wipe');
   await prisma.webhookDelivery.deleteMany();
   await prisma.webhookEndpoint.deleteMany();
   await prisma.humanReview.deleteMany();
