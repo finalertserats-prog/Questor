@@ -111,7 +111,13 @@ export async function createDemoData(): Promise<DemoIds> {
     data: {
       name: 'Acme Corp', region: 'in',
       policyJson: JSON.stringify({
-        disclosureText: "Hello, I'm Schranders, an AI interviewer for this first-round conversation. This session is transcribed and recorded only with your consent. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
+        // "recorded only with your consent" described something that does not
+        // happen: no audio is ever stored. What does happen is that the voice is
+        // captured, sent to a transcription service, and thrown away once the
+        // text exists — and the text is kept. The spoken disclosure now says
+        // that, because it is the first and sometimes only version a candidate
+        // takes in.
+        disclosureText: "Hello, I'm Schranders, an AI interviewer for this first-round conversation. So you know how this works: while you speak, your voice is captured and sent to a speech-to-text service to be written down. No recording of your voice is stored — the written transcript is what is kept, and it is what our hiring team reviews. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
         recordingDefault: true, retentionDaysRecording: 90, retentionDaysTranscript: 180,
         allowedModules: ['coding', 'case'], languages: ['en'], humanReviewRequired: true,
       }),

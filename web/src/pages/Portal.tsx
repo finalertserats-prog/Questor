@@ -4,10 +4,65 @@ import { api } from '../api/client';
 import { Banner } from '../components/ui';
 import { sttSupported, ttsSupported, speak } from '../speech';
 
+/** Mirrors SpeechCapability in server/src/providers/speech.ts. */
+export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
+
 interface PortalInfo {
   candidateName: string; roleTitle: string; state: string; durationMinutes: number;
   aiDisclosure: string; recordingRequested: boolean; privacy: string; accommodationsEnabled: boolean;
-  speech: { stt: { provider: string }; tts: { provider: string } };
+  speech: { stt: SttCapability; tts: { provider: string } };
+}
+
+/**
+ * Name every party that actually receives the candidate's voice.
+ *
+ * Naming only one would be a half-truth: InterviewRoom always starts the
+ * browser's SpeechRecognition, which Chrome and Edge implement by streaming the
+ * microphone to Google's speech servers rather than transcribing on the device,
+ * AND records a local clip that is uploaded to the operator's own provider
+ * whenever browser recognition returns nothing. Both can happen in one
+ * interview, so both are disclosed.
+ */
+export function transcriptionProcessorSentence(stt: SttCapability): string {
+  const browser =
+    "Your browser's own speech recognition sends it away to be transcribed — in Chrome and Edge that means "
+    + 'Google’s servers, not your own device.';
+  if (stt.mode !== 'server' || !stt.configured) return browser;
+  const vendor = stt.provider === 'whisper' ? 'OpenAI' : stt.provider;
+  return `${browser} If that fails, the audio is sent to our own transcription provider, ${vendor}, instead.`;
+}
+
+/**
+ * The four facts a candidate needs kept apart, because collapsing any two of
+ * them misleads in one direction or the other.
+ *
+ * "You are being recorded" overstates it: no audio file exists at any point
+ * after the text comes back (server/src/routes/portal.ts discards the upload,
+ * and docs/BUILD_STATUS.md is explicit that the transcript is the artefact).
+ * But "no audio is stored" understates it just as badly — the microphone really
+ * is live and the audio really does leave the machine. Capture, processing,
+ * storage and retention are therefore stated separately, in that order, so the
+ * mental model a candidate leaves with is the correct one rather than the
+ * reassuring one.
+ *
+ * Shared with InterviewRoom deliberately: the consent screen and the interview
+ * itself must not be able to drift into describing this differently.
+ */
+export function VoiceHandling({ stt }: { stt: SttCapability }) {
+  return (
+    <ul className="small" style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.55 }}>
+      <li><b>Captured.</b> Your microphone is live while you answer, and your voice is captured in your browser.</li>
+      <li><b>Processed by a third party.</b> {transcriptionProcessorSentence(stt)}</li>
+      <li>
+        <b>Not stored.</b> No audio file is kept — not by us, and not for playback. Each clip is discarded
+        once the text comes back, so there is no recording of your voice for anyone to listen to later.
+      </li>
+      <li>
+        <b>Retained.</b> The written transcript is kept. It is what the hiring team reads and what the AI
+        scores — that text, not your voice, is the record of this interview.
+      </li>
+    </ul>
+  );
 }
 
 export function Portal() {
@@ -73,6 +128,10 @@ export function Portal() {
               <p className="small">{info.aiDisclosure}</p>
             </div>
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
+              <b>What happens to your voice</b>
+              <VoiceHandling stt={info.speech.stt} />
+            </div>
+            <div className="card tight" style={{ background: 'var(--panel-2)' }}>
               <b>Privacy</b>
               <p className="small">{info.privacy}</p>
             </div>
@@ -85,10 +144,22 @@ export function Portal() {
 
         {step === 'consent' && (
           <>
+            {/* The old wording asked consent to "being recorded", which is not what
+                happens — nothing records. Consent has to name the processing that
+                is real, or it is consent to the wrong thing. The recordingRequested
+                branch is gone with it: whether the employer ticked "recording" does
+                not change any of the four facts below, so offering the candidate two
+                different sentences only implied a difference that does not exist. */}
             <label className="row" style={{ alignItems: 'flex-start' }}>
               <input type="checkbox" style={{ width: 'auto', marginTop: 4 }} checked={recordingConsent} onChange={(e) => setRecordingConsent(e.target.checked)} />
-              <span>{info.recordingRequested ? 'I consent to this interview being recorded and transcribed.' : 'I consent to this interview being transcribed.'}</span>
+              <span>
+                I consent to my voice being captured while I answer and sent to a speech-to-text service
+                to be transcribed, and to the resulting written transcript being kept and reviewed.
+              </span>
             </label>
+            <div className="card tight" style={{ background: 'var(--panel-2)' }}>
+              <VoiceHandling stt={info.speech.stt} />
+            </div>
             <label className="row" style={{ alignItems: 'flex-start' }}>
               <input type="checkbox" style={{ width: 'auto', marginTop: 4 }} checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
               <span>I understand this first round is conducted by an AI interviewer and reviewed by a human, and I agree to proceed.</span>

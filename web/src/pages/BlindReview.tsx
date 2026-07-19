@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, recBadge, Banner, Stat } from '../components/ui';
+import { ValidationStatus } from './AssessmentView';
 
 // Blind-first review.
 //
@@ -97,6 +98,13 @@ function Comparison({ view, levels, disposition, ai }: {
 
   return (
     <>
+      {/* The reveal is the exact moment the reviewer starts weighing the AI's
+          number against their own, so it is the moment they need to know that
+          the number has never been shown to agree with anyone. Rendered before
+          the comparison card for the same reason it sits above the score on the
+          full assessment: after reading it, the impression is already formed. */}
+      <ValidationStatus />
+
       <div className="card">
         <h3>Your call vs the AI</h3>
         <div className="row" style={{ gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>

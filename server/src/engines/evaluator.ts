@@ -3,7 +3,10 @@ import type {
   RoleSuccessProfile, TurnRecord,
 } from '../domain/types.js';
 import { answerQuality } from './interviewDirector.js';
-import { extractEvidence } from './evidenceExtractor.js';
+import {
+  attributeEvidence, independentEvidenceWeight,
+  type AttributedEvidenceSpan,
+} from './evidenceExtractor.js';
 import { validateNoProtectedInference } from './policyEngine.js';
 import { generateJson, getLlm } from '../providers/llm/index.js';
 
@@ -30,9 +33,20 @@ export async function evaluate(opts: {
   const { role, turns, rubricVersion } = opts;
   const scored = role.competencies.filter((c) => c.classification !== 'non_scoring' && c.weight > 0);
 
+  // Attribute evidence ONCE for the whole transcript, before grading. Attribution
+  // is inherently cross-competency — an answer given under one question may
+  // evidence another — so it cannot be done inside the per-competency loop without
+  // both losing that context and multiplying the number of LLM calls.
+  const attribution = await attributeEvidence({ turns, competencies: scored, sessionId: opts.sessionId });
+
   // Competencies are independent — grade them concurrently.
   const competencyScores: CompetencyScore[] = await Promise.all(
-    scored.map((c) => scoreCompetency({ competency: c, turns, rubricVersion, sessionId: opts.sessionId })),
+    scored.map((c) => scoreCompetency({
+      competency: c,
+      evidence: attribution.byCompetency[c.id] ?? [],
+      rubricVersion,
+      sessionId: opts.sessionId,
+    })),
   );
 
   // Overall score: weighted mean over competencies WITH evidence (NEE excluded).
@@ -74,6 +88,12 @@ export async function evaluate(opts: {
     ...(evidenceCoverage < 0.6 ? [`Sufficient-evidence coverage was ${Math.round(evidenceCoverage * 100)}% — some competencies lack evidence that demonstrates them.`] : []),
     ...mustPassNEE.map((s) => `Must-pass competency ${s.name} lacks sufficient evidence; recommendation is capped pending human review.`),
     ...(gradingFailures.length ? [`${gradingFailures.length} competenc${gradingFailures.length === 1 ? 'y' : 'ies'} could not be graded automatically and were excluded from the score; this is a system limitation, not a finding about the candidate.`] : []),
+    // Disclose the attribution mode: a reader must be able to tell whether evidence
+    // was matched by question slot or by an automated reading of the answers, and
+    // must have the handle needed to pull the decision record.
+    ...(attribution.mode === 'semantic'
+      ? [`Evidence was attributed to competencies by automated analysis of each answer's content, not only by the question it was asked under (attribution record ${attribution.modelExecutionId || 'unavailable'}).`]
+      : []),
   ];
 
   const confidence = Math.round(
@@ -112,13 +132,19 @@ export async function evaluate(opts: {
  */
 async function scoreCompetency(o: {
   competency: Competency;
-  turns: TurnRecord[];
+  evidence: AttributedEvidenceSpan[];
   rubricVersion: string;
   sessionId?: string;
 }): Promise<CompetencyScore> {
-  const { competency: c, rubricVersion } = o;
-  const evidence = extractEvidence(o.turns, c.id);
+  const { competency: c, rubricVersion, evidence } = o;
   const base = { id: c.id, name: c.name, requiredLevel: c.requiredLevel, evidence, rubricVersion };
+
+  // One answer credited to several competencies is one observation, not several.
+  // Discount confidence when a competency is leaning on shared evidence; this is
+  // exactly 1 when every span is exclusive, so slot-only interviews are unaffected.
+  const corroboration = evidence.length
+    ? Math.min(1, 0.6 + 0.4 * (independentEvidenceWeight(evidence) / evidence.length))
+    : 1;
 
   if (evidence.length === 0) {
     return {
@@ -132,7 +158,7 @@ async function scoreCompetency(o: {
     return {
       ...base,
       level: graded.notEnoughEvidence ? null : graded.level,
-      confidence: Math.round(graded.confidence * 100) / 100,
+      confidence: Math.round(graded.confidence * corroboration * 100) / 100,
       notEnoughEvidence: graded.notEnoughEvidence,
       rationale: graded.rationale,
     };
@@ -155,7 +181,10 @@ async function scoreCompetency(o: {
   const avg = qualities.reduce((a, q) => a + q.score, 0) / qualities.length;
   const level = qualityToLevel(avg);
   const specificityCount = qualities.filter((q) => q.specific).length;
-  const confidence = Math.max(0.35, Math.min(0.95, 0.4 + evidence.length * 0.12 + specificityCount * 0.08));
+  // `independentEvidenceWeight` replaces a raw count so N answers that are really
+  // one shared story do not buy N answers' worth of confidence.
+  const confidence = Math.max(0.35, Math.min(0.95,
+    0.4 + independentEvidenceWeight(evidence) * 0.12 + specificityCount * 0.08));
   return {
     ...base, level, confidence: Math.round(confidence * 100) / 100, notEnoughEvidence: false,
     rationale: buildRationale(c.name, level, qualities),

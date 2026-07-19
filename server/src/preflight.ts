@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { config } from './config.js';
 import { logger } from './logger.js';
@@ -113,6 +113,41 @@ function databaseExposureIssues(isProd: boolean): PreflightIssue[] {
   if (!existsSync(dbPath)) return [];
 
   const issues: PreflightIssue[] = [];
+
+  // A SQLite file IS the database — anyone who can read it has every
+  // transcript, regardless of what the application's authorisation says.
+  // Warned rather than fatal because the fix (encryption, a dedicated host) is
+  // an infrastructure decision, and refusing to boot would strand a deployment
+  // that is otherwise working. It is stated on every start so it cannot be
+  // quietly forgotten.
+  if (isProd) {
+    issues.push({
+      level: 'warn',
+      code: 'SQLITE_IN_PRODUCTION',
+      message: 'Candidate transcripts, résumés and assessments are in a plaintext SQLite file. Anyone with filesystem access — including anything else running on this host — can read every interview without logging in.',
+      fix: 'Move candidate data to a dedicated host with encryption at rest, or accept and document the risk. Note that switching to Postgres on the SAME host narrows file-permission exposure but does NOT protect against host compromise.',
+    });
+  }
+
+  // Owner-only on POSIX. `stat` via Node rather than parsing `ls`, which varies
+  // by distro and lies about symlinks, bind mounts and ACLs.
+  if (process.platform !== 'win32') {
+    try {
+      const mode = statSync(dbPath).mode & 0o777;
+      // Any group or other permission at all is too much for this file.
+      if (mode & 0o077) {
+        issues.push({
+          level: isProd ? 'fatal' : 'warn',
+          code: 'DB_WORLD_READABLE',
+          message: `The candidate database is mode ${mode.toString(8).padStart(3, '0')} — readable by users other than its owner. Every interview transcript on this host is exposed to any other account or service running on it.`,
+          fix: `Run: chmod 600 "${dbPath}" && chmod 700 "${path.dirname(dbPath)}" — and make sure the directory is owner-only too, since SQLite writes -wal and -shm siblings next to it.`,
+        });
+      }
+    } catch {
+      // Unreadable stat is not worth failing a boot over.
+    }
+  }
+
   if (process.platform === 'win32') {
     try {
       const acl = execFileSync('icacls', [dbPath], { encoding: 'utf8', timeout: 5000 });

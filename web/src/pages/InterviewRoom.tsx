@@ -6,6 +6,7 @@ import {
   startRecording, transcribeOnServer,
   sttSupported, ttsSupported, type Recognizer, type MicMeter, type Recording,
 } from '../speech';
+import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } from './Portal';
 
 // The interview room is the only screen a candidate ever sees, and it is the
 // screen they judge the company by. It is deliberately built as a call surface
@@ -15,7 +16,10 @@ import {
 
 interface AgentTurn { turnId: string; text: string; competencyId: string; kind: string; done: boolean }
 interface Msg { speaker: 'agent' | 'candidate'; text: string }
-interface PortalInfo { candidateName: string; roleTitle: string; recordingRequested: boolean; durationMinutes: number }
+interface PortalInfo {
+  candidateName: string; roleTitle: string; durationMinutes: number;
+  speech: { stt: SttCapability };
+}
 type Phase = 'ready' | 'speaking' | 'listening' | 'thinking' | 'done';
 
 const initials = (name: string) =>
@@ -43,6 +47,37 @@ function SpeakingRings({ active, level }: { active: boolean; level: number }) {
   );
 }
 
+/**
+ * What the room bar is allowed to claim about the microphone.
+ *
+ * This replaces a red "REC" pill, which was a straightforward lie: nothing is
+ * recorded. No audio file is written, kept or playable — the transcript is the
+ * artefact (docs/BUILD_STATUS.md), and the server discards each uploaded clip
+ * the moment the text comes back.
+ *
+ * Deleting the pill outright would have been the other kind of dishonesty. The
+ * microphone genuinely is open and the audio genuinely does leave the machine
+ * for a third-party transcriber, so an unmarked interview would understate what
+ * is happening. The indicator stays, keeps its pulsing dot — capture is live and
+ * should look live — and now says what the capture is FOR.
+ *
+ * 'transcribing' — audio is being captured and turned into text.
+ * 'mic'          — the mic is open for the level meter only (typed answers), so
+ *                  nothing is being transcribed and it must not claim otherwise.
+ */
+function CaptureIndicator({ mode, stt }: { mode: 'transcribing' | 'mic'; stt: SttCapability }) {
+  const detail = mode === 'transcribing'
+    ? `Your voice is captured while you answer and transcribed to text. ${transcriptionProcessorSentence(stt)} `
+      + 'No audio file is stored — the written transcript is what is kept and reviewed.'
+    : 'Your microphone is open so the level meter can show you it is working. You are answering by '
+      + 'typing, so no audio is being transcribed and none is stored.';
+  return (
+    <span className="rec-pill" title={detail}>
+      <i />{mode === 'transcribing' ? 'LIVE TRANSCRIPTION' : 'MIC OPEN'}
+    </span>
+  );
+}
+
 export function InterviewRoom() {
   const { token = '' } = useParams();
   const [info, setInfo] = useState<PortalInfo | null>(null);
@@ -56,6 +91,10 @@ export function InterviewRoom() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [captionsOn, setCaptionsOn] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
+  // Tracked so the capture indicator reflects whether the mic is ACTUALLY open,
+  // rather than whether we asked for it. A candidate who denied permission is
+  // not being captured and must not be shown a badge saying they are.
+  const [micOpen, setMicOpen] = useState(false);
   const [err, setErr] = useState('');
 
   const recognizerRef = useRef<Recognizer | null>(null);
@@ -191,7 +230,16 @@ export function InterviewRoom() {
     void speakTurn({
       token, turnId: turn.turnId, text: turn.text,
       onDone: () => {
-        if (turn.done) { setPhase('done'); return; }
+        if (turn.done) {
+          // Close the microphone at the end rather than at unmount. The capture
+          // indicator disappears here, and it must disappear because capture has
+          // actually stopped — not merely because the screen changed.
+          meterRef.current?.stop();
+          meterRef.current = null;
+          setMicOpen(false);
+          setPhase('done');
+          return;
+        }
         if (textMode) { setPhase('listening'); return; }
         beginListening();
       },
@@ -206,6 +254,7 @@ export function InterviewRoom() {
     // before the candidate has chosen to start reads as the page grabbing the
     // mic, and gets denied.
     meterRef.current = await createMicMeter();
+    setMicOpen(meterRef.current !== null);
     try {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/start`, {});
       addMsg({ speaker: 'agent', text: res.turn.text });
@@ -234,7 +283,9 @@ export function InterviewRoom() {
           <span className="room-role">{info.roleTitle}</span>
         </div>
         <div className="row" style={{ gap: 12, alignItems: 'center' }}>
-          {info.recordingRequested && live && <span className="rec-pill"><i />REC</span>}
+          {live && micOpen && (
+            <CaptureIndicator mode={textMode ? 'mic' : 'transcribing'} stt={info.speech.stt} />
+          )}
           <span className="room-timer"><Elapsed since={startTimeRef.current} /></span>
         </div>
       </header>
@@ -282,6 +333,12 @@ export function InterviewRoom() {
             <p className="muted">
               {info.durationMinutes} minutes · voice or typed · you can ask Schranders to repeat anything.
             </p>
+            {/* Repeated here, not just on the consent screen. The consent screen may
+                have been read minutes ago on another device, and this is the last
+                moment before the microphone actually opens. */}
+            <div className="muted" style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto' }}>
+              <VoiceHandling stt={info.speech.stt} />
+            </div>
             <button className="btn btn-join" onClick={begin}>Join interview</button>
           </div>
         )}
@@ -322,8 +379,10 @@ export function InterviewRoom() {
           <div className="done-panel">
             <h3>That's everything — thank you.</h3>
             <p className="muted">
-              Your interview has been submitted for human review. A person on the hiring team reads the
-              transcript and makes the decision. You can close this window.
+              Your microphone is now off. Your interview has been submitted for human review: a person on
+              the hiring team reads the <b>transcript</b> — the text of what you said, which is all that
+              was kept — and makes the decision. No recording of your voice exists. You can close this
+              window.
             </p>
           </div>
         )}
