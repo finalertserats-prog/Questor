@@ -74,3 +74,32 @@ export function validateNoProtectedInference(text: string): PolicyResult {
 export function detectDistress(text: string): boolean {
   return /\b(i want to (die|hurt)|kill myself|self harm|emergency|can'?t breathe|medical emergency)\b/i.test(text);
 }
+
+/**
+ * The candidate is asking to stop.
+ *
+ * A real candidate said "I think I'm going to end the interview", was asked
+ * another question, said "No I'm done I don't wanna do this to you anymore",
+ * and was asked another question. He closed the tab. Nothing in the system was
+ * listening for the one thing a person is most entitled to say.
+ *
+ * Deliberately generous: a false positive ends an interview the candidate can
+ * ask to resume, while a false negative traps someone who has said twice that
+ * they want out. Those costs are not symmetric.
+ *
+ * Anchored to the start of the utterance, or to an explicit "I"/"let's"
+ * construction, so that describing a past decision — "we decided to stop the
+ * rollout", "I want to quit that habit" — does not end the interview.
+ */
+export function detectWithdrawal(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  return (
+    /\b(i|i'?m|im)\s+(am\s+)?(done|finished)\b/.test(t) ||
+    /\bi\s+(want|wanna|would like)\s+to\s+(stop|end|quit|leave|finish)\b/.test(t) ||
+    /\bi'?m\s+going\s+to\s+(end|stop|quit|leave)\b/.test(t) ||
+    /\b(end|stop)\s+(the\s+)?(interview|call|session)\b/.test(t) ||
+    /\bi\s+don'?t\s+want\s+to\s+(do|continue|carry on)\b/.test(t) ||
+    /^(no,?\s+)?(i'?m\s+)?done\b/.test(t) ||
+    /\b(can we|let'?s)\s+(stop|end|finish)\b/.test(t)
+  );
+}

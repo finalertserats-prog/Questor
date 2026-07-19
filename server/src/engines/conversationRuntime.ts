@@ -1,12 +1,12 @@
 import type { DirectorSignal, InterviewPlan, PlanBlock, RoleSuccessProfile, TurnRecord } from '../domain/types.js';
 import { answerQuality } from './interviewDirector.js';
-import { screenQuestion, detectInjection, detectDistress } from './policyEngine.js';
+import { screenQuestion, detectInjection, detectDistress, detectWithdrawal } from './policyEngine.js';
 import { generateJson } from '../providers/llm/index.js';
 
 export interface AgentUtterance {
   text: string;
   competencyId: string;
-  kind: 'disclosure' | 'question' | 'followup' | 'clarify' | 'close' | 'signoff' | 'safety' | 'transition';
+  kind: 'disclosure' | 'question' | 'followup' | 'clarify' | 'close' | 'signoff' | 'safety' | 'withdrawn' | 'transition';
 }
 
 export interface Persona {
@@ -81,6 +81,22 @@ export async function nextUtterance(opts: {
   const { plan, signal, turns, role, persona } = opts;
   const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate');
   const lastText = lastCandidate?.text ?? '';
+
+  // Before anything else: did they ask to stop?
+  //
+  // Checked ahead of the director, the plan and the LLM, because none of those
+  // can produce the right answer here — they are all built to find the next
+  // question, and the next question is exactly what must not happen. A real
+  // candidate said "I'm going to end the interview", got asked another
+  // question, said "I don't wanna do this to you anymore", and got asked
+  // another one. He left. No score is worth that.
+  if (lastText && detectWithdrawal(lastText)) {
+    return {
+      text: 'Of course — we\'ll stop there. Thank you for the time you did give us, and nothing you\'ve said will count against you. Our team will follow up by email, and you can ask them for a different format or a conversation with a person instead. You can close this window now.',
+      competencyId: signal.nextCompetencyId ?? '',
+      kind: 'withdrawn',
+    };
+  }
 
   // Safety first (BRD exception journey).
   if (lastText && detectDistress(lastText)) {

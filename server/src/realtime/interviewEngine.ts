@@ -113,7 +113,9 @@ async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
 
   // 'close' invites the candidate's own questions and must stay open for their
   // reply; the session ends on the sign-off that follows it.
-  const done = utter.kind === 'signoff' || utter.kind === 'safety';
+  // 'withdrawn' ends the session like a sign-off: the candidate asked to stop,
+  // so the next thing that happens must not be another question.
+  const done = utter.kind === 'signoff' || utter.kind === 'safety' || utter.kind === 'withdrawn';
   return {
     turnId: agentTurn.id, index: agentTurn.index, text: utter.text, competencyId: utter.competencyId,
     kind: utter.kind, state: session.state, done,
