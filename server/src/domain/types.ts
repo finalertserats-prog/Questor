@@ -115,6 +115,8 @@ export interface CompetencyScore {
   evidence: EvidenceSpan[];
   rationale: string;
   rubricVersion: string;
+  /** True when rubric grading was configured but failed, so no score was produced. */
+  gradingUnavailable?: boolean;
 }
 
 export type Recommendation = 'PROCEED' | 'CONSIDER' | 'DO_NOT_PROGRESS';
