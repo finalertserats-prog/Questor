@@ -11,12 +11,25 @@ import { assertTransition } from '../domain/stateMachine.js';
 import { getEmail } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
 import { config } from '../config.js';
+import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview } from '../realtime/interviewEngine.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
+
+/** The invitation a candidate receives. Kept in one place so the plain-text and
+ *  HTML bodies cannot drift apart — a candidate whose client strips HTML must
+ *  still get a working link. */
+function buildInvite(candidateName: string, roleTitle: string, portalUrl: string) {
+  return {
+    to: '',
+    subject: `Your first-round interview for ${roleTitle}`,
+    text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. This interview is conducted by Questor, an AI voice interviewer, and will be transcribed.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
+    html: `<p>Hi ${candidateName},</p><p>You're invited to a first-round interview for <b>${roleTitle}</b>, conducted by <b>Questor</b>, an AI voice interviewer. It will be transcribed.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
+  };
+}
 
 const createSchema = z.object({
   candidateId: z.string(),
@@ -131,18 +144,43 @@ interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyn
   });
 
   const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
-  await getEmail().send({
-    to: candidate!.email,
-    subject: `Your first-round interview for ${role!.title}`,
-    text: `Hi ${candidate!.fullName},\n\nYou're invited to a first-round interview for ${role!.title}. This interview is conducted by Questor, an AI voice interviewer, and will be transcribed.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
-    html: `<p>Hi ${candidate!.fullName},</p><p>You're invited to a first-round interview for <b>${role!.title}</b>, conducted by <b>Questor</b>, an AI voice interviewer. It will be transcribed.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
+  const email = getEmail();
+
+  // Delivery is reported honestly, and a failure never loses the invitation.
+  // The link is the valuable artefact — a recruiter who can see it can send it
+  // by hand, whereas a 500 here would leave a half-created invitation and no
+  // way to reach the candidate at all.
+  let delivered = false;
+  let deliveryNote: string;
+  if (!email.delivers) {
+    await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl), to: candidate!.email }); // logs it
+    deliveryNote = `No email was sent: EMAIL_PROVIDER is "${email.name}", which does not deliver. Copy the link and send it yourself.`;
+    logger.warn({ sessionId: session.id, to: candidate!.email }, 'Invitation created but NOT emailed — no delivering email provider configured');
+  } else {
+    try {
+      await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl), to: candidate!.email });
+      delivered = true;
+      deliveryNote = `Emailed to ${candidate!.email}.`;
+    } catch (err) {
+      deliveryNote = 'The invitation link was created, but the email could not be sent. Copy the link and send it yourself.';
+      logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation email failed to send');
+    }
+  }
+
+  await prisma.invitation.update({
+    where: { id: invitation.id },
+    data: {
+      status: delivered ? 'sent' : 'created',
+      sentAt: delivered ? new Date() : null,
+      eventsJson: JSON.stringify([{ type: delivered ? 'sent' : 'created_not_delivered', at: new Date().toISOString() }]),
+    },
   });
 
   assertTransition(session.state, 'INVITED');
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'invitation.sent', entityType: 'InterviewSession', entityId: session.id });
-  await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId });
-  res.json({ invitation: { token: invitation.token, status: 'sent', portalUrl } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
+  await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
+  res.json({ invitation: { token: invitation.token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote } });
 }));
 
 // Schedule (FR-013)

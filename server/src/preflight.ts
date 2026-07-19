@@ -80,6 +80,20 @@ export function collectIssues(env: NodeJS.ProcessEnv = process.env): PreflightIs
     });
   }
 
+  // An email provider that does not deliver is a silent failure with a human
+  // cost: the recruiter is told the invitation went out, the candidate hears
+  // nothing, and the gap is only discovered when someone asks why nobody
+  // interviewed. Fatal in production for the same reason the secret defaults
+  // are — it looks like it is working.
+  if (config.email.provider === 'console' && env.ALLOW_UNDELIVERED_EMAIL !== 'true') {
+    issues.push({
+      level: isProd ? 'fatal' : 'warn',
+      code: 'EMAIL_NOT_DELIVERED',
+      message: 'EMAIL_PROVIDER is "console", which logs invitations instead of sending them. No candidate will ever receive an interview link.',
+      fix: 'Set EMAIL_PROVIDER=smtp with SMTP_HOST/SMTP_USER/SMTP_PASS, or EMAIL_PROVIDER=sendgrid with SENDGRID_API_KEY. To run without email on purpose, set ALLOW_UNDELIVERED_EMAIL=true and send invitation links by hand.',
+    });
+  }
+
   issues.push(...databaseExposureIssues(isProd));
 
   return issues;
