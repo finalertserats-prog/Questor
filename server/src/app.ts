@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config.js';
-import { requestId, errorHandler } from './middleware/index.js';
+import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
@@ -19,6 +19,12 @@ export function createApp() {
   app.use(cors({ origin: config.webOrigin, credentials: true }));
   app.use(express.json({ limit: '2mb' }));
   app.use(requestId);
+
+  // Before every router: cookie auth is ambient, so without a CSRF gate any
+  // page a logged-in recruiter visits could drive state-changing calls into
+  // Questor with their session. Exemptions (safe methods, the unauthenticated
+  // portal, header-authenticated API clients) live in the middleware.
+  app.use(csrfProtection);
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok', service: 'questor', ts: new Date().toISOString() }));
 

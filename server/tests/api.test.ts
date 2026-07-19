@@ -172,6 +172,26 @@ describe('Questor API end-to-end', () => {
     expect(audit).not.toBeNull();
   });
 
+  it('issues the session as an httpOnly cookie with a readable CSRF companion', async () => {
+    const res = await request(app).post('/api/auth/login')
+      .send({ email: 'api@questor.local', password: 'correct-horse-battery-staple' });
+    expect(res.status).toBe(200);
+
+    const raw = res.headers['set-cookie'] as unknown as string[];
+    const session = raw.find((c) => c.startsWith('questor_token='))!;
+    const csrf = raw.find((c) => c.startsWith('questor_csrf='))!;
+
+    expect(session.toLowerCase()).toContain('httponly');
+    expect(session.toLowerCase()).toContain('samesite=strict');
+    // Must stay readable: the browser has to echo it back in a header.
+    expect(csrf.toLowerCase()).not.toContain('httponly');
+    expect(csrf.toLowerCase()).toContain('samesite=strict');
+
+    // Session lifetime is the only revocation mechanism, so pin it at ~1h.
+    const claims = JSON.parse(Buffer.from((res.body.token as string).split('.')[1], 'base64url').toString());
+    expect(claims.exp - claims.iat).toBe(3600);
+  });
+
   it('refuses to erase a candidate belonging to another tenant', async () => {
     const other = await request(app).post('/api/auth/register')
       .send({ email: 'other@questor.local', password: 'yet-another-long-password', name: 'Other', tenantName: 'Other Org' });
@@ -180,5 +200,102 @@ describe('Questor API end-to-end', () => {
       .send({ reason: 'cross-tenant probe' });
     expect(res.status).toBe(404);
     expect(await prisma.candidate.count({ where: { id: candidateId } })).toBe(1);
+  });
+
+  // GDPR Art. 17(3)(e) disapplies the right to erasure where the data is needed
+  // to defend legal claims. Honouring an erasure request over a legal hold would
+  // destroy the evidence the hold exists to preserve.
+  it('refuses to erase a candidate whose interview is under legal hold', async () => {
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { legalHold: true } });
+    try {
+      const res = await request(app).delete(`/api/candidates/${candidateId}`).set('Authorization', `Bearer ${token}`)
+        .send({ reason: 'candidate requested erasure during an open complaint' });
+      expect(res.status).toBe(409);
+      expect(await prisma.candidate.count({ where: { id: candidateId } })).toBe(1);
+      expect(await prisma.turn.count({ where: { sessionId } })).toBeGreaterThan(0);
+    } finally {
+      await prisma.interviewSession.update({ where: { id: sessionId }, data: { legalHold: false } });
+    }
+  });
+});
+
+// Cookie auth is ambient — the browser sends it cross-site too — so every
+// state-changing route is forgeable without a CSRF gate.
+describe('cookie session and CSRF protection', () => {
+  let sessionCookie = '';
+  let csrfCookie = '';
+  let csrfValue = '';
+
+  const cookieOf = (jar: string[], name: string) =>
+    jar.find((c) => c.startsWith(`${name}=`))!.split(';')[0];
+
+  beforeAll(async () => {
+    const res = await request(app).post('/api/auth/login')
+      .send({ email: 'api@questor.local', password: 'correct-horse-battery-staple' });
+    const jar = res.headers['set-cookie'] as unknown as string[];
+    sessionCookie = cookieOf(jar, 'questor_token');
+    csrfCookie = cookieOf(jar, 'questor_csrf');
+    csrfValue = csrfCookie.slice('questor_csrf='.length);
+  });
+
+  it('authenticates a read using only the session cookie', async () => {
+    const res = await request(app).get('/api/roles').set('Cookie', sessionCookie);
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects a cookie-authenticated write with no CSRF header', async () => {
+    const res = await request(app).post('/api/candidates').set('Cookie', [sessionCookie, csrfCookie].join('; '))
+      .send({ fullName: 'CSRF Probe', email: 'csrf-none@e.com', roleId });
+    expect(res.status).toBe(403);
+    expect(await prisma.candidate.count({ where: { email: 'csrf-none@e.com' } })).toBe(0);
+  });
+
+  it('rejects a cookie-authenticated write whose CSRF header does not match the cookie', async () => {
+    const res = await request(app).post('/api/candidates').set('Cookie', [sessionCookie, csrfCookie].join('; '))
+      .set('X-CSRF-Token', 'not-the-right-value-not-the-right-value-xx')
+      .send({ fullName: 'CSRF Probe', email: 'csrf-bad@e.com', roleId });
+    expect(res.status).toBe(403);
+    expect(await prisma.candidate.count({ where: { email: 'csrf-bad@e.com' } })).toBe(0);
+  });
+
+  it('accepts a cookie-authenticated write that echoes the CSRF cookie', async () => {
+    const res = await request(app).post('/api/candidates').set('Cookie', [sessionCookie, csrfCookie].join('; '))
+      .set('X-CSRF-Token', csrfValue)
+      .send({ fullName: 'CSRF Ok', email: 'csrf-ok@e.com', roleId });
+    expect(res.status).toBe(201);
+  });
+
+  // The bypass that makes the whole scheme collapse: CSRF is skipped whenever an
+  // Authorization header is present, so if authenticate() fell back to the
+  // cookie on a junk header, an attacker could send one cross-site and ride the
+  // victim's session. The two rules must agree — a junk header must 401, never
+  // silently authenticate via the cookie.
+  it('does not let a junk Authorization header skip CSRF and fall back to the cookie', async () => {
+    const res = await request(app).post('/api/candidates').set('Cookie', [sessionCookie, csrfCookie].join('; '))
+      .set('Authorization', 'Bearer not-a-real-token')
+      .send({ fullName: 'Bypass Probe', email: 'bypass@e.com', roleId });
+    expect(res.status).toBe(401);
+    expect(await prisma.candidate.count({ where: { email: 'bypass@e.com' } })).toBe(0);
+  });
+
+  it('leaves header-authenticated clients exempt from CSRF', async () => {
+    const res = await request(app).post('/api/candidates').set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Header Client', email: 'header-client@e.com', roleId });
+    expect(res.status).toBe(201);
+  });
+
+  it('exempts the unauthenticated candidate portal', async () => {
+    const res = await request(app).post('/api/portal/nonexistent-token-abcdefgh/turn').send({ text: 'hello' });
+    expect(res.status).not.toBe(403);
+  });
+
+  it('clears both cookies on logout', async () => {
+    const res = await request(app).post('/api/auth/logout')
+      .set('Cookie', [sessionCookie, csrfCookie].join('; ')).set('X-CSRF-Token', csrfValue);
+    expect(res.status).toBe(200);
+    const jar = res.headers['set-cookie'] as unknown as string[];
+    // Expired cookies come back with an empty value, which is how the browser drops them.
+    expect(cookieOf(jar, 'questor_token')).toBe('questor_token=');
+    expect(cookieOf(jar, 'questor_csrf')).toBe('questor_csrf=');
   });
 });

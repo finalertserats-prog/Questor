@@ -156,6 +156,16 @@ model InterviewSession {
   qualityJson       String   @default("{}")      // audio quality, latency samples
   contextJson       String   @default("{}")      // structured running memory (resilience checkpoints)
   recordingConsent  Boolean  @default(false)
+  // Retention is a session-level property, not a per-artifact one: the
+  // recruitment purpose completes for a whole interview at once, and the
+  // candidate's data is spread across turns, assessments and reviews that all
+  // belong to this session. Null means "use the tenant default window" — see
+  // DEFAULT_RETENTION_DAYS in services/dataRights.ts. Both fields are optional
+  // so existing rows stay valid.
+  retainUntil       DateTime?
+  // Mirrors Artifact.legalHold. A session under hold is NEVER purged, whatever
+  // retainUntil says — litigation/regulatory holds override storage limitation.
+  legalHold         Boolean  @default(false)
   scheduledAt       DateTime?
   startedAt         DateTime?
   completedAt       DateTime?

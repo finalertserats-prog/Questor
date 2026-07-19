@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
-import { hashPassword, verifyPassword, signToken } from '../services/auth.js';
+import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
 
 export const authRouter = Router();
 
@@ -12,7 +12,9 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
   const { email, password } = loginSchema.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !verifyPassword(password, user.passwordHash)) throw new HttpError(401, 'Invalid credentials');
-  const token = signToken({ userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
+  // Sets the httpOnly session cookie + CSRF cookie. The token is also returned
+  // for non-browser clients; the web app ignores it and uses the cookie.
+  const token = issueSession(res, { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
   res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, tenantId: user.tenantId } });
 }));
 
@@ -35,9 +37,18 @@ authRouter.post('/register', asyncHandler(async (req, res) => {
   const user = await prisma.user.create({
     data: { email: body.email, name: body.name, passwordHash: hashPassword(body.password), role: 'admin', tenantId: tenant.id },
   });
-  const token = signToken({ userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
+  const token = issueSession(res, { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
   res.status(201).json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role, tenantId: user.tenantId } });
 }));
+
+// Not behind `authenticate`: ending a session must work even once the token has
+// already expired, and it discloses nothing — it only tells the browser to drop
+// cookies it already holds. Without this the httpOnly cookie could not be
+// cleared from the client at all.
+authRouter.post('/logout', (_req, res) => {
+  clearSession(res);
+  res.json({ ok: true });
+});
 
 authRouter.get('/me', authenticate, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.auth!.userId } });

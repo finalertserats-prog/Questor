@@ -7,6 +7,9 @@ import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { getAts } from '../providers/ats/index.js';
+import {
+  assertBlindVerdictRecorded, getAgreementReport, getBlindView, recordBlindVerdict, DISPOSITIONS,
+} from '../services/shadowMode.js';
 
 export const assessmentsRouter = Router();
 assessmentsRouter.use(authenticate);
@@ -16,6 +19,71 @@ async function getAssessment(tenantId: string, id: string) {
   if (!a || a.session.tenantId !== tenantId) throw new HttpError(404, 'Assessment not found');
   return a;
 }
+
+// ---------------------------------------------------------------------------
+// Shadow mode (see services/shadowMode.ts and docs/VALIDATION.md)
+//
+// Route order matters: these literal paths MUST be declared before '/:id',
+// otherwise Express matches '/shadow-metrics' as an assessment id and the
+// metrics endpoint 404s.
+// ---------------------------------------------------------------------------
+
+// Scoring-validity metrics across the tenant. Deliberately readable by any
+// authenticated user: a reviewer being asked to trust the AI's score is
+// entitled to see whether that score has ever been shown to agree with anyone.
+assessmentsRouter.get('/shadow-metrics', asyncHandler(async (req, res) => {
+  const report = await getAgreementReport(req.auth!.tenantId);
+  res.json(report);
+}));
+
+// The blinded assessment: evidence, transcript and competency definitions, with
+// every AI conclusion withheld so the reviewer forms an independent judgement.
+assessmentsRouter.get('/:id/blind', asyncHandler(async (req, res) => {
+  const view = await getBlindView(req.auth!.tenantId, req.params.id, req.auth!.userId);
+  res.json(view);
+}));
+
+const blindVerdictSchema = z.object({
+  disposition: z.enum(DISPOSITIONS),
+  reason: z.string().min(3),
+  comments: z.string().optional(),
+  competencyLevels: z.array(z.object({
+    competencyId: z.string().min(1),
+    level: z.number().int().min(1).max(5),
+    reason: z.string().optional(),
+  })).default([]),
+});
+
+assessmentsRouter.post('/:id/blind-verdict', asyncHandler(async (req, res) => {
+  const body = blindVerdictSchema.parse(req.body);
+  const { reviewId, recordedAt } = await recordBlindVerdict(
+    req.auth!.tenantId, req.params.id, req.auth!.userId, body,
+  );
+  // Audited because the ORDER of these events is the compliance artefact: it is
+  // what shows the human judgement preceded, rather than echoed, the machine's.
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.blind_verdict',
+    entityType: 'AssessmentVersion', entityId: req.params.id,
+    after: { reviewId, disposition: body.disposition, competencyCount: body.competencyLevels.length, recordedAt },
+  });
+  res.status(201).json({ reviewId, recordedAt, revealUrl: `/api/assessments/${req.params.id}/reveal` });
+}));
+
+// Reveal — refuses until this reviewer has recorded their own verdict.
+assessmentsRouter.get('/:id/reveal', asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!.tenantId, req.params.id);
+  await assertBlindVerdictRecorded(a.id, req.auth!.userId);
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.ai_revealed',
+    entityType: 'AssessmentVersion', entityId: a.id, after: { recommendation: a.recommendation },
+  });
+  res.json({
+    id: a.id,
+    result: parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult),
+    note: 'Advisory only. Agreement between this output and blind human review has not been established — '
+      + 'see GET /api/assessments/shadow-metrics and docs/VALIDATION.md.',
+  });
+}));
 
 assessmentsRouter.get('/:id', asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!.tenantId, req.params.id);

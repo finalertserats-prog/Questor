@@ -1,3 +1,6 @@
+import path from 'node:path';
+import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { config } from './config.js';
 import { logger } from './logger.js';
 
@@ -77,6 +80,43 @@ export function collectIssues(env: NodeJS.ProcessEnv = process.env): PreflightIs
     });
   }
 
+  issues.push(...databaseExposureIssues(isProd));
+
+  return issues;
+}
+
+/**
+ * The SQLite file holds candidate names, emails, resume text and full
+ * transcripts in plaintext. Application-level authorisation is irrelevant to
+ * anyone who can simply open the file, so check who can.
+ */
+function databaseExposureIssues(isProd: boolean): PreflightIssue[] {
+  const url = process.env.DATABASE_URL ?? '';
+  if (!url.startsWith('file:')) return []; // Postgres et al. are out of scope here.
+
+  const rel = url.slice('file:'.length).split('?')[0];
+  const dbPath = path.resolve(process.cwd(), 'prisma', rel);
+  if (!existsSync(dbPath)) return [];
+
+  const issues: PreflightIssue[] = [];
+  if (process.platform === 'win32') {
+    try {
+      const acl = execFileSync('icacls', [dbPath], { encoding: 'utf8', timeout: 5000 });
+      // These principals mean "any account that can log into this machine".
+      const broad = ['Authenticated Users', 'BUILTIN\\Users', 'Everyone']
+        .filter((p) => acl.includes(p));
+      if (broad.length) {
+        issues.push({
+          level: isProd ? 'fatal' : 'warn',
+          code: 'DB_WORLD_READABLE',
+          message: `The candidate database grants access to ${broad.join(', ')} — every account on this machine can read, and possibly rewrite, candidate transcripts and assessments without logging in.`,
+          fix: 'Run scripts/harden-windows.ps1 in an elevated PowerShell, and enable BitLocker on this drive.',
+        });
+      }
+    } catch {
+      // icacls unavailable or blocked; not worth failing a boot over.
+    }
+  }
   return issues;
 }
 

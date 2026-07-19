@@ -1,4 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { prisma } from '../src/db.js';
+import { findSessionsDueForPurge, runRetentionSweep, resolveRetainUntil } from '../src/services/dataRights.js';
 import { extractRoleHeuristic } from '../src/engines/roleIntelligence.js';
 import { normalizeProfile } from '../src/engines/resumeParser.js';
 import { computeFitScore } from '../src/engines/fitScoring.js';
@@ -117,5 +119,114 @@ describe('stateMachine', () => {
   it('rejects illegal transitions', () => {
     expect(canTransition('PROVISIONED', 'CLOSED')).toBe(false);
     expect(canTransition('CLOSED', 'ASSESSING')).toBe(false);
+  });
+});
+
+// --- Retention sweep (GDPR Art. 5(1)(e), DPDP s.8(6), AIVIA s.20) ---------
+// These hit the database because the thing under test IS the deletion: a unit
+// test with a mocked client would pass while real transcripts survived.
+
+describe('retention sweep', () => {
+  let tenantId = '';
+  let expiredSessionId = '';
+  let heldSessionId = '';
+  let freshSessionId = '';
+  let artifactHeldSessionId = '';
+
+  const longAgo = new Date(Date.now() - 400 * 86_400_000);
+
+  beforeAll(async () => {
+    const tenant = await prisma.tenant.create({ data: { name: 'Retention Org' } });
+    tenantId = tenant.id;
+    const role = await prisma.role.create({ data: { tenantId, title: 'Retention Engineer' } });
+    const scorecard = await prisma.roleScorecardVersion.create({ data: { roleId: role.id, status: 'approved' } });
+
+    const mk = async (o: { name: string; createdAt: Date; legalHold?: boolean }) => {
+      const candidate = await prisma.candidate.create({
+        data: { tenantId, roleId: role.id, fullName: o.name, email: `${o.name}@retention.test` },
+      });
+      const session = await prisma.interviewSession.create({
+        data: {
+          tenantId, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
+          createdAt: o.createdAt, completedAt: o.createdAt, legalHold: o.legalHold ?? false,
+        },
+      });
+      await prisma.turn.create({
+        data: { sessionId: session.id, index: 0, speaker: 'candidate', text: 'my salary history is private' },
+      });
+      return session.id;
+    };
+
+    expiredSessionId = await mk({ name: 'expired', createdAt: longAgo });
+    heldSessionId = await mk({ name: 'held', createdAt: longAgo, legalHold: true });
+    freshSessionId = await mk({ name: 'fresh', createdAt: new Date() });
+
+    // Session itself is NOT held and is long expired, but one artifact on it is
+    // under hold. Deleting the session would destroy held evidence.
+    artifactHeldSessionId = await mk({ name: 'artifactheld', createdAt: longAgo });
+    await prisma.artifact.create({
+      data: {
+        tenantId, sessionId: artifactHeldSessionId, kind: 'recording',
+        retentionDays: 1, legalHold: true, createdAt: longAgo,
+      },
+    });
+  });
+
+  it('lists only expired, non-held sessions as due for purge', async () => {
+    const due = await findSessionsDueForPurge({ tenantId });
+    const ids = due.map((d) => d.sessionId);
+    expect(ids).toContain(expiredSessionId);
+    expect(ids).not.toContain(heldSessionId);
+    expect(ids).not.toContain(freshSessionId);
+  });
+
+  it('deletes the transcript turns of an expired session', async () => {
+    expect(await prisma.turn.count({ where: { sessionId: expiredSessionId } })).toBe(1);
+    await runRetentionSweep();
+    expect(await prisma.turn.count({ where: { sessionId: expiredSessionId } })).toBe(0);
+    expect(await prisma.interviewSession.count({ where: { id: expiredSessionId } })).toBe(0);
+  });
+
+  it('removes the candidate once no session remains within retention', async () => {
+    // Name and email are the PII most likely to silently survive a purge that
+    // only walks session-owned tables.
+    expect(await prisma.candidate.count({ where: { tenantId, email: 'expired@retention.test' } })).toBe(0);
+    // ...but the held candidate must still be there.
+    expect(await prisma.candidate.count({ where: { tenantId, email: 'held@retention.test' } })).toBe(1);
+  });
+
+  it('never touches a session under legal hold', async () => {
+    expect(await prisma.turn.count({ where: { sessionId: heldSessionId } })).toBe(1);
+    expect(await prisma.interviewSession.count({ where: { id: heldSessionId } })).toBe(1);
+  });
+
+  it('leaves a session still inside its window alone', async () => {
+    expect(await prisma.turn.count({ where: { sessionId: freshSessionId } })).toBe(1);
+  });
+
+  it('spares an expired session when one of its artifacts is under legal hold', async () => {
+    // The artifact's own retentionDays (1) is long past too, so both the session
+    // sweep and the artifact sweep had a reason to delete it. Neither may.
+    expect(await prisma.artifact.count({ where: { sessionId: artifactHeldSessionId } })).toBe(1);
+    expect(await prisma.turn.count({ where: { sessionId: artifactHeldSessionId } })).toBe(1);
+    expect(await prisma.interviewSession.count({ where: { id: artifactHeldSessionId } })).toBe(1);
+  });
+
+  it('records an audit event that survives the purge and holds no personal data', async () => {
+    const event = await prisma.auditEvent.findFirst({
+      where: { action: 'session.purged', entityId: expiredSessionId },
+    });
+    expect(event).toBeTruthy();
+    expect(event!.afterJson).not.toContain('salary history');
+    expect(event!.afterJson).not.toContain('@retention.test');
+    expect(JSON.parse(event!.afterJson).deleted.turns).toBe(1);
+  });
+
+  it('honours an explicit retainUntil over the default window', () => {
+    const future = new Date(Date.now() + 86_400_000);
+    const resolved = resolveRetainUntil({
+      retainUntil: future, completedAt: longAgo, createdAt: longAgo, legalHold: false,
+    });
+    expect(resolved.getTime()).toBe(future.getTime());
   });
 });
