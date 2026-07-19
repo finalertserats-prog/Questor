@@ -91,8 +91,7 @@ export function InterviewRoom() {
     if (!text.trim()) return;
     recognizerRef.current?.abort();
     recognizerRef.current = null;
-    setInterim(''); setTyped('');
-    addMsg({ speaker: 'candidate', text });
+    setInterim('');
     setPhase('thinking');
     const now = Date.now();
     const startMs = startTimeRef.current ? now - startTimeRef.current - 25000 : 0;
@@ -100,9 +99,22 @@ export function InterviewRoom() {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/turn`, {
         text, startMs: Math.max(0, startMs), endMs: startTimeRef.current ? now - startTimeRef.current : 0,
       });
+      // Only show the answer once the server has it. Showing it first made a
+      // failed submit invisible: the candidate saw their answer sitting in the
+      // transcript looking delivered while the server never received it, and
+      // the text was already cleared so they could not resend it. A silent loss
+      // that looks like success is the worst outcome in an interview.
+      addMsg({ speaker: 'candidate', text });
+      setTyped('');
       addMsg({ speaker: 'agent', text: res.turn.text });
       sayAndListen(res.turn);
-    } catch (e) { setErr((e as Error).message); setPhase('listening'); }
+    } catch (e) {
+      // Keep the text so they can retry rather than reconstruct what they said.
+      setTyped(text);
+      setTextMode(true);
+      setErr(`${(e as Error).message} — your answer was not sent. It's in the box below; press Send to try again.`);
+      setPhase('listening');
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

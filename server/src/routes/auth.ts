@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
 import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
 
@@ -30,6 +31,13 @@ const registerSchema = z.object({
 });
 
 authRouter.post('/register', asyncHandler(async (req, res) => {
+  // Self-registration mints a tenant ADMIN. That is correct for the first user
+  // of a fresh install, and dangerous on a publicly reachable deployment where
+  // anyone can call it. Closed by default in production; an operator setting up
+  // a new tenant opens it deliberately and briefly.
+  if (config.nodeEnv === 'production' && process.env.ALLOW_SELF_REGISTRATION !== 'true') {
+    throw new HttpError(403, 'Self-registration is disabled. Ask an administrator for an account.');
+  }
   const body = registerSchema.parse(req.body);
   const existing = await prisma.user.findUnique({ where: { email: body.email } });
   if (existing) throw new HttpError(409, 'Email already registered');

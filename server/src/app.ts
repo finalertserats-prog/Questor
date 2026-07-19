@@ -15,6 +15,15 @@ import { adminRouter } from './routes/admin.js';
 
 export function createApp() {
   const app = express();
+
+  // Behind nginx, req.ip is the proxy's address for EVERY request unless this is
+  // set — so every IP-keyed rate limit collapses into one shared bucket for the
+  // whole internet. The login limiter (10 per 15 min) then locks out every
+  // recruiter as soon as any ten failed logins occur anywhere. Deliberately `1`
+  // and not `true`: trusting the whole chain lets a client forge
+  // X-Forwarded-For and pick its own rate-limit bucket.
+  app.set('trust proxy', 1);
+
   app.use(helmet());
   app.use(cors({ origin: config.webOrigin, credentials: true }));
   app.use(express.json({ limit: '2mb' }));

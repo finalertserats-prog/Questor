@@ -20,6 +20,13 @@ const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absen
 // 200 is unreachable in good faith but bounds the spend and the row count.
 const MAX_TURNS_PER_SESSION = 200;
 
+// Enforced HERE rather than only in the portal route, because Socket.IO is the
+// primary interview transport and Express middleware never runs on it. The
+// route-level 4000-char cap therefore protected the fallback path while the
+// primary one accepted up to socket.io's 1MB default buffer — roughly 200MB of
+// billable LLM input per valid invitation. Every transport inherits this.
+const MAX_ANSWER_CHARS = 4000;
+
 // States in which the transcript is still being written. Outside these the
 // assessment has been generated (and possibly human-reviewed), so accepting a
 // turn would silently rewrite the evidence behind a completed hiring decision.
@@ -141,8 +148,12 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
 /** Ingest a candidate turn and return the next agent turn. */
 export async function submitCandidateTurn(sessionId: string, text: string, timing?: { startMs?: number; endMs?: number; confidence?: number }): Promise<AgentTurnOut> {
   const { session, turns } = await loadContext(sessionId);
-  // Both guards run before any LLM call so an abusive caller never reaches a
-  // billable path.
+  // All three guards run before any LLM call so an abusive caller never reaches
+  // a billable path.
+  if (text.length > MAX_ANSWER_CHARS) {
+    logger.warn({ sessionId, chars: text.length }, 'Oversized candidate answer refused');
+    throw new HttpError(400, `That answer is too long (limit ${MAX_ANSWER_CHARS} characters).`);
+  }
   if (!LIVE_STATES.includes(session.state)) {
     throw new HttpError(409, 'This interview is no longer accepting answers.');
   }
