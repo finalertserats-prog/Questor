@@ -117,7 +117,11 @@ export async function nextUtterance(opts: {
   if (blockId === '__process__') {
     return {
       text: opts.disclosureText ||
-        `Hello, and thank you for joining. I\'m ${persona.name}, an AI interviewer for this first-round conversation. This session is being transcribed, and recorded only if you\'ve consented. I\'ll ask about your experience relevant to the role, you can take your time, ask me to repeat anything, or request a short pause. There are no trick questions. Shall we begin with a quick check that you can hear me clearly?`,
+        // Says what actually happens. "Recorded only if you've consented"
+        // described an audio artefact that is never produced, while omitting
+        // that the voice does leave the browser to be transcribed. Both halves
+        // were wrong, in opposite directions.
+        `Hello, and thank you for joining. I\'m ${persona.name}, an AI interviewer for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I\'ll ask about your experience relevant to the role. Take your time, ask me to repeat anything, or request a short pause. There are no trick questions. Shall we begin with a quick check that you can hear me clearly?`,
       competencyId: blockId,
       kind: 'disclosure',
     };

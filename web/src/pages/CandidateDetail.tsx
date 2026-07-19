@@ -33,8 +33,7 @@ export function CandidateDetail() {
   // interview setup form
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [personaName, setPersonaName] = useState('Schranders');
-  const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
-  const [recording, setRecording] = useState(false);
+  const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
   const [provider, setProvider] = useState<'hosted' | 'teams' | 'zoom' | 'meet'>('hosted');
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -63,7 +62,9 @@ export function CandidateDetail() {
         modules: MODULES,
         persona: { name: personaName, tone },
         provider,
-        recordingRequested: recording,
+        // Always false: no audio artefact is produced, so requesting one would
+        // only set a flag that misleads whoever reads it back.
+        recordingRequested: false,
         humanReviewRequired: true,
         approve: true,
       });
@@ -204,12 +205,17 @@ export function CandidateDetail() {
               <option value="meet">meet</option>
             </select>
           </div>
+          {/* The "Request recording" checkbox is gone. It set a flag that
+              produced no audio anywhere in the system, so a recruiter ticking it
+              believed they were commissioning a recording they would never
+              receive — and the candidate was shown a consent notice implying the
+              same. Stating what the product actually does is the honest control
+              here; a toggle for a capability that does not exist is not. */}
           <div>
-            <label>Recording</label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '5px 0 0' }}>
-              <input type="checkbox" checked={recording} onChange={(e) => setRecording(e.target.checked)} style={{ width: 'auto' }} />
-              Request recording
-            </label>
+            <label>Record of the interview</label>
+            <div className="muted small" style={{ marginTop: 5 }}>
+              A written transcript, kept and reviewed by a person. No audio is stored.
+            </div>
           </div>
         </div>
         <div className="row" style={{ marginTop: 16 }}>

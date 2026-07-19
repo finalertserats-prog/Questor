@@ -66,7 +66,11 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
   const disclosureText = tenantPolicy.disclosureText ??
-    `Hello, I'm ${body.persona.name}, an AI interviewer for this first-round conversation. This session is transcribed${body.recordingRequested ? ' and recorded with your consent' : ''}. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+    // No `recordingRequested` branch: it offered two different sentences for a
+    // distinction that does not exist, since no audio artefact is produced
+    // either way. Stating capture, transcription and retention plainly is both
+    // true and more useful than the flag ever was.
+    `Hello, I'm ${body.persona.name}, an AI interviewer for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
 
   const session = await prisma.interviewSession.create({
     data: {
