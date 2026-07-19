@@ -145,15 +145,25 @@ interviewsRouter.post('/:id/cancel', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Recruiter text-mode drive (also used for testing without voice)
+// Recruiter text-mode drive (also used for testing without voice).
+//
+// These let an authenticated recruiter write turns into a transcript that backs
+// a hiring decision, so every use is audit-logged with the acting user. The
+// engine's state and turn-cap guards apply here too — they live in
+// interviewEngine rather than in the portal route precisely so this path cannot
+// sidestep them.
 interviewsRouter.post('/:id/start', asyncHandler(async (req, res) => {
   await getSession(req.auth!.tenantId, req.params.id);
   const turn = await startInterview(req.params.id);
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.started.by_recruiter', entityType: 'InterviewSession', entityId: req.params.id });
   res.json({ turn });
 }));
 interviewsRouter.post('/:id/turn', asyncHandler(async (req, res) => {
   await getSession(req.auth!.tenantId, req.params.id);
-  const { text } = z.object({ text: z.string().min(1) }).parse(req.body);
+  // Same ceiling as the candidate portal; an authenticated caller is still a
+  // caller, and this text goes into a paid prompt.
+  const { text } = z.object({ text: z.string().min(1).max(4000) }).parse(req.body);
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.turn.by_recruiter', entityType: 'InterviewSession', entityId: req.params.id });
   const turn = await submitCandidateTurn(req.params.id, text);
   let assessmentId: string | null = null;
   if (turn.done) ({ assessmentId } = await finalizeInterview(req.params.id));

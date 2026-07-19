@@ -114,6 +114,27 @@ describe('Questor API end-to-end', () => {
     expect(inv === null || typeof inv.token === 'string').toBe(true);
   });
 
+  // The root integrity bypass: startInterview used to reset ANY state to
+  // ASSESSING, so a finished interview could be reopened and its evidence
+  // rewritten after a human had already seen the assessment.
+  it('refuses to restart an interview that has already been assessed', async () => {
+    const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { state: true } });
+    expect(['REVIEW_READY', 'HUMAN_REVIEWED']).toContain(session!.state);
+
+    const res = await request(app).post(`/api/interviews/${sessionId}/start`).set('Authorization', `Bearer ${token}`).send({});
+    expect(res.status).toBe(409);
+
+    const after = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { state: true } });
+    expect(after!.state).toBe(session!.state);
+  });
+
+  it('does not mint a second assessment when finalise is called again', async () => {
+    const before = await prisma.assessmentVersion.count({ where: { sessionId } });
+    const res = await request(app).post(`/api/interviews/${sessionId}/finalize`).set('Authorization', `Bearer ${token}`).send({});
+    expect(res.status).toBe(200);
+    expect(await prisma.assessmentVersion.count({ where: { sessionId } })).toBe(before);
+  });
+
   it('rejects an auth token supplied via the query string', async () => {
     const res = await request(app).get(`/api/roles?token=${token}`);
     expect(res.status).toBe(401);

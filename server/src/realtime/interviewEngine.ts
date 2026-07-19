@@ -25,6 +25,19 @@ const MAX_TURNS_PER_SESSION = 200;
 // turn would silently rewrite the evidence behind a completed hiring decision.
 const LIVE_STATES = ['ASSESSING', 'CANDIDATE_QUESTIONS'];
 
+// Pre-interview states from which "start" may legitimately converge to live.
+// Anything else — finished, closed, cancelled, withdrawn, handed to a human —
+// must not be restartable.
+const STARTABLE_STATES = [
+  'PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'WAITING',
+  'CONNECTING', 'DISCLOSURE', 'CONSENTED', 'WARMUP',
+];
+
+// Once an assessment exists the interview is over. Re-running finalisation
+// minted a fresh assessment version and new report/transcript artifacts every
+// time it was called, which is both evidence tampering and cost amplification.
+const FINALIZABLE_STATES = [...LIVE_STATES, 'CLOSING', 'PROCESSING'];
+
 // Terminal status stamped on an invitation once its interview finalises, so the
 // same link cannot restart or extend a finished interview.
 export const INVITATION_CONSUMED = 'consumed';
@@ -107,7 +120,16 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   // portal + recruiter flows. "Start" converges every valid entry point to the
   // live ASSESSING state; the opening disclosure/warmup turns are still emitted
   // by the conversation runtime so the candidate always gets them.
-  if (!['ASSESSING', 'CANDIDATE_QUESTIONS'].includes(session.state)) {
+  // Only states that precede the interview may be converged to live. Previously
+  // this reset ANY state, so REVIEW_READY / HUMAN_REVIEWED / CLOSED / CANCELLED
+  // / MANUAL_HANDOFF could all be dragged back to ASSESSING — reopening a
+  // finished interview and letting new turns rewrite the evidence behind a
+  // decision a human had already made. That also defeated the turn-state guard
+  // below, since the guard only checks the state this function could reset.
+  if (!LIVE_STATES.includes(session.state)) {
+    if (!STARTABLE_STATES.includes(session.state)) {
+      throw new HttpError(409, `This interview cannot be started from its current state (${session.state}).`);
+    }
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: 'ASSESSING' } });
   }
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
@@ -153,6 +175,15 @@ export async function submitCandidateTurn(sessionId: string, text: string, timin
 /** Close the interview, run the independent evaluator and persist the assessment. */
 export async function finalizeInterview(sessionId: string): Promise<{ assessmentId: string }> {
   const { session, profile, turns } = await loadContext(sessionId);
+  if (!FINALIZABLE_STATES.includes(session.state)) {
+    const existing = await prisma.assessmentVersion.findFirst({
+      where: { sessionId }, orderBy: { version: 'desc' }, select: { id: true },
+    });
+    // Idempotent: hand back the assessment that already exists rather than
+    // minting another version and another set of artifacts.
+    if (existing) return { assessmentId: existing.id };
+    throw new HttpError(409, `This interview cannot be finalised from its current state (${session.state}).`);
+  }
   // Transition CLOSING -> PROCESSING.
   if (session.state === 'ASSESSING' || session.state === 'CANDIDATE_QUESTIONS') {
     if (session.state === 'ASSESSING') { await setState(sessionId, 'ASSESSING', 'CANDIDATE_QUESTIONS'); }

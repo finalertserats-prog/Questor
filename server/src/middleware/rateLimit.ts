@@ -12,11 +12,24 @@ interface Bucket { count: number; resetAt: number }
 const buckets = new Map<string, Bucket>();
 let lastSweep = Date.now();
 
+// Keys can be attacker-chosen (an invitation token in the path), so expiry-only
+// cleanup is not enough: a flood of random tokens creates a bucket each and the
+// map grows until the window rolls. Cap the map and evict oldest-first.
+const MAX_BUCKETS = 50_000;
+
 function sweep(now: number) {
-  // Amortised cleanup so the map cannot grow without bound.
-  if (now - lastSweep < 60_000) return;
-  lastSweep = now;
-  for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+  if (now - lastSweep >= 60_000) {
+    lastSweep = now;
+    for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
+  }
+  if (buckets.size <= MAX_BUCKETS) return;
+  // Map preserves insertion order, so the head is the oldest window.
+  const excess = buckets.size - MAX_BUCKETS;
+  let removed = 0;
+  for (const k of buckets.keys()) {
+    buckets.delete(k);
+    if (++removed >= excess) break;
+  }
 }
 
 export interface RateLimitOptions {

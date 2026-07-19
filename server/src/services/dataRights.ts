@@ -118,6 +118,16 @@ export async function eraseCandidate(o: {
 /**
  * Delete artifacts whose retention window has passed (storage limitation).
  * Returns the number removed. Safe to run repeatedly.
+ *
+ * SCOPE LIMIT — read before relying on this for compliance. This purges
+ * `Artifact` rows only. The canonical transcript lives in `Turn.text`, and
+ * candidate personal data also sits in `Candidate`, `CandidateProfileVersion.rawText`,
+ * `AssessmentVersion.resultJson` and `HumanReview.comments`. None of those are
+ * touched here, so deleting the transcript artifact does NOT delete the
+ * transcript. Storage limitation under GDPR Art. 5(1)(e) and DPDP s.8 is
+ * therefore only partly enforced; erasing a specific candidate
+ * (`eraseCandidate`) is currently the only complete deletion path. Closing this
+ * needs a retention policy per session, not per artifact.
  */
 export async function purgeExpiredArtifacts(now = new Date()): Promise<number> {
   // retentionDays is per-artifact; SQLite cannot express "createdAt + n days"

@@ -4,7 +4,7 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { verifyToken } from '../services/auth.js';
-import { startInterview, submitCandidateTurn, finalizeInterview } from './interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 
 // The credential is kept after the handshake, not just the identity it proved:
@@ -48,6 +48,10 @@ async function loadInvitation(token: string) {
   });
   if (!inv) return null;
   if (inv.expiresAt && inv.expiresAt < new Date()) return null;
+  // A consumed invitation must not authenticate. Checking only existence and
+  // expiry let a finished interview be reopened over the socket: the credential
+  // still resolved, and `start` would then converge the session back to live.
+  if (inv.status === INVITATION_CONSUMED) return null;
   return inv;
 }
 
@@ -186,6 +190,12 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
       try {
         const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId));
         if (!session) { ack?.({ error: DENIED }); return; }
+        // Candidates must not be able to force assessment. Otherwise they could
+        // connect, start, and immediately finalise — skipping the interview and
+        // producing an assessment from no evidence that HR would read as a
+        // system-generated result. Finalisation happens automatically when the
+        // interviewer signs off, or is driven by a recruiter.
+        if (socket.data.auth?.kind !== 'user') { ack?.({ error: DENIED }); return; }
         const { assessmentId } = await finalizeInterview(session.id);
         io.to(session.id).emit('assessment_ready', { assessmentId });
         ack?.({ ok: true, assessmentId });
