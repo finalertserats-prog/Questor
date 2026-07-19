@@ -135,7 +135,12 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   // below, since the guard only checks the state this function could reset.
   if (!LIVE_STATES.includes(session.state)) {
     if (!STARTABLE_STATES.includes(session.state)) {
-      throw new HttpError(409, `This interview cannot be started from its current state (${session.state}).`);
+      // Candidate-facing. An internal state name reads as a crash to the person
+      // it is shown to, and MANUAL_HANDOFF in particular means "a human is
+      // coming" — which is reassuring information delivered as an error.
+      throw new HttpError(409, session.state === 'MANUAL_HANDOFF'
+        ? 'You asked to be interviewed by a person instead. Our team has your request and will be in touch — there is nothing more to do here. If you would rather continue with the AI interview after all, reply to your invitation email and we will reopen it.'
+        : 'This interview is not open right now. If you think that is wrong, reply to your invitation email and we will look into it.');
     }
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: 'ASSESSING' } });
   }

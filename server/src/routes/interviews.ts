@@ -195,6 +195,35 @@ interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyn
 // Schedule (FR-013)
 //
 /**
+ * Return a handed-off interview to the candidate.
+ *
+ * MANUAL_HANDOFF was a one-way door: a candidate who asked for a human — or who
+ * typed a stray character into that box — could never get back, and neither
+ * could a recruiter without direct database access. That is the wrong shape for
+ * a state a CANDIDATE can enter by accident, and it left a real person locked
+ * out of an interview they wanted.
+ *
+ * Restores to CONSENTED, which is where they were: consent is already recorded,
+ * so re-collecting it would be theatre. The reason is required and audited,
+ * because reversing an accommodation request is exactly the kind of decision
+ * that should be attributable.
+ */
+interviewsRouter.post('/:id/reopen', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
+  const { reason } = z.object({ reason: z.string().min(10, 'Say why this is being reopened.') }).parse(req.body);
+  if (session.state !== 'MANUAL_HANDOFF') {
+    throw new HttpError(409, `Only an interview handed to a human can be reopened; this one is ${session.state}.`);
+  }
+  await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'CONSENTED' } });
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
+    action: 'interview.reopened_from_handoff', entityType: 'InterviewSession', entityId: session.id,
+    after: { from: 'MANUAL_HANDOFF', to: 'CONSENTED', reason },
+  });
+  res.json({ reopened: true, state: 'CONSENTED' });
+}));
+
+/**
  * Resend an existing invitation.
  *
  * Separate from /invite because that one only accepts PROVISIONED — once a

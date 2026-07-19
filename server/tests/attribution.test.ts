@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Competency, RoleSuccessProfile, TurnRecord } from '../src/domain/types.js';
 import type { LlmMessage } from '../src/providers/llm/types.js';
 
@@ -87,7 +87,15 @@ beforeEach(() => {
   script.attribution = '';
   script.seen = [];
   _resetLlm();
+  // Semantic attribution is OFF by default in the product, because it is
+  // additive-only and can only ever lift the evidence-coverage safety cap —
+  // measured on a salted transcript it took coverage from a correct 42% back to
+  // a flattering 100%. These tests exercise that path deliberately, so they opt
+  // in explicitly rather than depending on whatever the default happens to be.
+  vi.stubEnv('EVIDENCE_ATTRIBUTION', 'semantic');
 });
+
+afterEach(() => { vi.unstubAllEnvs(); });
 
 // ---------------------------------------------------------------------------
 
@@ -367,5 +375,31 @@ describe('one answer evidencing several competencies is not independent corrobor
 
     const conf = (a: typeof exclusive) => a.competencies.find((c) => c.id === 'leadership')?.confidence ?? 0;
     expect(conf(shared)).toBeLessThan(conf(exclusive));
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// The default must stay safe.
+//
+// Semantic attribution is additive-only and evidenceCoverage is a brake in
+// decideRecommendation, so enabling it can only ever release that brake. On a
+// salted transcript (one content-free answer, three identical filler answers)
+// it moved coverage from a correct 42% to a flattering 100% and the
+// recommendation from CONSIDER to PROCEED. Until an agreement study says
+// otherwise, shipping it on by default would be a regression in the direction
+// that harms candidates least visibly.
+describe('default attribution mode', () => {
+  it('uses slot attribution unless semantic is explicitly enabled', async () => {
+    vi.unstubAllEnvs();
+    vi.stubEnv('EVIDENCE_ATTRIBUTION', '');
+    script.mode = 'attribute';
+    script.attribution = JSON.stringify({ mappings: [{ t: 0, c: [1], conf: [0.99] }] });
+
+    const result = await attributeEvidence({ turns: [LEADERSHIP_UNDER_DEBUGGING], competencies: COMPETENCIES, sessionId: 's-default' });
+
+    // No LLM call at all, and evidence stays on the slot it was asked under.
+    expect(script.seen.length).toBe(0);
+    expect(result.mode).toBe('slot');
   });
 });

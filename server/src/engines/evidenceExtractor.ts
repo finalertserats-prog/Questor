@@ -125,6 +125,36 @@ export async function attributeEvidence(opts: {
   const slot = slotAttribution(answers, competencies);
   if (answers.length === 0 || competencies.length === 0) return slot;
 
+  // OFF BY DEFAULT — semantic attribution is a measured regression in the
+  // direction that harms candidates least visibly.
+  //
+  // It was built to fix genuine under-attribution: an answer given under one
+  // question could evidence another, and slot mapping missed it, suppressing a
+  // strong candidate to 29% coverage. It does fix that. But it is ADDITIVE and
+  // never removes a span, and `decideRecommendation` uses evidenceCoverage as a
+  // brake (CONSIDER below 0.4, and on any must-pass NEE). So the change can only
+  // ever release that brake, never apply it.
+  //
+  // Measured on the same salted transcript — one content-free answer and three
+  // identical filler answers:
+  //     slot-based:   CONSIDER, 42% coverage, 7 not-enough-evidence
+  //     semantic:     PROCEED,  100% coverage, 85% confidence
+  // Filler fans out across competencies and the safety cap lifts. That is the
+  // exact failure rubric grading was introduced to fix, reintroduced one layer
+  // upstream.
+  //
+  // The intended safeguard does not hold either: the 1/sqrt(fan-out) discount
+  // multiplies `confidence` only, and no decision reads confidence. And the
+  // "grader still judges relevance" defence assumes two independent checks,
+  // when attributor and grader are the same model answering nearly the same
+  // question — their errors correlate.
+  //
+  // Enable with EVIDENCE_ATTRIBUTION=semantic to develop against it. Do not
+  // enable it for real candidates until the salted transcript returns to
+  // roughly 42% coverage and a test exists in which the grader REFUSES an
+  // over-attributed span.
+  if (process.env.EVIDENCE_ATTRIBUTION !== 'semantic') return slot;
+
   const mappings = await requestSemanticAttribution({ answers, competencies, sessionId: opts.sessionId });
   if (!mappings) return slot; // LLM disabled, failed, or unusable output.
 

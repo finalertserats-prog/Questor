@@ -4,10 +4,32 @@ export function Badge({ children, kind }: { children: ReactNode; kind?: 'green' 
   return <span className={`badge ${kind ?? 'gray'}`}>{children}</span>;
 }
 
+/**
+ * The AI recommendation badge.
+ *
+ * The caveat lives HERE rather than on each page because this is the single
+ * sink every recommendation flows through — the dashboard, the interview list
+ * and the interview detail all render it, and those lists are where the score
+ * actually does its triage work. A reviewer scanning a column of PROCEED /
+ * DO NOT PROGRESS badges sorts by them and may never open the detail view that
+ * carries the full validation notice. Putting the marker on the badge means a
+ * new screen cannot display a recommendation without it.
+ *
+ * The asterisk is deliberately quiet: loud enough to prompt "what's that?",
+ * quiet enough not to be tuned out by the tenth row.
+ */
 export function recBadge(rec?: string | null) {
   if (!rec) return <Badge kind="gray">—</Badge>;
   const kind = rec === 'PROCEED' ? 'green' : rec === 'CONSIDER' ? 'amber' : 'red';
-  return <Badge kind={kind as any}>{rec.replace(/_/g, ' ')}</Badge>;
+  return (
+    <span
+      title="This score comes from an instrument that has not been validated against human judgement. Open the assessment and judge the evidence yourself before acting on it."
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}
+    >
+      <Badge kind={kind as any}>{rec.replace(/_/g, ' ')}</Badge>
+      <abbr style={{ textDecoration: 'none', opacity: 0.7, fontSize: '0.85em' }} aria-label="unvalidated score">*</abbr>
+    </span>
+  );
 }
 
 export function stateBadge(state: string) {

@@ -15,6 +15,16 @@ export function renderReportMarkdown(opts: {
   lines.push(`**Role:** ${opts.roleTitle}`);
   lines.push(`**Recommendation:** ${recLabel}  |  **Confidence:** ${pct(a.confidence)}  |  **Evidence coverage:** ${pct(a.evidenceCoverage)}  |  **Overall:** ${a.overallScore}/100`);
   lines.push('');
+  // Welded to the recommendation line, not filed under Limitations at the
+  // bottom. This artifact is what gets pasted into an ATS or forwarded to a
+  // hiring manager — the number travels and the on-screen warning does not, so
+  // the person most likely to act on the score was the person least likely to
+  // ever see the caveat. Anyone reading only the first three lines still reads
+  // this one.
+  lines.push('> **This recommendation comes from an instrument that has not been validated against human judgement.**');
+  lines.push('> Agreement between these scores and blind human review has not been established. Treat this as one');
+  lines.push('> opinion to argue with, not a measurement. A person must read the transcript and decide.');
+  lines.push('');
   lines.push('## Executive summary');
   lines.push(a.summary);
   lines.push('');

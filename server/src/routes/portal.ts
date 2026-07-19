@@ -133,11 +133,31 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   const body = consentSchema.parse(req.body);
   if (!body.accepted) throw new HttpError(400, 'Consent to proceed is required, or choose the human-alternative path.');
 
-  if (body.accommodationRequest?.trim()) {
-    // BRD exception: stop standard flow, record minimally, hand off.
-    await prisma.interviewSession.update({ where: { id: inv.sessionId }, data: { state: 'MANUAL_HANDOFF' } });
-    await logAudit({ tenantId: inv.session.tenantId, actorType: 'user', actorId: 'candidate', action: 'accommodation.requested', entityType: 'InterviewSession', entityId: inv.sessionId });
-    return res.json({ ok: true, handoff: true, message: 'Your accommodation request has been recorded and routed to our team. Someone will contact you.' });
+  const accommodation = body.accommodationRequest?.trim();
+  // A real request, not a stray keystroke. A candidate who typed one character
+  // was previously converted to a handoff with no way back — a one-way door
+  // triggered by an accident.
+  if (accommodation && accommodation.length >= 10) {
+    // PERSIST WHAT THEY ASKED FOR. The previous version set the state and logged
+    // that "an accommodation was requested" while discarding the request itself,
+    // so the human meant to follow up had nothing to follow up on — the one
+    // thing the handoff exists to deliver.
+    const consent = parseJson<Record<string, unknown>>(inv.session.consentJson, {});
+    consent.accommodationRequest = accommodation;
+    consent.accommodationRequestedAt = new Date().toISOString();
+    await prisma.interviewSession.update({
+      where: { id: inv.sessionId },
+      data: { state: 'MANUAL_HANDOFF', consentJson: JSON.stringify(consent) },
+    });
+    await logAudit({
+      tenantId: inv.session.tenantId, actorType: 'user', actorId: 'candidate',
+      action: 'accommodation.requested', entityType: 'InterviewSession', entityId: inv.sessionId,
+      after: { request: accommodation },
+    });
+    return res.json({
+      ok: true, handoff: true,
+      message: 'Thanks — your request has been sent to our team and someone will contact you to arrange an alternative. You do not need to do anything else.',
+    });
   }
 
   const consent = parseJson<any>(inv.session.consentJson, {});
