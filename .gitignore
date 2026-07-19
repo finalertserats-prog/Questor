@@ -23,3 +23,6 @@ tmp/
 playwright-report/
 test-results/
 artifacts/
+
+# Local AI-harness session memory (not part of the project)
+notebook/
