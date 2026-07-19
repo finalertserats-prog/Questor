@@ -57,6 +57,15 @@ export interface AgentTurnOut {
   kind: string;
   state: string;
   done: boolean;
+  /**
+   * The candidate asked to stop, as opposed to reaching the end.
+   *
+   * Both end the session, but only one of them may be assessed. Callers must
+   * branch on this rather than on `done`: a withdrawn interview that goes
+   * through finalisation produces a score from a partial transcript, and the
+   * candidate was just told nothing they said would count against them.
+   */
+  withdrawn: boolean;
 }
 
 async function loadContext(sessionId: string) {
@@ -116,10 +125,48 @@ async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
   // 'withdrawn' ends the session like a sign-off: the candidate asked to stop,
   // so the next thing that happens must not be another question.
   const done = utter.kind === 'signoff' || utter.kind === 'safety' || utter.kind === 'withdrawn';
+  // Safety stops and withdrawals both end the conversation because the person
+  // asked to leave — neither is a completed interview, and neither may be
+  // scored.
+  const withdrawn = utter.kind === 'withdrawn' || utter.kind === 'safety';
   return {
     turnId: agentTurn.id, index: agentTurn.index, text: utter.text, competencyId: utter.competencyId,
-    kind: utter.kind, state: session.state, done,
+    kind: utter.kind, state: session.state, done, withdrawn,
   };
+}
+
+/**
+ * Close an interview the candidate chose to leave, WITHOUT assessing it.
+ *
+ * The alternative — running finalisation — produced, on a real withdrawal:
+ * state REVIEW_READY, one assessment, "CONSIDER 0/100". A person who exercised
+ * their right to stop appeared in the recruiter's queue looking like a bad
+ * candidate rather than an incomplete interview, moments after being told
+ * nothing they said would count against them. Scoring a partial transcript is
+ * not merely unfair, it is worse than silence: 0/100 reads as a judgement.
+ *
+ * The transcript is retained — the candidate may want to resume, and the
+ * accommodation follow-up needs the context — but no AssessmentVersion is
+ * created, so there is nothing for a reviewer to anchor on.
+ */
+export async function withdrawInterview(sessionId: string, reason: 'candidate_withdrew' | 'safety_stop'): Promise<void> {
+  const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { tenantId: true, state: true } });
+  if (!session) return;
+  if (['CANDIDATE_WITHDREW', 'POLICY_STOP', 'CLOSED'].includes(session.state)) return; // already closed
+
+  await prisma.interviewSession.update({
+    where: { id: sessionId },
+    data: { state: reason === 'safety_stop' ? 'POLICY_STOP' : 'CANDIDATE_WITHDREW', completedAt: new Date() },
+  });
+  // The link is not consumed: a candidate who stopped may be invited back, and
+  // burning it would force a recruiter to reissue just to say "take your time".
+  await logAudit({
+    tenantId: session.tenantId, actorType: 'user', actorId: 'candidate',
+    action: reason === 'safety_stop' ? 'interview.safety_stopped' : 'interview.withdrawn',
+    entityType: 'InterviewSession', entityId: sessionId,
+    after: { assessed: false, note: 'Ended at the candidate\'s request; no assessment generated.' },
+  });
+  logger.info({ sessionId, reason }, 'Interview ended at candidate request — not assessed');
 }
 
 /** Begin the assessed conversation: move to ASSESSING and emit the opening. */

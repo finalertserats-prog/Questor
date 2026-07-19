@@ -4,7 +4,7 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { verifyToken } from '../services/auth.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, INVITATION_CONSUMED } from './interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 
 // The credential is kept after the handshake, not just the identity it proved:
@@ -175,7 +175,10 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         socket.to(session.id).emit('candidate_turn', { text: payload.text });
         const turn = await submitCandidateTurn(session.id, payload.text, payload);
         io.to(session.id).emit('agent_turn', turn);
-        if (turn.done) {
+        if (turn.withdrawn) {
+          // Ended at the candidate's request — closed, never scored.
+          await withdrawInterview(session.id, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+        } else if (turn.done) {
           const { assessmentId } = await finalizeInterview(session.id);
           io.to(session.id).emit('assessment_ready', { assessmentId });
         }

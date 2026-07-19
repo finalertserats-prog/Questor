@@ -16,7 +16,7 @@ import {
   audioBytesMatchMimeType,
 } from '../providers/speech.js';
 import { logger } from '../logger.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, INVITATION_CONSUMED } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from '../realtime/interviewEngine.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 
@@ -198,7 +198,15 @@ portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
   const { text, startMs, endMs } = z.object({ text: z.string().min(1).max(MAX_TURN_TEXT_CHARS), startMs: z.number().optional(), endMs: z.number().optional() }).parse(req.body);
   const turn = await submitCandidateTurn(inv.sessionId, text, { startMs, endMs });
   let assessmentReady = false;
-  if (turn.done) { await finalizeInterview(inv.sessionId); assessmentReady = true; }
+  // Withdrawal ends the interview WITHOUT assessing it. Finalising here scored
+  // a real candidate 0/100 seconds after telling him nothing he said would
+  // count against him.
+  if (turn.withdrawn) {
+    await withdrawInterview(inv.sessionId, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+  } else if (turn.done) {
+    await finalizeInterview(inv.sessionId);
+    assessmentReady = true;
+  }
   res.json({ turn, assessmentReady });
 }));
 

@@ -14,7 +14,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
-import { startInterview, submitCandidateTurn, finalizeInterview } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview } from '../realtime/interviewEngine.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -312,7 +312,9 @@ interviewsRouter.post('/:id/turn', requireCapability('interview:drive'), asyncHa
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.turn.by_recruiter', entityType: 'InterviewSession', entityId: req.params.id });
   const turn = await submitCandidateTurn(req.params.id, text);
   let assessmentId: string | null = null;
-  if (turn.done) ({ assessmentId } = await finalizeInterview(req.params.id));
+  if (turn.withdrawn) {
+    await withdrawInterview(req.params.id, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+  } else if (turn.done) ({ assessmentId } = await finalizeInterview(req.params.id));
   res.json({ turn, assessmentId });
 }));
 interviewsRouter.post('/:id/finalize', requireCapability('interview:drive'), asyncHandler(async (req, res) => {
