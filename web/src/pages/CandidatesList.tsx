@@ -29,8 +29,24 @@ const TERMINAL_STATES = new Set([
   'CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW',
 ]);
 
+/**
+ * States where the candidate has been invited but has not yet begun. Nothing is
+ * happening and nothing is stuck — someone simply has not turned up yet.
+ */
+const NOT_STARTED_STATES = new Set(['PROVISIONED', 'INVITED']);
+
 export function isInFlight(state: string | null | undefined): boolean {
   return !!state && !TERMINAL_STATES.has(state);
+}
+
+/** Invited, not yet started. */
+export function isAwaitingCandidate(state: string | null | undefined): boolean {
+  return !!state && NOT_STARTED_STATES.has(state);
+}
+
+/** Actually part-way through an interview. */
+export function isUnderway(state: string | null | undefined): boolean {
+  return isInFlight(state) && !isAwaitingCandidate(state);
 }
 
 /**
@@ -43,10 +59,15 @@ export function isInFlight(state: string | null | undefined): boolean {
  */
 export function interviewCell(iv: LatestInterview | null) {
   if (!iv) return <span className="muted">—</span>;
+  // "in progress" against an INVITED candidate was wrong and actively
+  // misleading: it read as though ten people were mid-interview when nobody had
+  // started. The two states need different words because they need different
+  // actions — one is chased, the other is only waited on.
   return (
     <span className="row" style={{ gap: 6 }}>
       {stateBadge(iv.state)}
-      {isInFlight(iv.state) && <span className="inflight-note">in progress</span>}
+      {isAwaitingCandidate(iv.state) && <span className="inflight-note">not started yet</span>}
+      {isUnderway(iv.state) && <span className="inflight-note">in progress</span>}
     </span>
   );
 }
@@ -76,7 +97,11 @@ export function CandidatesList() {
 
   if (loading) return <div className="muted">Loading…</div>;
 
-  const stuck = candidates.filter((c) => isInFlight(c.latestInterview?.state)).length;
+  // Counted apart because they need different action. Someone who never started
+  // gets a nudge; someone who stopped half-way needs looking at, and may have
+  // hit a fault worth knowing about.
+  const notStarted = candidates.filter((c) => isAwaitingCandidate(c.latestInterview?.state)).length;
+  const underway = candidates.filter((c) => isUnderway(c.latestInterview?.state)).length;
 
   return (
     <div>
@@ -87,10 +112,21 @@ export function CandidatesList() {
 
       {error && <Banner kind="error">{error}</Banner>}
 
-      {stuck > 0 && (
+      {notStarted > 0 && (
         <Banner kind="info">
-          {stuck === 1 ? '1 candidate has' : `${stuck} candidates have`} an interview still in
-          progress — they may be waiting on an invitation or have stopped part-way through.
+          {notStarted === 1
+            ? '1 candidate has been invited but has not started yet.'
+            : `${notStarted} candidates have been invited but have not started yet.`}
+          {' '}Nothing is wrong — they have not opened their interview.
+        </Banner>
+      )}
+
+      {underway > 0 && (
+        <Banner kind="info">
+          {underway === 1
+            ? '1 candidate started an interview and has not finished it.'
+            : `${underway} candidates started an interview and have not finished it.`}
+          {' '}Worth opening — they may have stopped part-way, or hit a problem.
         </Banner>
       )}
 

@@ -53,13 +53,34 @@ export interface Recognizer {
   start(): void;
   stop(): void;
   abort(): void;
+  /** Everything heard so far, finalised or not. */
+  text(): string;
 }
+
+/**
+ * How long the candidate may be silent before we stop restarting the recognizer
+ * and ask whether they are still there.
+ *
+ * This deliberately does NOT submit the answer. An earlier version did, on the
+ * reasoning that a long silence means they finished — but that is the same bug
+ * it was meant to fix, just delayed: a candidate reading notes or thinking for
+ * a minute had a half-formed answer sent and the interview moved on. Silence is
+ * not consent to submit. Only the candidate ends their turn.
+ */
+const SILENCE_PROMPT_MS = 60000;
+
+/** Stop an unbounded restart loop when the microphone is dead rather than quiet. */
+const MAX_CONSECUTIVE_RESTARTS = 20;
 
 export function createRecognizer(handlers: {
   onFinal: (text: string) => void;
   onInterim?: (text: string) => void;
   onEnd?: () => void;
   onError?: (e: string) => void;
+  /** The candidate has gone quiet for a long time but the turn stays open. */
+  onSilence?: () => void;
+  /** Capture has stopped and cannot be recovered; the turn is still open. */
+  onDead?: (reason: string) => void;
 }): Recognizer | null {
   if (!sttSupported()) return null;
   const Ctor = AnyWindow.SpeechRecognition || AnyWindow.webkitSpeechRecognition;
@@ -67,7 +88,31 @@ export function createRecognizer(handlers: {
   rec.lang = 'en-US';
   rec.continuous = true;
   rec.interimResults = true;
+
+  // Text confirmed across ALL recognition sessions for this turn. A restarted
+  // session numbers its results from zero and knows nothing of the previous
+  // one, so anything already heard has to be banked here before restarting or
+  // it is either lost or re-counted.
+  let committed = '';
+  // The current session's finalised text.
   let finalBuf = '';
+  // Interim text is kept because it is frequently the ONLY text there is.
+  // Chrome may hold a whole sentence as interim for seconds before finalising
+  // it, so a candidate who finishes speaking and immediately clicks "Done
+  // answering" has an empty finalBuf. Submitting that dropped their answer and
+  // made the button look broken.
+  let interimBuf = '';
+  // Distinguishes "the candidate said they were finished" from "Chrome ended
+  // the session by itself", which are the same `onend` event but must not have
+  // the same consequence.
+  let finishing = false;
+  let dead = false;
+  let lastSpeechAt = Date.now();
+  let restarts = 0;
+
+  const join = (...parts: string[]) => parts.join(' ').replace(/\s+/g, ' ').trim();
+  const collected = () => join(committed, finalBuf, interimBuf);
+
   rec.onresult = (event: any) => {
     let interim = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -75,19 +120,75 @@ export function createRecognizer(handlers: {
       if (event.results[i].isFinal) finalBuf += t + ' ';
       else interim += t;
     }
-    if (interim) handlers.onInterim?.(finalBuf + interim);
+    interimBuf = interim;
+    lastSpeechAt = Date.now();
+    restarts = 0; // speech is flowing; this is a live microphone
+    handlers.onInterim?.(collected());
   };
-  rec.onerror = (e: any) => handlers.onError?.(e.error ?? 'speech-error');
+
+  rec.onerror = (e: any) => {
+    const err = e.error ?? 'speech-error';
+    // `no-speech` is Chrome reporting a quiet moment, not a fault. Letting it
+    // through stopped the answer every time the candidate paused. Chrome always
+    // follows it with `onend`, which restarts us.
+    if (err === 'no-speech') return;
+    // `aborted` is our own stop()/abort() completing — not a fault either.
+    if (err === 'aborted') return;
+    // Anything else means capture is genuinely broken. Do NOT close the turn:
+    // the candidate still has the recorded-audio fallback and the text box, and
+    // ending their answer here would submit whatever fragment happened to exist.
+    dead = true;
+    handlers.onError?.(err);
+    handlers.onDead?.(err);
+  };
+
   rec.onend = () => {
-    const text = finalBuf.trim();
+    // Chrome ends a `continuous` session on its own after a few seconds of
+    // silence. Treating that as the end of the answer is what cut candidates
+    // off mid-thought: a pause to think became a submitted answer and the
+    // interviewer moved to the next question. Restart instead, banking what has
+    // been heard, so pausing costs nothing.
+    if (!finishing && !dead) {
+      const quietFor = Date.now() - lastSpeechAt;
+      if (quietFor < SILENCE_PROMPT_MS && restarts < MAX_CONSECUTIVE_RESTARTS) {
+        committed = join(committed, finalBuf, interimBuf);
+        finalBuf = '';
+        interimBuf = '';
+        restarts += 1;
+        try { rec.start(); return; } catch { /* fall through */ }
+      }
+      // Long silence, or the recognizer will not restart. Either way the turn
+      // stays OPEN — silence is not an answer. Tell the caller so it can ask.
+      committed = join(committed, finalBuf, interimBuf);
+      finalBuf = '';
+      interimBuf = '';
+      dead = restarts >= MAX_CONSECUTIVE_RESTARTS;
+      if (dead) handlers.onDead?.('recognizer-unavailable');
+      else handlers.onSilence?.();
+      return;
+    }
+
+    const text = collected();
+    committed = '';
     finalBuf = '';
-    if (text) handlers.onFinal(text);
+    interimBuf = '';
+    finishing = false;
+    // Always call, even when empty: the caller has a recorded-audio fallback
+    // and needs the chance to use it. Staying silent here is what made "Done
+    // answering" do nothing at all.
+    handlers.onFinal(text);
     handlers.onEnd?.();
   };
+
   return {
-    start: () => { finalBuf = ''; try { rec.start(); } catch { /* already started */ } },
-    stop: () => { try { rec.stop(); } catch { /* noop */ } },
-    abort: () => { try { rec.abort(); } catch { /* noop */ } },
+    start: () => {
+      committed = ''; finalBuf = ''; interimBuf = '';
+      finishing = false; dead = false; restarts = 0; lastSpeechAt = Date.now();
+      try { rec.start(); } catch { /* already started */ }
+    },
+    stop: () => { finishing = true; try { rec.stop(); } catch { /* noop */ } },
+    abort: () => { finishing = true; try { rec.abort(); } catch { /* noop */ } },
+    text: collected,
   };
 }
 
@@ -248,5 +349,52 @@ export async function createMicMeter(): Promise<MicMeter | null> {
     };
   } catch {
     return null; // Permission denied or no device: the tile just stays static.
+  }
+}
+
+/**
+ * Speak a check-in when the candidate has gone quiet.
+ *
+ * The words come from the server so this cannot be used to synthesize arbitrary
+ * text at the operator's expense — the client only chooses which of a fixed set
+ * to use. The text comes back in a header so it can be captioned and, when
+ * there is no server voice, spoken locally in the fallback voice.
+ *
+ * Resolves when the audio has finished, so the caller knows when it is safe to
+ * listen again without recording the interviewer talking over the candidate.
+ */
+export async function speakNudge(token: string, index: number): Promise<string> {
+  let text = '';
+  try {
+    const res = await fetch(`/api/portal/${token}/nudge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index }),
+    });
+    const header = res.headers.get('X-Nudge-Text');
+    if (header) text = decodeURIComponent(header);
+
+    if (res.status === 204 || !res.ok) {
+      if (text) await new Promise<void>((done) => speak(text, done));
+      return text;
+    }
+
+    const url = URL.createObjectURL(await res.blob());
+    stopSpeaking();
+    const audio = new Audio(url);
+    currentAudio = audio;
+    await new Promise<void>((done) => {
+      let fired = false;
+      const finish = () => { if (fired) return; fired = true; URL.revokeObjectURL(url); done(); };
+      audio.onended = finish;
+      audio.onerror = finish;
+      void audio.play().catch(finish);
+    });
+    return text;
+  } catch {
+    // A failed check-in must never end the turn. Silence is recoverable; a
+    // dropped answer is not.
+    if (text) await new Promise<void>((done) => speak(text, done));
+    return text;
   }
 }

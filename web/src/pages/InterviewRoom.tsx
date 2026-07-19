@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import {
-  speakTurn, stopAllSpeech, createRecognizer, createMicMeter,
+  speakTurn, speakNudge, stopAllSpeech, createRecognizer, createMicMeter,
   startRecording, transcribeOnServer,
   sttSupported, ttsSupported, type Recognizer, type MicMeter, type Recording,
 } from '../speech';
@@ -103,6 +103,14 @@ export function InterviewRoom() {
   const recognizerFailedRef = useRef(false);
   const startTimeRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // One answer per turn. The recognizer's end event and the "Done answering"
+  // watchdog can both fire for the same answer, and without this the candidate
+  // submits twice — the second one empty, which reads as a non-answer.
+  const turnClosedRef = useRef(false);
+  const doneWatchdogRef = useRef<number | null>(null);
+  // Escalates the check-in wording within a turn, and resets with the turn so
+  // the next question starts from the gentlest phrasing again.
+  const silenceCountRef = useRef(0);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`)
@@ -122,7 +130,14 @@ export function InterviewRoom() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  useEffect(() => () => { meterRef.current?.stop(); stopAllSpeech(); recognizerRef.current?.abort(); }, []);
+  useEffect(() => () => {
+    meterRef.current?.stop();
+    stopAllSpeech();
+    recognizerRef.current?.abort();
+    // Otherwise a pending watchdog fires after unmount and sets state on a
+    // component that is gone.
+    if (doneWatchdogRef.current !== null) window.clearTimeout(doneWatchdogRef.current);
+  }, []);
 
   const addMsg = (m: Msg) => setMsgs((prev) => [...prev, m]);
 
@@ -149,6 +164,7 @@ export function InterviewRoom() {
       sayAndListen(res.turn);
     } catch (e) {
       // Keep the text so they can retry rather than reconstruct what they said.
+      turnClosedRef.current = false;
       setTyped(text);
       setTextMode(true);
       setErr(`${(e as Error).message} — your answer was not sent. It's in the box below; press Send to try again.`);
@@ -157,10 +173,38 @@ export function InterviewRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  /**
+   * Schranders checks in after a long silence, then goes back to listening.
+   *
+   * Recognition is stopped while the check-in plays, or the microphone would
+   * transcribe the interviewer's own words into the candidate's answer.
+   */
+  const checkInOnSilence = useCallback(async () => {
+    if (turnClosedRef.current) return;
+    const n = Math.min(silenceCountRef.current, 2);
+    silenceCountRef.current += 1;
+
+    recognizerRef.current?.abort();
+    recognizerRef.current = null;
+    setPhase('speaking');
+
+    const said = await speakNudge(token, n);
+    if (said) addMsg({ speaker: 'agent', text: said });
+
+    // They may have finished or navigated while it was speaking.
+    if (turnClosedRef.current) return;
+    setPhase('listening');
+    void beginListening();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const beginListening = useCallback(async () => {
-    if (textMode) { setPhase('listening'); return; }
+    if (textMode) { turnClosedRef.current = false; setPhase('listening'); return; }
     setInterim('');
     setPhase('listening');
+    // A new turn is open for answering again.
+    turnClosedRef.current = false;
+    silenceCountRef.current = 0;
 
     // Always record. The recording is what gets transcribed if the browser's
     // own recognition fails — without it a `network` error loses the answer
@@ -169,13 +213,28 @@ export function InterviewRoom() {
 
     const rec = createRecognizer({
       onInterim: setInterim,
-      onFinal: (t) => void finishAnswer(t),
+      onFinal: (t) => closeTurn(t),
       onError: (e) => {
         if (e === 'no-speech') return;
         // Do not surface this as an error yet: if we captured audio, the server
         // can still transcribe it and the candidate never needs to know.
         recognizerFailedRef.current = true;
         if (!recordingRef.current) setErr(`Speech error: ${e}. You can type your answer instead.`);
+      },
+      // Long silence. Schranders speaks rather than a banner appearing: a
+      // candidate who has gone quiet is usually thinking or stuck, and a person
+      // conducting this interview would say something. A silent screen with a
+      // warning on it is the moment an interview stops feeling like one.
+      //
+      // The turn is NOT closed and nothing is submitted — this is a check-in,
+      // not a prompt to wrap up.
+      onSilence: () => { void checkInOnSilence(); },
+      // Capture is broken and will not recover. Offer the keyboard immediately
+      // rather than letting them keep talking to a microphone that is not on.
+      onDead: () => {
+        recognizerFailedRef.current = true;
+        setTextMode(true);
+        setErr('Your microphone stopped working. Please type your answer below — nothing you have said so far is lost.');
       },
     });
     if (!rec) {
@@ -209,7 +268,9 @@ export function InterviewRoom() {
       if (text) { recognizerFailedRef.current = false; void submitAnswer(text); return; }
     }
 
-    // Nothing usable from either path.
+    // Nothing usable from either path. The turn did NOT close — reopen it, or
+    // the candidate is told to try again by a screen that will ignore them.
+    turnClosedRef.current = false;
     setPhase('listening');
     setErr(recognizerFailedRef.current
       ? 'We could not hear that. Please try again, or type your answer instead.'
@@ -217,10 +278,45 @@ export function InterviewRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  /** "Done answering" — stop recognition; finishAnswer runs on its end event. */
+  /**
+   * Close the turn exactly once, whichever path got here first — the
+   * recognizer's end event or the "Done answering" watchdog.
+   */
+  const closeTurn = useCallback((text: string) => {
+    if (turnClosedRef.current) return;
+    turnClosedRef.current = true;
+    if (doneWatchdogRef.current !== null) {
+      window.clearTimeout(doneWatchdogRef.current);
+      doneWatchdogRef.current = null;
+    }
+    void finishAnswer(text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finishAnswer]);
+
+  /**
+   * "Done answering" — the candidate says the turn is over.
+   *
+   * This used to call `stop()` and trust the recognizer's end event to deliver
+   * the text. When the browser had not finalised anything yet there was no text
+   * to deliver, nothing fired, and the button did nothing at all — candidates
+   * pressed it repeatedly with no feedback. Now the text is read straight off
+   * the recognizer, with a watchdog for the case where the end event never
+   * arrives at all.
+   */
   const doneAnswering = () => {
-    if (recognizerRef.current) recognizerRef.current.stop();
-    else void finishAnswer('');
+    // Repeated presses must not each install a watchdog: only the newest id is
+    // stored, so an earlier timer would survive uncancelled and fire into a
+    // later turn.
+    if (turnClosedRef.current || doneWatchdogRef.current !== null) return;
+    const rec = recognizerRef.current;
+    if (!rec) { closeTurn(''); return; }
+    setPhase('thinking');
+    // Read the text when the watchdog FIRES, not now. Chrome often finalises a
+    // trailing phrase in the moment between the click and the end event, and
+    // capturing the snapshot here threw that phrase away — the candidate lost
+    // the last thing they said.
+    doneWatchdogRef.current = window.setTimeout(() => closeTurn(rec.text()), 1500);
+    rec.stop();
   };
 
   function sayAndListen(turn: AgentTurn) {
@@ -238,6 +334,12 @@ export function InterviewRoom() {
           meterRef.current = null;
           setMicOpen(false);
           setPhase('done');
+          // Show what was captured. A candidate who has just spoken for half an
+          // hour has no idea whether any of it registered, and asking them to
+          // trust that it did is not reasonable when the whole transcript is
+          // already here. It stays open until they close it — a timed reveal
+          // would make them race to read their own words.
+          setShowTranscript(true);
           return;
         }
         if (textMode) { setPhase('listening'); return; }
@@ -381,8 +483,12 @@ export function InterviewRoom() {
             <p className="muted">
               Your microphone is now off. Your interview has been submitted for human review: a person on
               the hiring team reads the <b>transcript</b> — the text of what you said, which is all that
-              was kept — and makes the decision. No recording of your voice exists. You can close this
-              window.
+              was kept — and makes the decision. No recording of your voice exists.
+            </p>
+            <p className="muted">
+              <b>Everything that was captured is shown on the right</b>, exactly as the reviewer will see
+              it. Take as long as you like to read it before closing this window. If something you said is
+              missing or came out wrong, reply to your invitation email and tell us — we would rather know.
             </p>
           </div>
         )}

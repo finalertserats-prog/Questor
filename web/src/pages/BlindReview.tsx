@@ -279,8 +279,8 @@ export default function BlindReview() {
                 {c.evidence.length === 0
                   ? <Banner kind="info">No transcript evidence was captured for this competency.</Banner>
                   : c.evidence.map((e) => (
-                    <blockquote key={e.turnId} style={{ borderLeft: '3px solid #888', margin: '8px 0', paddingLeft: 12 }}>
-                      <span style={{ opacity: 0.6, fontSize: 12 }}>{fmt(e.startMs)}</span>
+                    <blockquote key={e.turnId} className="evidence">
+                      <span className="stamp">{fmt(e.startMs)}</span>
                       <div>{e.quote}</div>
                     </blockquote>
                   ))}

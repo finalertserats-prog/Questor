@@ -31,8 +31,11 @@ export function Login() {
   return (
     <div className="center-screen">
       <form className="card auth-card" onSubmit={submit}>
-        <div className="logo" style={{ fontSize: 26, fontWeight: 800 }}>QUES<span style={{ color: 'var(--brand)' }}>TOR</span></div>
-        <div className="muted small" style={{ marginBottom: 16 }}>Autonomous AI First-Round Interview Agent</div>
+        <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div>
+        <div className="brand-line" aria-hidden="true" />
+        <div className="muted small" style={{ marginTop: 10, marginBottom: 18 }}>
+          First-round interview screening. You make the call.
+        </div>
         {err && <Banner kind="error">{err}</Banner>}
         {mode === 'register' && (
           <>

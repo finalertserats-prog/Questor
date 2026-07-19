@@ -481,9 +481,27 @@ async function tryLlmUtterance(
   // half-answered question rather than inferring the conversation from one
   // isolated answer. The real transcript's unacknowledged "not farmer, Pharma"
   // was invisible to a prompt that only ever saw the latest answer.
-  const recentDialogue = turns
-    .slice(-4)
-    .map((t) => `${t.speaker === 'agent' ? 'INTERVIEWER' : 'CANDIDATE'}: ${t.text.slice(0, 300)}`)
+  // The latest candidate answer is kept whole. It used to be clipped to 300
+  // characters like the rest, which cut exactly the part worth probing: a
+  // candidate who described a design in detail had the detail truncated away,
+  // so the only question the model could ask back was a generic one. You cannot
+  // ask "why that way, and was there a simpler option" about text you were
+  // never shown.
+  const window = turns.slice(-4);
+  // Found by scanning back rather than assuming it is the last entry: a
+  // transition or safety turn can follow the answer, and when it did the answer
+  // silently fell back to 300 characters -- the exact truncation this is meant
+  // to avoid, in the case where it matters most.
+  let latestCandidateIdx = -1;
+  for (let i = window.length - 1; i >= 0; i--) {
+    if (window[i].speaker === 'candidate') { latestCandidateIdx = i; break; }
+  }
+
+  const recentDialogue = window
+    .map((t, i) => {
+      const body = i === latestCandidateIdx ? t.text.slice(0, 2000) : t.text.slice(0, 300);
+      return `${t.speaker === 'agent' ? 'INTERVIEWER' : 'CANDIDATE'}: ${body}`;
+    })
     .join('\n');
 
   const result = await generateJson<{ question: string }>({
@@ -493,6 +511,12 @@ async function tryLlmUtterance(
     system:
       'You are Questor, a fair, warm, professional AI interviewer. Ask exactly ONE spoken question (1-2 sentences). ' +
       'Stay strictly on the target competency. Seek concrete evidence (situation, action, reasoning, result, learning). ' +
+      'ENGAGE WITH WHAT THEY ACTUALLY SAID. When the candidate describes a specific thing they built, chose or ' +
+      'decided, your next question should interrogate THAT decision rather than move to a fresh topic: why that ' +
+      'approach and not a simpler one, what alternative they weighed and rejected, what would break at ten times ' +
+      'the volume, what they would do differently now. Name the specific thing they mentioned — the flow, the ' +
+      'pipeline, the table, the rollout — so it is obvious you were listening. A question that could have been ' +
+      'asked before they spoke is a wasted question. ' +
       'VARY THE FORM of your questions — this is as important as their content. A real interview mixes ' +
       'behavioural examples with opinions ("what\'s overrated about X"), disagreement probes ("when did you push back"), ' +
       'grounded hypotheticals, step-by-step walkthroughs, trade-off questions and "what would you do differently". ' +

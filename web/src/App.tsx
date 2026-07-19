@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from './auth';
+import { ThemeToggle } from './components/theme';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
@@ -21,23 +22,36 @@ function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="logo">QUES<span>TOR</span></div>
-        <div className="small muted">AI Interview Agent</div>
+        <div>
+          <div className="logo">QUES<span>TOR</span></div>
+          {/* The ticked rule is the instrument's edge; it recurs under every
+              page title, which is what ties the console together. */}
+          <div className="brand-line" aria-hidden="true" />
+          <div className="small muted" style={{ marginTop: 8 }}>First-round interview screening</div>
+        </div>
+        {/* Grouped by cadence, not by entity: the top group is the daily
+            reviewing loop, the bottom is what you set up once. The old flat
+            list gave a connector settings page the same weight as the
+            candidate queue. */}
         <nav>
-          <NavLink to="/" end>▚ Dashboard</NavLink>
-          <NavLink to="/roles/new">✎ New Role</NavLink>
+          <div className="nav-group">Review</div>
+          <NavLink to="/" end>Dashboard</NavLink>
           {/* Candidates sits above "Add Candidate" because finding an existing
               one is the far more frequent errand — and for a long time it was
               the impossible one: creation had a nav entry, retrieval had none. */}
-          <NavLink to="/candidates" end>☰ Candidates</NavLink>
-          <NavLink to="/candidates/new">＋ Add Candidate</NavLink>
-          <NavLink to="/interviews">🎙 Interviews</NavLink>
-          <NavLink to="/admin">⚙ Admin & Connectors</NavLink>
+          <NavLink to="/candidates" end>Candidates</NavLink>
+          <NavLink to="/interviews">Interviews</NavLink>
+
+          <div className="nav-group">Set up</div>
+          <NavLink to="/candidates/new">Add candidate</NavLink>
+          <NavLink to="/roles/new">New role</NavLink>
+          <NavLink to="/admin">Admin &amp; connectors</NavLink>
         </nav>
         <div className="foot small muted">
-          <div>{user?.name}</div>
+          <div className="who">{user?.name}</div>
           <div>{tenant?.name}</div>
-          <a onClick={() => { logout(); nav('/login'); }} style={{ cursor: 'pointer', display: 'block', marginTop: 8 }}>Sign out</a>
+          <ThemeToggle />
+          <a onClick={() => { logout(); nav('/login'); }} style={{ cursor: 'pointer' }}>Sign out</a>
         </div>
       </aside>
       <main className="main">{children}</main>

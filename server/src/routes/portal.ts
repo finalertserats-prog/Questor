@@ -302,6 +302,57 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
 }));
 
 /**
+ * What Schranders says when a candidate has gone quiet for a long time.
+ *
+ * The phrases live here, not on the client, for the same reason `/speak` will
+ * only synthesize a stored turn: if the caller supplied the words, this would
+ * be an open text-to-speech endpoint billed to the operator. The client sends
+ * an index; the server decides what is said.
+ *
+ * They escalate. The first is a reassurance and nothing more — a candidate who
+ * is thinking should not be made to feel rushed, which is the whole risk of
+ * speaking into their silence at all. Only later do they offer a way out.
+ */
+const SILENCE_PROMPTS = [
+  'Take your time — there is no rush at all. I am still here whenever you are ready.',
+  'No hurry. If it would help, I can repeat the question, or you can type your answer instead.',
+  'I will wait. If you would rather come back to this one, just say so and we can move on.',
+];
+
+const nudgeSchema = z.object({ index: z.number().int().min(0).max(SILENCE_PROMPTS.length - 1) });
+
+portalRouter.post('/:token/nudge', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  const { index } = nudgeSchema.parse(req.body);
+  const text = SILENCE_PROMPTS[index];
+
+  // Sent as a header so the client can caption it and, when there is no server
+  // voice, speak it locally — without the phrase list having to exist twice.
+  res.setHeader('X-Nudge-Text', encodeURIComponent(text));
+  res.setHeader('Access-Control-Expose-Headers', 'X-Nudge-Text');
+
+  if (!serverTtsReady()) return res.status(204).end();
+
+  const etag = speechEtag(text);
+  res.setHeader('ETag', etag);
+  res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+
+  let speech: Awaited<ReturnType<typeof synthesizeServerSpeech>>;
+  try {
+    speech = await synthesizeServerSpeech(text);
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: inv.sessionId }, 'Nudge TTS failed; falling back to browser speech');
+    return res.status(204).end();
+  }
+  if (!speech) return res.status(204).end();
+
+  res.setHeader('Content-Type', speech.contentType);
+  res.setHeader('Content-Length', String(speech.audio.byteLength));
+  return res.send(speech.audio);
+}));
+
+/**
  * Server-side transcription of a candidate's spoken answer.
  *
  * Exists because the browser path does not actually work everywhere. Chrome and
