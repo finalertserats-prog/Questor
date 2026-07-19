@@ -65,35 +65,39 @@ export async function eraseCandidate(o: {
     deleted[label] = (await fn()).count;
   };
 
-  // Ordered leaf-first so foreign keys are never left dangling.
-  await prisma.$transaction(async () => {
+  // Ordered leaf-first so foreign keys are never left dangling. Every delete
+  // MUST go through `tx`, not the global client — using `prisma` here would run
+  // the statements outside the transaction, so a failure part-way would leave a
+  // candidate half-erased with nothing to roll back. For an erasure request
+  // that is the worst possible outcome: it looks done and isn't.
+  await prisma.$transaction(async (tx) => {
     if (assessmentIds.length) {
-      await count('humanReviews', () => prisma.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
-      await count('assessments', () => prisma.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
+      await count('humanReviews', () => tx.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
+      await count('assessments', () => tx.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
     }
     if (nodeIds.length) {
-      await count('evidenceEdges', () => prisma.evidenceEdge.deleteMany({
+      await count('evidenceEdges', () => tx.evidenceEdge.deleteMany({
         where: { OR: [{ fromId: { in: nodeIds } }, { toId: { in: nodeIds } }] },
       }));
-      await count('evidenceNodes', () => prisma.evidenceNode.deleteMany({ where: { id: { in: nodeIds } } }));
+      await count('evidenceNodes', () => tx.evidenceNode.deleteMany({ where: { id: { in: nodeIds } } }));
     }
     if (sessionIds.length) {
-      await count('turns', () => prisma.turn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
-      await count('invitations', () => prisma.invitation.deleteMany({ where: { sessionId: { in: sessionIds } } }));
-      await count('plans', () => prisma.interviewPlanVersion.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+      await count('turns', () => tx.turn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+      await count('invitations', () => tx.invitation.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+      await count('plans', () => tx.interviewPlanVersion.deleteMany({ where: { sessionId: { in: sessionIds } } }));
       // Model executions record prompts/outputs that can quote the candidate.
-      await count('modelExecutions', () => prisma.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+      await count('modelExecutions', () => tx.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }));
     }
-    await count('artifacts', () => prisma.artifact.deleteMany({
+    await count('artifacts', () => tx.artifact.deleteMany({
       where: { OR: [{ candidateId: o.candidateId }, ...(sessionIds.length ? [{ sessionId: { in: sessionIds } }] : [])] },
     }));
     if (sessionIds.length) {
-      await count('sessions', () => prisma.interviewSession.deleteMany({ where: { id: { in: sessionIds } } }));
+      await count('sessions', () => tx.interviewSession.deleteMany({ where: { id: { in: sessionIds } } }));
     }
     if (profileIds.length) {
-      await count('profiles', () => prisma.candidateProfileVersion.deleteMany({ where: { id: { in: profileIds } } }));
+      await count('profiles', () => tx.candidateProfileVersion.deleteMany({ where: { id: { in: profileIds } } }));
     }
-    await count('candidates', () => prisma.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
+    await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
 
   // Retained intentionally, and free of personal data.

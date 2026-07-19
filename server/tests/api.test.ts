@@ -113,4 +113,51 @@ describe('Questor API end-to-end', () => {
     expect([200, 409]).toContain(invited.status);
     expect(inv === null || typeof inv.token === 'string').toBe(true);
   });
+
+  it('rejects an auth token supplied via the query string', async () => {
+    const res = await request(app).get(`/api/roles?token=${token}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('does not let registration self-assign a privileged role', async () => {
+    const res = await request(app).post('/api/auth/register')
+      .send({ email: 'probe@questor.local', password: 'another-long-password', name: 'Probe', tenantName: 'Probe Org', role: 'superuser' });
+    expect(res.status).toBe(201);
+    // The submitted role is ignored: the first user of a new tenant is its admin.
+    expect(res.body.user.role).toBe('admin');
+  });
+
+  // Erasure is a legal obligation (GDPR Art. 17, DPDP s.8, Illinois AIVIA s.20),
+  // so it needs coverage proving the data is actually gone, not just a 200.
+  it('erases a candidate and everything derived from them', async () => {
+    const victim = await request(app).post('/api/candidates').set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Erasure Test', email: 'erase@questor.local', roleId });
+    expect(victim.status).toBe(201);
+    const victimId = victim.body.candidate.id;
+
+    await request(app).post(`/api/candidates/${victimId}/resume`).set('Authorization', `Bearer ${token}`).field('text', DEMO_RESUME);
+    expect(await prisma.candidateProfileVersion.count({ where: { candidateId: victimId } })).toBeGreaterThan(0);
+
+    const del = await request(app).delete(`/api/candidates/${victimId}`).set('Authorization', `Bearer ${token}`)
+      .send({ reason: 'candidate requested erasure' });
+    expect(del.status).toBe(200);
+
+    expect(await prisma.candidate.count({ where: { id: victimId } })).toBe(0);
+    expect(await prisma.candidateProfileVersion.count({ where: { candidateId: victimId } })).toBe(0);
+    expect(await prisma.artifact.count({ where: { candidateId: victimId } })).toBe(0);
+
+    // The audit record of the erasure must survive it.
+    const audit = await prisma.auditEvent.findFirst({ where: { action: 'candidate.erased', entityId: victimId } });
+    expect(audit).not.toBeNull();
+  });
+
+  it('refuses to erase a candidate belonging to another tenant', async () => {
+    const other = await request(app).post('/api/auth/register')
+      .send({ email: 'other@questor.local', password: 'yet-another-long-password', name: 'Other', tenantName: 'Other Org' });
+    const otherToken = other.body.token;
+    const res = await request(app).delete(`/api/candidates/${candidateId}`).set('Authorization', `Bearer ${otherToken}`)
+      .send({ reason: 'cross-tenant probe' });
+    expect(res.status).toBe(404);
+    expect(await prisma.candidate.count({ where: { id: candidateId } })).toBe(1);
+  });
 });
