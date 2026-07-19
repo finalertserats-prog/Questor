@@ -32,7 +32,7 @@ export function CandidateDetail() {
 
   // interview setup form
   const [durationMinutes, setDurationMinutes] = useState(45);
-  const [personaName, setPersonaName] = useState('Alex');
+  const [personaName, setPersonaName] = useState('Schranders');
   const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
   const [recording, setRecording] = useState(false);
   const [provider, setProvider] = useState<'hosted' | 'teams' | 'zoom' | 'meet'>('hosted');

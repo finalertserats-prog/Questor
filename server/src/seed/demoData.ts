@@ -111,7 +111,7 @@ export async function createDemoData(): Promise<DemoIds> {
     data: {
       name: 'Acme Corp', region: 'in',
       policyJson: JSON.stringify({
-        disclosureText: "Hello, I'm Alex, an AI interviewer for this first-round conversation. This session is transcribed and recorded only with your consent. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
+        disclosureText: "Hello, I'm Schranders, an AI interviewer for this first-round conversation. This session is transcribed and recorded only with your consent. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
         recordingDefault: true, retentionDaysRecording: 90, retentionDaysTranscript: 180,
         allowedModules: ['coding', 'case'], languages: ['en'], humanReviewRequired: true,
       }),
@@ -158,7 +158,7 @@ export async function createDemoData(): Promise<DemoIds> {
     data: {
       tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
       state: 'ACCEPTED', provider: 'hosted', language: 'en', durationMinutes: 45,
-      personaJson: JSON.stringify({ name: 'Alex', tone: 'warm' }),
+      personaJson: JSON.stringify({ name: 'Schranders', tone: 'warm' }),
       consentJson: JSON.stringify({ disclosureText: JSON.parse(tenant.policyJson).disclosureText, recordingRequested: true, recording: true, humanReviewRequired: true, consentVersion: 'v1', consentedAt: new Date().toISOString(), channel: 'seed' }),
       recordingConsent: true,
     },

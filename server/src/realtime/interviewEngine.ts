@@ -61,7 +61,7 @@ async function loadContext(sessionId: string) {
   if (!session.plan) throw new Error('Session has no interview plan');
   const plan = parseJson<InterviewPlan>(session.plan.planJson, {} as InterviewPlan);
   const profile = parseJson<RoleSuccessProfile>(session.scorecard.profileJson, {} as RoleSuccessProfile);
-  const persona = parseJson<Persona>(session.personaJson, { name: 'Alex', tone: 'warm' });
+  const persona = parseJson<Persona>(session.personaJson, { name: 'Schranders', tone: 'warm' });
   const turns: TurnRecord[] = session.turns.map((t) => ({
     id: t.id, index: t.index, speaker: t.speaker as TurnRecord['speaker'], text: t.text,
     startMs: t.startMs, endMs: t.endMs, confidence: t.confidence, competencyId: t.competencyId,

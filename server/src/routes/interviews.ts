@@ -23,7 +23,7 @@ const createSchema = z.object({
   durationMinutes: z.number().int().min(10).max(120).default(45),
   language: z.string().default('en'),
   modules: z.array(z.string()).default([]),
-  persona: z.object({ name: z.string(), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ name: 'Alex', tone: 'warm' }),
+  persona: z.object({ name: z.string(), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ name: 'Schranders', tone: 'warm' }),
   provider: z.enum(['hosted', 'teams', 'zoom', 'meet']).default('hosted'),
   recordingRequested: z.boolean().default(false),
   humanReviewRequired: z.boolean().default(true),
