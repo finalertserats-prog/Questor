@@ -102,7 +102,7 @@ async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id'>, meta?
   return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
 }
 
-async function setState(sessionId: string, from: string, to: string) {
+export async function setState(sessionId: string, from: string, to: string) {
   assertTransition(from, to);
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: to } });
 }
@@ -295,7 +295,7 @@ async function currentState(sessionId: string): Promise<string> {
   return s?.state ?? '';
 }
 
-function fmt(ms: number): string {
+export function fmt(ms: number): string {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

@@ -7,9 +7,14 @@ import { getLlm } from './providers/llm/index.js';
 import { preflight } from './preflight.js';
 
 import { startRetentionSweep } from './services/dataRights.js';
+import { startIncompleteSweep } from './services/incompleteInterviews.js';
 
 preflight();
 startRetentionSweep();
+// Interviews that stopped part-way would otherwise stay ASSESSING for ever,
+// showing as "in progress" and never producing anything to read. Marks them
+// INCOMPLETE and saves the transcript; deliberately never scores them.
+startIncompleteSweep();
 
 const app = createApp();
 const httpServer = createServer(app);

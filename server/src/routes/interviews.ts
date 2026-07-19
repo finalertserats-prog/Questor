@@ -14,7 +14,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -321,6 +321,45 @@ interviewsRouter.post('/:id/finalize', requireCapability('interview:drive'), asy
   await getSession(req, req.params.id);
   const { assessmentId } = await finalizeInterview(req.params.id);
   res.json({ assessmentId });
+}));
+
+/**
+ * Assess an interview that stopped part-way, on a human's explicit instruction.
+ *
+ * The sweep that marks interviews INCOMPLETE deliberately does not score them:
+ * a candidate whose network dropped after three good answers must not acquire a
+ * permanent recommendation from an interview they never chose to end, and no
+ * timer should be deciding whether a partial transcript is "enough" to judge a
+ * person on.
+ *
+ * A reviewer looking at the transcript can decide it IS worth assessing. That
+ * is a person taking responsibility for a partial record, which is a different
+ * act from a scheduled job doing it silently — so it is a separate endpoint,
+ * needs the drive capability, and is recorded in the audit trail with a reason.
+ */
+interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
+  if (session.state !== 'INCOMPLETE') {
+    throw new HttpError(409, 'Only an interview marked INCOMPLETE can be assessed this way.');
+  }
+
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (reason.length < 10) {
+    // Not bureaucracy. If this assessment is ever questioned, the record has to
+    // show a person decided a partial interview was fair to score, and why.
+    throw new HttpError(400, 'A reason is required (at least 10 characters) — it is recorded with the assessment.');
+  }
+
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
+    action: 'interview.assess_partial', entityType: 'InterviewSession', entityId: session.id,
+    after: { reason },
+  });
+
+  // Back to a state finalizeInterview accepts, then score it.
+  await setState(session.id, 'INCOMPLETE', 'CLOSING');
+  const { assessmentId } = await finalizeInterview(session.id);
+  res.json({ assessmentId, partial: true });
 }));
 
 interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asyncHandler(async (req, res) => {

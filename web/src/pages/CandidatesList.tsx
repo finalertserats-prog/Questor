@@ -27,6 +27,9 @@ interface CandidateRow {
 const TERMINAL_STATES = new Set([
   'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED', 'ACCEPTED',
   'CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW',
+  // Started, then stopped responding. Terminal so it leaves the chase list —
+  // it was showing as "in progress" for hours after the tab was closed.
+  'INCOMPLETE',
 ]);
 
 /**

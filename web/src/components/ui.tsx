@@ -35,7 +35,7 @@ export function recBadge(rec?: string | null) {
 export function stateBadge(state: string) {
   const green = ['REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED', 'ACCEPTED'];
   const amber = ['ASSESSING', 'CANDIDATE_QUESTIONS', 'PROCESSING', 'INVITED', 'WARMUP', 'CONSENTED'];
-  const red = ['CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW'];
+  const red = ['CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW', 'INCOMPLETE'];
   const kind = green.includes(state) ? 'green' : red.includes(state) ? 'red' : amber.includes(state) ? 'amber' : 'blue';
   return <Badge kind={kind as any}>{state.replace(/_/g, ' ')}</Badge>;
 }
