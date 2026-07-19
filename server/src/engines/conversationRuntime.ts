@@ -6,7 +6,7 @@ import { generateJson } from '../providers/llm/index.js';
 export interface AgentUtterance {
   text: string;
   competencyId: string;
-  kind: 'disclosure' | 'question' | 'followup' | 'clarify' | 'close' | 'safety' | 'transition';
+  kind: 'disclosure' | 'question' | 'followup' | 'clarify' | 'close' | 'signoff' | 'safety' | 'transition';
 }
 
 export interface Persona {
@@ -94,8 +94,18 @@ export async function nextUtterance(opts: {
   const blockId = signal.nextCompetencyId ?? '';
   const block = plan.blocks.find((b) => b.competencyId === blockId);
 
-  // Close / candidate questions.
+  // Close / candidate questions. The close invites the candidate's own
+  // questions, so it must NOT end the session — the candidate needs a turn to
+  // answer it. The interview ends on the sign-off that follows their reply.
   if (signal.action === 'close' || blockId === '__candidate_questions__') {
+    const alreadyInvited = turns.some((t) => t.speaker === 'agent' && t.competencyId === '__candidate_questions__');
+    if (alreadyInvited) {
+      return {
+        text: 'Thank you — that\'s everything from my side. Our team will review this conversation and follow up with next steps. Have a good rest of your day.',
+        competencyId: blockId,
+        kind: 'signoff',
+      };
+    }
     return {
       text: 'That covers everything I wanted to ask. Before we wrap up, do you have any questions about the role or the process? Whatever you ask here won\'t affect your assessment. After this, our team will review the interview and follow up with next steps — I won\'t be sharing a decision today.',
       competencyId: blockId,
@@ -122,10 +132,16 @@ export async function nextUtterance(opts: {
     };
   }
 
-  // Resume validation.
+  // Resume validation. `block.intent` is an internal director instruction
+  // ("Probe X: ask for a concrete example…"), never candidate-facing speech —
+  // rendering it verbatim leaks the rubric. Turn it into a real question.
   if (blockId === '__resume_validation__') {
+    const fallback = 'I\'d like to dig into one thing from your background. Pick an accomplishment you listed and tell me exactly what your personal contribution was and how you measured the result.';
+    const llm = await tryLlmUtterance(opts, block?.competencyName ?? 'the candidate\'s background', block, lastText, signal);
+    const proposed = llm ?? fallback;
+    const screened = screenQuestion(proposed);
     return {
-      text: block?.intent ?? 'I\'d like to dig into one thing from your background. Pick an accomplishment you listed and tell me exactly what your personal contribution was and how you measured the result.',
+      text: screened.allowed ? proposed : (screened.rewritten ?? fallback),
       competencyId: blockId,
       kind: 'question',
     };

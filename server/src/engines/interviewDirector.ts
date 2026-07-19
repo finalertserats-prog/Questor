@@ -5,6 +5,9 @@ import type { DirectorSignal, InterviewPlan, PlanBlock, TurnRecord } from '../do
 // Runtime turns into utterances. Decisions are based on evidence and time only,
 // never on demographic or voice attributes.
 
+/** Below this answer-quality score the candidate is probed once more before moving on. */
+const WEAK_ANSWER_SCORE = 45;
+
 export function answersNeeded(block: PlanBlock): number {
   if (block.competencyId.startsWith('__')) return 1;
   return Math.max(1, Math.min(3, Math.round(block.targetMinutes / 2.5)));
@@ -73,14 +76,21 @@ export function directorDecide(opts: {
   const lastWasThisBlock = lastCandidate?.competencyId === current.competencyId;
   const q = lastCandidate ? answerQuality(lastCandidate.text) : { score: 0, hasSituation: false, hasAction: false, hasResult: false, specific: false };
 
+  // A weak answer earns one probing turn beyond the block's quota. Without this
+  // a block whose quota is 1 (short blocks, or many competencies in a fixed
+  // budget) always falls straight through to move_on, so a vague answer is
+  // silently accepted and the follow-up ladder below is never reached.
+  const needed = answersNeeded(current);
+  const allowance = lastWasThisBlock && q.score < WEAK_ANSWER_SCORE ? needed + 1 : needed;
+
   let action: DirectorSignal['action'];
   let depth: DirectorSignal['depthInstruction'] = 'hold';
   if (answersHere === 0 || !lastWasThisBlock) {
     action = 'ask';
-  } else if (answersHere < answersNeeded(current) && q.score < 65) {
+  } else if (answersHere < allowance && q.score < 65) {
     action = 'followup';
     depth = 'hold';
-  } else if (answersHere < answersNeeded(current) && q.score >= 65) {
+  } else if (answersHere < allowance && q.score >= 65) {
     action = 'followup';
     depth = 'increase'; // strong answer -> push deeper
   } else {
