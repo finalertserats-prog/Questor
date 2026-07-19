@@ -206,6 +206,10 @@ export async function eraseCandidate(o: {
     // Artifacts attached to the candidate rather than to a session (résumé
     // uploads) are not reached by the session cascade.
     await count('artifacts', () => tx.artifact.deleteMany({ where: { candidateId: o.candidateId } }));
+    // Access-control rows hold a foreign key onto Candidate, so they must go
+    // first or the delete below fails the constraint and erasure — a legal
+    // obligation — errors out entirely.
+    await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
 
@@ -393,6 +397,9 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
       await prisma.$transaction(async (tx) => {
         await deleteProfileCascade(tx, candidateId, count);
         await count('artifacts', () => tx.artifact.deleteMany({ where: { candidateId } }));
+        // Same foreign-key ordering as erasure: assignment rows reference the
+        // candidate and must go first.
+        await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));
       });
     } catch (err) {

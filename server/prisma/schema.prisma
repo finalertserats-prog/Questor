@@ -39,6 +39,8 @@ model User {
   role         String   @default("recruiter")
   createdAt    DateTime @default(now())
   reviews      HumanReview[]
+  roleAssignments      RoleAssignment[]
+  candidateAssignments CandidateAssignment[]
 }
 
 model Role {
@@ -58,6 +60,7 @@ model Role {
   scorecards    RoleScorecardVersion[]
   candidates    Candidate[]
   interviews    InterviewSession[]
+  assignments   RoleAssignment[]
 }
 
 model RoleScorecardVersion {
@@ -88,6 +91,7 @@ model Candidate {
   profiles      CandidateProfileVersion[]
   interviews    InterviewSession[]
   artifacts     Artifact[]
+  assignments   CandidateAssignment[]
 }
 
 model CandidateProfileVersion {
@@ -308,4 +312,45 @@ model WebhookDelivery {
   attempts    Int      @default(0)
   lastError   String   @default("")
   createdAt   DateTime @default(now())
+}
+
+// ---- Object-level access control ----
+//
+// Capabilities answer "may this user perform this kind of action?". These
+// assignments answer "may this user touch THIS object?" — the question that
+// actually matters when every recruiter in a tenant could otherwise read every
+// candidate's transcript.
+//
+// Two levels, because requisition ownership and candidate ownership genuinely
+// differ: several recruiters may share a role while each owns different
+// candidates under it, and a candidate can exist with no roleId at all
+// (Candidate.roleId is optional), so role-inherited access cannot cover
+// everyone.
+
+model RoleAssignment {
+  id        String   @id @default(cuid())
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  // owner | collaborator — owner may reassign, collaborator may work the role
+  relation  String   @default("collaborator")
+  createdAt DateTime @default(now())
+
+  @@unique([roleId, userId])
+  @@index([userId])
+}
+
+model CandidateAssignment {
+  id          String   @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  // owner | reviewer — reviewer is granted for assessment review only
+  relation    String   @default("owner")
+  createdAt   DateTime @default(now())
+
+  @@unique([candidateId, userId])
+  @@index([userId])
 }

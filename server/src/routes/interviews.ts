@@ -1,8 +1,10 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
+import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { prisma, parseJson } from '../db.js';
-import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
+import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
+import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import type { FitScore, RoleSuccessProfile } from '../domain/types.js';
 import { assertTransition } from '../domain/stateMachine.js';
@@ -29,12 +31,15 @@ const createSchema = z.object({
 });
 
 // Approve interview + build plan (FR-011, FR-016)
-interviewsRouter.post('/', asyncHandler(async (req, res) => {
+interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
   if (!body.approve) throw new HttpError(400, 'HR approval is required before an interview can be created');
 
-  const candidate = await prisma.candidate.findFirst({ where: { id: body.candidateId, tenantId: req.auth!.tenantId } });
-  if (!candidate?.roleId) throw new HttpError(404, 'Candidate or role not found');
+  // Object scope, not just tenant: creating a session is how a candidate enters
+  // the interview pipeline, so being able to name a candidate id must not be
+  // enough to start one. Throws 404 when out of scope.
+  const candidate = await assertCanAccessCandidate(req.auth!, body.candidateId);
+  if (!candidate.roleId) throw new HttpError(404, 'Candidate or role not found');
 
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: candidate.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
   if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
@@ -65,10 +70,18 @@ interviewsRouter.post('/', asyncHandler(async (req, res) => {
   res.status(201).json({ session: { id: session.id, state: session.state, provider: session.provider }, plan, meetingCapability: meetingCapability(body.provider) });
 }));
 
-// List sessions
-interviewsRouter.get('/', asyncHandler(async (req, res) => {
+// List sessions.
+//
+// Gated on candidate:read as well as scoped, because each row carries a
+// candidate's name and their recommendation — an auditor holds audit:read and
+// has no business reading candidate detail here.
+interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  // Sessions have no scope of their own; they inherit the candidate's. Filtering
+  // through the candidate relation keeps that single definition of scope rather
+  // than reimplementing the assignment rules in this query.
+  const scope = (await candidateScope(req.auth!)) as Prisma.CandidateWhereInput;
   const sessions = await prisma.interviewSession.findMany({
-    where: { tenantId: req.auth!.tenantId }, orderBy: { createdAt: 'desc' },
+    where: { tenantId: req.auth!.tenantId, candidate: scope }, orderBy: { createdAt: 'desc' },
     include: { candidate: true, role: true, assessments: { orderBy: { version: 'desc' }, take: 1 }, invitation: true },
   });
   res.json({ sessions: sessions.map((s) => ({
@@ -79,9 +92,14 @@ interviewsRouter.get('/', asyncHandler(async (req, res) => {
   })) });
 }));
 
-// Session detail
-interviewsRouter.get('/:id', asyncHandler(async (req, res) => {
-  const session = await getSession(req.auth!.tenantId, req.params.id);
+// Session detail.
+//
+// This response includes the live invitation token, which is a bearer
+// credential for the unauthenticated candidate portal — anyone holding it can
+// open the candidate's interview. Scope here is what stops one recruiter from
+// lifting another's portal link.
+interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
   const [plan, turns, assessment, invitation] = await Promise.all([
     prisma.interviewPlanVersion.findUnique({ where: { sessionId: session.id } }),
     prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
@@ -98,8 +116,8 @@ interviewsRouter.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // Send invitation (FR-012)
-interviewsRouter.post('/:id/invite', asyncHandler(async (req, res) => {
-  const session = await getSession(req.auth!.tenantId, req.params.id);
+interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
   const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
   const role = await prisma.role.findUnique({ where: { id: session.roleId } });
   if (session.state !== 'PROVISIONED' && session.state !== 'RESCHEDULE_REQUIRED') throw new HttpError(409, `Cannot invite from state ${session.state}`);
@@ -128,8 +146,13 @@ interviewsRouter.post('/:id/invite', asyncHandler(async (req, res) => {
 }));
 
 // Schedule (FR-013)
-interviewsRouter.post('/:id/schedule', asyncHandler(async (req, res) => {
-  const session = await getSession(req.auth!.tenantId, req.params.id);
+//
+// Gated on interview:invite as the nearest existing scheduling-lane capability
+// (recruiter, manager, admin — not reviewer or auditor). There is no
+// `interview:schedule` capability yet; when one is added this and /cancel
+// should move to it rather than borrowing the invite grant.
+interviewsRouter.post('/:id/schedule', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
   const at = z.object({ scheduledAt: z.string() }).parse(req.body).scheduledAt;
   await prisma.interviewSession.update({ where: { id: session.id }, data: { scheduledAt: new Date(at) } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at } });
@@ -137,8 +160,8 @@ interviewsRouter.post('/:id/schedule', asyncHandler(async (req, res) => {
 }));
 
 // Cancel / reschedule (FR-014)
-interviewsRouter.post('/:id/cancel', asyncHandler(async (req, res) => {
-  const session = await getSession(req.auth!.tenantId, req.params.id);
+interviewsRouter.post('/:id/cancel', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
   assertTransition(session.state, 'CANCELLED');
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'CANCELLED' } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.cancelled', entityType: 'InterviewSession', entityId: session.id });
@@ -152,14 +175,14 @@ interviewsRouter.post('/:id/cancel', asyncHandler(async (req, res) => {
 // engine's state and turn-cap guards apply here too — they live in
 // interviewEngine rather than in the portal route precisely so this path cannot
 // sidestep them.
-interviewsRouter.post('/:id/start', asyncHandler(async (req, res) => {
-  await getSession(req.auth!.tenantId, req.params.id);
+interviewsRouter.post('/:id/start', requireCapability('interview:drive'), asyncHandler(async (req, res) => {
+  await getSession(req, req.params.id);
   const turn = await startInterview(req.params.id);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.started.by_recruiter', entityType: 'InterviewSession', entityId: req.params.id });
   res.json({ turn });
 }));
-interviewsRouter.post('/:id/turn', asyncHandler(async (req, res) => {
-  await getSession(req.auth!.tenantId, req.params.id);
+interviewsRouter.post('/:id/turn', requireCapability('interview:drive'), asyncHandler(async (req, res) => {
+  await getSession(req, req.params.id);
   // Same ceiling as the candidate portal; an authenticated caller is still a
   // caller, and this text goes into a paid prompt.
   const { text } = z.object({ text: z.string().min(1).max(4000) }).parse(req.body);
@@ -169,20 +192,25 @@ interviewsRouter.post('/:id/turn', asyncHandler(async (req, res) => {
   if (turn.done) ({ assessmentId } = await finalizeInterview(req.params.id));
   res.json({ turn, assessmentId });
 }));
-interviewsRouter.post('/:id/finalize', asyncHandler(async (req, res) => {
-  await getSession(req.auth!.tenantId, req.params.id);
+interviewsRouter.post('/:id/finalize', requireCapability('interview:drive'), asyncHandler(async (req, res) => {
+  await getSession(req, req.params.id);
   const { assessmentId } = await finalizeInterview(req.params.id);
   res.json({ assessmentId });
 }));
 
-interviewsRouter.get('/:id/transcript', asyncHandler(async (req, res) => {
-  const session = await getSession(req.auth!.tenantId, req.params.id);
+interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
   const turns = await prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } });
   res.json({ transcript: turns.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs })) });
 }));
 
-async function getSession(tenantId: string, id: string) {
-  const s = await prisma.interviewSession.findFirst({ where: { id, tenantId } });
-  if (!s) throw new HttpError(404, 'Interview session not found');
-  return s;
+/**
+ * Load a session the caller is actually entitled to.
+ *
+ * Takes the request rather than a bare tenantId so no route can call it with
+ * only the tenant in hand — the tenant-only lookup this replaced was the single
+ * line behind every leak on this router.
+ */
+async function getSession(req: Request, id: string) {
+  return assertCanAccessSession(req.auth!, id);
 }

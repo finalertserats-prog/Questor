@@ -4,8 +4,14 @@ import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
-import { asyncHandler, authenticate, requireRole, HttpError } from '../middleware/index.js';
+import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { eraseCandidate } from '../services/dataRights.js';
+import {
+  assertCanAccessCandidate,
+  assertCanAccessRole,
+  assignCandidate,
+  candidateScope,
+} from '../services/access.js';
 import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import type { RoleSuccessProfile } from '../domain/types.js';
@@ -57,8 +63,11 @@ function sanitizeFilename(original: string): string {
 // List candidates (optionally by role)
 candidatesRouter.get('/', asyncHandler(async (req, res) => {
   const roleId = req.query.roleId as string | undefined;
+  // `roleId` is ANDed with the caller's scope, so it can only ever NARROW the
+  // result set. Previously it was the whole filter beside tenantId, which turned
+  // a display convenience into "enumerate any requisition's pipeline by id".
   const candidates = await prisma.candidate.findMany({
-    where: { tenantId: req.auth!.tenantId, ...(roleId ? { roleId } : {}) },
+    where: { ...(await candidateScope(req.auth!)), ...(roleId ? { roleId } : {}) },
     orderBy: { createdAt: 'desc' },
     include: { profiles: { orderBy: { version: 'desc' }, take: 1 }, role: true, interviews: { orderBy: { createdAt: 'desc' }, take: 1 } },
   });
@@ -73,20 +82,25 @@ candidatesRouter.get('/', asyncHandler(async (req, res) => {
 const createSchema = z.object({ fullName: z.string().min(1), email: z.string().email(), phone: z.string().optional(), roleId: z.string() });
 
 // Create a candidate under a role
-candidatesRouter.post('/', asyncHandler(async (req, res) => {
+candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
-  const role = await prisma.role.findFirst({ where: { id: body.roleId, tenantId: req.auth!.tenantId } });
-  if (!role) throw new HttpError(404, 'Role not found');
+  // The target role is scoped, not merely tenant-matched: attaching a candidate
+  // to someone else's requisition would otherwise plant a record inside a
+  // pipeline the caller cannot see but the role's owners can.
+  await assertCanAccessRole(req.auth!, body.roleId);
   const candidate = await prisma.candidate.create({
     data: { tenantId: req.auth!.tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, phone: body.phone ?? '' },
   });
+  // Role assignment alone would already cover this candidate, but the explicit
+  // grant survives the creator later being unassigned from the role.
+  await assignCandidate(candidate.id, req.auth!.userId, 'owner');
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.created', entityType: 'Candidate', entityId: candidate.id });
   res.status(201).json({ candidate: shape(candidate) });
 }));
 
 // Upload + parse resume, compute fit score, build evidence graph (FR-006..010)
 candidatesRouter.post('/:id/resume', uploadResume, asyncHandler(async (req, res) => {
-  const candidate = await getCandidate(req.auth!.tenantId, req.params.id);
+  const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
   let rawText = '';
   let filename = 'pasted.txt';
   if (req.file) {
@@ -138,7 +152,7 @@ candidatesRouter.post('/:id/resume', uploadResume, asyncHandler(async (req, res)
 
 // Get candidate detail (profile + fit + evidence)
 candidatesRouter.get('/:id', asyncHandler(async (req, res) => {
-  const candidate = await getCandidate(req.auth!.tenantId, req.params.id);
+  const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
   const profileVersion = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' }, include: { evidenceNodes: true } });
   const interviews = await prisma.interviewSession.findMany({ where: { candidateId: candidate.id }, orderBy: { createdAt: 'desc' } });
   res.json({
@@ -151,11 +165,16 @@ candidatesRouter.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // Right to erasure: GDPR Art. 17, India DPDP s.8, Illinois AIVIA s.20 (which
-// requires deletion within 30 days of request, including copies). Admin-only
-// and irreversible; the audit trail records that it happened.
-candidatesRouter.delete('/:id', requireRole('admin'), asyncHandler(async (req, res) => {
+// requires deletion within 30 days of request, including copies). Irreversible;
+// the audit trail records that it happened.
+//
+// Gated on the `candidate:erase` capability rather than the literal role name:
+// `requireRole('admin')` also silently admitted anyone the role map later grants
+// an admin-ish role, and it stated the grant in a second place that could drift
+// from capabilities.ts. Only admin holds this capability today.
+candidatesRouter.delete('/:id', requireCapability('candidate:erase'), asyncHandler(async (req, res) => {
   const { reason } = z.object({ reason: z.string().min(1).max(500) }).parse(req.body ?? {});
-  await getCandidate(req.auth!.tenantId, req.params.id);
+  await assertCanAccessCandidate(req.auth!, req.params.id);
   const result = await eraseCandidate({
     tenantId: req.auth!.tenantId,
     candidateId: req.params.id,
@@ -165,11 +184,11 @@ candidatesRouter.delete('/:id', requireRole('admin'), asyncHandler(async (req, r
   res.json({ erased: true, ...result });
 }));
 
-async function getCandidate(tenantId: string, id: string) {
-  const c = await prisma.candidate.findFirst({ where: { id, tenantId } });
-  if (!c) throw new HttpError(404, 'Candidate not found');
-  return c;
-}
+// The former `getCandidate(tenantId, id)` helper is deliberately deleted rather
+// than repaired: it read like an access check while only ever matching a tenant,
+// so every route that reached for it inherited the hole. `assertCanAccessCandidate`
+// is now the only lookup path.
+
 function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email, phone: c.phone, roleId: c.roleId, createdAt: c.createdAt }; }
 function emptyProfile(): RoleSuccessProfile {
   return { roleContext: '', outcomes: [], responsibilities: [], competencies: [], scoringRules: { mustPassCompetencyIds: [], notEnoughEvidencePolicy: 'exclude', passThreshold: 65 }, policyRules: { prohibitedTopics: [], requiredDisclosures: [], accommodationsEnabled: true, jurisdiction: 'IN' }, redFlags: [], seniority: '' };

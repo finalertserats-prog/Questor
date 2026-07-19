@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { timingSafeEqual } from 'node:crypto';
 import { ZodError } from 'zod';
 import { nanoid } from 'nanoid';
+import { capabilitiesOf, type Capability } from '../domain/capabilities.js';
 import {
   verifyToken,
   parseCookies,
@@ -118,6 +119,27 @@ export function requireRole(...roles: string[]) {
     if (!req.auth) return res.status(401).json({ error: 'Not authenticated' });
     if (roles.length && !roles.includes(req.auth.role) && req.auth.role !== 'admin') {
       return res.status(403).json({ error: `Requires role: ${roles.join(' or ')}` });
+    }
+    next();
+  };
+}
+
+/**
+ * Gate a route on a capability rather than a role name.
+ *
+ * Unlike `requireRole` this has no implicit admin pass-through — admin holds
+ * every capability explicitly in the role map, so the grant is visible in one
+ * place instead of being an invisible override on every check.
+ *
+ * This answers only "may this user perform this KIND of action?". It does NOT
+ * answer "may they touch THIS object" — routes must still scope the object via
+ * services/access.ts. Both are required; either alone leaves a hole.
+ */
+export function requireCapability(cap: Capability) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.auth) return res.status(401).json({ error: 'Not authenticated' });
+    if (!capabilitiesOf(req.auth.role).includes(cap)) {
+      return res.status(403).json({ error: 'Your account does not have permission to do that.' });
     }
     next();
   };

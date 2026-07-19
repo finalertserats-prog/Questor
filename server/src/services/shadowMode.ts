@@ -1,5 +1,7 @@
 import { prisma, parseJson } from '../db.js';
 import { HttpError } from '../middleware/index.js';
+import { assertCanAccessAssessment, ranTheInterview } from './access.js';
+import type { AuthClaims } from './auth.js';
 import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
 
 // Shadow mode: a scoring-validity harness AND a compliance safeguard.
@@ -242,11 +244,13 @@ const WITHHELD_FIELDS: readonly string[] = [
  * state) that would leak the machine's opinion through the side door.
  */
 export async function getBlindView(
-  tenantId: string,
+  auth: AuthClaims,
   assessmentId: string,
-  reviewerId: string,
 ): Promise<BlindAssessmentView> {
-  const assessment = await loadAssessment(tenantId, assessmentId);
+  // The reviewer is always the caller. Passing a separate reviewerId alongside
+  // the tenant let a caller read or file against another user's identity.
+  const reviewerId = auth.userId;
+  const assessment = await loadAssessment(auth, assessmentId);
   const result = parseJson<AssessmentResult>(assessment.resultJson, {} as AssessmentResult);
   const profile = parseJson<RoleSuccessProfile>(assessment.scorecard.profileJson, {} as RoleSuccessProfile);
 
@@ -338,12 +342,12 @@ export interface BlindVerdictInput {
  * destroy the independence the whole harness depends on.
  */
 export async function recordBlindVerdict(
-  tenantId: string,
+  auth: AuthClaims,
   assessmentId: string,
-  reviewerId: string,
   input: BlindVerdictInput,
-): Promise<{ reviewId: string; recordedAt: Date }> {
-  const assessment = await loadAssessment(tenantId, assessmentId);
+): Promise<{ reviewId: string; recordedAt: Date; selfReview: boolean }> {
+  const reviewerId = auth.userId;
+  const assessment = await loadAssessment(auth, assessmentId);
 
   const existing = await findBlindReview(assessment.id, reviewerId);
   if (existing) {
@@ -360,6 +364,8 @@ export async function recordBlindVerdict(
     reason: c.reason ?? 'Independent blind assessment.',
   }));
 
+  const selfReview = await ranTheInterview(reviewerId, assessment.sessionId);
+
   const recordedAt = new Date();
   const review = await prisma.humanReview.create({
     data: {
@@ -368,13 +374,38 @@ export async function recordBlindVerdict(
       status: BLIND_REVIEW_STATUS,
       disposition: input.disposition,
       reason: input.reason,
-      comments: input.comments ?? '',
+      comments: annotateSelfReview(input.comments ?? '', selfReview),
       overridesJson: JSON.stringify(overrides),
       completedAt: recordedAt,
     },
   });
 
-  return { reviewId: review.id, recordedAt };
+  return { reviewId: review.id, recordedAt, selfReview };
+}
+
+/**
+ * Marker written into HumanReview.comments when the reviewer drove the
+ * interview they are now judging.
+ */
+export const SELF_REVIEW_NOTE =
+  'SEPARATION OF DUTIES: this verdict was recorded by the same user who conducted the interview, '
+  + 'so it is not an independent review.';
+
+/**
+ * Record, rather than block, a reviewer judging their own interview.
+ *
+ * Independence is what makes the human review meaningful under GDPR Art. 22 and
+ * NYC LL144, so self-review genuinely weakens the compliance position. But a
+ * hard block fails badly in the real case: a five-person recruiting team often
+ * has nobody else available, and a 403 at that moment does not produce an
+ * independent reviewer — it produces someone borrowing the admin account, which
+ * destroys the audit trail as well as the independence. Writing it into the
+ * review record and the audit log keeps the missing independence VISIBLE in the
+ * compliance artefact instead of invisible outside it.
+ */
+function annotateSelfReview(comments: string, selfReview: boolean): string {
+  if (!selfReview) return comments;
+  return comments ? `${comments}\n\n${SELF_REVIEW_NOTE}` : SELF_REVIEW_NOTE;
 }
 
 /**
@@ -398,12 +429,23 @@ async function findBlindReview(assessmentId: string, reviewerId: string) {
   });
 }
 
-async function loadAssessment(tenantId: string, id: string) {
+/**
+ * Load an assessment the caller is entitled to see.
+ *
+ * Takes AuthClaims rather than a tenantId because a tenant match was never
+ * authorisation here: shadow mode hands over the full transcript and every
+ * evidence quote, so a tenant-only check let any authenticated user read any
+ * candidate's interview. Object scope is delegated to services/access.ts so
+ * there is one definition of who may touch an assessment; the second read
+ * exists only to pull the scorecard relation that access.ts does not include.
+ */
+async function loadAssessment(auth: AuthClaims, id: string) {
+  await assertCanAccessAssessment(auth, id);
   const assessment = await prisma.assessmentVersion.findUnique({
     where: { id },
     include: { scorecard: true, session: { include: { candidate: true, role: true } } },
   });
-  if (!assessment || assessment.session.tenantId !== tenantId) throw new HttpError(404, 'Assessment not found');
+  if (!assessment) throw new HttpError(404, 'Assessment not found');
   return assessment;
 }
 

@@ -2,6 +2,7 @@ import { nanoid } from 'nanoid';
 import { config } from '../config.js';
 import { prisma } from '../db.js';
 import { hashPassword } from '../services/auth.js';
+import { assignRole, assignCandidate } from '../services/access.js';
 import { extractRoleHeuristic } from '../engines/roleIntelligence.js';
 import { normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
@@ -89,6 +90,10 @@ export async function wipe(): Promise<void> {
   await prisma.evidenceEdge.deleteMany();
   await prisma.evidenceNode.deleteMany();
   await prisma.candidateProfileVersion.deleteMany();
+  // Assignment rows hold foreign keys onto Candidate, Role and User, so they
+  // must go before their targets or the deletes below fail on a constraint.
+  await prisma.candidateAssignment.deleteMany();
+  await prisma.roleAssignment.deleteMany();
   await prisma.candidate.deleteMany();
   await prisma.roleScorecardVersion.deleteMany();
   await prisma.role.deleteMany();
@@ -125,10 +130,22 @@ export async function createDemoData(): Promise<DemoIds> {
     data: { roleId: role.id, version: 1, status: 'approved', profileJson: JSON.stringify(extraction.profile), approvedById: user.id, approvedAt: new Date() },
   });
 
+  // Explicit ownership, even though the demo user happens to hold the admin role
+  // and would therefore see this through the tenant-wide admin path anyway.
+  // Relying on that would make the demo a demonstration of the break-glass
+  // override rather than of how scoping actually works, and it would break the
+  // moment someone sensibly downgrades the demo account to `recruiter`.
+  await assignRole(role.id, user.id, 'owner');
+
   // Candidate + resume + fit
   const candidate = await prisma.candidate.create({
     data: { tenantId: tenant.id, roleId: role.id, fullName: 'Priya Sharma', email: 'priya.sharma@example.com', phone: '' },
   });
+  // Direct grant as well as the one inherited from the role: the demo is the
+  // fixture the API tests and the E2E script drive, so it should exercise both
+  // assignment paths rather than leaving the candidate one untested.
+  await assignCandidate(candidate.id, user.id, 'owner');
+
   const profile = normalizeProfile(DEMO_RESUME);
   const { fit } = computeFitScore(profile, DEMO_RESUME, extraction.profile);
   await prisma.candidateProfileVersion.create({

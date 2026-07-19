@@ -1,24 +1,27 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
-import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
+import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { getAts } from '../providers/ats/index.js';
+import { assertCanAccessAssessment, ranTheInterview } from '../services/access.js';
 import {
-  assertBlindVerdictRecorded, getAgreementReport, getBlindView, recordBlindVerdict, DISPOSITIONS,
+  assertBlindVerdictRecorded, getAgreementReport, getBlindView, recordBlindVerdict,
+  DISPOSITIONS, SELF_REVIEW_NOTE,
 } from '../services/shadowMode.js';
 
 export const assessmentsRouter = Router();
 assessmentsRouter.use(authenticate);
 
-async function getAssessment(tenantId: string, id: string) {
-  const a = await prisma.assessmentVersion.findUnique({ where: { id }, include: { session: { include: { candidate: true, role: true } } } });
-  if (!a || a.session.tenantId !== tenantId) throw new HttpError(404, 'Assessment not found');
-  return a;
-}
+/**
+ * Every route below loads its assessment through object scope, not a tenant
+ * match. The previous tenant-only loader meant any authenticated user could
+ * read, override and export any candidate's assessment in the org.
+ */
+const getAssessment = assertCanAccessAssessment;
 
 // ---------------------------------------------------------------------------
 // Shadow mode (see services/shadowMode.ts and docs/VALIDATION.md)
@@ -38,8 +41,11 @@ assessmentsRouter.get('/shadow-metrics', asyncHandler(async (req, res) => {
 
 // The blinded assessment: evidence, transcript and competency definitions, with
 // every AI conclusion withheld so the reviewer forms an independent judgement.
-assessmentsRouter.get('/:id/blind', asyncHandler(async (req, res) => {
-  const view = await getBlindView(req.auth!.tenantId, req.params.id, req.auth!.userId);
+assessmentsRouter.get('/:id/blind', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  // Gated on assessment:review rather than assessment:read: the blind view is
+  // the reviewer's working surface, and its whole purpose is to be seen only by
+  // someone who is about to file an independent verdict.
+  const view = await getBlindView(req.auth!, req.params.id);
   res.json(view);
 }));
 
@@ -54,24 +60,26 @@ const blindVerdictSchema = z.object({
   })).default([]),
 });
 
-assessmentsRouter.post('/:id/blind-verdict', asyncHandler(async (req, res) => {
+assessmentsRouter.post('/:id/blind-verdict', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const body = blindVerdictSchema.parse(req.body);
-  const { reviewId, recordedAt } = await recordBlindVerdict(
-    req.auth!.tenantId, req.params.id, req.auth!.userId, body,
-  );
+  // recordBlindVerdict resolves the reviewer from the caller's own claims and
+  // records — without blocking — whether they drove this interview themselves.
+  const { reviewId, recordedAt, selfReview } = await recordBlindVerdict(req.auth!, req.params.id, body);
   // Audited because the ORDER of these events is the compliance artefact: it is
   // what shows the human judgement preceded, rather than echoed, the machine's.
+  // selfReview rides along so a later audit can find non-independent reviews
+  // without reparsing every comments field.
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.blind_verdict',
     entityType: 'AssessmentVersion', entityId: req.params.id,
-    after: { reviewId, disposition: body.disposition, competencyCount: body.competencyLevels.length, recordedAt },
+    after: { reviewId, disposition: body.disposition, competencyCount: body.competencyLevels.length, recordedAt, selfReview },
   });
-  res.status(201).json({ reviewId, recordedAt, revealUrl: `/api/assessments/${req.params.id}/reveal` });
+  res.status(201).json({ reviewId, recordedAt, selfReview, revealUrl: `/api/assessments/${req.params.id}/reveal` });
 }));
 
 // Reveal — refuses until this reviewer has recorded their own verdict.
-assessmentsRouter.get('/:id/reveal', asyncHandler(async (req, res) => {
-  const a = await getAssessment(req.auth!.tenantId, req.params.id);
+assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
   await assertBlindVerdictRecorded(a.id, req.auth!.userId);
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.ai_revealed',
@@ -85,8 +93,8 @@ assessmentsRouter.get('/:id/reveal', asyncHandler(async (req, res) => {
   });
 }));
 
-assessmentsRouter.get('/:id', asyncHandler(async (req, res) => {
-  const a = await getAssessment(req.auth!.tenantId, req.params.id);
+assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
   const reviews = await prisma.humanReview.findMany({ where: { assessmentId: a.id }, orderBy: { createdAt: 'desc' } });
   res.json({
     id: a.id,
@@ -98,8 +106,8 @@ assessmentsRouter.get('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-assessmentsRouter.get('/:id/report', asyncHandler(async (req, res) => {
-  const a = await getAssessment(req.auth!.tenantId, req.params.id);
+assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
   const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
   const md = renderReportMarkdown({ candidateName: a.session.candidate.fullName, roleTitle: a.session.role.title, assessment: result });
   if (req.query.format === 'json') return res.json({ report: md, result });
@@ -113,13 +121,28 @@ const reviewSchema = z.object({
   comments: z.string().optional(),
   overrides: z.array(z.object({ competencyId: z.string(), from: z.any(), to: z.any(), reason: z.string() })).default([]),
 });
-assessmentsRouter.post('/:id/review', asyncHandler(async (req, res) => {
-  const a = await getAssessment(req.auth!.tenantId, req.params.id);
+assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
   const body = reviewSchema.parse(req.body);
+
+  // Separation of duties, recorded rather than enforced.
+  //
+  // A reviewer signing off the interview they personally drove is the weakest
+  // form of the "meaningful human review" that keeps this pipeline advisory
+  // under GDPR Art. 22 and NYC LL144. It is NOT hard-blocked: a small recruiting
+  // team may genuinely have nobody else available, and a 403 here does not
+  // conjure an independent reviewer — it pushes the work onto a shared admin
+  // login, which costs us the audit trail as well as the independence. Stamping
+  // it on the review row and the audit event makes the missing independence
+  // visible in the compliance record instead of absent from it.
+  const selfReview = await ranTheInterview(req.auth!.userId, a.sessionId);
+  const comments = body.comments ?? '';
   const review = await prisma.humanReview.create({
     data: {
       assessmentId: a.id, reviewerId: req.auth!.userId, status: 'COMPLETED', disposition: body.disposition,
-      reason: body.reason, comments: body.comments ?? '', overridesJson: JSON.stringify(body.overrides), completedAt: new Date(),
+      reason: body.reason,
+      comments: selfReview ? (comments ? `${comments}\n\n${SELF_REVIEW_NOTE}` : SELF_REVIEW_NOTE) : comments,
+      overridesJson: JSON.stringify(body.overrides), completedAt: new Date(),
     },
   });
   // Session -> HUMAN_REVIEWED -> CLOSED
@@ -129,15 +152,16 @@ assessmentsRouter.post('/:id/review', asyncHandler(async (req, res) => {
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.completed',
     entityType: 'AssessmentVersion', entityId: a.id,
-    before: { recommendation: a.recommendation }, after: { disposition: body.disposition, reason: body.reason },
+    before: { recommendation: a.recommendation },
+    after: { disposition: body.disposition, reason: body.reason, selfReview },
   });
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, disposition: body.disposition });
-  res.status(201).json({ review: { id: review.id, disposition: review.disposition } });
+  res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview } });
 }));
 
 // Export to ATS (FR-040)
-assessmentsRouter.post('/:id/export', asyncHandler(async (req, res) => {
-  const a = await getAssessment(req.auth!.tenantId, req.params.id);
+assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
   const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
   const externalId = (req.body?.externalCandidateId as string) || a.session.candidateId;
   const out = await getAts().pushAssessment(externalId, {
