@@ -378,6 +378,26 @@ describe('acknowledging a correction', () => {
     expect(detectCorrection('We work with pharma distributors')).toBeNull();
   });
 
+  it('does not read an ordinary "not X, Y" sentence as a correction', () => {
+    // From a simulated interview: the bare pattern has no correction frame
+    // around it, so it matched a candidate simply continuing their sentence.
+    // The interviewer then said "Thanks for the correction — so that part I'm
+    // not worried about, noted", which is both false and unreadable.
+    expect(detectCorrection(
+      "The uniqueness test stays cheap since it's just checking the output, not reprocessing everything, so that part I'm not worried about.",
+    )).toBeNull();
+  });
+
+  it('does not fire when the replacement is a clause rather than a term', () => {
+    expect(detectCorrection('I focused on the model, not the pipeline, because that was the bottleneck')).toBeNull();
+    expect(detectCorrection('We chose Kafka, not because it was cheaper, but it was what we knew')).toBeNull();
+  });
+
+  it('still catches a terse correction between two short terms', () => {
+    expect(detectCorrection('not Redshift, Snowflake')?.right.toLowerCase()).toContain('snowflake');
+    expect(detectCorrection('not Azure, AWS')?.right.toLowerCase()).toContain('aws');
+  });
+
   it('never repeats the wrong term in the next question', () => {
     const corrected = applyCorrection(
       'Tell me more about the farmer company work you did.',

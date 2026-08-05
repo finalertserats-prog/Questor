@@ -189,6 +189,34 @@ const CORRECTION_PATTERNS: RegExp[] = [
   /\bnot\s+(.{2,40}?)[,;]\s*(?:but\s+)?(?:it'?s\s+)?(.{2,40}?)(?:[.,;!?]|$)/i,
 ];
 
+// Words that open a clause rather than name a thing. A correction replaces a
+// TERM ("not Redshift, Snowflake"); ordinary speech uses the same "not X, Y"
+// shape to continue a sentence, and only the second kind starts this way.
+const CLAUSE_OPENERS = /^(so|and|but|which|because|since|then|that|if|when|as|to|for|it|they|we|you|i|he|she|there|this|these|those|just|only|rather|instead|due|given)\b/i;
+
+/** Contractions that mark a clause with a subject and a verb in it. */
+const CLAUSE_VERBS = /\b(i'm|you're|we're|they're|it's|isn't|aren't|don't|doesn't|didn't|won't|can't|couldn't|wouldn't|i've|we've|i'd)\b/i;
+
+/**
+ * Does this read as a term being substituted, rather than a clause continuing?
+ *
+ * Guards the bare "not X, Y" pattern, which has no correction frame around it
+ * and therefore matches ordinary speech. A real transcript produced "…not
+ * reprocessing everything, so that part I'm not worried about", and the
+ * interviewer replied "Thanks for the correction — so that part I'm not worried
+ * about, noted." Thanking a candidate for a correction they did not make, in a
+ * garbled sentence, is worse than missing a real one.
+ */
+function looksLikeTerm(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  const words = t.split(/\s+/);
+  if (words.length > 4) return false;
+  if (CLAUSE_OPENERS.test(t)) return false;
+  if (CLAUSE_VERBS.test(t)) return false;
+  return true;
+}
+
 /** Detect an explicit factual self-correction in the candidate's last answer. */
 export function detectCorrection(text: string): Correction | null {
   const t = (text || '').trim();
@@ -200,6 +228,9 @@ export function detectCorrection(text: string): Correction | null {
     const wrong = clean(i === 1 ? m[2] : m[1]);
     const right = clean(i === 1 ? m[1] : m[2]);
     if (!wrong || !right || wrong.toLowerCase() === right.toLowerCase()) continue;
+    // Patterns 0 and 1 carry an explicit correction frame ("it's not X, it's Y",
+    // "I said X, not Y") and need no such guard. Pattern 2 is the bare form.
+    if (i === 2 && !(looksLikeTerm(wrong) && looksLikeTerm(right))) continue;
     return { wrong, right };
   }
   return null;

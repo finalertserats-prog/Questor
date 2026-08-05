@@ -87,6 +87,34 @@ describe('policyEngine', () => {
   it('detects distress signals', () => {
     expect(detectDistress('this is a medical emergency')).toBe(true);
   });
+
+  it('still catches distress phrased in the moment', () => {
+    for (const said of [
+      'I want to die',
+      'I think I might hurt myself — sorry, I want to hurt',
+      'please call an ambulance',
+      "I can't breathe properly",
+      "it's an emergency, I have to go",
+    ]) {
+      expect(detectDistress(said), said).toBe(true);
+    }
+  });
+
+  it('does not read on-call war stories as a personal emergency', () => {
+    // A simulated interview ended a candidate's session on one of these. The
+    // engine said "your wellbeing matters more than this interview", produced no
+    // assessment, and the candidate had described a production incident — which
+    // is precisely what the senior bands are meant to ask about.
+    for (const said of [
+      'We had an emergency at 3am and I ran the rollback.',
+      'I pushed an emergency fix and then wrote the postmortem.',
+      'That triggered our emergency escalation path.',
+      'We keep an emergency runbook for exactly that case.',
+      'I was on the emergency response rota for two years.',
+    ]) {
+      expect(detectDistress(said), said).toBe(false);
+    }
+  });
 });
 
 describe('interviewDirector', () => {

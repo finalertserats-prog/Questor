@@ -70,9 +70,30 @@ export function validateNoProtectedInference(text: string): PolicyResult {
   return { allowed: violations.length === 0, violations };
 }
 
-/** Distress/safety signal detection (BRD exception journey). */
+/**
+ * Distress/safety signal detection (BRD exception journey).
+ *
+ * A bare `emergency` used to be in here, and a simulated interview showed what
+ * that costs: an infrastructure candidate describing on-call work — "we had an
+ * emergency", "I pushed an emergency fix" — trips it, and the engine replies
+ * "I want to pause here. Your wellbeing matters more than this interview",
+ * ends the session and produces NO assessment. The candidate is thrown out of
+ * their own interview for describing their job, and has to be re-invited.
+ *
+ * The failure is systematic rather than unlucky. Incident response is exactly
+ * what the established and senior bands are supposed to ask about, so the more
+ * senior the candidate, the likelier they trip it.
+ *
+ * So the word now has to appear in a construction that says the emergency is
+ * HERE and NOW, not in a story about production. Everything else is unchanged:
+ * this stays deliberately blunt, because the cost of missing real distress is
+ * far worse than the cost of an unnecessary pause.
+ */
 export function detectDistress(text: string): boolean {
-  return /\b(i want to (die|hurt)|kill myself|self harm|emergency|can'?t breathe|medical emergency)\b/i.test(text);
+  return (
+    /\b(i want to (die|hurt)|kill myself|self harm|can'?t breathe)\b/i.test(text) ||
+    /\b(medical emergency|it'?s an emergency|this is an emergency|i have an emergency|having an emergency|call an ambulance|need an ambulance|call 911|call 999)\b/i.test(text)
+  );
 }
 
 /**

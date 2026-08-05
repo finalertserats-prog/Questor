@@ -52,8 +52,7 @@ export async function generateJson<T>(opts: {
   ];
   try {
     const result = await llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens });
-    const jsonText = extractJson(result.text);
-    const parsed = JSON.parse(jsonText);
+    const parsed = parseJsonLoose(result.text);
     const validated = opts.validate(parsed);
     await logModelExecution({
       sessionId: opts.sessionId ?? '',
@@ -82,15 +81,87 @@ export async function generateJson<T>(opts: {
   }
 }
 
-function extractJson(text: string): string {
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced) return fenced[1].trim();
-  const start = text.indexOf('{');
-  const arrStart = text.indexOf('[');
-  const s = arrStart >= 0 && (arrStart < start || start < 0) ? arrStart : start;
-  if (s < 0) return text.trim();
-  const end = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
-  return text.slice(s, end + 1);
+/**
+ * Pull the JSON value out of a model reply, whatever it wrapped it in.
+ *
+ * Rewritten after the simulation harness showed every work-sample call failing.
+ * The previous version took the first fenced block via `/```(?:json)?\s*(...)/`
+ * and returned its contents — but when the fence was tagged `sql` or `python`
+ * the optional `json` did not match, `\s*` matched nothing, and the LANGUAGE TAG
+ * itself was captured. The result was "sql\nSELECT…", which cannot parse.
+ *
+ * That hit precisely the generator whose job is to emit an artefact alongside
+ * its JSON, so the calls that mattered most were billed, discarded and silently
+ * replaced by the heuristic fallback. It also scanned from the first `{` to the
+ * LAST `}` in the whole reply, which spans any prose sitting between two
+ * objects.
+ *
+ * Now: try each fenced block, then scan the raw text, and return the first
+ * candidate that actually parses. Throws if none does, so `generateJson` falls
+ * back for a real reason rather than on a formatting accident.
+ */
+export function parseJsonLoose(text: string): unknown {
+  if (!text) throw new Error('empty model reply');
+
+  for (const block of fencedBlocks(text)) {
+    const parsed = firstBalancedValue(block);
+    if (parsed !== undefined) return parsed;
+  }
+  const parsed = firstBalancedValue(text);
+  if (parsed !== undefined) return parsed;
+
+  throw new Error(`no JSON value found in model reply (started "${text.slice(0, 120)}")`);
+}
+
+/** Fenced block bodies, with the language tag left behind where it belongs. */
+function fencedBlocks(text: string): string[] {
+  const out: string[] = [];
+  const re = /```[a-zA-Z0-9_-]*[ \t]*\r?\n?([\s\S]*?)```/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) out.push(m[1]);
+  return out;
+}
+
+/** First `{`/`[` that opens a balanced, parseable value. `undefined` if none. */
+function firstBalancedValue(text: string): unknown {
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== '{' && ch !== '[') continue;
+    const end = matchingClose(text, i);
+    if (end === -1) continue;
+    try {
+      return JSON.parse(text.slice(i, end + 1));
+    } catch {
+      // Balanced but not valid JSON — keep scanning rather than giving up.
+    }
+  }
+  return undefined;
+}
+
+/** Index of the brace closing the one at `start`, or -1. String-aware. */
+function matchingClose(text: string, start: number): number {
+  const open = text[start];
+  const close = open === '{' ? '}' : ']';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
 }
 
 export async function logModelExecution(row: {
