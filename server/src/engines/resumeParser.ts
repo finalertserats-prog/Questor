@@ -164,8 +164,20 @@ export function normalizeProfile(text: string): NormalizedProfile {
     if (certifications.length >= 8) break;
   }
 
-  // Rough total years
-  const years = (clean.match(dateRe) ?? []).map(Number).filter((y) => y > 1980 && y <= new Date().getFullYear());
+  // Rough total years.
+  //
+  // "Present" is not a year, and a CV that reads "2004 - Present" therefore used
+  // to measure as zero years of experience: the span between the earliest and
+  // latest years actually WRITTEN DOWN. Every currently-employed candidate was
+  // understated, and the longer their tenure the worse the error.
+  //
+  // That fed band calibration, which read a twenty-two year director as
+  // `developing` and interviewed them at a level meant for two-to-five years.
+  // The questions were not the bug; this was.
+  const thisYear = new Date().getFullYear();
+  const years = (clean.match(dateRe) ?? []).map(Number).filter((y) => y > 1980 && y <= thisYear);
+  // An ongoing role means the range runs to today, whether or not the CV says so.
+  if (/\b(present|current|now|to date|ongoing|till date)\b/i.test(clean) && years.length) years.push(thisYear);
   const totalYears = years.length >= 2 ? Math.min(45, Math.max(...years) - Math.min(...years)) : undefined;
 
   return { employment: employment.slice(0, 12), education, projects, certifications, skills, totalYears };
