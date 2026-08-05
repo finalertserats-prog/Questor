@@ -16,7 +16,7 @@
  *   SIM_CONCURRENCY=2             cells in flight at once
  *   SIM_GENERATE=true             have a peer invent roles/candidates instead of templates
  */
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { BANDS, type BandId } from '../engines/experienceBands.js';
 import { PEER_IDS, otherPeers, type PeerId } from './peers.js';
 import { ROLE_FAMILIES, templateRole, generateRole, type RoleFamily, type RoleSpec } from './roleFactory.js';
@@ -68,6 +68,37 @@ export interface CellResult {
   questor?: { transcript: SimTranscript; judged?: JudgedTranscript };
   benchmark?: { transcript: SimTranscript; judged?: JudgedTranscript };
   errors: string[];
+}
+
+/**
+ * Cells already completed in an earlier run of the same configuration.
+ *
+ * Keyed by cell index, which is stable for a given SIM_BANDS/FAMILIES/STRENGTHS
+ * set. Resuming matters because a sweep is hours long: a change worth making
+ * halfway through should not cost every interview conducted so far.
+ *
+ * A malformed line is skipped rather than fatal — a checkpoint truncated by a
+ * kill mid-write should cost one cell, not the whole resume.
+ */
+export function readCheckpoint(path: string): Map<number, CellResult> {
+  const done = new Map<number, CellResult>();
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    return done;
+  }
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as CellResult;
+      const idx = parsed?.cell?.index;
+      if (typeof idx === 'number') done.set(idx, parsed);
+    } catch {
+      // Truncated or partial line — skip it and re-run that cell.
+    }
+  }
+  return done;
 }
 
 function envList<T extends string>(name: string, allowed: readonly T[], fallback: T[]): T[] {
@@ -133,33 +164,40 @@ async function runCell(cell: Cell, opts: { laneAOnly: boolean; generate: boolean
     cell, role: fixtures.role.title, candidate: fixtures.candidate.fullName, errors,
   };
 
-  const questorTranscript = await runLaneA({
-    role: fixtures.role, candidate: fixtures.candidate, candidatePeer: cell.perm.candidate, durationMinutes: 20,
-  });
+  // The two lanes are independent interviews that happen to share fixtures, so
+  // they run together rather than one after the other. Sequentially they left
+  // roughly 40% of each cell's wall clock idle waiting on a peer.
+  const [questorTranscript, benchTranscript] = await Promise.all([
+    runLaneA({
+      role: fixtures.role, candidate: fixtures.candidate, candidatePeer: cell.perm.candidate, durationMinutes: 20,
+    }),
+    opts.laneAOnly
+      ? Promise.resolve(null)
+      : runLaneB({
+          role: fixtures.role, candidate: fixtures.candidate,
+          interviewerPeer: cell.perm.interviewer, candidatePeer: cell.perm.candidate,
+        }),
+  ]);
+
   if (questorTranscript.error) errors.push(`laneA: ${questorTranscript.error}`);
   result.questor = { transcript: questorTranscript };
-
-  if (!opts.laneAOnly) {
-    const benchTranscript = await runLaneB({
-      role: fixtures.role, candidate: fixtures.candidate,
-      interviewerPeer: cell.perm.interviewer, candidatePeer: cell.perm.candidate,
-    });
+  if (benchTranscript) {
     if (benchTranscript.error) errors.push(`laneB: ${benchTranscript.error}`);
     result.benchmark = { transcript: benchTranscript };
   }
 
-  // Judge whatever produced turns. A lane that broke is recorded as an error,
-  // not silently scored as if it had run.
-  for (const side of ['questor', 'benchmark'] as const) {
+  // Judge whatever produced turns, both at once. A lane that broke is recorded
+  // as an error, not silently scored as if it had run.
+  await Promise.all((['questor', 'benchmark'] as const).map(async (side) => {
     const entry = result[side];
-    if (!entry || entry.transcript.turns.length < 2) continue;
+    if (!entry || entry.transcript.turns.length < 2) return;
     try {
       entry.judged = await judgeTranscript({ transcript: entry.transcript, judge: cell.perm.judge });
       console.log(`${label} · ${side}: pitched=${entry.judged.verdict.pitchedBand} (true=${cell.band}) distance=${entry.judged.bandDistance} calibration=${entry.judged.objectiveCalibration}`);
     } catch (e) {
       errors.push(`judge(${side}): ${e instanceof Error ? e.message : String(e)}`);
     }
-  }
+  }));
 
   return result;
 }
@@ -264,10 +302,19 @@ async function main() {
   // Written as each cell lands, because a large sweep runs for hours and the
   // report is only produced at the end. Without this, a crash at cell 50 of 54
   // throws away every interview conducted so far.
-  const checkpoint = `${dir}/checkpoint-${stamp}.jsonl`;
-  let done = 0;
+  // Resuming appends to the SAME file, so a second interruption resumes too.
+  const resumeFrom = process.env.SIM_RESUME;
+  const alreadyDone = resumeFrom ? readCheckpoint(resumeFrom) : new Map<number, CellResult>();
+  const checkpoint = resumeFrom || `${dir}/checkpoint-${stamp}.jsonl`;
+  if (alreadyDone.size) {
+    console.log(`Resuming: ${alreadyDone.size} cells already complete, ${cells.length - alreadyDone.size} to run.\n`);
+  }
+  let done = alreadyDone.size;
 
   const results = await runPool(cells, concurrency, async (cell) => {
+    const cached = alreadyDone.get(cell.index);
+    if (cached) return cached;
+
     const r = await runCell(cell, { laneAOnly, generate });
     try {
       appendFileSync(checkpoint, `${JSON.stringify(r)}\n`, 'utf8');

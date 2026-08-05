@@ -28,15 +28,25 @@ export function buildInterviewPlan(opts: {
   const bandGuidance = bandGuidanceFor(band);
   const scored = opts.role.competencies.filter((c) => c.classification !== 'non_scoring');
 
-  // Fixed overhead blocks.
-  const processMin = 3;
-  const warmupMin = 4;
-  const candidateQMin = 3;
-  const resumeValidationMin = 3;
-  const overhead = processMin + warmupMin + candidateQMin + resumeValidationMin;
-  const assessableMin = Math.max(10, durationMinutes - overhead);
+  // Fit the plan to the time it actually has.
+  //
+  // This used to allocate a flat 3 minutes minimum per competency on top of 13
+  // minutes of fixed overhead, with no reference to the duration at all. A
+  // 12-minute interview with seven competencies was planned as 34 minutes of
+  // blocks. The director simply ran out of time and closed, three blocks were
+  // never asked — including Resume Validation — and the assessment then reported
+  // those competencies as lacking evidence.
+  //
+  // That last step is the harm: the candidate was marked down for questions
+  // nobody put to them, and coverage below 0.4 forces a CONSIDER recommendation.
+  // A plan that cannot be delivered is not a plan, it is a way of blaming the
+  // candidate for the clock.
+  const budget = allocateTime(durationMinutes, scored);
+  const { processMin, warmupMin, candidateQMin, resumeValidationMin } = budget;
+  const fitted = budget.fitted;
+  const notAssessed = budget.notAssessed.map((c) => c.name);
 
-  const totalWeight = scored.reduce((a, c) => a + c.weight, 0) || 1;
+  const totalWeight = fitted.reduce((a, c) => a + c.weight, 0) || 1;
   const blocks: PlanBlock[] = [];
   const coverageTargets: Record<string, number> = {};
 
@@ -53,9 +63,9 @@ export function buildInterviewPlan(opts: {
     targetMinutes: warmupMin, followupHints: ['Clarify ownership, scale and outcomes.'], prohibited: opts.role.policyRules.prohibitedTopics,
   });
 
-  // One block per scored competency, weighted time.
-  for (const c of scored) {
-    const minutes = Math.max(3, Math.round((c.weight / totalWeight) * assessableMin));
+  // One block per competency that fits, weighted time.
+  for (const [i, c] of fitted.entries()) {
+    const minutes = budget.competencyMinutes[i];
     coverageTargets[c.id] = c.weight;
     const module = pickModule(c, modules);
     blocks.push({
@@ -76,14 +86,18 @@ export function buildInterviewPlan(opts: {
     });
   }
 
-  // Resume validation block (probe a high-value claim / fit gap).
-  const probe = opts.fit?.probes?.[0] ?? 'Probe one high-value resume claim for personal contribution and measured result.';
-  blocks.push({
-    competencyId: '__resume_validation__', competencyName: 'Resume Validation',
-    intent: probe, targetMinutes: resumeValidationMin,
-    followupHints: ['Personal contribution and measured result.'], prohibited: opts.role.policyRules.prohibitedTopics,
-    bandGuidance,
-  });
+  // Resume validation block (probe a high-value claim / fit gap). Dropped under
+  // time pressure rather than planned and then silently never reached — a block
+  // that cannot run is more honest as an absence than as an unmet promise.
+  if (resumeValidationMin > 0) {
+    const probe = opts.fit?.probes?.[0] ?? 'Probe one high-value resume claim for personal contribution and measured result.';
+    blocks.push({
+      competencyId: '__resume_validation__', competencyName: 'Resume Validation',
+      intent: probe, targetMinutes: resumeValidationMin,
+      followupHints: ['Personal contribution and measured result.'], prohibited: opts.role.policyRules.prohibitedTopics,
+      bandGuidance,
+    });
+  }
   // Candidate questions / close.
   blocks.push({
     competencyId: '__candidate_questions__', competencyName: 'Candidate Questions & Close',
@@ -92,7 +106,85 @@ export function buildInterviewPlan(opts: {
     followupHints: ['No scoring from candidate personal questions unless job-related evidence emerges.'], prohibited: [],
   });
 
-  return { durationMinutes, language, modules, blocks, coverageTargets, band, bandRationale: opts.bandRationale };
+  return {
+    durationMinutes, language, modules, blocks, coverageTargets, band,
+    bandRationale: opts.bandRationale,
+    ...(notAssessed.length ? { notAssessed } : {}),
+  };
+}
+
+/** Shortest block worth asking. Below this there is no time for a real answer. */
+const MIN_COMPETENCY_MINUTES = 2;
+
+interface TimeBudget {
+  processMin: number;
+  warmupMin: number;
+  candidateQMin: number;
+  resumeValidationMin: number;
+  fitted: Competency[];
+  notAssessed: Competency[];
+  /** Minutes per fitted competency, index-aligned with `fitted`. */
+  competencyMinutes: number[];
+}
+
+/**
+ * Divide the interview's minutes between its fixed blocks and its competencies,
+ * spending no more than there are.
+ *
+ * Order of precedence is deliberate. Disclosure and close are close to
+ * non-negotiable: one is how consent is obtained, the other is the difference
+ * between an interview ending and a call dropping. Warmup earns its place next
+ * because a candidate who has not spoken yet answers the first real question
+ * badly. Resume validation yields before competencies, and the lowest-weight
+ * competencies yield before the highest — if something must go unasked, it
+ * should be the thing the role cares least about.
+ */
+function allocateTime(durationMinutes: number, scored: Competency[]): TimeBudget {
+  const tenth = Math.floor(durationMinutes * 0.15);
+  const processMin = Math.min(3, Math.max(1, tenth));
+  const candidateQMin = Math.min(3, Math.max(1, tenth));
+  let remaining = Math.max(0, durationMinutes - processMin - candidateQMin);
+
+  const warmupMin = remaining >= 6 ? 4 : remaining >= 4 ? 2 : 0;
+  remaining -= warmupMin;
+
+  const resumeValidationMin = remaining >= MIN_COMPETENCY_MINUTES + 3 ? 3 : 0;
+  remaining -= resumeValidationMin;
+
+  // Weight decides WHAT survives, never in what order it is asked.
+  //
+  // Sorting the blocks themselves by weight quietly rewrote the interview's
+  // running order, and a low-weight competency that used to be asked first was
+  // pushed to the end. Selection and sequencing are different decisions: the
+  // role's declared order is a deliberate shape, and a fitting rule has no
+  // business rearranging it.
+  const byWeight = [...scored].sort((a, b) => b.weight - a.weight);
+  const capacity = Math.floor(remaining / MIN_COMPETENCY_MINUTES);
+  // Always assess at least one thing; an interview that assesses nothing is not
+  // an interview, however short the slot.
+  const fitCount = Math.max(1, Math.min(byWeight.length, capacity));
+  const keep = new Set(byWeight.slice(0, fitCount).map((c) => c.id));
+
+  const fitted = scored.filter((c) => keep.has(c.id));
+  const notAssessed = scored.filter((c) => !keep.has(c.id));
+
+  const floor = Math.min(MIN_COMPETENCY_MINUTES, Math.max(1, remaining));
+  const totalWeight = fitted.reduce((a, c) => a + c.weight, 0) || 1;
+  const competencyMinutes = fitted.map((c) =>
+    Math.max(floor, Math.floor((c.weight / totalWeight) * remaining)),
+  );
+
+  // Rounding up from the floor can overshoot; trim the largest blocks until the
+  // total fits. Guaranteed to terminate because fitCount * floor <= remaining
+  // whenever capacity >= 1.
+  let spent = competencyMinutes.reduce((a, b) => a + b, 0);
+  while (spent > remaining && competencyMinutes.some((m) => m > floor)) {
+    const i = competencyMinutes.indexOf(Math.max(...competencyMinutes));
+    competencyMinutes[i]--;
+    spent--;
+  }
+
+  return { processMin, warmupMin, candidateQMin, resumeValidationMin, fitted, notAssessed, competencyMinutes };
 }
 
 function intentFor(c: { name: string; category: string }): string {

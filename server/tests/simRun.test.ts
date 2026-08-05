@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { permutations, renderReport, type CellResult } from '../src/sim/run.js';
+import { permutations, renderReport, readCheckpoint, type CellResult } from '../src/sim/run.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PEER_IDS } from '../src/sim/peers.js';
 
 describe('permutations', () => {
@@ -97,5 +100,51 @@ describe('renderReport', () => {
     };
     expect(() => renderReport([bare], Date.now())).not.toThrow();
     expect(renderReport([bare], Date.now())).toContain('—');
+  });
+});
+
+describe('readCheckpoint', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'sim-ckpt-'));
+
+  function write(name: string, lines: string[]): string {
+    const p = join(dir, name);
+    writeFileSync(p, lines.join('\n'), 'utf8');
+    return p;
+  }
+
+  it('returns nothing when there is no checkpoint to resume from', () => {
+    expect(readCheckpoint(join(dir, 'does-not-exist.jsonl')).size).toBe(0);
+  });
+
+  it('reads completed cells back by index', () => {
+    const p = write('ok.jsonl', [
+      JSON.stringify({ cell: { index: 0 }, role: 'A', candidate: 'X', errors: [] }),
+      JSON.stringify({ cell: { index: 3 }, role: 'B', candidate: 'Y', errors: [] }),
+    ]);
+    const done = readCheckpoint(p);
+    expect(done.size).toBe(2);
+    expect(done.get(3)?.role).toBe('B');
+    expect(done.has(1)).toBe(false);
+  });
+
+  it('survives a line truncated by a kill mid-write', () => {
+    // A sweep interrupted while appending leaves a partial last line. Losing one
+    // cell to that is acceptable; losing the whole resume is not.
+    const p = write('torn.jsonl', [
+      JSON.stringify({ cell: { index: 0 }, role: 'A', candidate: 'X', errors: [] }),
+      '{"cell":{"index":1},"role":"trunc',
+    ]);
+    const done = readCheckpoint(p);
+    expect(done.size).toBe(1);
+    expect(done.has(0)).toBe(true);
+  });
+
+  it('ignores blank lines', () => {
+    const p = write('blank.jsonl', [
+      JSON.stringify({ cell: { index: 2 }, role: 'A', candidate: 'X', errors: [] }),
+      '',
+      '',
+    ]);
+    expect(readCheckpoint(p).size).toBe(1);
   });
 });

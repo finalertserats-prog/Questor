@@ -91,6 +91,12 @@ export interface InterviewPlan {
   blocks: PlanBlock[];
   coverageTargets: Record<string, number>; // competencyId -> planned weight
   /**
+   * Competencies the role defines but the interview had no time to assess.
+   * Recorded so an assessment can say "not asked" rather than "no evidence" —
+   * the difference between a gap in the plan and a gap in the candidate.
+   */
+  notAssessed?: string[];
+  /**
    * The experience band this interview is pitched at (see engines/experienceBands).
    * Optional so plans persisted before calibration existed still deserialize.
    */
