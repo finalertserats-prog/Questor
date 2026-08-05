@@ -6,7 +6,7 @@ import {
   inferBand,
   bandDistance,
   type BandId,
-} from '../src/sim/bands.js';
+} from '../src/engines/experienceBands.js';
 
 describe('band table', () => {
   it('covers the years axis without gaps or overlaps', () => {
