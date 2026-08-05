@@ -239,7 +239,7 @@ export async function submitCandidateTurn(sessionId: string, text: string, timin
 
 /** Close the interview, run the independent evaluator and persist the assessment. */
 export async function finalizeInterview(sessionId: string): Promise<{ assessmentId: string }> {
-  const { session, profile, turns } = await loadContext(sessionId);
+  const { session, profile, turns, plan } = await loadContext(sessionId);
   if (!FINALIZABLE_STATES.includes(session.state)) {
     const existing = await prisma.assessmentVersion.findFirst({
       where: { sessionId }, orderBy: { version: 'desc' }, select: { id: true },
@@ -260,6 +260,9 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
   const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
   const result = await evaluate({
     role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
+    // The plan knows which competencies it had no room for. Passing that on is
+    // what lets the assessment say "not asked" instead of "no evidence".
+    notAssessed: plan.notAssessed,
   });
 
   const assessment = await prisma.assessmentVersion.create({

@@ -28,10 +28,24 @@ export async function evaluate(opts: {
   turns: TurnRecord[];
   rubricVersion: string;
   assessmentVersion: string;
+  /**
+   * Competency names the interview had no time to reach (from the plan).
+   *
+   * Without this, a competency nobody asked about was scored "no transcript
+   * evidence was gathered", counted against evidence coverage, and coverage
+   * below 0.4 forces CONSIDER — so the candidate was marked down for questions
+   * that were never put to them. "We did not ask" and "they could not answer"
+   * are different findings and must not share a code path.
+   */
+  notAssessed?: string[];
   sessionId?: string;
 }): Promise<AssessmentResult> {
   const { role, turns, rubricVersion } = opts;
   const scored = role.competencies.filter((c) => c.classification !== 'non_scoring' && c.weight > 0);
+  const notAsked = new Set(opts.notAssessed ?? []);
+  // What the interview actually set out to cover. Coverage is measured against
+  // this, not against the role's full competency list.
+  const assessable = scored.filter((c) => !notAsked.has(c.name));
 
   // Attribute evidence ONCE for the whole transcript, before grading. Attribution
   // is inherently cross-competency — an answer given under one question may
@@ -41,12 +55,18 @@ export async function evaluate(opts: {
 
   // Competencies are independent — grade them concurrently.
   const competencyScores: CompetencyScore[] = await Promise.all(
-    scored.map((c) => scoreCompetency({
-      competency: c,
-      evidence: attribution.byCompetency[c.id] ?? [],
-      rubricVersion,
-      sessionId: opts.sessionId,
-    })),
+    scored.map((c) => notAsked.has(c.name)
+      ? Promise.resolve<CompetencyScore>({
+          id: c.id, name: c.name, level: null, requiredLevel: c.requiredLevel,
+          confidence: 0.2, notEnoughEvidence: true, evidence: [], rubricVersion,
+          rationale: 'This competency was not assessed — the interview did not have time to cover it. This is a gap in the interview, not a finding about the candidate.',
+        })
+      : scoreCompetency({
+          competency: c,
+          evidence: attribution.byCompetency[c.id] ?? [],
+          rubricVersion,
+          sessionId: opts.sessionId,
+        })),
   );
 
   // Overall score: weighted mean over competencies WITH evidence (NEE excluded).
@@ -55,14 +75,22 @@ export async function evaluate(opts: {
   const overallScore = Math.round(
     withEvidence.reduce((a, s) => a + (s.level! / 5) * 100 * weightOf(role, s.id), 0) / totalWeight,
   );
-  const evidenceCoverage = scored.length ? Math.round((withEvidence.length / scored.length) * 100) / 100 : 0;
+  // Measured over what the interview set out to cover, so an unasked competency
+  // cannot depress the candidate's coverage. The cost of a short interview is
+  // carried by `confidence` and stated in `limitations` instead.
+  const evidenceCoverage = assessable.length ? Math.round((withEvidence.length / assessable.length) * 100) / 100 : 0;
 
   // Must-pass evaluation.
   const mustPass = role.scoringRules.mustPassCompetencyIds;
   const failedMustPass = competencyScores.filter(
     (s) => mustPass.includes(s.id) && s.level !== null && s.level < s.requiredLevel,
   );
-  const mustPassNEE = competencyScores.filter((s) => mustPass.includes(s.id) && s.notEnoughEvidence);
+  // An unasked must-pass competency is an incomplete interview, not a candidate
+  // who failed to evidence it — routing it through the must-pass gate would turn
+  // our scheduling into their result.
+  const mustPassNEE = competencyScores.filter(
+    (s) => mustPass.includes(s.id) && s.notEnoughEvidence && !notAsked.has(s.name),
+  );
 
   const recommendation = decideRecommendation({
     overallScore, evidenceCoverage, passThreshold: role.scoringRules.passThreshold,
@@ -88,6 +116,12 @@ export async function evaluate(opts: {
     ...(evidenceCoverage < 0.6 ? [`Sufficient-evidence coverage was ${Math.round(evidenceCoverage * 100)}% — some competencies lack evidence that demonstrates them.`] : []),
     ...mustPassNEE.map((s) => `Must-pass competency ${s.name} lacks sufficient evidence; recommendation is capped pending human review.`),
     ...(gradingFailures.length ? [`${gradingFailures.length} competenc${gradingFailures.length === 1 ? 'y' : 'ies'} could not be graded automatically and were excluded from the score; this is a system limitation, not a finding about the candidate.`] : []),
+    // Named, not counted. A reviewer deciding whether to progress someone needs
+    // to know WHICH parts of the role remain unknown, so they can cover them in
+    // the next round rather than treating the assessment as complete.
+    ...(notAsked.size
+      ? [`The interview did not have time to cover ${notAsked.size} competenc${notAsked.size === 1 ? 'y' : 'ies'}: ${[...notAsked].join(', ')}. These were not assessed and are not counted against the candidate — they remain open questions for a later round.`]
+      : []),
     // Disclose the attribution mode: a reader must be able to tell whether evidence
     // was matched by question slot or by an automated reading of the answers, and
     // must have the handle needed to pull the decision record.
@@ -96,8 +130,13 @@ export async function evaluate(opts: {
       : []),
   ];
 
+  // Coverage now excludes what was never asked, so the cost of a partial
+  // interview has to land somewhere else: confidence carries it, scaled by how
+  // much of the role the interview actually attempted. Without this, dropping
+  // competencies for time would make an assessment look MORE certain, not less.
+  const attempted = scored.length ? assessable.length / scored.length : 1;
   const confidence = Math.round(
-    (withEvidence.reduce((a, s) => a + s.confidence, 0) / (withEvidence.length || 1)) * evidenceCoverage * 100,
+    (withEvidence.reduce((a, s) => a + s.confidence, 0) / (withEvidence.length || 1)) * evidenceCoverage * attempted * 100,
   ) / 100;
 
   const summary = await buildSummary({ role, recommendation, confidence, evidenceCoverage, overallScore, competencyScores, strengths, concerns, sessionId: opts.sessionId });
