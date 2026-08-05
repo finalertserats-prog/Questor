@@ -1,4 +1,4 @@
-import type { BandId } from './bands.js';
+import type { BandId } from '../engines/experienceBands.js';
 import type { PeerId } from './peers.js';
 import type { RoleSpec } from './roleFactory.js';
 import type { CandidateSpec } from './candidateFactory.js';

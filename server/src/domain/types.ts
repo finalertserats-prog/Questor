@@ -1,6 +1,8 @@
 // Questor domain types. These describe the JSON structures serialized into the
 // DB's *Json columns and passed between engines. (BRD Sections 7, 10, 15, 16.)
 
+import type { BandId } from '../engines/experienceBands.js';
+
 export type Proficiency = 0 | 1 | 2 | 3 | 4 | 5;
 
 export interface Competency {
@@ -75,6 +77,11 @@ export interface PlanBlock {
   followupHints: string[];      // situation/action/reasoning/result/learning probes
   prohibited: string[];
   module?: 'coding' | 'case' | 'presentation' | 'roleplay' | 'document_review';
+  /**
+   * What to ask, and what not to ask, at this candidate's experience level.
+   * Absent on process/close blocks, which are script rather than assessment.
+   */
+  bandGuidance?: string;
 }
 
 export interface InterviewPlan {
@@ -83,6 +90,13 @@ export interface InterviewPlan {
   modules: string[];
   blocks: PlanBlock[];
   coverageTargets: Record<string, number>; // competencyId -> planned weight
+  /**
+   * The experience band this interview is pitched at (see engines/experienceBands).
+   * Optional so plans persisted before calibration existed still deserialize.
+   */
+  band?: BandId;
+  /** Why that band was chosen, for the audit trail behind the pitch. */
+  bandRationale?: string;
 }
 
 // ---- Turns / evidence ----

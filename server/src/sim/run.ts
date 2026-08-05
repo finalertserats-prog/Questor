@@ -17,7 +17,7 @@
  *   SIM_GENERATE=true             have a peer invent roles/candidates instead of templates
  */
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { BANDS, type BandId } from './bands.js';
+import { BANDS, type BandId } from '../engines/experienceBands.js';
 import { PEER_IDS, otherPeers, type PeerId } from './peers.js';
 import { ROLE_FAMILIES, templateRole, generateRole, type RoleFamily, type RoleSpec } from './roleFactory.js';
 import {
@@ -277,8 +277,14 @@ async function main() {
     }
     done++;
     const elapsedMin = (Date.now() - startedAt) / 60000;
-    const projected = (elapsedMin / done) * cells.length;
-    console.log(`--- progress ${done}/${cells.length} · ${elapsedMin.toFixed(1)} min elapsed · ~${Math.max(0, projected - elapsedMin).toFixed(0)} min remaining`);
+    // No projection until at least one full concurrent wave has landed. Before
+    // that, `elapsed / done` divides the whole warm-up by a single completion
+    // while the other slots are nearly finished, and reports several times the
+    // real figure — the first tick of a 4-hour run announced 12 hours.
+    const projection = done >= concurrency
+      ? `~${Math.max(0, (elapsedMin / done) * cells.length - elapsedMin).toFixed(0)} min remaining`
+      : `(estimating — needs ${concurrency} completions)`;
+    console.log(`--- progress ${done}/${cells.length} · ${elapsedMin.toFixed(1)} min elapsed · ${projection}`);
     return r;
   });
 

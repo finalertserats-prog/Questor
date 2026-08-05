@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BANDS, inferBand, bandById } from '../src/sim/bands.js';
+import { BANDS, inferBand, bandById } from '../src/engines/experienceBands.js';
 import { ROLE_FAMILIES, templateRole, validateRoleSpec } from '../src/sim/roleFactory.js';
 import {
   CANDIDATE_STRENGTHS,

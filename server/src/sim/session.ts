@@ -21,6 +21,7 @@ import { extractRole } from '../engines/roleIntelligence.js';
 import { normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
+import { resolveCandidateBand } from '../engines/bandCalibration.js';
 import type { RoleSpec } from './roleFactory.js';
 import type { CandidateSpec } from './candidateFactory.js';
 
@@ -159,7 +160,19 @@ export async function createSimSession(opts: {
     },
   });
 
-  const plan = buildInterviewPlan({ role: extraction.profile, fit, durationMinutes, language: 'en', modules: [] });
+  // Resolved exactly as the production route does, so the harness measures the
+  // engine's own banding rather than being handed the answer it is testing for.
+  const banding = resolveCandidateBand({
+    profile,
+    resumeText: opts.candidate.resumeText,
+    roleSeniority: extraction.profile.seniority ?? '',
+  });
+
+  const plan = buildInterviewPlan({
+    role: extraction.profile, fit, durationMinutes, language: 'en', modules: [],
+    band: banding.band.id,
+    bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
+  });
   const session = await prisma.interviewSession.create({
     data: {
       tenantId, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,

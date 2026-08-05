@@ -1,5 +1,7 @@
 import type { Competency, FitScore, InterviewPlan, PlanBlock, RoleSuccessProfile } from '../domain/types.js';
 import { isWorkSampleEligible } from './workSample.js';
+import { bandForRoleSeniority, bandGuidanceFor } from './bandCalibration.js';
+import type { BandId } from './experienceBands.js';
 
 // Interview plan builder (BRD FR-016, Appendix 25.1). Produces comparable
 // competency coverage while reserving process, warmup, resume-validation and
@@ -11,10 +13,19 @@ export function buildInterviewPlan(opts: {
   durationMinutes?: number;
   language?: string;
   modules?: string[];
+  /**
+   * The candidate's experience band. Falls back to the ROLE's level when the
+   * caller has not resolved one — worse than reading the candidate, but far
+   * better than the single binary check this replaced.
+   */
+  band?: BandId;
+  bandRationale?: string;
 }): InterviewPlan {
   const durationMinutes = opts.durationMinutes ?? 45;
   const language = opts.language ?? 'en';
   const modules = opts.modules ?? [];
+  const band = opts.band ?? bandForRoleSeniority(opts.role.seniority).id;
+  const bandGuidance = bandGuidanceFor(band);
   const scored = opts.role.competencies.filter((c) => c.classification !== 'non_scoring');
 
   // Fixed overhead blocks.
@@ -61,6 +72,7 @@ export function buildInterviewPlan(opts: {
       ],
       prohibited: opts.role.policyRules.prohibitedTopics,
       module,
+      bandGuidance,
     });
   }
 
@@ -70,6 +82,7 @@ export function buildInterviewPlan(opts: {
     competencyId: '__resume_validation__', competencyName: 'Resume Validation',
     intent: probe, targetMinutes: resumeValidationMin,
     followupHints: ['Personal contribution and measured result.'], prohibited: opts.role.policyRules.prohibitedTopics,
+    bandGuidance,
   });
   // Candidate questions / close.
   blocks.push({
@@ -79,7 +92,7 @@ export function buildInterviewPlan(opts: {
     followupHints: ['No scoring from candidate personal questions unless job-related evidence emerges.'], prohibited: [],
   });
 
-  return { durationMinutes, language, modules, blocks, coverageTargets };
+  return { durationMinutes, language, modules, blocks, coverageTargets, band, bandRationale: opts.bandRationale };
 }
 
 function intentFor(c: { name: string; category: string }): string {

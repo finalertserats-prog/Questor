@@ -11,7 +11,7 @@
  * self-identification and the consent disclosure are all removed, because each
  * one tells the judge which lane it is reading before it reaches a question.
  */
-import { BANDS, bandById, bandDistance, type BandId } from './bands.js';
+import { BANDS, bandById, bandDistance, type BandId } from '../engines/experienceBands.js';
 import { callPeerJson, type PeerId } from './peers.js';
 import type { JudgeVerdict, SimTranscript } from './types.js';
 

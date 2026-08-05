@@ -7,7 +7,7 @@
  * fixture that changes every run cannot tell you whether the engine changed.
  */
 import { nanoid } from 'nanoid';
-import { bandById, type BandId } from './bands.js';
+import { bandById, type BandId } from '../engines/experienceBands.js';
 import { callPeerJson, type PeerId } from './peers.js';
 
 export const ROLE_FAMILIES = [

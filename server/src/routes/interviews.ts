@@ -6,7 +6,8 @@ import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
-import type { FitScore, RoleSuccessProfile } from '../domain/types.js';
+import { resolveCandidateBand } from '../engines/bandCalibration.js';
+import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { assertTransition } from '../domain/stateMachine.js';
 import { getEmail } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
@@ -61,7 +62,22 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' } });
   const fit = latestProfile ? parseJson<FitScore>(latestProfile.fitScoreJson, undefined as any) : undefined;
 
-  const plan = buildInterviewPlan({ role: profile, fit, durationMinutes: body.durationMinutes, language: body.language, modules: body.modules });
+  // Pitch the interview at the candidate rather than at the requisition. Their
+  // parsed resume already knew how long they have worked and what they have
+  // owned; until now none of it reached the plan, so a first-year applicant to a
+  // senior req was questioned as though they held the job.
+  const parsed = latestProfile ? parseJson<NormalizedProfile>(latestProfile.profileJson, {} as NormalizedProfile) : ({} as NormalizedProfile);
+  const banding = resolveCandidateBand({
+    profile: parsed,
+    resumeText: latestProfile?.rawText ?? '',
+    roleSeniority: profile.seniority ?? '',
+  });
+
+  const plan = buildInterviewPlan({
+    role: profile, fit, durationMinutes: body.durationMinutes, language: body.language, modules: body.modules,
+    band: banding.band.id,
+    bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
+  });
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});

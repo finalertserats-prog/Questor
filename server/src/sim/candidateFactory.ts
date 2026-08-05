@@ -8,7 +8,7 @@
  * exists to find. So strength lives mostly in the brief, not the CV.
  */
 import { nanoid } from 'nanoid';
-import { bandById, type BandId } from './bands.js';
+import { bandById, type BandId } from '../engines/experienceBands.js';
 import { callPeerJson, type PeerId } from './peers.js';
 import type { RoleSpec } from './roleFactory.js';
 
