@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { anonymiseTranscript, calibrationFromDistance, validateVerdict } from '../src/sim/judge.js';
+import { anonymiseTranscript, calibrationFromDistance, validateVerdict, MAX_ANSWER_EXCERPT_CHARS, MAX_BODY_CHARS } from '../src/sim/judge.js';
 import { MAX_PROMPT_CHARS } from '../src/sim/peers.js';
 import { templateRole } from '../src/sim/roleFactory.js';
 import { templateCandidate } from '../src/sim/candidateFactory.js';
@@ -90,8 +90,21 @@ describe('anonymiseTranscript — prompt bounding', () => {
     expect(out).toContain('answer truncated for review');
   });
 
-  it('never truncates a question, which is the thing being judged', () => {
+  it('gives a question far more room than an answer, since the question is what is judged', () => {
+    // Questions were originally never truncated at all. That had to change: a
+    // work-sample question embeds a whole code artefact, and transcripts of them
+    // blew the process-argument ceiling and killed the judge call outright. They
+    // still get more than twice an answer's budget, and the opening — which is
+    // what reveals the level it was pitched at — always survives.
     const question = `Walk me through ${'the migration '.repeat(200)}step by step.`;
+    const out = anonymiseTranscript(transcript([{ speaker: 'interviewer', text: question }]));
+    expect(out).toContain('Walk me through the migration');
+    expect(out.length).toBeGreaterThan(MAX_ANSWER_EXCERPT_CHARS * 2);
+    expect(out).toContain('question truncated for review');
+  });
+
+  it('leaves a question of ordinary length exactly as it was', () => {
+    const question = 'Walk me through, step by step, how that problem reached you.';
     const out = anonymiseTranscript(transcript([{ speaker: 'interviewer', text: question }]));
     expect(out).toContain(question);
     expect(out).not.toContain('truncated');
@@ -160,5 +173,55 @@ describe('validateVerdict', () => {
 
   it('rejects a verdict with no band at all', () => {
     expect(() => validateVerdict({ ...good, pitchedBand: undefined })).toThrow();
+  });
+});
+
+describe('anonymiseTranscript — hard ceiling', () => {
+  it('excerpts a work-sample question that embeds a code artefact', () => {
+    // Bounding only answers was not enough: work-sample questions carry whole
+    // SQL or Python artefacts, and a transcript of them reached 31,480 chars —
+    // past the process-argument ceiling, so the judge died and the cell lost its
+    // verdict.
+    const artefact = `Let's do a short practical one. ${'SELECT customer_id, COUNT(*) FROM orders GROUP BY 1; '.repeat(60)}`;
+    const out = anonymiseTranscript(transcript([{ speaker: 'interviewer', text: artefact }]));
+    expect(out.length).toBeLessThan(1100);
+    expect(out).toContain('question truncated for review');
+    // The opening survives — that is what shows the level it was pitched at.
+    expect(out).toContain("Let's do a short practical one.");
+  });
+
+  it('keeps even a pathological transcript under the peer prompt ceiling', () => {
+    const turns: SimTurn[] = [];
+    for (let i = 0; i < 40; i++) {
+      turns.push({ speaker: 'interviewer', text: `Q${i} ${'x'.repeat(4000)}` });
+      turns.push({ speaker: 'candidate', text: 'y'.repeat(4000) });
+    }
+    const out = anonymiseTranscript(transcript(turns));
+    // The real requirement: body plus the CV, band menu and instructions must
+    // clear the process-argument ceiling with room to spare.
+    expect(out.length).toBeLessThanOrEqual(MAX_BODY_CHARS + 200);
+    expect(out.length + 6000).toBeLessThan(MAX_PROMPT_CHARS);
+  });
+
+  it('says so when it drops earlier turns, rather than handing over a silent fragment', () => {
+    const turns: SimTurn[] = [];
+    for (let i = 0; i < 40; i++) {
+      turns.push({ speaker: 'interviewer', text: `Question ${i} ${'x'.repeat(500)}` });
+      turns.push({ speaker: 'candidate', text: 'y'.repeat(500) });
+    }
+    const out = anonymiseTranscript(transcript(turns));
+    expect(out).toContain('earlier turns omitted for length');
+    // Drops from the start: the close is where the pitch reads clearest.
+    expect(out).toContain('Question 39');
+  });
+
+  it('leaves a normal-length interview completely untouched', () => {
+    const turns: SimTurn[] = [
+      { speaker: 'interviewer', text: 'What broke last?' },
+      { speaker: 'candidate', text: 'The nightly load.' },
+    ];
+    const out = anonymiseTranscript(transcript(turns));
+    expect(out).not.toContain('truncated');
+    expect(out).not.toContain('omitted');
   });
 });

@@ -118,9 +118,21 @@ export async function callPeer(peer: PeerId, prompt: string, opts: PeerCallOptio
       return text;
     } catch (e) {
       lastErr = e;
+      // Back off before retrying. Peer failures cluster when many calls are in
+      // flight — running two lanes per cell concurrently took the failure rate
+      // from 0.00 to 0.72 per cell — so an immediate retry rejoins exactly the
+      // contention that caused the failure. Growing the wait gives it time to
+      // clear.
+      if (attempt < retries) await sleep(RETRY_BACKOFF_MS * attempt);
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(`${peer} failed`);
+}
+
+const RETRY_BACKOFF_MS = 5_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // --- JSON extraction --------------------------------------------------------

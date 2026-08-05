@@ -57,10 +57,28 @@ function scrub(text: string): string {
  * no numbers in it. Bounding here is what keeps the prompt under the ceiling
  * that {@link MAX_PROMPT_CHARS} enforces.
  */
-export const MAX_ANSWER_EXCERPT_CHARS = 600;
+export const MAX_ANSWER_EXCERPT_CHARS = 400;
 
-export function anonymiseTranscript(t: SimTranscript, opts: { maxAnswerChars?: number } = {}): string {
+/**
+ * Questions are excerpted too, but far more generously than answers.
+ *
+ * Bounding only answers was not enough: a work-sample question embeds a whole
+ * SQL or Python artefact, and a transcript full of them reached a 31,480-character
+ * prompt — over the process-argument ceiling, so the judge call died and the cell
+ * lost its verdict. The artefact's body is not what decides whether the question
+ * was pitched at the right level; its opening is.
+ */
+export const MAX_QUESTION_EXCERPT_CHARS = 900;
+
+/** Ceiling on the rendered transcript, leaving room for the CV and instructions. */
+export const MAX_BODY_CHARS = 18_000;
+
+export function anonymiseTranscript(
+  t: SimTranscript,
+  opts: { maxAnswerChars?: number; maxBodyChars?: number } = {},
+): string {
   const maxAnswer = opts.maxAnswerChars ?? MAX_ANSWER_EXCERPT_CHARS;
+  const maxBody = opts.maxBodyChars ?? MAX_BODY_CHARS;
   const lines: string[] = [];
   let skipNextCandidate = false;
 
@@ -77,14 +95,26 @@ export function anonymiseTranscript(t: SimTranscript, opts: { maxAnswerChars?: n
 
     const isCandidate = turn.speaker === 'candidate';
     const scrubbed = scrub(turn.text);
+    const cap = isCandidate ? maxAnswer : MAX_QUESTION_EXCERPT_CHARS;
     // Marked when cut, so the judge knows it is reading an excerpt and does not
     // score the candidate down for an answer that merely stops.
-    const body = isCandidate && scrubbed.length > maxAnswer
-      ? `${scrubbed.slice(0, maxAnswer)} […answer truncated for review]`
+    const body = scrubbed.length > cap
+      ? `${scrubbed.slice(0, cap)} […${isCandidate ? 'answer' : 'question'} truncated for review]`
       : scrubbed;
     lines.push(`${isCandidate ? 'CANDIDATE' : 'INTERVIEWER'}: ${body}`);
   }
-  return lines.join('\n\n');
+
+  // Last resort. Drops from the START rather than the end, because the closing
+  // exchanges are where an interview's pitch is clearest and the opening warmup
+  // is the most disposable. Announced, so the judge is not silently handed a
+  // fragment and asked to score a whole interview.
+  let rendered = lines.join('\n\n');
+  if (rendered.length > maxBody) {
+    let kept = lines;
+    while (kept.length > 2 && kept.join('\n\n').length > maxBody) kept = kept.slice(1);
+    rendered = `[…earlier turns omitted for length]\n\n${kept.join('\n\n')}`;
+  }
+  return rendered;
 }
 
 /**
