@@ -329,3 +329,19 @@ describe('cookie session and CSRF protection', () => {
     expect(cookieOf(jar, 'questor_csrf')).toBe('questor_csrf=');
   });
 });
+
+describe('health endpoint identifies the running build', () => {
+  it('reports a commit so "is production current?" is one request', async () => {
+    const res = await request(app).get('/api/health');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ok');
+    expect(res.body.commit).toBeTruthy();
+    // Either a real sha or an honest admission — never a crash, and never absent.
+    expect(res.body.commit === 'unknown' || /^[0-9a-f]{7,40}$/.test(res.body.commit)).toBe(true);
+  });
+
+  it('still reports a timestamp per request', async () => {
+    const res = await request(app).get('/api/health');
+    expect(res.body.ts).toBeTruthy();
+  });
+});

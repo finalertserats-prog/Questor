@@ -310,6 +310,12 @@ async function main() {
     console.log(`Resuming: ${alreadyDone.size} cells already complete, ${cells.length - alreadyDone.size} to run.\n`);
   }
   let done = alreadyDone.size;
+  // Counted separately from `done`, because resumed cells contribute to the
+  // total without contributing to elapsed time. Mixing them made a 2.7-hour
+  // remainder read as 32 minutes — the same class of error as projecting from a
+  // single completion, in a different disguise.
+  let ranThisSession = 0;
+  const remainingToRun = cells.length - alreadyDone.size;
 
   const results = await runPool(cells, concurrency, async (cell) => {
     const cached = alreadyDone.get(cell.index);
@@ -323,13 +329,14 @@ async function main() {
       console.warn(`checkpoint write failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     done++;
+    ranThisSession++;
     const elapsedMin = (Date.now() - startedAt) / 60000;
-    // No projection until at least one full concurrent wave has landed. Before
-    // that, `elapsed / done` divides the whole warm-up by a single completion
-    // while the other slots are nearly finished, and reports several times the
-    // real figure — the first tick of a 4-hour run announced 12 hours.
-    const projection = done >= concurrency
-      ? `~${Math.max(0, (elapsedMin / done) * cells.length - elapsedMin).toFixed(0)} min remaining`
+    // Rate comes from cells this session actually ran, projected over the ones
+    // still to run. No projection until a full concurrent wave has landed:
+    // before that, elapsed divided by a single completion counts the whole
+    // warm-up against it and reports several times the real figure.
+    const projection = ranThisSession >= concurrency
+      ? `~${Math.max(0, (elapsedMin / ranThisSession) * (remainingToRun - ranThisSession)).toFixed(0)} min remaining`
       : `(estimating — needs ${concurrency} completions)`;
     console.log(`--- progress ${done}/${cells.length} · ${elapsedMin.toFixed(1)} min elapsed · ${projection}`);
     return r;
