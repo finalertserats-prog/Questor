@@ -15,6 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx src/seed/simulateInterview.ts",
+    "sim": "tsx src/sim/run.ts",
+    "sim:smoke": "tsx src/sim/smoke.ts",
+    "sim:voice": "tsx src/sim/voiceAB.ts",
     "lint": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
