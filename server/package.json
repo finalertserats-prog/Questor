@@ -18,6 +18,7 @@
     "sim": "tsx src/sim/run.ts",
     "sim:smoke": "tsx src/sim/smoke.ts",
     "sim:voice": "tsx src/sim/voiceAB.ts",
+    "sim:report": "tsx src/sim/report.ts",
     "lint": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
