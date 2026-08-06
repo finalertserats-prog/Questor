@@ -182,3 +182,103 @@ can close alone:
 - Read the first transcripts next to their assessments
   (`GET /api/interviews/:id/transcript`).
 - Check `/api/health` returns the commit you expect before a batch goes out.
+
+---
+
+# Next session — start here
+
+Written 6 August 2026 at the end of the session that produced everything above.
+Read this first; it says where things stand and what to pick up.
+
+## State at handoff
+
+- Production: `https://questor.187-127-166-193.sslip.io`, commit `e7bb716`,
+  healthy. `GET /api/health` returns the running commit — check it before a batch
+  of invites.
+- Branch `claude/open-source-app-build-lnrqia`, 423 tests green across 27 files.
+- Interview calibration is fixed and measured. Evidence in `docs/evidence/`.
+- The invite flow was verified end to end on production and the test candidate
+  erased. 19 real candidates in the database — do not run the simulator against
+  it (`session.ts` refuses without `ALLOW_SIM_SEED`, keep it that way).
+- Rollback if ever needed:
+  `cd /root/Questor/repo && git reset --hard f9a0d2a && npm ci && pm2 restart questor`
+
+## Recommended first task: load and concurrency testing
+
+The highest-value unknown, and the reason to do it before the pilot rather than
+after: **the database is SQLite, which is single-writer.** If it collapses at
+modest concurrency the answer is a Postgres migration, and that is an
+architectural change you want to discover on a staging copy rather than during a
+real candidate's interview.
+
+Build a harness that drives N concurrent interviews through the real HTTP API —
+not through the simulator, which bypasses the transport. Find the breaking point
+for: SQLite writes, the Socket.IO layer, and LLM provider rate limits. Run it
+against a copy, never production.
+
+Roughly a day. Nothing else on this list can invalidate it.
+
+## Then, in order
+
+**Tier 1 — no decisions needed from anyone**
+
+1. Monitoring and alerting (~half day). A 3am failure mid-interview currently
+   tells nobody. Minimum: uptime on `/api/health`, error-rate and LLM-spend
+   alerts, and a check for sessions stuck in `ASSESSING` — an interview that dies
+   mid-flight just sits there.
+2. `npm audit` warnings. Deliberately not run with `--force` unattended on
+   production; it installs breaking majors.
+3. The `emerging` residual: 2 of 9 entry-level candidates still pitched one band
+   high (0.22, down from 1.11).
+
+**Tier 2 — needs pilot data**
+
+4. Real-candidate validation. Everything measured so far used synthetic
+   candidates. Run 20–30 real interviews with every assessment human-reviewed and
+   track where reviewers *disagree* with Questor. That disagreement rate is what
+   an enterprise buyer will ask for, and no simulation can produce it.
+5. Accessibility. This was missing from earlier assessments and should not have
+   been. Candidates with disabilities have a legal right to accommodation.
+   `accommodationsEnabled` exists in the policy model but the flow is untested:
+   screen reader, keyboard-only, and the typed-answer path for anyone who cannot
+   use voice. Discrimination exposure, not polish.
+
+**Tier 3 — needs people who are not an AI**
+
+6. **Bias audit.** The hard blocker for enterprise sale. NYC Local Law 144
+   requires an independent annual bias audit for automated employment decision
+   tools; the EU AI Act treats employment AI as high-risk. Needs real demographic
+   data, a qualified auditor and counsel. The harness can *prepare* the evidence —
+   it already produces per-band fairness scores and every decision is logged — but
+   it cannot perform the audit.
+7. Security and compliance: penetration test, SOC 2 or ISO 27001, a DPA and
+   sub-processor list (OpenAI processes candidate voice and transcripts — that
+   must be disclosed), data residency.
+8. Enterprise plumbing: SSO/SAML, audit-log export, SLA and uptime commitments.
+
+## The sequencing, honestly
+
+Pilot and Tier 1 can run in parallel. Tier 3 gates any sale and is measured in
+months, involving lawyers and auditors rather than commits. Nothing in Tiers 1
+and 2 lets you skip it: an unaudited hiring tool sold to an enterprise is a legal
+problem regardless of how well it interviews.
+
+Enterprise readiness for a hiring system is mostly governance, not code. The
+engineering is in reasonable shape — measured calibration, audited erasure, human
+review enforced, 423 tests. What is missing is the paperwork that proves it to
+someone who was not here.
+
+## One thing worth carrying forward
+
+The worst defect found in this session was not in the questions, the templates or
+the competency model — all three were checked first and all three were fine. A CV
+reading "2004 - Present" parsed as **zero years of experience**, and twenty-year
+directors were interviewed as juniors.
+
+It hid precisely because the surrounding design was good: years are a prior that
+evidenced scope adjusts, so scope markers quietly promoted the nonsense from
+`emerging` to `developing` — a plausible wrong answer rather than an obvious
+failure. Graceful degradation makes bad input look like a considered decision.
+
+It was found by measurement, not by reading code. When something here seems
+wrong, build the thing that measures it before theorising about the cause.
