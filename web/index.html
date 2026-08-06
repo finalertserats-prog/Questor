@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Questor — AI Interview Agent</title>
+    <script>
+      // Runs before first paint so the console never flashes the wrong theme.
+      // A stored choice wins; otherwise only a positive OS dark signal moves us
+      // off the light default.
+      (function () {
+        try {
+          // Light unless the person chose dark. The OS preference is not
+          // consulted — consulting it meant every reviewer on a dark-themed
+          // desktop got a dark console despite light being the default. Must
+          // stay in step with resolveInitialTheme() in components/theme.tsx;
+          // if the two disagree the page repaints on load.
+          var stored = localStorage.getItem('questor-theme');
+          var theme = stored === 'dark' || stored === 'light' ? stored : 'light';
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

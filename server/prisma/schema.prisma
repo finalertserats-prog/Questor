@@ -1,0 +1,364 @@
+// Questor domain model (BRD Section 15).
+// Default datasource is SQLite (zero-config, open source).
+// To use the Postgres connector: change `provider` to "postgresql" and set
+// DATABASE_URL to your Postgres URL (see docs/CONNECTORS.md). Complex objects
+// are stored as JSON strings so the schema is portable across both engines.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name         String
+  region       String   @default("in")
+  // JSON: disclosure text, retention days, recording default, allowed modules, languages
+  policyJson   String   @default("{}")
+  createdAt    DateTime @default(now())
+  users        User[]
+  roles        Role[]
+  candidates   Candidate[]
+  interviews   InterviewSession[]
+  auditEvents  AuditEvent[]
+  webhooks     WebhookEndpoint[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  email        String   @unique
+  name         String
+  passwordHash String
+  // recruiter | manager | admin | auditor | program_owner
+  role         String   @default("recruiter")
+  createdAt    DateTime @default(now())
+  reviews      HumanReview[]
+  roleAssignments      RoleAssignment[]
+  candidateAssignments CandidateAssignment[]
+}
+
+model Role {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  title         String
+  level         String   @default("")
+  location      String   @default("")
+  employmentType String  @default("")
+  sourceType    String   @default("paste") // paste | file | ats | form
+  sourceText    String   @default("")
+  status        String   @default("draft")  // draft | approved | archived
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  scorecards    RoleScorecardVersion[]
+  candidates    Candidate[]
+  interviews    InterviewSession[]
+  assignments   RoleAssignment[]
+}
+
+model RoleScorecardVersion {
+  id             String   @id @default(cuid())
+  roleId         String
+  role           Role     @relation(fields: [roleId], references: [id])
+  version        Int      @default(1)
+  status         String   @default("draft") // draft | approved
+  // JSON RoleSuccessProfile: outcomes, responsibilities, competencies[], scoringRules, policyRules
+  profileJson    String   @default("{}")
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime @default(now())
+  interviews     InterviewSession[]
+  assessments    AssessmentVersion[]
+}
+
+model Candidate {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  roleId        String?
+  role          Role?    @relation(fields: [roleId], references: [id])
+  fullName      String
+  email         String
+  phone         String   @default("")
+  createdAt     DateTime @default(now())
+  profiles      CandidateProfileVersion[]
+  interviews    InterviewSession[]
+  artifacts     Artifact[]
+  assignments   CandidateAssignment[]
+}
+
+model CandidateProfileVersion {
+  id            String   @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id])
+  version       Int      @default(1)
+  rawText       String   @default("")
+  // JSON normalized profile: employment[], education[], projects[], certifications[], skills[]
+  profileJson   String   @default("{}")
+  // JSON fit score: overall, confidence, components[], missing[], probes[]
+  fitScoreJson  String   @default("{}")
+  createdAt     DateTime @default(now())
+  evidenceNodes EvidenceNode[]
+}
+
+model EvidenceNode {
+  id            String   @id @default(cuid())
+  profileId     String
+  profile       CandidateProfileVersion @relation(fields: [profileId], references: [id])
+  kind          String   // claim | competency | evidence | question | answer
+  label         String
+  dataJson      String   @default("{}")
+  createdAt     DateTime @default(now())
+  outEdges      EvidenceEdge[] @relation("fromNode")
+  inEdges       EvidenceEdge[] @relation("toNode")
+}
+
+model EvidenceEdge {
+  id        String   @id @default(cuid())
+  fromId    String
+  toId      String
+  from      EvidenceNode @relation("fromNode", fields: [fromId], references: [id])
+  to        EvidenceNode @relation("toNode", fields: [toId], references: [id])
+  // supports | contradicts | requires-validation | demonstrates-at-level | source
+  relation  String
+  weight    Float    @default(1)
+}
+
+model InterviewPlanVersion {
+  id            String   @id @default(cuid())
+  sessionId     String   @unique
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  version       Int      @default(1)
+  // JSON: blocks[] {competencyId, intent, targetMinutes, followupHints[], prohibited[]}, durationMinutes, language, modules[]
+  planJson      String   @default("{}")
+  createdAt     DateTime @default(now())
+}
+
+model InterviewSession {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  roleId            String
+  role              Role     @relation(fields: [roleId], references: [id])
+  scorecardId       String
+  scorecard         RoleScorecardVersion @relation(fields: [scorecardId], references: [id])
+  state             String   @default("PROVISIONED")
+  provider          String   @default("hosted")
+  language          String   @default("en")
+  durationMinutes   Int      @default(45)
+  personaJson       String   @default("{}")
+  consentJson       String   @default("{}")     // version, timestamp, channel, recording, withdrawn
+  qualityJson       String   @default("{}")      // audio quality, latency samples
+  contextJson       String   @default("{}")      // structured running memory (resilience checkpoints)
+  recordingConsent  Boolean  @default(false)
+  // Retention is a session-level property, not a per-artifact one: the
+  // recruitment purpose completes for a whole interview at once, and the
+  // candidate's data is spread across turns, assessments and reviews that all
+  // belong to this session. Null means "use the tenant default window" — see
+  // DEFAULT_RETENTION_DAYS in services/dataRights.ts. Both fields are optional
+  // so existing rows stay valid.
+  retainUntil       DateTime?
+  // Mirrors Artifact.legalHold. A session under hold is NEVER purged, whatever
+  // retainUntil says — litigation/regulatory holds override storage limitation.
+  legalHold         Boolean  @default(false)
+  scheduledAt       DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  // Separate from completedAt on purpose. An interview that stopped part-way
+  // was not completed, and a report counting completed interviews must not
+  // count it.
+  interruptedAt     DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  plan              InterviewPlanVersion?
+  invitation        Invitation?
+  turns             Turn[]
+  assessments       AssessmentVersion[]
+  artifacts         Artifact[]
+}
+
+model Invitation {
+  id            String   @id @default(cuid())
+  sessionId     String   @unique
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  token         String   @unique
+  channel       String   @default("email")
+  status        String   @default("created") // created | sent | opened | accepted | consumed | expired | cancelled
+  sentAt        DateTime?
+  // First time the candidate actually loaded their portal link. The closest
+  // thing to delivery confirmation available: SMTP acceptance only proves the
+  // mail was handed to a provider, not that a person ever saw it.
+  openedAt      DateTime?
+  acceptedAt    DateTime?
+  expiresAt     DateTime?
+  eventsJson    String   @default("[]")
+  createdAt     DateTime @default(now())
+}
+
+model Turn {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  index         Int
+  speaker       String   // agent | candidate | system
+  text          String
+  startMs       Int      @default(0)
+  endMs         Int      @default(0)
+  confidence    Float    @default(1)
+  competencyId  String   @default("")
+  metaJson      String   @default("{}")
+  createdAt     DateTime @default(now())
+}
+
+model AssessmentVersion {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  scorecardId   String
+  scorecard     RoleScorecardVersion @relation(fields: [scorecardId], references: [id])
+  version       Int      @default(1)
+  recommendation String  @default("CONSIDER") // PROCEED | CONSIDER | DO_NOT_PROGRESS
+  confidence    Float    @default(0)
+  evidenceCoverage Float @default(0)
+  // JSON: competencies[], strengths[], concerns[], contradictions[], openQuestions[], limitations[], summary
+  resultJson    String   @default("{}")
+  modelExecId   String?
+  createdAt     DateTime @default(now())
+  reviews       HumanReview[]
+}
+
+model HumanReview {
+  id             String   @id @default(cuid())
+  assessmentId   String
+  assessment     AssessmentVersion @relation(fields: [assessmentId], references: [id])
+  reviewerId     String
+  reviewer       User     @relation(fields: [reviewerId], references: [id])
+  status         String   @default("PENDING") // PENDING | COMPLETED
+  disposition    String   @default("")         // PROCEED | CONSIDER | DO_NOT_PROGRESS
+  // JSON overrides: [{competencyId, from, to, reason}]
+  overridesJson  String   @default("[]")
+  comments       String   @default("")
+  reason         String   @default("")
+  createdAt      DateTime @default(now())
+  completedAt    DateTime?
+}
+
+model Artifact {
+  id            String   @id @default(cuid())
+  tenantId      String
+  candidateId   String?
+  candidate     Candidate? @relation(fields: [candidateId], references: [id])
+  sessionId     String?
+  session       InterviewSession? @relation(fields: [sessionId], references: [id])
+  kind          String   // resume | recording | transcript | report | clip
+  filename      String   @default("")
+  contentType   String   @default("")
+  storageKey    String   @default("")
+  sizeBytes     Int      @default(0)
+  retentionDays Int      @default(180)
+  legalHold     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  actorId     String   @default("system")
+  actorType   String   @default("user") // user | system | model
+  action      String
+  entityType  String   @default("")
+  entityId    String   @default("")
+  beforeJson  String   @default("")
+  afterJson   String   @default("")
+  requestId   String   @default("")
+  createdAt   DateTime @default(now())
+}
+
+model ModelExecution {
+  id          String   @id @default(cuid())
+  sessionId   String   @default("")
+  provider    String
+  model       String
+  function    String   // role_parser | resume_assessor | live_interviewer | director | evidence_extractor | evaluator | report_writer | policy
+  promptRef   String   @default("")
+  paramsJson  String   @default("{}")
+  inputTokens Int      @default(0)
+  outputTokens Int     @default(0)
+  latencyMs   Int      @default(0)
+  safetyJson  String   @default("{}")
+  createdAt   DateTime @default(now())
+}
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  url         String
+  events      String   @default("*")  // comma-separated event names or *
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  deliveries  WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  endpointId  String
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id])
+  event       String
+  payloadJson String
+  status      String   @default("pending") // pending | delivered | failed
+  attempts    Int      @default(0)
+  lastError   String   @default("")
+  createdAt   DateTime @default(now())
+}
+
+// ---- Object-level access control ----
+//
+// Capabilities answer "may this user perform this kind of action?". These
+// assignments answer "may this user touch THIS object?" — the question that
+// actually matters when every recruiter in a tenant could otherwise read every
+// candidate's transcript.
+//
+// Two levels, because requisition ownership and candidate ownership genuinely
+// differ: several recruiters may share a role while each owns different
+// candidates under it, and a candidate can exist with no roleId at all
+// (Candidate.roleId is optional), so role-inherited access cannot cover
+// everyone.
+
+model RoleAssignment {
+  id        String   @id @default(cuid())
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  // owner | collaborator — owner may reassign, collaborator may work the role
+  relation  String   @default("collaborator")
+  createdAt DateTime @default(now())
+
+  @@unique([roleId, userId])
+  @@index([userId])
+}
+
+model CandidateAssignment {
+  id          String   @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  // owner | reviewer — reviewer is granted for assessment review only
+  relation    String   @default("owner")
+  createdAt   DateTime @default(now())
+
+  @@unique([candidateId, userId])
+  @@index([userId])
+}
