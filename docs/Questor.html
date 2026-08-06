@@ -957,6 +957,108 @@
     </p>
   </div>
 
+
+  <section id="update-2026-08-06">
+    <h2>Update — 6 August 2026</h2>
+    <p>
+      This section was added after the rest of the guide was written (19 July). Where it
+      disagrees with anything above, this section is current. Nothing else in the guide has
+      been altered.
+    </p>
+
+    <h3>What changed</h3>
+    <p>
+      The interviewer was pitching questions at the wrong experience level, and nothing measured
+      it. A simulation harness now does — nine AI agents interviewing each other across role
+      families, seniorities and candidate strengths. It found the miscalibration, and the fixes
+      are live in production.
+    </p>
+    <p>
+      Measured as the gap between the level the questions were pitched at and the level the
+      candidate actually occupies, judged blind:
+    </p>
+    <table>
+      <thead><tr><th>Candidate experience</th><th>Before</th><th>After</th></tr></thead>
+      <tbody>
+        <tr><td>0&ndash;2 years</td><td>1.11 levels off</td><td>0.22</td></tr>
+        <tr><td>2&ndash;5 years</td><td>0.11</td><td>&mdash;</td></tr>
+        <tr><td>5&ndash;8 years</td><td>0.13</td><td>&mdash;</td></tr>
+        <tr><td>8&ndash;12 years</td><td>0.17</td><td>&mdash;</td></tr>
+        <tr><td>12&ndash;18 years</td><td>0.44</td><td>&mdash;</td></tr>
+        <tr><td>18+ years</td><td><strong>2.89</strong></td><td><strong>0.00</strong></td></tr>
+      </tbody>
+    </table>
+    <p>
+      The 18+ row is the one that matters. Before this fix, not one of nine twenty-year
+      directors was interviewed at their own level, and three were asked questions meant for
+      someone with two to five years' experience. The cause was mundane: a CV reading
+      &ldquo;2004 &ndash; Present&rdquo; was read as <em>zero</em> years of experience, because
+      &ldquo;Present&rdquo; is not a year. Every currently-employed candidate was understated,
+      worst for the longest-serving.
+    </p>
+
+    <h3>What this means for you, practically</h3>
+    <ul>
+      <li>
+        <strong>Upload the CV before creating the interview.</strong> The CV is what decides the
+        level the interview is pitched at. Without one, Questor falls back to the level on the
+        job advert &mdash; which interviews the vacancy rather than the person.
+      </li>
+      <li>
+        <strong>Check the CV says &ldquo;&ndash; Present&rdquo;</strong> (or &ldquo;Current&rdquo;)
+        on the candidate's current job, not just a start year. That phrasing is how Questor works
+        out how long someone has actually been working.
+      </li>
+      <li>
+        <strong>Nobody is marked down for a question that was never asked.</strong> If the
+        interview ran out of time before covering something, the report now says so explicitly
+        and it does not count against the candidate.
+      </li>
+    </ul>
+
+    <h3>Three faults fixed that affected real interviews</h3>
+    <ul>
+      <li>
+        A candidate who used the word <em>emergency</em> while describing their job &mdash;
+        &ldquo;we had an emergency at 3am and I ran the rollback&rdquo; &mdash; had their
+        interview stopped and received no assessment at all. This hit experienced technical
+        candidates hardest, because describing incidents is exactly what they are asked about.
+      </li>
+      <li>
+        Questor sometimes thanked candidates for corrections they had not made, quoting their
+        words back at them garbled.
+      </li>
+      <li>
+        Practical exercises silently fell back to a generic version instead of the one written
+        for the role.
+      </li>
+    </ul>
+
+    <h3>What has not changed</h3>
+    <p>
+      Everything in &ldquo;What we need from you&rdquo; still stands. In particular: <strong>a
+      person reviews every assessment before it affects anyone.</strong> Questor recommends; it
+      does not decide. The calibration work makes it fairer, not autonomous.
+    </p>
+    <p>
+      Two limits worth stating plainly to anyone asking how far this has been tested. Everything
+      above was measured against <em>simulated</em> candidates &mdash; no synthetic candidate is
+      nervous, accented, or on poor wifi, so the first real interviews will teach us things the
+      testing structurally cannot. And Questor has not yet been tested with many interviews
+      running at once, so please stagger the first batch of invitations rather than sending
+      fifty at once.
+    </p>
+
+    <h3>Before your first candidate</h3>
+    <ul>
+      <li>Send an invitation to yourself and take the interview end to end. Five minutes of that
+        is worth more than any amount of documentation.</li>
+      <li>Read the first few transcripts next to their assessments, and tell us where the
+        judgement looks wrong.</li>
+      <li>Start with two or three candidates, not a full cohort.</li>
+    </ul>
+  </section>
+
   <footer>
     <p>
       Questor pilot · questions and access requests to Vishnu.<br>
