@@ -16,6 +16,8 @@ datasource db {
 model Tenant {
   id           String   @id @default(cuid())
   name         String
+  // The organisation's own sign-in link: /o/<slug>. Null until an admin sets it.
+  slug         String?  @unique
   region       String   @default("in")
   // JSON: disclosure text, retention days, recording default, allowed modules, languages
   policyJson   String   @default("{}")

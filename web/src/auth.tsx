@@ -3,7 +3,7 @@ import { api, setToken, getToken } from './api/client';
 
 export interface User { id: string; name: string; email: string; role: string; }
 interface AuthCtx { user: User | null; tenant: { id: string; name: string } | null; loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, orgSlug?: string) => Promise<void>;
   register: (b: { email: string; password: string; name: string; tenantName?: string }) => Promise<void>;
   logout: () => void; }
 
@@ -23,8 +23,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const login = async (email: string, password: string) => {
-    const d = await api.post<{ token: string; user: User }>('/auth/login', { email, password });
+  const login = async (email: string, password: string, orgSlug?: string) => {
+    const d = await api.post<{ token: string; user: User }>('/auth/login', orgSlug ? { email, password, orgSlug } : { email, password });
     setToken(d.token); setUser(d.user);
     const me = await api.get<{ tenant: any }>('/auth/me'); setTenant(me.tenant);
   };

@@ -4,6 +4,7 @@ import { useAuth } from './auth';
 import { Icon } from './components/Icon';
 import { ProfileMenu } from './components/ProfileMenu';
 import { Login } from './pages/Login';
+import { OrgLogin } from './pages/OrgLogin';
 import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
 import { RoleDetail } from './pages/RoleDetail';
@@ -115,6 +116,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/o/:slug" element={<OrgLogin />} />
       <Route path="/portal/:token" element={<Portal />} />
       <Route path="/room/:token" element={<InterviewRoom />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />

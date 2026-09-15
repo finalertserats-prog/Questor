@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { config } from './config.js';
 import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
+import { orgsRouter } from './routes/orgs.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
 import { candidatesRouter } from './routes/candidates.js';
@@ -115,6 +116,9 @@ export function createApp() {
   const isIntegrityEvent = (req: Request) => /^\/api\/portal\/[^/]+\/integrity-event(?:[/?]|$)/.test(req.originalUrl);
   app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey, skip: isIntegrityEvent }));
 
+  // Public organisation lookup for sign-in links. Rate limited so it cannot be
+  // used to probe for organisation names at speed.
+  app.use('/api/orgs', rateLimit({ name: 'orgs', windowMs: 15 * 60_000, max: 120 }), orgsRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/candidates', candidatesRouter);

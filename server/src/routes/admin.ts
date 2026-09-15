@@ -16,6 +16,7 @@ import { findSessionsDueForPurge, retentionDays, DEFAULT_RETENTION_DAYS } from '
 import { logAudit } from '../services/audit.js';
 import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
 import { getPipelineSummary } from '../services/pipeline.js';
+import { ORG_SLUG } from './orgs.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -146,6 +147,37 @@ adminRouter.get('/hr-dashboard', requireCapability('assessment:read'), asyncHand
   }
 
   res.json({ pipeline, agreement, reviewDispositions });
+}));
+
+// Organisation sign-in link (/o/:slug). The slug is what an organisation shares
+// with its HR team; login through that link is then held to this organisation.
+const orgSlugSchema = z.object({
+  slug: z.string().regex(ORG_SLUG, 'Use 2–40 lowercase letters, numbers or hyphens, starting and ending with a letter or number.'),
+});
+
+adminRouter.patch('/org', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const { slug } = orgSlugSchema.parse(req.body);
+  const tenantId = req.auth!.tenantId;
+
+  const taken = await prisma.tenant.findUnique({ where: { slug }, select: { id: true } });
+  if (taken && taken.id !== tenantId) throw new HttpError(409, 'That organisation link is already in use.');
+
+  const before = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { slug: true } });
+  let org: { name: string; slug: string | null };
+  try {
+    org = await prisma.tenant.update({ where: { id: tenantId }, data: { slug }, select: { name: true, slug: true } });
+  } catch (err) {
+    // Two organisations claiming the same slug at once: the unique index decides.
+    if ((err as { code?: string }).code === 'P2002') throw new HttpError(409, 'That organisation link is already in use.');
+    throw err;
+  }
+
+  await logAudit({
+    tenantId, actorType: 'user', actorId: req.auth!.userId,
+    action: 'org.slug_changed', entityType: 'Tenant', entityId: tenantId,
+    before: { slug: before?.slug ?? null }, after: { slug },
+  });
+  res.json({ org });
 }));
 
 // Webhook endpoints CRUD (FR-039)

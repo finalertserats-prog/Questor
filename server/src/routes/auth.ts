@@ -7,12 +7,24 @@ import { hashPassword, verifyPassword, issueSession, clearSession } from '../ser
 
 export const authRouter = Router();
 
-const loginSchema = z.object({ email: z.string().email(), password: z.string().min(6) });
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+  // Present when signing in through an organisation's own link (/o/:slug).
+  orgSlug: z.string().max(64).optional(),
+});
 
 authRouter.post('/login', asyncHandler(async (req, res) => {
-  const { email, password } = loginSchema.parse(req.body);
+  const { email, password, orgSlug } = loginSchema.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email } });
   if (!user || !verifyPassword(password, user.passwordHash)) throw new HttpError(401, 'Invalid credentials');
+  // Through an organisation link, sign-in is held to that organisation. The
+  // error matches a wrong password so a link cannot be used to learn which
+  // organisation an email address belongs to.
+  if (orgSlug !== undefined) {
+    const tenant = await prisma.tenant.findUnique({ where: { slug: orgSlug }, select: { id: true } });
+    if (!tenant || tenant.id !== user.tenantId) throw new HttpError(401, 'Invalid credentials');
+  }
   // Sets the httpOnly session cookie + CSRF cookie. The token is also returned
   // for non-browser clients; the web app ignores it and uses the cookie.
   const token = issueSession(res, { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
@@ -62,5 +74,5 @@ authRouter.get('/me', authenticate, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.auth!.userId } });
   if (!user) throw new HttpError(404, 'User not found');
   const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
-  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role }, tenant: { id: tenant?.id, name: tenant?.name, region: tenant?.region } });
+  res.json({ user: { id: user.id, name: user.name, email: user.email, role: user.role }, tenant: { id: tenant?.id, name: tenant?.name, region: tenant?.region, slug: tenant?.slug ?? null } });
 }));
