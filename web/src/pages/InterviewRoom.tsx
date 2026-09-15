@@ -158,7 +158,16 @@ export function InterviewRoom() {
     if (!info?.proctoringEnabled || phase === 'ready' || phase === 'done') return undefined;
     const onVisibility = () => { if (document.hidden) sendIntegrityEvent('TAB_BLUR'); };
     const onBlur = () => sendIntegrityEvent('FOCUS_LOST');
-    const onPaste = () => sendIntegrityEvent('PASTE_DETECTED');
+    // Pasting into the typed-answer accommodation textarea is a legitimate,
+    // expected way to answer (see the "voice or typed" affordance above) — not
+    // an integrity signal. Flagging it would penalize exactly the candidates
+    // this fallback exists to support, so it is excluded here rather than left
+    // for a human reviewer to have to discount later.
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.getAttribute('data-answer-input') === 'true') return;
+      sendIntegrityEvent('PASTE_DETECTED');
+    };
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('blur', onBlur);
     document.addEventListener('paste', onPaste);
@@ -490,6 +499,7 @@ export function InterviewRoom() {
               onChange={(e) => setTyped(e.target.value)}
               placeholder="Type your answer, then Send… (Ctrl+Enter)"
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submitAnswer(typed); }}
+              data-answer-input="true"
             />
             <div className="type-actions">
               <button className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}>Send</button>
