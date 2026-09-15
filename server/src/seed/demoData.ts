@@ -80,6 +80,7 @@ export async function wipe(): Promise<void> {
   assertNotProduction('wipe');
   await prisma.webhookDelivery.deleteMany();
   await prisma.webhookEndpoint.deleteMany();
+  await prisma.candidateFeedbackDelivery.deleteMany();
   await prisma.humanReview.deleteMany();
   await prisma.assessmentVersion.deleteMany();
   await prisma.integrityEvent.deleteMany();
