@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { StatusBadge } from './StatusBadge';
 
 export function Badge({ children, kind }: { children: ReactNode; kind?: 'green' | 'amber' | 'red' | 'blue' | 'gray' }) {
   return <span className={`badge ${kind ?? 'gray'}`}>{children}</span>;
@@ -20,24 +21,20 @@ export function Badge({ children, kind }: { children: ReactNode; kind?: 'green' 
  */
 export function recBadge(rec?: string | null) {
   if (!rec) return <Badge kind="gray">—</Badge>;
-  const kind = rec === 'PROCEED' ? 'green' : rec === 'CONSIDER' ? 'amber' : 'red';
   return (
     <span
       title="This score comes from an instrument that has not been validated against human judgement. Open the assessment and judge the evidence yourself before acting on it."
       style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'help' }}
     >
-      <Badge kind={kind as any}>{rec.replace(/_/g, ' ')}</Badge>
+      <StatusBadge kind="recommendation" value={rec} />
       <abbr style={{ textDecoration: 'none', opacity: 0.7, fontSize: '0.85em' }} aria-label="unvalidated score">*</abbr>
     </span>
   );
 }
 
+/** Interview state chip. Tone groupings live in statusModel.ts. */
 export function stateBadge(state: string) {
-  const green = ['REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED', 'ACCEPTED'];
-  const amber = ['ASSESSING', 'CANDIDATE_QUESTIONS', 'PROCESSING', 'INVITED', 'WARMUP', 'CONSENTED'];
-  const red = ['CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW', 'INCOMPLETE'];
-  const kind = green.includes(state) ? 'green' : red.includes(state) ? 'red' : amber.includes(state) ? 'amber' : 'blue';
-  return <Badge kind={kind as any}>{state.replace(/_/g, ' ')}</Badge>;
+  return <StatusBadge kind="interview" value={state} />;
 }
 
 export function Banner({ kind, children }: { kind: 'error' | 'info' | 'ok'; children: ReactNode }) {

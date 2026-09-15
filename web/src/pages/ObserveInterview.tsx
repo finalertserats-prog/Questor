@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { Skeleton } from '../components/Skeleton';
 
 interface ObservedTurn {
   index: number;
@@ -65,12 +69,15 @@ export function ObserveInterview() {
 
   return (
     <div>
-      <div className="topbar">
-        <h1>Observing interview</h1>
-        <Link className="btn secondary" to={`/interviews/${id}`}>Interview details</Link>
-      </div>
+      <PageHeader
+        icon="eye"
+        title="Observing interview"
+        actions={<Link className="btn secondary" to={`/interviews/${id}`}><Icon name="arrow-left" size={16} />Interview details</Link>}
+      />
 
       {error && <Banner kind="error">{error}</Banner>}
+
+      {!data && !error && <div className="card"><Skeleton lines={5} label="Connecting to the live transcript…" /></div>}
 
       {data && (
         <>
@@ -79,11 +86,14 @@ export function ObserveInterview() {
           </Banner>
           <div className="card">
             <div className="row spread" style={{ marginBottom: 8 }}>
-              <h2 style={{ margin: 0 }}>Live transcript</h2>
-              <span className="muted small">{finished ? 'Interview finished' : 'Updating every few seconds'}</span>
+              <h2 className="card-title" style={{ margin: 0 }}><Icon name="interviews" />Live transcript</h2>
+              <span className="muted small card-title">
+                <Icon name={finished ? 'check-circle' : 'refresh'} size={14} />
+                {finished ? 'Interview finished' : 'Updating every few seconds'}
+              </span>
             </div>
             {data.turns.length === 0 ? (
-              <p className="muted small">The interview has not started yet.</p>
+              <EmptyState compact icon="hourglass" title="Waiting to start" message="The interview has not started yet." />
             ) : (
               <ol className="observe-transcript" aria-live="polite">
                 {data.turns.map((turn) => (

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
 
 interface CreateResp {
   role: { id: string; title: string; level: string; location: string; employmentType: string; status: string };
@@ -53,9 +55,7 @@ export function RoleCreate() {
 
   return (
     <div>
-      <div className="topbar">
-        <h1>New Role</h1>
-      </div>
+      <PageHeader icon="role" title="New Role" subtitle="Paste a job description and Questor drafts a scorecard for you to review." />
 
       {error && <Banner kind="error">{error}</Banner>}
       {warnings.length > 0 && (
@@ -94,6 +94,7 @@ export function RoleCreate() {
 
         <div className="row" style={{ marginTop: 16 }}>
           <button className="btn" type="submit" disabled={submitting || !sourceText.trim()}>
+            <Icon name={submitting ? 'hourglass' : 'sparkle'} size={16} />
             {submitting ? 'Creating…' : 'Create role'}
           </button>
           <button
@@ -101,6 +102,7 @@ export function RoleCreate() {
             type="button"
             onClick={() => setSourceText(SAMPLE_JD)}
           >
+            <Icon name="job" size={16} />
             Load sample JD
           </button>
         </div>

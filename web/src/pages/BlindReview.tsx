@@ -3,6 +3,9 @@ import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, recBadge, Banner, Stat } from '../components/ui';
 import { ValidationStatus } from './AssessmentView';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { PageSkeleton } from '../components/Skeleton';
 
 // Blind-first review.
 //
@@ -106,7 +109,7 @@ function Comparison({ view, levels, disposition, ai }: {
       <ValidationStatus />
 
       <div className="card">
-        <h3>Your call vs the AI</h3>
+        <h3 className="card-title"><Icon name="handoff" size={16} />Your call vs the AI</h3>
         <div className="row" style={{ gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>
           <Stat label="You said" value={<Badge kind="blue">{disposition.replace(/_/g, ' ')}</Badge>} />
           <Stat label="AI said" value={recBadge(ai.recommendation)} />
@@ -128,7 +131,8 @@ function Comparison({ view, levels, disposition, ai }: {
       </div>
 
       <div className="card">
-        <h3>Competency comparison</h3>
+        <h3 className="card-title"><Icon name="evidence" size={16} />Competency comparison</h3>
+        <div className="table-scroll">
         <table className="table">
           <thead>
             <tr><th>Competency</th><th>You</th><th>AI</th><th>Δ</th><th>AI rationale</th></tr>
@@ -149,10 +153,11 @@ function Comparison({ view, levels, disposition, ai }: {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="card">
-        <h3>AI summary</h3>
+        <h3 className="card-title"><Icon name="sparkle" size={16} />AI summary</h3>
         <p style={{ whiteSpace: 'pre-wrap' }}>{ai.summary}</p>
       </div>
     </>
@@ -213,17 +218,18 @@ export default function BlindReview() {
   };
 
   if (error && !view) return <Banner kind="error">{error}</Banner>;
-  if (!view) return <p>Loading…</p>;
+  if (!view) return <PageSkeleton label="Loading the evidence…" cards={3} />;
 
   const alreadyDone = view.blindVerdictRecorded && !reveal;
 
   return (
     <div className="stack">
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <h2>Independent review — {view.candidate.name}</h2>
-        <Link className="btn ghost" to={`/assessments/${id}`}>Full assessment</Link>
-      </div>
-      <p className="muted">{view.role.title}</p>
+      <PageHeader
+        icon="eye-off"
+        title={`Independent review — ${view.candidate.name}`}
+        subtitle={view.role.title}
+        actions={<Link className="btn ghost" to={`/assessments/${id}`}><Icon name="evidence" size={16} />Full assessment</Link>}
+      />
 
       {!reveal && (
         <Banner kind="info">
@@ -254,7 +260,7 @@ export default function BlindReview() {
         : (
           <>
             <div className="card">
-              <h3>Score each competency from the evidence</h3>
+              <h3 className="card-title"><Icon name="evidence" size={16} />Score each competency from the evidence</h3>
               <p className="muted">
                 {scoredCount} of {view.competencies.length} scored. Leaving one as “not enough
                 evidence” is a valid answer — judge the evidence, not how fluent the answers sounded.
@@ -290,8 +296,9 @@ export default function BlindReview() {
 
             <div className="card">
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <h3>Full transcript</h3>
+                <h3 className="card-title"><Icon name="interviews" size={16} />Full transcript</h3>
                 <button type="button" className="btn ghost" onClick={() => setShowTranscript((s) => !s)}>
+                  <Icon name={showTranscript ? 'eye-off' : 'eye'} size={16} />
                   {showTranscript ? 'Hide' : 'Show'}
                 </button>
               </div>
@@ -303,7 +310,7 @@ export default function BlindReview() {
             </div>
 
             <div className="card">
-              <h3>Your recommendation</h3>
+              <h3 className="card-title"><Icon name="check-circle" size={16} />Your recommendation</h3>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
                 {DISPOSITIONS.map((d) => (
                   <button
@@ -336,6 +343,7 @@ export default function BlindReview() {
                   onClick={submit}
                   data-testid="submit-verdict"
                 >
+                  <Icon name={busy ? 'hourglass' : 'eye'} size={16} />
                   {busy ? 'Saving…' : 'Save verdict & reveal AI assessment'}
                 </button>
               </div>

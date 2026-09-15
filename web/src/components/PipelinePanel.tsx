@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from './ui';
+import { Icon } from './Icon';
+import { StatusBadge } from './StatusBadge';
+import { EmptyState } from './EmptyState';
+import { Skeleton } from './Skeleton';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
 
 interface Round {
@@ -59,12 +63,6 @@ const STATE_TEXT: Record<StageState, string> = {
   upcoming: 'Upcoming',
   decided: 'Decision made here',
   skipped: 'Not needed',
-};
-
-const DECISION_TEXT: Record<Decision, string> = {
-  APPROVED: 'Approved',
-  REJECTED: 'Not progressing',
-  WITHDRAWN: 'Withdrawn',
 };
 
 function errorMessage(error: unknown): string {
@@ -134,19 +132,32 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
     }
   };
 
-  if (loading) return <div className="card muted">Loading pipeline…</div>;
+  if (loading) {
+    return (
+      <section className="card pipeline">
+        <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
+        <Skeleton lines={3} label="Loading pipeline…" />
+      </section>
+    );
+  }
 
   if (!pipeline || pipeline.candidateId !== candidateId) {
     return (
       <section className="card pipeline">
-        <h2>Hiring pipeline</h2>
+        <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
         {error && <Banner kind="error">{error}</Banner>}
-        <p className="muted small">
-          Track this candidate from onboarding through the Bronze profile review, the Silver AI interview and any human rounds, with a decision recorded by a person.
-        </p>
-        <button className="btn" disabled={busy} onClick={() => run(() => api.post('/pipelines', { candidateId }))}>
-          {busy ? 'Starting…' : 'Start pipeline'}
-        </button>
+        <EmptyState
+          compact
+          icon="flag"
+          title="No pipeline yet"
+          message="Track this candidate from onboarding through the Bronze profile review, the Silver AI interview and any human rounds, with a decision recorded by a person."
+          action={
+            <button className="btn" disabled={busy} onClick={() => run(() => api.post('/pipelines', { candidateId }))}>
+              <Icon name={busy ? 'hourglass' : 'play'} size={16} />
+              {busy ? 'Starting…' : 'Start pipeline'}
+            </button>
+          }
+        />
       </section>
     );
   }
@@ -190,7 +201,10 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
 
   return (
     <section className="card pipeline">
-      <h2>Hiring pipeline</h2>
+      <div className="row spread" style={{ marginBottom: 12 }}>
+        <h2 className="card-title" style={{ margin: 0 }}><Icon name="flag" />Hiring pipeline</h2>
+        <StatusBadge kind="pipeline" value={pipeline.status} />
+      </div>
       {error && <Banner kind="error">{error}</Banner>}
 
       {schedulingNotice && (
@@ -212,15 +226,17 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
 
       {pipeline.status === 'DECIDED' ? (
         <Banner kind="info">
-          <b>{DECISION_TEXT[(pipeline.decision ?? 'APPROVED') as Decision]}</b> at {labelFor(pipeline.decidedAtStageKey)}. {pipeline.decisionReason}
+          {/* Badge labels come from statusModel and match DECISION_TEXT. */}
+          <StatusBadge kind="decision" value={pipeline.decision ?? 'APPROVED'} />{' '}
+          at {labelFor(pipeline.decidedAtStageKey)}. {pipeline.decisionReason}
         </Banner>
       ) : (
         <div className="pipeline-actions grid cols-3">
           <div className="pipeline-action">
-            <h3>Next stage</h3>
+            <h3 className="card-title"><Icon name="arrow-right" size={16} />Next stage</h3>
             {next ? (
               <button className="btn secondary" disabled={busy} onClick={() => run(() => api.post(`/pipelines/${pipeline.id}/advance`, { toStageKey: next.key }))}>
-                Move to {next.label}
+                <Icon name="arrow-right" size={16} />Move to {next.label}
               </button>
             ) : (
               <p className="muted small">This is the final stage. Record a decision when ready.</p>
@@ -228,7 +244,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
           </div>
 
           <form className="pipeline-action" onSubmit={scheduleRound}>
-            <h3>Schedule {current ? `${current.label} round` : 'round'}</h3>
+            <h3 className="card-title"><Icon name="schedule" size={16} />Schedule {current ? `${current.label} round` : 'round'}</h3>
             {isInterviewStage ? (
               <>
                 <label htmlFor="round-when">Date and time</label>
@@ -249,7 +265,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
                     <input id="round-people" value={interviewers} onChange={(e) => setInterviewers(e.target.value)} placeholder="Hiring manager, Team lead" />
                   </>
                 )}
-                <button className="btn secondary" style={{ marginTop: 10 }} disabled={busy}>Schedule</button>
+                <button className="btn secondary" style={{ marginTop: 10 }} disabled={busy}><Icon name="schedule" size={16} />Schedule</button>
               </>
             ) : (
               <p className="muted small">{current?.label} is not an interview stage.</p>
@@ -257,7 +273,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
           </form>
 
           <form className="pipeline-action" onSubmit={recordDecision}>
-            <h3>Record decision</h3>
+            <h3 className="card-title"><Icon name="check-circle" size={16} />Record decision</h3>
             <label htmlFor="decision">Outcome</label>
             <select id="decision" value={decision} onChange={(e) => setDecision(e.target.value as Decision)}>
               <option value="APPROVED">Approve</option>
@@ -266,14 +282,15 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
             </select>
             <label htmlFor="decision-reason">Reason</label>
             <textarea id="decision-reason" value={reason} onChange={(e) => setReason(e.target.value)} minLength={10} required placeholder="What in the evidence led to this decision?" />
-            <button className="btn" style={{ marginTop: 10 }} disabled={busy}>Record decision</button>
+            <button className="btn" style={{ marginTop: 10 }} disabled={busy}><Icon name="check-circle" size={16} />Record decision</button>
           </form>
         </div>
       )}
 
       {pipeline.rounds.length > 0 && (
         <>
-          <h3>Rounds</h3>
+          <h3 className="card-title"><Icon name="schedule" size={16} />Rounds</h3>
+          <div className="table-scroll">
           <table>
             <thead>
               <tr><th>Stage</th><th>Led by</th><th>Observers</th><th>Scheduled</th><th>Status</th></tr>
@@ -286,21 +303,24 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
                   <td>{new Date(round.scheduledAt).toLocaleString()}</td>
                   <td>
-                    {round.status.toLowerCase()}
-                    {round.conductedBy === 'AI' && round.sessionId && round.status === 'SCHEDULED' && (
-                      <> · <Link to={`/interviews/${round.sessionId}/observe`}>Observe live</Link></>
-                    )}
+                    <span className="row" style={{ gap: 8 }}>
+                      <StatusBadge kind="round" value={round.status} />
+                      {round.conductedBy === 'AI' && round.sessionId && round.status === 'SCHEDULED' && (
+                        <Link to={`/interviews/${round.sessionId}/observe`}><Icon name="eye" size={15} />Observe live</Link>
+                      )}
+                    </span>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
 
       {openHumanRounds.length > 0 && (
         <form className="pipeline-action pipeline-complete" onSubmit={completeRound}>
-          <h3>Complete a human round</h3>
+          <h3 className="card-title"><Icon name="candidates" size={16} />Complete a human round</h3>
           <p className="muted small">What the interviewers recorded becomes the evidence for this stage.</p>
           {openHumanRounds.length > 1 && (
             <>
@@ -314,17 +334,17 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
           )}
           <label htmlFor="round-notes">Round notes</label>
           <textarea id="round-notes" value={roundNotes} onChange={(e) => setRoundNotes(e.target.value)} minLength={20} required placeholder="What the candidate demonstrated, with specific examples." />
-          <button className="btn secondary" style={{ marginTop: 10 }} disabled={busy}>Complete round</button>
+          <button className="btn secondary" style={{ marginTop: 10 }} disabled={busy}><Icon name="check" size={16} />Complete round</button>
         </form>
       )}
 
       {summary && (
         <div className="pipeline-summary">
-          <h3>Evidence so far</h3>
+          <h3 className="card-title"><Icon name="evidence" size={16} />Evidence so far</h3>
           <ul className="evidence-list">
             {summary.stages.map((stage) => (
               <li key={stage.key} className={stage.hasEvidence ? 'has-evidence' : 'no-evidence'}>
-                <span className="evidence-mark" aria-hidden="true">{stage.hasEvidence ? '✓' : '–'}</span>
+                <span className="evidence-mark" aria-hidden="true">{stage.hasEvidence ? <Icon name="check-circle" size={16} /> : '–'}</span>
                 <b>{stage.label}</b> <span className="muted small">{stage.detail}</span>
               </li>
             ))}

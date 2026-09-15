@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
 
 interface HealthPayload {
   commit?: unknown;
@@ -28,9 +30,7 @@ export function About() {
 
   return (
     <div>
-      <div className="topbar">
-        <h1>About</h1>
-      </div>
+      <PageHeader icon="about" title="About" />
       <div className="card about-card">
         <p>
           Questor is one place for HR to take a candidate from job description to decision: onboard the profile,
@@ -38,7 +38,7 @@ export function About() {
           through evidence. Every AI assessment is reviewed by a person before it affects anyone.
         </p>
         <div className="about-build">
-          <div className="small muted">Running build</div>
+          <div className="small muted card-title"><Icon name="build" size={14} />Running build</div>
           <code>{version}</code>
         </div>
       </div>
