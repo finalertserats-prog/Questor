@@ -224,12 +224,17 @@ unset QUESTOR_PG_PASSWORD
 create_database() {
   local name="$1"
   [ "$(pg_admin -c "SELECT 1 FROM pg_database WHERE datname = '$name';")" != 1 ] || return 1
-  local create_result revoke_result
-  create_result="$(pg_admin -c "CREATE DATABASE "$name" OWNER questor;")" || return 1
-  [ "$create_result" = "CREATE DATABASE" ] || { echo "unexpected CREATE DATABASE result: $create_result" >&2; return 1; }
+  # Checked by exit status, not by matching psql's command tag: pg_admin runs
+  # psql with -q, which prints no tag at all, so comparing against "CREATE
+  # DATABASE" would fail every time and make a fresh cutover look like a
+  # database that already exists. ON_ERROR_STOP makes a real failure non-zero.
+  pg_admin -c "CREATE DATABASE \"$name\" OWNER questor;" || return 1
   # Nobody but questor (and the superuser) can connect to candidate data.
-  revoke_result="$(pg_admin -c "REVOKE ALL ON DATABASE "$name" FROM PUBLIC;")" || return 1
-  [ "$revoke_result" = "REVOKE" ] || { echo "unexpected REVOKE result: $revoke_result" >&2; return 1; }
+  pg_admin -c "REVOKE ALL ON DATABASE \"$name\" FROM PUBLIC;" || return 1
+  # Prove it: an existing database with PUBLIC still able to connect is not what
+  # this function claims to have made.
+  [ "$(pg_admin -c "SELECT 1 FROM pg_database WHERE datname = '$name';")" = 1 ] || return 1
+  [ -z "$(pg_admin -c "SELECT 1 FROM (SELECT unnest(datacl) AS acl FROM pg_database WHERE datname = '$name') a WHERE acl::text LIKE '=%';")" ] || return 1
 }
 
 pg_url() { printf 'postgresql://questor:%s@127.0.0.1:5432/%s?schema=public&connection_limit=%s' "$PG_PASSWORD" "$1" "$POOL_SIZE"; }
