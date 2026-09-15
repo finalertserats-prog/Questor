@@ -73,9 +73,13 @@ case "$DB_URL" in
   postgresql://*|postgres://*) DB_KIND=postgres ;;
   *) DB_KIND=sqlite ;;
 esac
-# psql and pg_dump do not understand Prisma's ?schema= parameter.
-PG_URL="${DB_URL%%\?*}"
 if [ "$DB_KIND" = postgres ]; then
+  # psql and pg_dump get the connection through libpq environment variables, so
+  # the password never appears in a process list.
+  [[ "$DB_URL" =~ ^postgres(ql)?://([^:@/]+):([^@/]*)@([^:/?]+)(:([0-9]+))?/([^?]+) ]] \
+    || die "DATABASE_URL in server/.env is not a postgresql://user:password@host[:port]/db URL"
+  export PGUSER="${BASH_REMATCH[2]}" PGPASSWORD="${BASH_REMATCH[3]}" PGHOST="${BASH_REMATCH[4]}"
+  export PGPORT="${BASH_REMATCH[6]:-5432}" PGDATABASE="${BASH_REMATCH[7]}"
   command -v psql >/dev/null || die "psql not on PATH (needed to check for live interviews)"
   command -v pg_dump >/dev/null || die "pg_dump not on PATH (needed for the pre-deploy backup)"
   command -v pg_restore >/dev/null || die "pg_restore not on PATH (needed to verify the backup)"
@@ -92,7 +96,7 @@ ACTIVE=""
 if [ "$DB_KIND" = postgres ]; then
   # A failed query is fatal here rather than read as "nobody is interviewing":
   # skipping this check silently is exactly how a live interview gets cut off.
-  ACTIVE="$(psql "$PG_URL" -tAc "
+  ACTIVE="$(psql -X -tAc "
     SELECT COUNT(*) FROM \"InterviewSession\" s
     WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
                           'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
@@ -100,14 +104,21 @@ if [ "$DB_KIND" = postgres ]; then
                   AND t.\"createdAt\" > (now() AT TIME ZONE 'UTC') - interval '15 minutes');")" \
     || die "could not query Postgres for live interviews — not deploying blind"
 else
-  DB="$(ls server/prisma/data/*.db 2>/dev/null | head -1 || true)"
-  if [ -n "$DB" ]; then
-    ACTIVE="$(sqlite3 "$DB" "
+  # The file DATABASE_URL names (Prisma resolves it against server/prisma), not
+  # whichever .db happens to sort first in the data directory.
+  DB_REL="${DB_URL#file:}"; DB_REL="${DB_REL%%\?*}"
+  case "$DB_REL" in
+    /*) DB="$DB_REL" ;;
+    *)  DB="server/prisma/${DB_REL#./}" ;;
+  esac
+  if [ -f "$DB" ]; then
+    ACTIVE="$(sqlite3 -cmd '.timeout 10000' "$DB" "
       SELECT COUNT(*) FROM InterviewSession s
       WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
                             'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
         AND EXISTS (SELECT 1 FROM Turn t WHERE t.sessionId = s.id
-                    AND t.createdAt > (strftime('%s','now','-15 minutes') * 1000));" 2>/dev/null || echo 0)"
+                    AND t.createdAt > (strftime('%s','now','-15 minutes') * 1000));")" \
+      || die "could not query SQLite for live interviews — not deploying blind"
     # Prisma stores SQLite DateTimes as epoch milliseconds. This used to compare
     # them with datetime('now', …) text, which an integer never exceeds, so the
     # check found no live interview however many there were.
@@ -143,14 +154,14 @@ if [ "$DB_KIND" = postgres ]; then
   mkdir -p /root/Questor/backups
   LATEST="/root/Questor/backups/questor-$(date +%Y%m%d-%H%M%S).dump"
   # Owner-only: the dump holds every candidate's transcript and résumé.
-  run_logged backup bash -c 'umask 077 && pg_dump --format=custom --file="$1" "$2"' -- "$LATEST" "$PG_URL"
+  run_logged backup bash -c 'umask 077 && pg_dump --format=custom --file="$1"' -- "$LATEST"
   # A dump pg_restore cannot read back, or one without the candidate table, is
   # not a restore point.
   pg_restore --list "$LATEST" > "$LOG_DIR/restore-list.txt" 2>&1 \
     || die "backup could not be read back by pg_restore — not deploying without a restore point"
   grep -Eq 'TABLE DATA public "?Candidate"?' "$LOG_DIR/restore-list.txt" \
     || die "backup is missing the Candidate table — not deploying without a restore point"
-  ROWS="$(psql "$PG_URL" -tAc 'SELECT COUNT(*) FROM "Candidate";')"
+  ROWS="$(psql -X -tAc 'SELECT COUNT(*) FROM "Candidate";')"
   ok "$(basename "$LATEST") verified restorable ($ROWS candidates)"
 elif [ -x "$BACKUP_SCRIPT" ]; then
   run_logged backup "$BACKUP_SCRIPT"
