@@ -16,6 +16,7 @@ export type Capability =
   | 'candidate:read'
   | 'candidate:erase'
   | 'interview:create'
+  | 'interview:read'
   | 'interview:invite'
   | 'interview:schedule'
   | 'interview:drive'
@@ -36,18 +37,18 @@ const CAPABILITIES: Record<RoleName, readonly Capability[]> = {
   // Runs requisitions and the candidates they are assigned. Deliberately cannot
   // approve the scorecard they authored, nor sign off an assessment.
   recruiter: ['role:create', 'role:edit_scorecard', 'candidate:create', 'candidate:read',
-    'interview:create', 'interview:invite', 'interview:schedule', 'interview:drive', 'assessment:read'],
+    'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'interview:drive', 'assessment:read'],
   // Hiring manager: approves what the recruiter drafted, and reviews outcomes.
   manager: ['role:create', 'role:edit_scorecard', 'role:approve_scorecard', 'candidate:read',
-    'interview:create', 'interview:invite', 'interview:schedule', 'assessment:read', 'assessment:review', 'assessment:export'],
+    'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'assessment:read', 'assessment:review', 'assessment:export'],
   // Exists so review can be separated from whoever ran the interview.
-  reviewer: ['candidate:read', 'assessment:read', 'assessment:review'],
+  reviewer: ['candidate:read', 'interview:read', 'assessment:read', 'assessment:review'],
   // Compliance/audit: sees that things happened, not candidate detail.
   auditor: ['audit:read'],
   // Tenant-wide, and every grant is listed explicitly rather than being an
   // invisible bypass inside the permission check.
   admin: ['role:create', 'role:edit_scorecard', 'role:approve_scorecard', 'candidate:create',
-    'candidate:read', 'candidate:erase', 'interview:create', 'interview:invite', 'interview:schedule', 'interview:drive',
+    'candidate:read', 'candidate:erase', 'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'interview:drive',
     'assessment:read', 'assessment:review', 'assessment:export', 'retention:configure',
     'audit:read', 'admin:manage'],
 };
