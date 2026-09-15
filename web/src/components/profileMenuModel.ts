@@ -10,14 +10,21 @@ export interface ProfileMenuItem {
 }
 
 interface MenuEntry extends ProfileMenuItem {
-  // The admin console's API requires admin:manage, so offering it to anyone
-  // else would only lead them to an access-denied page.
-  readonly adminOnly?: boolean;
+  // Roles that may see the entry; absent means everyone. These mirror the
+  // server capability each page's API requires (server domain/capabilities.ts),
+  // so nobody is offered a link that only leads to an access-denied page.
+  readonly roles?: readonly string[];
 }
+
+// admin:manage
+const ADMIN_ROLES = ['admin'] as const;
+// audit:read
+const AUDIT_ROLES = ['admin', 'auditor'] as const;
 
 const MENU_ENTRIES: readonly MenuEntry[] = [
   { key: 'settings', label: 'Settings', to: '/settings' },
-  { key: 'admin', label: 'Admin console', to: '/admin', adminOnly: true },
+  { key: 'admin', label: 'Admin console', to: '/admin', roles: ADMIN_ROLES },
+  { key: 'audit', label: 'Audit log', to: '/audit', roles: AUDIT_ROLES },
   { key: 'about', label: 'About', to: '/about' },
   { key: 'contact', label: 'Contact', to: '/contact' },
 ];
@@ -25,8 +32,13 @@ const MENU_ENTRIES: readonly MenuEntry[] = [
 /** The menu entries this user may see, in display order. */
 export function profileMenuItems(role: string): ProfileMenuItem[] {
   return MENU_ENTRIES
-    .filter((entry) => !entry.adminOnly || role === 'admin')
+    .filter((entry) => !entry.roles || entry.roles.includes(role))
     .map(({ key, label, to }) => ({ key, label, to }));
+}
+
+/** Whether this role may open the audit log page. */
+export function canReadAudit(role: string): boolean {
+  return (AUDIT_ROLES as readonly string[]).includes(role);
 }
 
 /** Avatar initials: first and last word of the name, or '?' when there is no name. */

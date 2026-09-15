@@ -16,6 +16,7 @@ import { InterviewDetail } from './pages/InterviewDetail';
 import { AssessmentView } from './pages/AssessmentView';
 import BlindReview from './pages/BlindReview';
 import { Admin } from './pages/Admin';
+import { AuditLog } from './pages/AuditLog';
 import { Portal } from './pages/Portal';
 import { InterviewRoom } from './pages/InterviewRoom';
 import { Settings } from './pages/Settings';
@@ -150,6 +151,7 @@ export function App() {
           the score by accident. */}
       <Route path="/assessments/:id/review" element={<Protected><BlindReview /></Protected>} />
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
+      <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="/about" element={<Protected><About /></Protected>} />
       <Route path="/contact" element={<Protected><Contact /></Protected>} />

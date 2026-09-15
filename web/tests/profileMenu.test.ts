@@ -25,15 +25,23 @@ describe('initialsFor', () => {
 });
 
 describe('profileMenuItems', () => {
-  it('lists Settings, Admin console, About and Contact in that order for an admin', () => {
-    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'About', 'Contact']);
+  it('lists Settings, Admin console, Audit log, About and Contact in that order for an admin', () => {
+    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'Audit log', 'About', 'Contact']);
   });
 
-  it('omits Admin console for a non-admin', () => {
+  it('omits Admin console and Audit log for a recruiter', () => {
     expect(profileMenuItems('recruiter').map((item) => item.label)).toEqual(['Settings', 'About', 'Contact']);
   });
 
+  it('offers an auditor the Audit log but not the Admin console', () => {
+    expect(profileMenuItems('auditor').map((item) => item.label)).toEqual(['Settings', 'Audit log', 'About', 'Contact']);
+  });
+
+  it('omits Audit log for a manager, who does not hold audit:read', () => {
+    expect(profileMenuItems('manager').some((item) => item.key === 'audit')).toBe(false);
+  });
+
   it('points each item at its route', () => {
-    expect(profileMenuItems('admin').map((item) => item.to)).toEqual(['/settings', '/admin', '/about', '/contact']);
+    expect(profileMenuItems('admin').map((item) => item.to)).toEqual(['/settings', '/admin', '/audit', '/about', '/contact']);
   });
 });
