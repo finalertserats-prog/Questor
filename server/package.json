@@ -12,6 +12,7 @@
     "db:push": "prisma db push --skip-generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx src/seed/seed.ts",
+    "users": "tsx src/scripts/users.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx src/seed/simulateInterview.ts",

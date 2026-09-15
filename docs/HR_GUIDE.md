@@ -28,7 +28,8 @@ Go to the Questor address and enter your email and password on the sign-in page.
 
 **Everyone gets their own personal account.** Ask Vishnu, who administers the
 pilot deployment, for one — and say which of the roles in section 3 matches what
-you actually do. Your password should reach you through something other than
+you actually do. Accounts are created on the server in a few seconds (the
+appendix has the command), so there is no reason to share one. Your password should reach you through something other than
 email, and should be treated like any other HR system credential.
 
 There is no shared team login, and there is no self-service sign-up:
@@ -59,8 +60,9 @@ There is no shared team login, and there is no self-service sign-up:
 ### Forgotten password
 
 Questor currently has **no self-service password reset and no "change my
-password" screen.** If you forget your password, Vishnu has to reset it for you
-directly on the server — there is no email you can trigger yourself. Passwords
+password" screen.** If you forget your password, Vishnu resets it for you on the
+server in one command (`npm run users -w server -- reset-password`) — there is no
+email you can trigger yourself. Passwords
 are stored only as one-way hashes, so nobody, including the administrator, can
 look up your existing one; it can only be replaced. See the appendix.
 
@@ -235,10 +237,12 @@ Then, if your ATS is connected, **Export to ATS**.
 
 These are real gaps in the current build, not caveats for the sake of it.
 
-- **No user-management screen.** Accounts are created through the API by the
-  administrator (see the appendix). There is no "invite a colleague" button.
-- **No password reset or password change.** A forgotten password means the
-  administrator resets it on the server.
+- **No user-management screen.** Accounts are created by the administrator with
+  a command-line tool on the server (see the appendix). There is no "invite a
+  colleague" button, so allow a little time when someone new joins.
+- **No self-service password reset, and no "change my password" screen.** You
+  cannot rotate your own password; the administrator has to reissue it. Treat the
+  password you are given as the one you will keep.
 - **Check that invitation emails are actually being delivered.** Unless a mail
   provider is configured, Questor logs invitations rather than sending them, and
   the interview page tells you which happened. Read that badge every time.
@@ -280,44 +284,71 @@ These are real gaps in the current build, not caveats for the sake of it.
 
 ## Appendix — for your IT administrator
 
-### Creating HR accounts
+### Creating the first administrator, and every HR account
 
-There is no UI for this yet. An existing admin creates accounts via the API.
+There is no user-management screen, and the API cannot help you here: creating a
+user needs `admin:manage`, so you cannot make the first administrator through it,
+and `POST /api/auth/register` would mint a **separate empty organisation** that
+cannot see any existing candidate. The seed script is not the answer either — it
+wipes, and it refuses to run in production because its password is public.
+
+So account setup runs on the server, next to the database:
 
 ```bash
-# 1. Sign in as an admin and capture the token
-TOKEN=$(curl -s -X POST https://questor.187-127-166-193.sslip.io/api/auth/login \
-  -H 'content-type: application/json' \
-  -d '{"email":"admin@yourcompany.com","password":"<admin password>"}' \
-  | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+cd /root/Questor/repo          # wherever the deployment lives
 
-# 2. Create an HR user
-#    role: recruiter | manager | reviewer | auditor | admin
-#    password: minimum 12 characters
-curl -s -X POST https://questor.187-127-166-193.sslip.io/api/admin/users \
-  -H "authorization: Bearer $TOKEN" \
-  -H 'content-type: application/json' \
-  -d '{"email":"jane@yourcompany.com","name":"Jane Doe","role":"recruiter","password":"<12+ char password>"}'
+# See what exists today
+npm run users -w server -- list
 
-# 3. List users / change a role
-curl -s -H "authorization: Bearer $TOKEN" https://questor.187-127-166-193.sslip.io/api/admin/users
-curl -s -X PATCH https://questor.187-127-166-193.sslip.io/api/admin/users/<userId>/role \
-  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"role":"manager"}'
+# Create the administrator (role defaults to admin)
+npm run users -w server -- create --email you@yourcompany.com --name "Your Name"
+
+# Then one account per HR user, with the narrowest role that fits their job
+npm run users -w server -- create --email jane@yourcompany.com --name "Jane Doe" --role recruiter
+npm run users -w server -- create --email sam@yourcompany.com  --name "Sam Patel" --role manager
+
+# Someone forgot their password
+npm run users -w server -- reset-password --email jane@yourcompany.com
+
+# Someone changed job
+npm run users -w server -- set-role --email jane@yourcompany.com --role manager
 ```
 
-Notes:
+Each command prints the credentials **once** — passwords are stored as bcrypt
+hashes and cannot be read back afterwards, only replaced. Hand them over through
+something other than email, and clear your terminal scrollback.
 
-- The **first** account on a fresh install is created through `POST
-  /api/auth/register`, which mints the organisation and its first admin. Close
-  self-registration again afterwards (it is closed by default in production).
-- A role change does not take effect on an already-signed-in user until their
-  session expires — within the hour.
-- The last remaining admin cannot be demoted; it would lock the organisation out
-  of user management permanently.
-- Assign users to the roles (requisitions) and candidates they should see, via
-  `POST /api/admin/users/:id/roles/:roleId` and the matching candidate endpoint.
-  Without an assignment they will see an empty console.
+Roles are `recruiter · manager · reviewer · auditor · admin` (section 3 says what
+each can do). A password is generated for you unless you pass `--password`;
+either way the 12-character minimum applies. The tool never deletes anything and
+never touches candidate data, and it refuses to demote the last administrator —
+that would lock the organisation out of user management permanently.
+
+**You need at least one `manager` or `admin` besides the recruiters.** A recruiter
+cannot approve a scorecard or sign off an assessment, so an organisation of
+recruiters alone cannot complete a single hire.
+
+### Assigning who sees what
+
+A non-admin sees only the roles and candidates assigned to them — a new recruiter
+signs in to an empty console until you assign them. Do that through the API with
+an admin token:
+
+```bash
+TOKEN=$(curl -s -X POST https://questor.187-127-166-193.sslip.io/api/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@yourcompany.com","password":"<your password>"}' \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+
+curl -s -H "authorization: Bearer $TOKEN" \
+  https://questor.187-127-166-193.sslip.io/api/admin/users
+
+curl -s -X POST -H "authorization: Bearer $TOKEN" \
+  https://questor.187-127-166-193.sslip.io/api/admin/users/<userId>/roles/<roleId>
+```
+
+A role change does not affect an already-signed-in user until their session
+expires, within the hour.
 
 ### Operating the pilot deployment
 
