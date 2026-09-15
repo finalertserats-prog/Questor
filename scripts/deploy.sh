@@ -194,11 +194,38 @@ fi
 # and a deploy once shipped code querying a table and columns the database did
 # not have. Run from server/ so Prisma loads server/.env for DATABASE_URL. The
 # backup above is the restore point; `db push` refuses any change that would
-# drop data unless explicitly told to accept it, and it is never told to here.
+# drop data unless explicitly told to accept it.
+#
+# One refusal is not about data at all: adding a unique constraint (Tenant.slug)
+# is reported as "might lose data" only because it fails when duplicates exist.
+# It deletes nothing, and on duplicates the push itself errors out. So when
+# every warning is that one, and nothing else, the push is retried with the
+# flag. Any other warning still stops the deploy.
+push_schema() {
+  local log="$LOG_DIR/schema.log"
+  local unique_warning='A unique constraint covering the columns `\[[A-Za-z0-9_, ]*\]` on the table `[A-Za-z0-9_]*` will be added\. If there are existing duplicate values, this will fail\.$'
+  if (cd server && npx prisma db push --skip-generate "$@") >"$log" 2>&1; then
+    tail -3 "$log" | sed 's/^/    /'
+    return
+  fi
+  # Prisma colours its output; strip the escape codes before matching lines.
+  local plain="$LOG_DIR/schema.plain.log" warnings others
+  sed 's/\x1b\[[0-9;]*m//g' "$log" >"$plain"
+  warnings="$(grep -c '^ *• ' "$plain" || true)"
+  others="$(grep '^ *• ' "$plain" | grep -vc "$unique_warning" || true)"
+  if ! grep -q -- '--accept-data-loss' "$plain" || [ "$warnings" -eq 0 ] || [ "$others" -ne 0 ]; then
+    printf '\n\033[31m--- schema failed, last 25 lines ---\033[0m\n' >&2
+    tail -25 "$log" >&2
+    die "schema"
+  fi
+  grep '^ *• ' "$plain" | sed 's/^ */    /'
+  ok "only new unique constraints pending; applying them"
+  run_logged schema-unique bash -c 'cd server && npx prisma db push --skip-generate --accept-data-loss "$@"' -- "$@"
+}
 if [ "$DB_KIND" = postgres ]; then
-  run_logged schema bash -c 'cd server && npx prisma db push --skip-generate --schema prisma/postgres/schema.prisma'
+  push_schema --schema prisma/postgres/schema.prisma
 else
-  run_logged schema bash -c 'cd server && npx prisma db push --skip-generate'
+  push_schema
 fi
 
 for pkg in express @prisma/client dotenv; do
