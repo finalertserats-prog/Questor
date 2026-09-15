@@ -85,6 +85,7 @@ export const api = {
   get: <T>(p: string) => req<T>('GET', p),
   post: <T>(p: string, body?: unknown) => req<T>('POST', p, body),
   put: <T>(p: string, body?: unknown) => req<T>('PUT', p, body),
+  patch: <T>(p: string, body?: unknown) => req<T>('PATCH', p, body),
   postForm: <T>(p: string, form: FormData) => req<T>('POST', p, form, true),
   // Public portal helpers reuse the same fetch; they carry no session cookie
   // and the server exempts /api/portal/* from CSRF.

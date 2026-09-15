@@ -44,6 +44,12 @@ export function Admin() {
   const [hookEvents, setHookEvents] = useState('*');
   const [creating, setCreating] = useState(false);
 
+  const [orgName, setOrgName] = useState('');
+  const [slug, setSlug] = useState('');
+  const [savedSlug, setSavedSlug] = useState<string | null>(null);
+  const [savingSlug, setSavingSlug] = useState(false);
+  const [slugNotice, setSlugNotice] = useState('');
+
   const loadWebhooks = () =>
     api.get<{ webhooks: Webhook[] }>('/admin/webhooks').then((d) => setWebhooks(d.webhooks ?? []));
 
@@ -61,6 +67,16 @@ export function Admin() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    api.get<{ tenant: { name?: string; slug?: string | null } }>('/auth/me')
+      .then((d) => {
+        setOrgName(d.tenant?.name ?? '');
+        setSlug(d.tenant?.slug ?? '');
+        setSavedSlug(d.tenant?.slug ?? null);
+      })
+      .catch(() => undefined);
   }, []);
 
   if (loading) return <div className="muted">Loading…</div>;
@@ -84,6 +100,25 @@ export function Admin() {
     }
   };
 
+  const saveSlug = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSlugNotice('');
+    setSavingSlug(true);
+    try {
+      const { org } = await api.patch<{ org: { name: string; slug: string } }>('/admin/org', { slug: slug.trim().toLowerCase() });
+      setSavedSlug(org.slug);
+      setSlug(org.slug);
+      setSlugNotice('Sign-in link saved.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not save the sign-in link.');
+    } finally {
+      setSavingSlug(false);
+    }
+  };
+
+  const orgLink = savedSlug ? `${window.location.origin}/o/${savedSlug}` : '';
+
   const connectorRows: { label: string; c?: ProviderComponent }[] = [
     { label: 'LLM', c: providers?.llm },
     { label: 'Speech-to-text', c: providers?.stt },
@@ -99,6 +134,37 @@ export function Admin() {
       </div>
 
       {error && <Banner kind="error">{error}</Banner>}
+
+      <div className="card">
+        <h2>Organisation sign-in link</h2>
+        <p className="muted small">
+          Share this link with your HR team so they sign in to {orgName || 'your organisation'} directly. Anyone who guesses the link can see your organisation's name, so avoid putting anything sensitive in it.
+        </p>
+        {slugNotice && <Banner kind="ok">{slugNotice}</Banner>}
+        {orgLink && (
+          <div className="row" style={{ gap: 10, marginBottom: 12 }}>
+            <code>{orgLink}</code>
+            <button type="button" className="btn sm secondary" onClick={() => { void navigator.clipboard?.writeText(orgLink); setSlugNotice('Link copied.'); }}>Copy link</button>
+          </div>
+        )}
+        <form className="row" style={{ alignItems: 'flex-end' }} onSubmit={saveSlug}>
+          <div style={{ flex: 1 }}>
+            <label htmlFor="org-slug">Link name</label>
+            <input
+              id="org-slug"
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+              placeholder="acme-hiring"
+              pattern="[a-z0-9][a-z0-9\-]{0,38}[a-z0-9]"
+              title="2–40 lowercase letters, numbers or hyphens, starting and ending with a letter or number"
+              required
+            />
+          </div>
+          <button className="btn" type="submit" disabled={savingSlug || !slug.trim()}>
+            {savingSlug ? 'Saving…' : savedSlug ? 'Update link' : 'Create link'}
+          </button>
+        </form>
+      </div>
 
       <div className="card">
         <h2>Connectors</h2>
