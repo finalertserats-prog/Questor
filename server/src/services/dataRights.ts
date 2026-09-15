@@ -480,11 +480,51 @@ export async function purgeExpiredArtifacts(now = new Date()): Promise<number> {
 }
 
 /**
+ * Clear the notes of completed human interview rounds past the retention window.
+ *
+ * Round notes are candidate personal data written by interviewers. A human round
+ * has no interview session, so session-level retention never reaches it, and a
+ * candidate with other lawfully kept data is never purged as a whole — without
+ * this step those notes would outlive every window. The round row itself stays,
+ * holding no free text, so the pipeline still shows that the round happened.
+ */
+export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - retentionDays() * DAY_MS);
+  const expired = await prisma.interviewRound.findMany({
+    where: { status: 'COMPLETED', notes: { not: '' }, scheduledAt: { lte: cutoff } },
+    select: { id: true, pipelineId: true, tenantId: true },
+  });
+  if (expired.length === 0) return 0;
+
+  const { count } = await prisma.interviewRound.updateMany({
+    where: { id: { in: expired.map((r) => r.id) }, notes: { not: '' } },
+    data: { notes: '' },
+  });
+
+  const roundsByPipeline = expired.reduce<Record<string, { tenantId: string; rounds: number }>>(
+    (acc, r) => ({ ...acc, [r.pipelineId]: { tenantId: r.tenantId, rounds: (acc[r.pipelineId]?.rounds ?? 0) + 1 } }),
+    {},
+  );
+  // Counts only — the notes themselves must not survive into the audit log.
+  for (const [pipelineId, { tenantId, rounds }] of Object.entries(roundsByPipeline)) {
+    await logAudit({
+      tenantId, actorType: 'system', actorId: 'retention-sweep',
+      action: 'pipeline.round_notes_purged', entityType: 'CandidatePipeline', entityId: pipelineId,
+      after: { reason: 'retention window elapsed', rounds, retentionDays: retentionDays() },
+    });
+  }
+  logger.info({ count }, 'Cleared interview round notes past their retention window');
+  return count;
+}
+
+/**
  * One full retention pass: expired sessions and their candidate data first, then
- * any artifact that outlived its own shorter window.
+ * the notes of human interview rounds past the window.
  */
 export async function runRetentionSweep(now = new Date()): Promise<PurgeResult> {
-  const result = await purgeExpiredSessions(now);
+  const sessions = await purgeExpiredSessions(now);
+  const roundNotes = await purgeExpiredRoundNotes(now);
+  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes } };
   // Logged unconditionally and on every outcome. Logging only when something was
   // deleted makes a sweep that has failed on 100% of rows for months look
   // identical to a sweep with nothing to do — and under GDPR Art. 5(2) you must
