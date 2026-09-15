@@ -193,6 +193,19 @@ model InterviewSession {
   turns             Turn[]
   assessments       AssessmentVersion[]
   artifacts         Artifact[]
+  integrityEvents   IntegrityEvent[]
+}
+
+model IntegrityEvent {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   InterviewSession @relation(fields: [sessionId], references: [id])
+  type      String
+  detail    String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([type])
 }
 
 model Invitation {

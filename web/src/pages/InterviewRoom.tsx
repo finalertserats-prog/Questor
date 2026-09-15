@@ -19,6 +19,7 @@ interface Msg { speaker: 'agent' | 'candidate'; text: string }
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
   speech: { stt: SttCapability };
+  proctoringEnabled: boolean;
 }
 type Phase = 'ready' | 'speaking' | 'listening' | 'thinking' | 'done';
 
@@ -140,6 +141,42 @@ export function InterviewRoom() {
   }, []);
 
   const addMsg = (m: Msg) => setMsgs((prev) => [...prev, m]);
+
+  const sendIntegrityEvent = useCallback((type: 'TAB_BLUR' | 'FOCUS_LOST' | 'PASTE_DETECTED', detail?: Record<string, unknown>) => {
+    // Fire-and-forget by design: browser-integrity telemetry must never make the
+    // interview feel broken to the candidate. The server gates this on consent
+    // and tenant policy before storing anything.
+    void fetch(`/api/portal/${token}/integrity-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, detail }),
+      credentials: 'include',
+    }).catch(() => undefined);
+  }, [token]);
+
+  useEffect(() => {
+    if (!info?.proctoringEnabled || phase === 'ready' || phase === 'done') return undefined;
+    const onVisibility = () => { if (document.hidden) sendIntegrityEvent('TAB_BLUR'); };
+    const onBlur = () => sendIntegrityEvent('FOCUS_LOST');
+    // Pasting into the typed-answer accommodation textarea is a legitimate,
+    // expected way to answer (see the "voice or typed" affordance above) — not
+    // an integrity signal. Flagging it would penalize exactly the candidates
+    // this fallback exists to support, so it is excluded here rather than left
+    // for a human reviewer to have to discount later.
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.getAttribute('data-answer-input') === 'true') return;
+      sendIntegrityEvent('PASTE_DETECTED');
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, [info?.proctoringEnabled, phase, sendIntegrityEvent]);
 
   const submitAnswer = useCallback(async (text: string) => {
     if (!text.trim()) return;
@@ -462,6 +499,7 @@ export function InterviewRoom() {
               onChange={(e) => setTyped(e.target.value)}
               placeholder="Type your answer, then Send… (Ctrl+Enter)"
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submitAnswer(typed); }}
+              data-answer-input="true"
             />
             <div className="type-actions">
               <button className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}>Send</button>

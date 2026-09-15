@@ -82,6 +82,7 @@ export async function wipe(): Promise<void> {
   await prisma.webhookEndpoint.deleteMany();
   await prisma.humanReview.deleteMany();
   await prisma.assessmentVersion.deleteMany();
+  await prisma.integrityEvent.deleteMany();
   await prisma.turn.deleteMany();
   await prisma.interviewPlanVersion.deleteMany();
   await prisma.invitation.deleteMany();

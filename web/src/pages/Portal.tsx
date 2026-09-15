@@ -9,7 +9,7 @@ export interface SttCapability { provider: string; mode: 'browser' | 'server'; c
 
 interface PortalInfo {
   candidateName: string; roleTitle: string; state: string; durationMinutes: number;
-  aiDisclosure: string; recordingRequested: boolean; privacy: string; accommodationsEnabled: boolean;
+  aiDisclosure: string; recordingRequested: boolean; privacy: string; accommodationsEnabled: boolean; proctoringEnabled: boolean;
   speech: { stt: SttCapability; tts: { provider: string } };
 }
 
