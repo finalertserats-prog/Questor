@@ -3,6 +3,16 @@ import { Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
 import { ProfileMenu } from './components/ProfileMenu';
+import {
+  brandDisplay,
+  navItemTooltip,
+  readSidebarMode,
+  shellClassName,
+  sidebarToggleLabel,
+  toggleSidebarMode,
+  writeSidebarMode,
+  type SidebarMode,
+} from './components/sidebarModel';
 import { Login } from './pages/Login';
 import { OrgLogin } from './pages/OrgLogin';
 import { Dashboard } from './pages/Dashboard';
@@ -24,9 +34,42 @@ import { About } from './pages/About';
 import { Contact } from './pages/Contact';
 import { ObserveInterview } from './pages/ObserveInterview';
 
+// Below this width the sidebar is an overlay drawer; above it, it is docked
+// beside the page. Kept in step with the breakpoint in styles/sidebar.css.
+const NARROW_VIEWPORT = '(max-width: 820px)';
+
+function narrowViewportQuery(): MediaQueryList | null {
+  try {
+    return window.matchMedia(NARROW_VIEWPORT);
+  } catch {
+    // No matchMedia (or it throws): assume the desktop, docked layout.
+    return null;
+  }
+}
+
+function useIsNarrowViewport(): boolean {
+  const [isNarrow, setIsNarrow] = useState(() => narrowViewportQuery()?.matches ?? false);
+
+  useEffect(() => {
+    const query = narrowViewportQuery();
+    if (!query) return undefined;
+    setIsNarrow(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setIsNarrow(event.matches);
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  return isNarrow;
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
-  // The sidebar is a drawer: hidden until asked for, so pages get the full width.
+  // Two separate ideas. On a desktop the sidebar is docked beside the page and
+  // open by default; the collapse control narrows it to an icon rail. On a
+  // phone it is still a drawer, closed until asked for. Collapsible was never
+  // meant to mean collapsed.
+  const isNarrow = useIsNarrowViewport();
   const [navOpen, setNavOpen] = useState(false);
+  const [mode, setMode] = useState<SidebarMode>(() => readSidebarMode());
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLElement>(null);
@@ -35,16 +78,22 @@ function Layout({ children }: { children: React.ReactNode }) {
   const restoreFocusRef = useRef(false);
   const location = useLocation();
 
+  // Only the drawer overlays anything. Docked, the sidebar sits beside the
+  // content, so there is no backdrop and nothing is made inert.
+  const overlayOpen = isNarrow && navOpen;
+  // A rail is a desktop idea: the drawer always shows its labels in full.
+  const railMode: SidebarMode = isNarrow ? 'expanded' : mode;
+
   // While the drawer is open, the page behind it is inert: keyboard focus and
   // clicks stay inside the drawer instead of wandering into hidden content.
   useEffect(() => {
-    mainRef.current?.toggleAttribute('inert', navOpen);
-    toggleRef.current?.toggleAttribute('inert', navOpen);
-    if (!navOpen && restoreFocusRef.current) {
+    mainRef.current?.toggleAttribute('inert', overlayOpen);
+    toggleRef.current?.toggleAttribute('inert', overlayOpen);
+    if (!overlayOpen && restoreFocusRef.current) {
       restoreFocusRef.current = false;
       toggleRef.current?.focus();
     }
-  }, [navOpen]);
+  }, [overlayOpen]);
 
   // Following a link is the end of the errand the drawer was opened for.
   useEffect(() => {
@@ -52,7 +101,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   }, [location.pathname]);
 
   useEffect(() => {
-    if (!navOpen) return undefined;
+    if (!overlayOpen) return undefined;
     closeRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       // The profile menu handles Escape first (capture phase) and marks it, so
@@ -64,55 +113,85 @@ function Layout({ children }: { children: React.ReactNode }) {
     };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [navOpen]);
+  }, [overlayOpen]);
 
   const closeNav = () => {
     restoreFocusRef.current = true;
     setNavOpen(false);
   };
 
+  // The choice outlives the reload; a storage that refuses is not an error.
+  const toggleRail = () => {
+    const next = toggleSidebarMode(mode);
+    setMode(next);
+    writeSidebarMode(next);
+  };
+
+  const brand = brandDisplay(railMode);
+  const tip = (label: string) => navItemTooltip(railMode, label);
+
   return (
-    <div className="app">
+    <div className={shellClassName(railMode)}>
       <button
         ref={toggleRef}
         type="button"
         className="nav-toggle"
         aria-controls="app-sidebar"
-        aria-expanded={navOpen}
+        aria-expanded={overlayOpen}
         onClick={() => setNavOpen(true)}
       >
         <Icon name="menu" />
         <span>Menu</span>
       </button>
 
-      {navOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
+      {overlayOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
 
-      <aside id="app-sidebar" className={navOpen ? 'sidebar is-open' : 'sidebar'} aria-label="Main navigation">
+      <aside id="app-sidebar" className={overlayOpen ? 'sidebar is-open' : 'sidebar'} aria-label="Main navigation">
         <button ref={closeRef} type="button" className="nav-close" aria-label="Close menu" onClick={closeNav}>
           <Icon name="close" />
         </button>
         <div>
-          <div className="logo">QUES<span>TOR</span></div>
+          <div className="sidebar-head">
+            {/* Collapsing narrows the sidebar; it does not take the product's
+                name off the screen. In the rail the wordmark is simply set
+                smaller, above the icons it names. */}
+            <div className={brand.className} title={brand.label}>{brand.lead}<span>{brand.tail}</span></div>
+            <button
+              type="button"
+              className="rail-toggle"
+              aria-controls="app-sidebar"
+              aria-expanded={mode === 'expanded'}
+              aria-label={sidebarToggleLabel(mode)}
+              title={sidebarToggleLabel(mode)}
+              onClick={toggleRail}
+            >
+              <Icon name={mode === 'collapsed' ? 'sidebar-expand' : 'sidebar-collapse'} />
+            </button>
+          </div>
           {/* The ticked rule is the instrument's edge; it recurs under every
               page title, which is what ties the console together. */}
           <div className="brand-line" aria-hidden="true" />
-          <div className="small muted" style={{ marginTop: 8 }}>Hire through evidence</div>
+          <div className="small muted sidebar-tagline" style={{ marginTop: 8 }}>Hire through evidence</div>
         </div>
         {/* Grouped by cadence, not by entity: the top group is the daily
             reviewing loop, the bottom is what you set up once. The admin console
-            lives in the profile menu, beside the other account-level pages. */}
+            lives in the profile menu, beside the other account-level pages.
+
+            Each label stays in the markup in both states: in the rail it is
+            clipped rather than removed, so every icon keeps its name for a
+            screen reader, and data-tip shows that name on hover and on focus. */}
         <nav>
           <div className="nav-group">Review</div>
-          <NavLink to="/" end><Icon name="dashboard" /><span>Dashboard</span></NavLink>
+          <NavLink to="/" end data-tip={tip('Dashboard')}><Icon name="dashboard" /><span className="nav-label">Dashboard</span></NavLink>
           {/* Candidates sits above "Add Candidate" because finding an existing
               one is the far more frequent errand — and for a long time it was
               the impossible one: creation had a nav entry, retrieval had none. */}
-          <NavLink to="/candidates" end><Icon name="candidates" /><span>Candidates</span></NavLink>
-          <NavLink to="/interviews"><Icon name="interviews" /><span>Interviews</span></NavLink>
+          <NavLink to="/candidates" end data-tip={tip('Candidates')}><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
+          <NavLink to="/interviews" data-tip={tip('Interviews')}><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
 
           <div className="nav-group">Set up</div>
-          <NavLink to="/candidates/new"><Icon name="add-candidate" /><span>Add candidate</span></NavLink>
-          <NavLink to="/roles/new"><Icon name="role" /><span>New role</span></NavLink>
+          <NavLink to="/candidates/new" data-tip={tip('Add candidate')}><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
+          <NavLink to="/roles/new" data-tip={tip('New role')}><Icon name="role" /><span className="nav-label">New role</span></NavLink>
         </nav>
         <ProfileMenu />
       </aside>
