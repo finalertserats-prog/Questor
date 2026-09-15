@@ -49,6 +49,11 @@ async function interviewStarts(token: string) {
   await request(app).post(`/api/portal/${token}/start`).send({});
 }
 
+/** The candidate answers through their own portal, after hearing the opening disclosure. */
+async function candidateAnswers(token: string) {
+  await request(app).post(`/api/portal/${token}/turn`).send({ text: 'Yes, I can hear you clearly and I am ready to begin.' });
+}
+
 describe('disclosing that HR may observe', () => {
   beforeEach(async () => { await wipe(); });
 
@@ -92,7 +97,19 @@ describe('disclosing that HR may observe', () => {
 describe('watching the interview live', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('lets HR read the live transcript once the AI has told the candidate they may be observed', async () => {
+  it('lets HR read the live transcript once the candidate has heard the notice and answered', async () => {
+    const ids = await seeded();
+    await silverRound(ids);
+    await candidateConsents(ids.token, true);
+    await interviewStarts(ids.token);
+    await candidateAnswers(ids.token);
+
+    const res = await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses observation until the candidate has answered after hearing the notice', async () => {
     const ids = await seeded();
     await silverRound(ids);
     await candidateConsents(ids.token, true);
@@ -100,7 +117,19 @@ describe('watching the interview live', () => {
 
     const res = await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
+  });
+
+  it('refuses observation of an interview a staff member started and answered themselves', async () => {
+    const ids = await seeded();
+    await silverRound(ids);
+    await candidateConsents(ids.token, true);
+    await request(app).post(`/api/interviews/${ids.sessionId}/start`).set('Authorization', ids.auth).send({});
+    await request(app).post(`/api/interviews/${ids.sessionId}/turn`).set('Authorization', ids.auth).send({ text: 'Yes, I can hear you clearly and I am ready to begin.' });
+
+    const res = await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
+
+    expect(res.status).toBe(409);
   });
 
   it('refuses observation until the AI has spoken the observer notice, whatever the consent flag says', async () => {
@@ -129,6 +158,7 @@ describe('watching the interview live', () => {
     await silverRound(ids);
     await candidateConsents(ids.token, true);
     await interviewStarts(ids.token);
+    await candidateAnswers(ids.token);
     await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
 
     const audit = await prisma.auditEvent.findFirst({ where: { action: 'interview.observed', entityId: ids.sessionId, actorId: ids.userId } });

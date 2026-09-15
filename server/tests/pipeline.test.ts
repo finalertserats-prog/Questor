@@ -274,3 +274,16 @@ describe('completing a round', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('configuring stages', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('rejects stage labels containing line breaks, which could forge email text or headers', async () => {
+    const ids = await seeded();
+
+    const res = await request(app).put(`/api/roles/${ids.roleId}/pipeline-stages`).set('Authorization', ids.auth)
+      .send({ stages: [{ key: 'participation', label: 'Participation', kind: 'intake' }, { key: 'gold', label: 'Gold\nBcc: attacker@example.com', kind: 'human_interview' }] });
+
+    expect(res.status).toBe(400);
+  });
+});

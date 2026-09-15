@@ -508,12 +508,27 @@ export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> 
   });
   if (expired.length === 0) return 0;
 
+  const ids = expired.map((r) => r.id);
+  const heldCandidate = { interviews: { some: { legalHold: true } } };
   const { count } = await prisma.interviewRound.updateMany({
-    where: { id: { in: expired.map((r) => r.id) }, notes: { not: '' } },
+    // The hold is checked again at the moment of clearing: a hold placed after
+    // the rounds were selected must still spare their notes.
+    where: {
+      id: { in: ids },
+      notes: { not: '' },
+      pipeline: { candidate: { NOT: [heldCandidate, { artifacts: { some: { legalHold: true } } }] } },
+    },
     data: { notes: '' },
   });
+  if (count === 0) return 0;
 
-  const roundsByPipeline = expired.reduce<Record<string, { tenantId: string; rounds: number }>>(
+  // Audit only what was actually cleared, not what was selected.
+  const cleared = await prisma.interviewRound.findMany({
+    where: { id: { in: ids }, notes: '' },
+    select: { pipelineId: true, tenantId: true },
+  });
+
+  const roundsByPipeline = cleared.reduce<Record<string, { tenantId: string; rounds: number }>>(
     (acc, r) => ({ ...acc, [r.pipelineId]: { tenantId: r.tenantId, rounds: (acc[r.pipelineId]?.rounds ?? 0) + 1 } }),
     {},
   );

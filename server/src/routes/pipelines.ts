@@ -169,13 +169,17 @@ async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt:
     return { delivered: false, link: o.link, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Use the link here.` };
   }
   const when = o.scheduledAt.toUTCString();
+  // Stage labels are configurable, so strip control characters before they
+  // reach a subject line or plain-text body, where a line break could forge
+  // headers or text. HTML escaping below does not cover these.
+  const label = o.stageLabel.replace(/[ -]+/g, ' ').trim();
   const intro = o.aiRound
-    ? `The ${o.stageLabel} AI interview is scheduled for ${when}. You can observe it live here:`
-    : `The ${o.stageLabel} interview is scheduled for ${when}. The candidate and their pipeline are here:`;
+    ? `The ${label} AI interview is scheduled for ${when}. You can observe it live here:`
+    : `The ${label} interview is scheduled for ${when}. The candidate and their pipeline are here:`;
   try {
     await email.send({
       to: o.to,
-      subject: `${o.stageLabel} interview scheduled`,
+      subject: `${label} interview scheduled`,
       text: `${intro}\n${o.link}`,
       html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(o.link)}">${escapeHtml(o.link)}</a></p>`,
     });
