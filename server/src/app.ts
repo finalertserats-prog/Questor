@@ -15,6 +15,7 @@ import { portalRouter } from './routes/portal.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { dashboardRouter } from './routes/dashboard.js';
+import { connectorsRouter } from './routes/connectors.js';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -129,6 +130,7 @@ export function createApp() {
   app.use('/api/pipelines', pipelinesRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);
+  app.use('/api/admin/connectors', connectorsRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
 
