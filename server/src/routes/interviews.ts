@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid';
 import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
+import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { resolveCandidateBand } from '../engines/bandCalibration.js';
 import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
@@ -127,19 +128,25 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   })) });
 }));
 
-const pipelineSummaryQuerySchema = z.object({ roleId: z.string().min(1).optional() });
+const pipelineSummaryQuerySchema = z.object({
+  roleId: z.string().min(1).optional(),
+  format: z.enum(['csv']).optional(),
+});
+
+/** `state,count` — one row per state present in the summary, in no particular order. */
+function pipelineSummaryToCsv(summary: PipelineSummary): string {
+  const lines = ['state,count', ...Object.entries(summary.stateCounts).map(([state, count]) => `${state},${count}`)];
+  return `${lines.join('\n')}\n`;
+}
 
 interviewsRouter.get('/pipeline-summary', requireCapability('interview:read'), asyncHandler(async (req, res) => {
   const query = pipelineSummaryQuerySchema.parse(req.query);
-  const scope = (await candidateScope(req.auth!)) as Prisma.CandidateWhereInput;
-  const rows = await prisma.interviewSession.groupBy({
-    by: ['state'],
-    where: { tenantId: req.auth!.tenantId, ...(query.roleId ? { roleId: query.roleId } : {}), candidate: scope },
-    _count: { _all: true },
-  });
-  const stateCounts = Object.fromEntries(rows.map((row) => [row.state, row._count._all]));
-  const total = rows.reduce((sum, row) => sum + row._count._all, 0);
-  res.json({ stateCounts, total });
+  const summary = await getPipelineSummary(req.auth!, query.roleId);
+  if (query.format === 'csv') {
+    res.type('text/csv').send(pipelineSummaryToCsv(summary));
+    return;
+  }
+  res.json(summary);
 }));
 
 const bulkInviteRowSchema = z.object({ candidateId: z.string().min(1) });

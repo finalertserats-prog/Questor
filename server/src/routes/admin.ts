@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import type { Prisma } from '@prisma/client';
 import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
 import { isRoleName, ROLES } from '../domain/capabilities.js';
-import { assignRole, assignCandidate } from '../services/access.js';
+import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { getLlm } from '../providers/llm/index.js';
 import { getEmail } from '../providers/email/index.js';
@@ -13,6 +14,8 @@ import { getAts } from '../providers/ats/index.js';
 import { allMeetingCapabilities } from '../providers/meeting/index.js';
 import { findSessionsDueForPurge, retentionDays, DEFAULT_RETENTION_DAYS } from '../services/dataRights.js';
 import { logAudit } from '../services/audit.js';
+import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
+import { getPipelineSummary } from '../services/pipeline.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -98,6 +101,51 @@ adminRouter.get('/analytics', requireCapability('assessment:read'), asyncHandler
     quality: { avgEvidenceCoverage: Math.round(avgCoverage * 100) / 100 },
     fairnessNote: 'Selection-rate monitoring requires a configured minimum group size and lawful group attributes; not computed on this dataset.',
   });
+}));
+
+// HR feedback dashboard — one read-only call that composes the three signals
+// an HR reviewer otherwise has to know to fetch separately:
+//   - pipeline: session counts by state, via the same scoped aggregation
+//     GET /api/interviews/pipeline-summary uses (services/pipeline.ts).
+//   - agreement: the blind-review-vs-AI agreement report, via the SAME
+//     getAgreementReport function GET /api/assessments/shadow-metrics calls.
+//     That function is tenant-wide by design (see shadowMode.ts) — reused
+//     as-is, not re-scoped, so this does not invent a second definition of
+//     "how shadow metrics are scoped".
+//   - reviewDispositions: a PROCEED/CONSIDER/DO_NOT_PROGRESS rollup over
+//     HumanReview, scoped through candidateScope like every other
+//     candidate-scoped query (services/access.ts).
+//
+// Gated on `assessment:read`, matching GET /analytics just above: the payload
+// is dominated by assessment/review substance, and that is the capability
+// already held by the roles who see that kind of content.
+//
+// This is purely a read-side composition — no scoring, no HumanReview writes,
+// no schema changes.
+adminRouter.get('/hr-dashboard', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
+  const auth = req.auth!;
+  const candScope = (await candidateScope(auth)) as Prisma.CandidateWhereInput;
+
+  const [pipeline, agreement, dispositionRows] = await Promise.all([
+    getPipelineSummary(auth),
+    getAgreementReport(auth.tenantId),
+    prisma.humanReview.groupBy({
+      by: ['disposition'],
+      where: { assessment: { session: { tenantId: auth.tenantId, candidate: candScope } } },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const reviewDispositions: Record<(typeof DISPOSITIONS)[number], number> = {
+    PROCEED: 0, CONSIDER: 0, DO_NOT_PROGRESS: 0,
+  };
+  for (const row of dispositionRows) {
+    if ((DISPOSITIONS as readonly string[]).includes(row.disposition)) {
+      reviewDispositions[row.disposition as (typeof DISPOSITIONS)[number]] = row._count._all;
+    }
+  }
+
+  res.json({ pipeline, agreement, reviewDispositions });
 }));
 
 // Webhook endpoints CRUD (FR-039)
