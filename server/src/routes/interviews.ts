@@ -125,6 +125,53 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   })) });
 }));
 
+const pipelineSummaryQuerySchema = z.object({ roleId: z.string().min(1).optional() });
+
+interviewsRouter.get('/pipeline-summary', requireCapability('interview:read'), asyncHandler(async (req, res) => {
+  const query = pipelineSummaryQuerySchema.parse(req.query);
+  const scope = (await candidateScope(req.auth!)) as Prisma.CandidateWhereInput;
+  const rows = await prisma.interviewSession.groupBy({
+    by: ['state'],
+    where: { tenantId: req.auth!.tenantId, ...(query.roleId ? { roleId: query.roleId } : {}), candidate: scope },
+    _count: { _all: true },
+  });
+  const stateCounts = Object.fromEntries(rows.map((row) => [row.state, row._count._all]));
+  const total = rows.reduce((sum, row) => sum + row._count._all, 0);
+  res.json({ stateCounts, total });
+}));
+
+const bulkInviteRowSchema = z.object({ candidateId: z.string().min(1) });
+
+interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const rows = z.array(z.unknown()).parse(req.body);
+  const results = [];
+
+  for (let index = 0; index < rows.length; index++) {
+    const parsed = bulkInviteRowSchema.safeParse(rows[index]);
+    const candidateId = parsed.success ? parsed.data.candidateId : undefined;
+    try {
+      if (!parsed.success) throw new HttpError(400, parsed.error.issues.map((i) => i.message).join('; '));
+
+      const candidate = await assertCanAccessCandidate(req.auth!, parsed.data.candidateId);
+      const session = await prisma.interviewSession.findFirst({
+        where: { tenantId: req.auth!.tenantId, candidateId: candidate.id },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!session) throw new HttpError(404, 'Interview not found');
+
+      const invitation = await inviteSession(req, session);
+      results.push({ index, candidateId: candidate.id, sessionId: session.id, success: true, invitation });
+    } catch (err) {
+      results.push({
+        index, candidateId, success: false,
+        error: err instanceof Error ? err.message : 'Invitation failed',
+      });
+    }
+  }
+
+  res.json({ results });
+}));
+
 // Session detail.
 //
 // This response includes the live invitation token, which is a bearer
@@ -156,56 +203,8 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
 // Send invitation (FR-012)
 interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
-  const role = await prisma.role.findUnique({ where: { id: session.roleId } });
-  if (session.state !== 'PROVISIONED' && session.state !== 'RESCHEDULE_REQUIRED') throw new HttpError(409, `Cannot invite from state ${session.state}`);
-
-  const token = nanoid(24);
-  const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);
-  const invitation = await prisma.invitation.upsert({
-    where: { sessionId: session.id },
-    create: { sessionId: session.id, token, status: 'sent', sentAt: new Date(), expiresAt, eventsJson: JSON.stringify([{ type: 'sent', at: new Date().toISOString() }]) },
-    update: { token, status: 'sent', sentAt: new Date(), expiresAt },
-  });
-
-  const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
-  const email = getEmail();
-
-  // Delivery is reported honestly, and a failure never loses the invitation.
-  // The link is the valuable artefact — a recruiter who can see it can send it
-  // by hand, whereas a 500 here would leave a half-created invitation and no
-  // way to reach the candidate at all.
-  let delivered = false;
-  let deliveryNote: string;
-  if (!email.delivers) {
-    await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl), to: candidate!.email }); // logs it
-    deliveryNote = `No email was sent: EMAIL_PROVIDER is "${email.name}", which does not deliver. Copy the link and send it yourself.`;
-    logger.warn({ sessionId: session.id, to: candidate!.email }, 'Invitation created but NOT emailed — no delivering email provider configured');
-  } else {
-    try {
-      await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl), to: candidate!.email });
-      delivered = true;
-      deliveryNote = `Emailed to ${candidate!.email}.`;
-    } catch (err) {
-      deliveryNote = 'The invitation link was created, but the email could not be sent. Copy the link and send it yourself.';
-      logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation email failed to send');
-    }
-  }
-
-  await prisma.invitation.update({
-    where: { id: invitation.id },
-    data: {
-      status: delivered ? 'sent' : 'created',
-      sentAt: delivered ? new Date() : null,
-      eventsJson: JSON.stringify([{ type: delivered ? 'sent' : 'created_not_delivered', at: new Date().toISOString() }]),
-    },
-  });
-
-  assertTransition(session.state, 'INVITED');
-  await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
-  await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
-  res.json({ invitation: { token: invitation.token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote } });
+  const invitation = await inviteSession(req, session);
+  res.json({ invitation });
 }));
 
 // Schedule (FR-013)
@@ -391,6 +390,62 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
  * only the tenant in hand — the tenant-only lookup this replaced was the single
  * line behind every leak on this router.
  */
+type InvitableSession = { id: string; candidateId: string; roleId: string; state: string };
+
+async function inviteSession(req: Request, session: InvitableSession) {
+  const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
+  const role = await prisma.role.findUnique({ where: { id: session.roleId } });
+  if (!candidate || !role) throw new HttpError(404, 'Candidate or role not found');
+  if (session.state !== 'PROVISIONED' && session.state !== 'RESCHEDULE_REQUIRED') throw new HttpError(409, `Cannot invite from state ${session.state}`);
+
+  const token = nanoid(24);
+  const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);
+  const invitation = await prisma.invitation.upsert({
+    where: { sessionId: session.id },
+    create: { sessionId: session.id, token, status: 'sent', sentAt: new Date(), expiresAt, eventsJson: JSON.stringify([{ type: 'sent', at: new Date().toISOString() }]) },
+    update: { token, status: 'sent', sentAt: new Date(), expiresAt },
+  });
+
+  const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
+  const email = getEmail();
+
+  // Delivery is reported honestly, and a failure never loses the invitation.
+  // The link is the valuable artefact — a recruiter who can see it can send it
+  // by hand, whereas a 500 here would leave a half-created invitation and no
+  // way to reach the candidate at all.
+  let delivered = false;
+  let deliveryNote: string;
+  if (!email.delivers) {
+    await email.send({ ...buildInvite(candidate.fullName, role.title, portalUrl), to: candidate.email }); // logs it
+    deliveryNote = `No email was sent: EMAIL_PROVIDER is "${email.name}", which does not deliver. Copy the link and send it yourself.`;
+    logger.warn({ sessionId: session.id, to: candidate.email }, 'Invitation created but NOT emailed — no delivering email provider configured');
+  } else {
+    try {
+      await email.send({ ...buildInvite(candidate.fullName, role.title, portalUrl), to: candidate.email });
+      delivered = true;
+      deliveryNote = `Emailed to ${candidate.email}.`;
+    } catch (err) {
+      deliveryNote = 'The invitation link was created, but the email could not be sent. Copy the link and send it yourself.';
+      logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation email failed to send');
+    }
+  }
+
+  await prisma.invitation.update({
+    where: { id: invitation.id },
+    data: {
+      status: delivered ? 'sent' : 'created',
+      sentAt: delivered ? new Date() : null,
+      eventsJson: JSON.stringify([{ type: delivered ? 'sent' : 'created_not_delivered', at: new Date().toISOString() }]),
+    },
+  });
+
+  assertTransition(session.state, 'INVITED');
+  await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
+  await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
+  return { token: invitation.token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote };
+}
+
 async function getSession(req: Request, id: string) {
   return assertCanAccessSession(req.auth!, id);
 }
