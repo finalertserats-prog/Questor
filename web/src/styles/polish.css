@@ -147,6 +147,14 @@ td a:not(.btn) {
   height: auto;
   margin-bottom: 6px;
 }
+
+/* The artwork is light-on-transparent: a pale tile and a white calendar body.
+   Left alone on the dark desk it reads as a lit panel rather than a drawing,
+   so it is dimmed to sit at the same weight as the text around it. */
+:root[data-theme='dark'] .empty-art {
+  opacity: 0.85;
+  filter: brightness(0.88) saturate(0.92);
+}
 .empty-title {
   margin: 0;
   font-size: 15px;

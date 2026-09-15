@@ -171,7 +171,7 @@ export function CandidatesList() {
             action={<button type="button" className="btn secondary sm" onClick={() => setQuery('')}><Icon name="close" size={14} />Clear filter</button>}
           />
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Candidates">
           <table>
             <thead>
               <tr>

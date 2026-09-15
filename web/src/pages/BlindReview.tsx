@@ -132,7 +132,7 @@ function Comparison({ view, levels, disposition, ai }: {
 
       <div className="card">
         <h3 className="card-title"><Icon name="evidence" size={16} />Competency comparison</h3>
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency comparison">
         <table className="table">
           <thead>
             <tr><th>Competency</th><th>You</th><th>AI</th><th>Δ</th><th>AI rationale</th></tr>

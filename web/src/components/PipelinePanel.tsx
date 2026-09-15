@@ -290,7 +290,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
       {pipeline.rounds.length > 0 && (
         <>
           <h3 className="card-title"><Icon name="schedule" size={16} />Rounds</h3>
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interview rounds">
           <table>
             <thead>
               <tr><th>Stage</th><th>Led by</th><th>Observers</th><th>Scheduled</th><th>Status</th></tr>

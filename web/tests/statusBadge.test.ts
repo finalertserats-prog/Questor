@@ -2,24 +2,20 @@ import { describe, it, expect } from 'vitest';
 import {
   interviewStatus, pipelineStatus, decisionStatus, roundStatus, recommendationStatus, toneToBadgeKind,
 } from '../src/components/statusModel';
-
-// Mirrors server/src/domain/stateMachine.ts. Duplicated on purpose: the web
-// bundle cannot import server code, and a state added there without a badge
-// here should fail this test rather than render as an unexplained grey chip.
-const SESSION_STATES = [
-  'PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'WAITING', 'CONNECTING',
-  'DISCLOSURE', 'CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS',
-  'CLOSING', 'PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED',
-];
-const EXCEPTION_STATES = [
-  'RESCHEDULE_REQUIRED', 'NO_SHOW', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE',
-  'POLICY_STOP', 'MANUAL_HANDOFF', 'CANCELLED', 'INCOMPLETE',
-];
+// Imported from the server's own state machine rather than copied, so adding a
+// state there and forgetting a badge here genuinely fails this test. A copy
+// could never do that: it would simply agree with itself.
+import { SESSION_STATES, EXCEPTION_STATES } from '../../server/src/domain/stateMachine';
 
 describe('interviewStatus', () => {
   it('gives every known session and exception state a non-neutral tone', () => {
     const neutral = [...SESSION_STATES, ...EXCEPTION_STATES].filter((s) => interviewStatus(s).tone === 'neutral');
     expect(neutral).toEqual([]);
+  });
+
+  it('gives every known state a label that is not the raw constant', () => {
+    const shouty = [...SESSION_STATES, ...EXCEPTION_STATES].filter((s) => interviewStatus(s).label === s);
+    expect(shouty).toEqual([]);
   });
 
   it('uses a distinct icon for review-ready interviews', () => {
@@ -44,6 +40,23 @@ describe('interviewStatus', () => {
 
   it('falls back to a neutral, readable label for an unknown state', () => {
     expect(interviewStatus('SOMETHING_NEW')).toEqual({ label: 'Something new', tone: 'neutral', icon: 'about' });
+  });
+});
+
+// A chip with no text has no accessible name, so a screen reader announces
+// nothing at all where a status should be.
+describe('a missing or blank status', () => {
+  it('still produces a readable label for an empty string', () => {
+    expect(interviewStatus('')).toEqual({ label: 'Unknown', tone: 'neutral', icon: 'about' });
+  });
+
+  it('still produces a readable label for whitespace', () => {
+    expect(interviewStatus('   ')).toEqual({ label: 'Unknown', tone: 'neutral', icon: 'about' });
+  });
+
+  it('applies to every status family, not just interviews', () => {
+    expect([pipelineStatus(''), decisionStatus(''), roundStatus(''), recommendationStatus('')].map((s) => s.label))
+      .toEqual(['Unknown', 'Unknown', 'Unknown', 'Unknown']);
   });
 });
 

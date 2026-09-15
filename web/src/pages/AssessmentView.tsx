@@ -315,7 +315,7 @@ export function AssessmentView() {
 
       <div className="card">
         <h2 className="card-title"><Icon name="evidence" />Competency scorecard</h2>
-        <div className="table-scroll">
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency scorecard">
         <table>
           <thead>
             <tr><th>Competency</th><th>Level</th><th>Required</th><th>Confidence</th><th>Evidence</th></tr>
@@ -388,7 +388,7 @@ export function AssessmentView() {
         {(reviews ?? []).length > 0 && (
           <div style={{ marginTop: 16 }}>
             <h3>Previous reviews</h3>
-            <div className="table-scroll">
+            <div className="table-scroll" tabIndex={0} role="region" aria-label="Previous reviews">
             <table>
               <thead><tr><th>Disposition</th><th>Reason</th><th>Status</th><th>Completed</th></tr></thead>
               <tbody>

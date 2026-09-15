@@ -39,6 +39,23 @@ describe('EmptyState', () => {
   it('renders no action wrapper when there is no call to action', () => {
     expect(render({ icon: 'candidates', title: 'Empty', message: 'x' })).not.toContain('empty-action');
   });
+
+  // Without intrinsic dimensions the browser reserves no space for the artwork
+  // and the text below it jumps when the image arrives.
+  it('gives the illustration intrinsic dimensions so the layout does not shift', () => {
+    const html = render({ icon: 'candidates', illustration: '/brand/x.webp', title: 'Empty', message: 'x' });
+    expect(html).toContain('width="360"');
+    expect(html).toContain('height="360"');
+  });
+
+  it('uses the artwork’s real aspect ratio when it is not square', () => {
+    const html = render({
+      icon: 'interviews', illustration: '/brand/empty-interviews.webp', title: 'Empty', message: 'x',
+      illustrationWidth: 360, illustrationHeight: 331,
+    });
+    expect(html).toContain('width="360"');
+    expect(html).toContain('height="331"');
+  });
 });
 
 describe('Skeleton', () => {

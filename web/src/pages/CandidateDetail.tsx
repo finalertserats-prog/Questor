@@ -139,7 +139,7 @@ export function CandidateDetail() {
             <Stat label="Confidence" value={`${Math.round(fit.confidence * 100)}%`} />
           </div>
 
-          <div className="table-scroll" style={{ marginTop: 14 }}>
+          <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Resume fit components">
           <table>
             <thead>
               <tr><th>Component</th><th>Weight</th><th>Score</th><th>Rule</th></tr>
@@ -275,11 +275,13 @@ export function CandidateDetail() {
             compact
             icon="interviews"
             illustration="/brand/empty-interviews.webp"
+            illustrationWidth={360}
+            illustrationHeight={331}
             title="No interviews yet"
             message="Use “Set up interview” above to create one for this candidate."
           />
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interviews for this candidate">
           <table>
             <thead>
               <tr>

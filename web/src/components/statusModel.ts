@@ -75,6 +75,10 @@ function humanise(value: string): string {
 }
 
 function lookup(table: StatusTable, value: string): StatusMeta {
+  // A blank status would render a chip with no text, which has no accessible
+  // name — a screen reader announces nothing where a status should be. Say
+  // that the status is unknown instead of saying nothing at all.
+  if (!value || !value.trim()) return { label: 'Unknown', tone: 'neutral', icon: 'about' };
   const entry = table[value];
   if (!entry) return { label: humanise(value), tone: 'neutral', icon: 'about' };
   const [tone, icon, label] = entry;

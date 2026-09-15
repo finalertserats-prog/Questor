@@ -42,12 +42,14 @@ export function InterviewsList() {
           <EmptyState
             icon="interviews"
             illustration="/brand/empty-interviews.webp"
+            illustrationWidth={360}
+            illustrationHeight={331}
             title="No interviews yet"
             message="Interviews are set up from a candidate’s page. Add a candidate to create the first one."
             action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
           />
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interviews">
             <table>
               <thead>
                 <tr>

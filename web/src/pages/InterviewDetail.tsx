@@ -122,7 +122,7 @@ export function InterviewDetail() {
       <div className="card">
         <h2 className="card-title"><Icon name="list" />Interview plan</h2>
         {plan && (plan.blocks ?? []).length > 0 ? (
-          <div className="table-scroll">
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interview plan">
             <table>
               <thead><tr><th>Competency</th><th>Intent</th><th>Target</th></tr></thead>
               <tbody>
