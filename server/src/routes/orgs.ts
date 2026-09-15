@@ -7,8 +7,10 @@ import { asyncHandler, HttpError } from '../middleware/index.js';
  * Public, unauthenticated: resolves an organisation's own sign-in link.
  *
  * It answers for one slug at a time and there is deliberately no listing
- * endpoint, so a visitor cannot enumerate which organisations use Questor.
- * Only the display name is returned.
+ * endpoint. Readable links like /o/acme are a product choice, and they mean a
+ * visitor who guesses a slug learns that organisation uses Questor; the route
+ * is tightly rate limited in app.ts so that cannot be done at scale. Only the
+ * display name is returned.
  */
 export const orgsRouter = Router();
 

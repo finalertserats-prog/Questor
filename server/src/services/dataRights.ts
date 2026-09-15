@@ -117,6 +117,8 @@ async function deleteSessionCascade(
   // Model executions record prompts/outputs that can quote the candidate.
   await count('modelExecutions', () => tx.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   await count('artifacts', () => tx.artifact.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+  // A pipeline round may outlive a purged session; unlink it rather than keep a dangling reference.
+  await count('roundSessionLinks', () => tx.interviewRound.updateMany({ where: { sessionId: { in: sessionIds } }, data: { sessionId: null } }));
   await count('sessions', () => tx.interviewSession.deleteMany({ where: { id: { in: sessionIds } } }));
 }
 

@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
 import { isInFlight } from './CandidatesList';
+import { PipelinePanel } from '../components/PipelinePanel';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -107,6 +108,8 @@ export function CandidateDetail() {
           <Link className="btn secondary" to={`/roles/${candidate.roleId}`}>View role</Link>
         </div>
       </div>
+
+      <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} />
 
       {fit && (
         <div className="card">

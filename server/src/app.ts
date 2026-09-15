@@ -117,9 +117,9 @@ export function createApp() {
   const isIntegrityEvent = (req: Request) => /^\/api\/portal\/[^/]+\/integrity-event(?:[/?]|$)/.test(req.originalUrl);
   app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey, skip: isIntegrityEvent }));
 
-  // Public organisation lookup for sign-in links. Rate limited so it cannot be
-  // used to probe for organisation names at speed.
-  app.use('/api/orgs', rateLimit({ name: 'orgs', windowMs: 15 * 60_000, max: 120 }), orgsRouter);
+  // Public organisation lookup for sign-in links. A person follows a link once
+  // or twice; 30 per 15 minutes per IP stops anyone guessing slugs at speed.
+  app.use('/api/orgs', rateLimit({ name: 'orgs', windowMs: 15 * 60_000, max: 30 }), orgsRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);

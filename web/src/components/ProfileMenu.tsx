@@ -22,10 +22,15 @@ export function ProfileMenu() {
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     if (!isOpen) return undefined;
+
+    // Move keyboard focus into the menu, so it is reachable without reaching
+    // backwards past the trigger.
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -51,12 +56,24 @@ export function ProfileMenu() {
     };
   }, [isOpen]);
 
+  // Arrow keys move between menu items, as expected of role="menu".
+  const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    if (items.length === 0) return;
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    const focusAt = (i: number) => items[(i + items.length) % items.length].focus();
+    if (event.key === 'ArrowDown') { event.preventDefault(); focusAt(index + 1); }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); focusAt(index < 0 ? items.length - 1 : index - 1); }
+    else if (event.key === 'Home') { event.preventDefault(); focusAt(0); }
+    else if (event.key === 'End') { event.preventDefault(); focusAt(items.length - 1); }
+  };
+
   if (!user) return null;
 
   return (
     <div className="profile-container" ref={containerRef}>
       {isOpen && (
-        <div className="profile-menu-popover" role="menu" aria-label="Profile menu">
+        <div ref={menuRef} className="profile-menu-popover" role="menu" aria-label="Profile menu" onKeyDown={handleMenuKeyDown}>
           {profileMenuItems(user.role).map((item) => (
             <Link key={item.key} to={item.to} role="menuitem" className="profile-menu-item" onClick={() => setIsOpen(false)}>
               <Icon name={MENU_ICONS[item.key] ?? 'about'} size={16} />

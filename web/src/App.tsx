@@ -27,7 +27,15 @@ function Layout({ children }: { children: React.ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const location = useLocation();
+
+  // While the drawer is open, the page behind it is inert: keyboard focus and
+  // clicks stay inside the drawer instead of wandering into hidden content.
+  useEffect(() => {
+    mainRef.current?.toggleAttribute('inert', navOpen);
+    toggleRef.current?.toggleAttribute('inert', navOpen);
+  }, [navOpen]);
 
   // Following a link is the end of the errand the drawer was opened for.
   useEffect(() => {
@@ -100,7 +108,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         <ProfileMenu />
       </aside>
 
-      <main className="main">{children}</main>
+      <main ref={mainRef} className="main">{children}</main>
     </div>
   );
 }

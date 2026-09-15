@@ -104,6 +104,19 @@ pipelinesRouter.post('/', requireCapability('interview:create'), asyncHandler(as
   res.status(201).json({ pipeline: presentPipeline(pipeline) });
 }));
 
+// A candidate's pipelines. Scoped through the candidate, so naming a candidate
+// in another organisation, or outside the caller's assignments, returns 404.
+pipelinesRouter.get('/', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const { candidateId } = z.object({ candidateId: z.string().min(1) }).parse(req.query);
+  const candidate = await assertCanAccessCandidate(req.auth!, candidateId);
+  const pipelines = await prisma.candidatePipeline.findMany({
+    where: { candidateId: candidate.id, tenantId: req.auth!.tenantId },
+    orderBy: { createdAt: 'desc' },
+    include: withRounds,
+  });
+  res.json({ pipelines: pipelines.map(presentPipeline) });
+}));
+
 pipelinesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   res.json({ pipeline: presentPipeline(await loadPipeline(req, req.params.id)) });
 }));
@@ -160,13 +173,23 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     if (!session) throw new HttpError(404, 'Interview session not found for this candidate.');
   }
 
-  const round = await prisma.interviewRound.create({
-    data: {
-      tenantId, pipelineId: pipeline.id, stageKey: stage.key,
-      conductedBy: roles.conductedBy, aiObserver: roles.aiObserver, hrMayObserve: roles.hrMayObserve,
-      sessionId: body.sessionId ?? null, interviewersJson: JSON.stringify(body.interviewers ?? []),
-      scheduledAt: new Date(body.scheduledAt), createdById: req.auth!.userId,
-    },
+  // Re-check the pipeline inside the same transaction as the insert. Checking
+  // it only on load left a gap in which a concurrent decision or advance could
+  // land, producing a round after a decision or for a stage already left.
+  const round = await prisma.$transaction(async (tx) => {
+    const stillHere = await tx.candidatePipeline.updateMany({
+      where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: stage.key },
+      data: { updatedAt: new Date() },
+    });
+    if (stillHere.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
+    return tx.interviewRound.create({
+      data: {
+        tenantId, pipelineId: pipeline.id, stageKey: stage.key,
+        conductedBy: roles.conductedBy, aiObserver: roles.aiObserver, hrMayObserve: roles.hrMayObserve,
+        sessionId: body.sessionId ?? null, interviewersJson: JSON.stringify(body.interviewers ?? []),
+        scheduledAt: new Date(body.scheduledAt), createdById: req.auth!.userId,
+      },
+    });
   });
 
   await logAudit({
@@ -175,6 +198,32 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     after: { roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy, scheduledAt: body.scheduledAt },
   });
   res.status(201).json({ round: presentRound(round) });
+}));
+
+const completeSchema = z.object({
+  notes: z.string().trim().min(20, 'Record what the round showed — this is the evidence for the stage.').max(10000),
+});
+
+// Closing a round with what it showed. Until the AI observer can transcribe
+// human rounds, these notes are the evidence the summary relies on.
+pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
+  const { notes } = completeSchema.parse(req.body);
+  const pipeline = await loadPipeline(req, req.params.id);
+  const round = pipeline.rounds.find((r) => r.id === req.params.roundId);
+  if (!round) throw new HttpError(404, 'Round not found');
+
+  const completed = await prisma.interviewRound.updateMany({
+    where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED' },
+    data: { status: 'COMPLETED', notes },
+  });
+  if (completed.count !== 1) throw new HttpError(409, 'This round has already been completed or cancelled.');
+
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
+    action: 'pipeline.round_completed', entityType: 'CandidatePipeline', entityId: pipeline.id,
+    after: { roundId: round.id, stage: round.stageKey },
+  });
+  res.json({ round: presentRound(await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } })) });
 }));
 
 const decisionSchema = z.object({
@@ -188,19 +237,26 @@ pipelinesRouter.post('/:id/decision', requireCapability('assessment:review'), as
   const body = decisionSchema.parse(req.body);
   const pipeline = await loadPipeline(req, req.params.id);
 
+  if (pipeline.status !== 'ACTIVE') throw new HttpError(409, DECIDED);
+
+  // Conditional on the stage we read as well as the status: a concurrent
+  // advance would otherwise leave the decision recorded against a stage the
+  // candidate had already left.
   const decided = await prisma.candidatePipeline.updateMany({
-    where: { id: pipeline.id, status: 'ACTIVE' },
+    where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: pipeline.currentStageKey },
     data: {
       status: 'DECIDED', decision: body.decision, decisionReason: body.reason,
       decidedAtStageKey: pipeline.currentStageKey, decidedById: req.auth!.userId, decidedAt: new Date(),
     },
   });
-  if (decided.count !== 1) throw new HttpError(409, DECIDED);
+  if (decided.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
 
+  // The reason itself stays on the pipeline, which erasure removes. Audit rows
+  // outlive erasure, so they record that a reason was given, not what it said.
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.decided', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    after: { decision: body.decision, reason: body.reason, stage: pipeline.currentStageKey },
+    after: { decision: body.decision, stage: pipeline.currentStageKey, reasonRecorded: true },
   });
   res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
 }));

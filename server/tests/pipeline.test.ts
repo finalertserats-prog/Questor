@@ -57,6 +57,29 @@ describe('creating a pipeline', () => {
   });
 });
 
+describe('finding a candidate\'s pipeline', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('lists the pipeline for a candidate', async () => {
+    const ids = await seeded();
+    const created = await createPipeline(ids);
+
+    const res = await request(app).get(`/api/pipelines?candidateId=${ids.candidateId}`).set('Authorization', ids.auth);
+
+    expect(res.body.pipelines.map((p: { id: string }) => p.id)).toEqual([created.body.pipeline.id]);
+  });
+
+  it("returns 404 for a candidate in another organisation", async () => {
+    const ids = await seeded();
+    await createPipeline(ids);
+    const other = await request(app).post('/api/auth/register').send({ email: 'hr2@other.local', password: OTHER_PASSWORD, name: 'Other HR', tenantName: 'Other Org' });
+
+    const res = await request(app).get(`/api/pipelines?candidateId=${ids.candidateId}`).set('Authorization', `Bearer ${other.body.token}`);
+
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('moving through stages', () => {
   beforeEach(async () => { await wipe(); });
 
@@ -127,6 +150,30 @@ describe('deciding', () => {
 
     expect(audit).not.toBeNull();
   });
+
+  it('keeps the free-text reason out of the audit log, which outlives candidate erasure', async () => {
+    const ids = await seeded();
+    const created = await createPipeline(ids);
+    const reason = 'Strong evidence across the profile review and first round.';
+    await request(app).post(`/api/pipelines/${created.body.pipeline.id}/decision`).set('Authorization', ids.auth).send({ decision: 'APPROVED', reason });
+
+    const audit = await prisma.auditEvent.findFirstOrThrow({ where: { action: 'pipeline.decided', entityId: created.body.pipeline.id } });
+
+    expect(audit.afterJson).not.toContain(reason);
+  });
+
+  it('records the decision at the stage the pipeline is actually at when advanced concurrently', async () => {
+    const ids = await seeded();
+    const id = (await createPipeline(ids)).body.pipeline.id as string;
+
+    await Promise.all([
+      request(app).post(`/api/pipelines/${id}/advance`).set('Authorization', ids.auth).send({ toStageKey: 'bronze' }),
+      request(app).post(`/api/pipelines/${id}/decision`).set('Authorization', ids.auth).send({ decision: 'REJECTED', reason: 'Role requirements were not met in the evidence.' }),
+    ]);
+    const stored = await prisma.candidatePipeline.findUniqueOrThrow({ where: { id } });
+
+    expect(stored.decidedAtStageKey ?? stored.currentStageKey).toBe(stored.currentStageKey);
+  });
 });
 
 describe('consolidated summary', () => {
@@ -191,5 +238,39 @@ describe('who runs each stage', () => {
       .send({ stageKey: 'bronze', scheduledAt: '2026-10-01T09:00:00.000Z' });
 
     expect(res.status).toBe(409);
+  });
+});
+
+describe('completing a round', () => {
+  beforeEach(async () => { await wipe(); });
+
+  async function goldRound(ids: Awaited<ReturnType<typeof seeded>>) {
+    const id = (await createPipeline(ids)).body.pipeline.id as string;
+    for (const key of ['bronze', 'silver', 'gold']) {
+      await request(app).post(`/api/pipelines/${id}/advance`).set('Authorization', ids.auth).send({ toStageKey: key });
+    }
+    const round = await request(app).post(`/api/pipelines/${id}/rounds`).set('Authorization', ids.auth)
+      .send({ stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewers: ['Hiring manager'] });
+    return { id, roundId: round.body.round.id as string };
+  }
+
+  it('records notes that then count as evidence for the stage', async () => {
+    const ids = await seeded();
+    const { id, roundId } = await goldRound(ids);
+    await request(app).post(`/api/pipelines/${id}/rounds/${roundId}/complete`).set('Authorization', ids.auth)
+      .send({ notes: 'Walked through a production incident end to end, with clear ownership and a measured outcome.' });
+
+    const res = await request(app).get(`/api/pipelines/${id}/summary`).set('Authorization', ids.auth);
+
+    expect(res.body.summary.missingEvidence).not.toContain('Gold');
+  });
+
+  it('refuses to complete a round without notes', async () => {
+    const ids = await seeded();
+    const { id, roundId } = await goldRound(ids);
+
+    const res = await request(app).post(`/api/pipelines/${id}/rounds/${roundId}/complete`).set('Authorization', ids.auth).send({ notes: '' });
+
+    expect(res.status).toBe(400);
   });
 });

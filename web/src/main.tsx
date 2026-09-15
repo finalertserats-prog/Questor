@@ -8,6 +8,7 @@ import './styles/app.css';
 import './styles/sidebar.css';
 import './styles/workflow.css';
 import './styles/login.css';
+import './styles/pipeline.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
