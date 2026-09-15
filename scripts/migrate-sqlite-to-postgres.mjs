@@ -60,6 +60,39 @@ function revive(modelName, row) {
   ]));
 }
 
+// PostgreSQL text and jsonb values cannot contain NUL bytes. SQLite can, and a
+// single bad résumé or transcript would otherwise abort the whole import after
+// downtime has started.
+function stripNuls(value) {
+  if (typeof value === 'string') {
+    const count = (value.match(/\u0000/g) ?? []).length;
+    return { value: count > 0 ? value.replace(/\u0000/g, '') : value, count };
+  }
+  if (Array.isArray(value)) {
+    const stripped = value.map((item) => stripNuls(item));
+    return {
+      value: stripped.map((item) => item.value),
+      count: stripped.reduce((sum, item) => sum + item.count, 0),
+    };
+  }
+  if (value && typeof value === 'object' && !(value instanceof Date)) {
+    const stripped = Object.entries(value).map(([key, item]) => [key, stripNuls(item)]);
+    return {
+      value: Object.fromEntries(stripped.map(([key, item]) => [key, item.value])),
+      count: stripped.reduce((sum, [, item]) => sum + item.count, 0),
+    };
+  }
+  return { value, count: 0 };
+}
+
+function sanitizeRow(row) {
+  const stripped = Object.entries(row).map(([key, value]) => [key, stripNuls(value)]);
+  return {
+    row: Object.fromEntries(stripped.map(([key, item]) => [key, item.value])),
+    nulCount: stripped.reduce((sum, [, item]) => sum + item.count, 0),
+  };
+}
+
 async function exportData(prisma, outPath) {
   const tables = {};
   for (const name of ORDER) {
@@ -80,8 +113,11 @@ async function importData(prisma, inPath) {
   if (existingTenants > 0) fail(`The target database already has ${existingTenants} tenant(s). Import only into an empty, freshly pushed schema.`);
 
   await prisma.$transaction(async (tx) => {
+    const nulCounts = {};
     for (const name of ORDER) {
-      let rows = tables[name].map((row) => revive(name, row));
+      const sanitized = tables[name].map((row) => sanitizeRow(revive(name, row)));
+      nulCounts[name] = sanitized.reduce((sum, item) => sum + item.nulCount, 0);
+      let rows = sanitized.map((item) => item.row);
       // Retakes point at earlier sessions; insert every session unlinked, then link.
       const retakeLinks = name === 'InterviewSession'
         ? rows.filter((r) => r.retakeOfSessionId).map((r) => ({ id: r.id, retakeOfSessionId: r.retakeOfSessionId }))
@@ -99,6 +135,9 @@ async function importData(prisma, inPath) {
       const actual = await tx[delegateName(name)].count();
       if (actual !== counts[name]) throw new Error(`${name}: expected ${counts[name]} rows, found ${actual}`);
     }
+
+    console.log('NUL characters stripped during import:');
+    console.table(nulCounts);
   }, { maxWait: 60_000, timeout: 600_000 });
 
   console.log('Import complete; every table matches the export row for row:');

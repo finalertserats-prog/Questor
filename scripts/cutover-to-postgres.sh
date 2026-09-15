@@ -15,7 +15,7 @@ set -Eeuo pipefail
 
 REPO_DIR="${REPO_DIR:-/root/Questor/repo}"
 PM2_NAME="${PM2_NAME:-questor}"
-APP_PORT="${APP_PORT:-4000}"
+APP_PORT=""
 SECRETS_DIR=/root/Questor/secrets
 PG_ENV_FILE="$SECRETS_DIR/questor-postgres.env"
 BACKUP_DIR=/root/Questor/backups
@@ -27,7 +27,11 @@ POOL_SIZE=10
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
 umask 077
-LOG_DIR="$(mktemp -d)"
+LOG_ROOT=/root/Questor/cutover-logs
+mkdir -p "$LOG_ROOT"
+chmod 700 "$LOG_ROOT"
+LOG_DIR="$(mktemp -d "$LOG_ROOT/$STAMP-XXXXXX")"
+chmod 700 "$LOG_DIR"
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32mok\033[0m  %s\n' "$*"; }
@@ -51,6 +55,7 @@ sq() { sqlite3 -cmd '.timeout 10000' "$@"; }
 # on a command line (psql reads it from the environment with \getenv).
 pg_admin() { (cd /tmp && sudo -u postgres --preserve-env=QUESTOR_PG_PASSWORD psql -X -v ON_ERROR_STOP=1 -qtA "$@"); }
 pg_questor() { local db="$1"; shift; PGPASSWORD="$PG_PASSWORD" psql -X -h 127.0.0.1 -U questor -d "$db" -v ON_ERROR_STOP=1 -qtA "$@"; }
+pg_questor_login() { PGPASSWORD="$PG_PASSWORD" psql -X -h 127.0.0.1 -U questor -d postgres -v ON_ERROR_STOP=1 -qtA -c "SELECT 1;" >/dev/null; }
 
 MODE="${1:-}"
 case "$MODE" in
@@ -68,11 +73,34 @@ ENV_BACKUP=""
 
 rollback() {
   warn "rolling back to SQLite"
-  [ -n "$ENV_BACKUP" ] && [ -f "$ENV_BACKUP" ] && cp -p "$ENV_BACKUP" "$REPO_DIR/server/.env"
+  if [ -n "$ENV_BACKUP" ] && [ -f "$ENV_BACKUP" ]; then
+    cp -p "$ENV_BACKUP" "$REPO_DIR/server/.env"
+  fi
   (cd "$REPO_DIR/server" && npx prisma generate >"$LOG_DIR/rollback-generate.log" 2>&1) \
     || warn "SQLite client regeneration failed — see $LOG_DIR/rollback-generate.log"
+  if [ "$(pg_admin -c "SELECT 1 FROM pg_database WHERE datname = 'questor';" 2>/dev/null || true)" = 1 ]; then
+    local failed_db="questor_failed_$STAMP"
+    pg_admin -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'questor' AND pid <> pg_backend_pid();" >"$LOG_DIR/rollback-terminate.log" 2>&1 \
+      || warn "could not terminate questor connections before preserving the failed database"
+    if pg_admin -c "ALTER DATABASE questor RENAME TO \"$failed_db\";" >"$LOG_DIR/rollback-rename.log" 2>&1; then
+      warn "failed Postgres database preserved as $failed_db"
+    else
+      warn "could not rename failed questor database — see $LOG_DIR/rollback-rename.log"
+    fi
+  fi
   pm2 restart "$PM2_NAME" --update-env >/dev/null 2>&1 || pm2 start "$PM2_NAME" >/dev/null 2>&1 || true
-  warn "the app is on SQLite again; the questor database is left for inspection"
+  local healthy=0
+  for _ in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:${APP_PORT:-4000}/api/health" >"$LOG_DIR/rollback-health.log" 2>&1; then healthy=1; break; fi
+    sleep 2
+  done
+  if [ "$healthy" -eq 1 ]; then
+    warn "the app is on SQLite again and /api/health is answering"
+  else
+    printf '
+[31mMANUAL INTERVENTION REQUIRED: rollback restored SQLite config but /api/health is still down; logs are in %s[0m
+' "$LOG_DIR" >&2
+  fi
 }
 
 on_exit() {
@@ -98,9 +126,21 @@ say "Pre-flight"
 
 command -v psql >/dev/null || die "psql not on PATH"
 command -v sqlite3 >/dev/null || die "sqlite3 not on PATH"
-systemctl is-active --quiet postgresql || die "postgresql service is not active"
+command -v pg_isready >/dev/null || die "pg_isready not on PATH"
+command -v rsync >/dev/null || die "rsync not on PATH"
+pg_isready -h 127.0.0.1 -p 5432 >/dev/null || die "Postgres is not ready on 127.0.0.1:5432"
 [ -f server/.env ] || die "server/.env not found"
 [ -f scripts/migrate-sqlite-to-postgres.mjs ] || die "this commit has no migration script — deploy first"
+
+# The VPS may override Express's default; checking the wrong port can turn a
+# safe cutover into unnecessary downtime.
+APP_PORT="$(grep -E '^PORT=' server/.env | head -1 | cut -d= -f2- | tr -d "\"'" || true)"
+APP_PORT="${APP_PORT:-4000}"
+case "$APP_PORT" in
+  *[!0-9]*|'') die "server/.env PORT must be numeric if set" ;;
+  *) [ "$APP_PORT" -ge 1 ] && [ "$APP_PORT" -le 65535 ] || die "server/.env PORT must be between 1 and 65535" ;;
+esac
+ok "using app health port $APP_PORT"
 
 DB_URL="$(grep -E '^DATABASE_URL=' server/.env | head -1 | cut -d= -f2- | tr -d "\"'" || true)"
 case "$DB_URL" in
@@ -117,6 +157,21 @@ esac
 [ -f "$SQLITE_PATH" ] || die "SQLite database not found at the path server/.env names"
 [ "$(sq "$SQLITE_PATH" 'PRAGMA integrity_check;')" = ok ] || die "SQLite integrity check failed"
 ok "SQLite database healthy ($(sq "$SQLITE_PATH" 'SELECT COUNT(*) FROM Candidate;') candidates)"
+SQLITE_KB="$(( ( $(wc -c < "$SQLITE_PATH") + 1023 ) / 1024 ))"
+NEEDED_KB="$(( SQLITE_KB * 4 ))"
+MEM_AVAILABLE_KB="$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)"
+SHM_AVAILABLE_KB="$(df -Pk /dev/shm | awk 'NR == 2 { print $4 }')"
+ROOT_AVAILABLE_KB="$(df -Pk /root | awk 'NR == 2 { print $4 }')"
+[ "$MEM_AVAILABLE_KB" -ge "$NEEDED_KB" ] || die "free RAM below 4x SQLite size (need ${NEEDED_KB}KB, have ${MEM_AVAILABLE_KB}KB)"
+[ "$SHM_AVAILABLE_KB" -ge "$NEEDED_KB" ] || die "/dev/shm free space below 4x SQLite size (need ${NEEDED_KB}KB, have ${SHM_AVAILABLE_KB}KB)"
+[ "$ROOT_AVAILABLE_KB" -ge "$NEEDED_KB" ] || die "/root free space below 4x SQLite size (need ${NEEDED_KB}KB, have ${ROOT_AVAILABLE_KB}KB)"
+ok "headroom is at least 4x the SQLite database in RAM, /dev/shm and /root"
+
+if curl -fsS "http://127.0.0.1:$APP_PORT/api/health" >"$LOG_DIR/pre-cutover-health.log" 2>&1; then
+  ok "app health endpoint answers on port $APP_PORT"
+else
+  die "app health endpoint is not answering on port $APP_PORT"
+fi
 
 # ---------------------------------------------------------------------------
 say "Postgres role"
@@ -140,27 +195,41 @@ fi
 [ -n "${PG_PASSWORD:-}" ] || die "no password in $PG_ENV_FILE"
 export QUESTOR_PG_PASSWORD="$PG_PASSWORD"
 
+[[ "$PG_PASSWORD" =~ ^[0-9a-f]{64}$ ]] || die "$PG_ENV_FILE must contain PG_PASSWORD as exactly 64 lowercase hex characters"
+
 if [ "$ROLE_EXISTS" != 1 ]; then
   pg_admin <<SQL
+SET log_statement='none';
+SET log_min_error_statement='panic';
 \getenv pw QUESTOR_PG_PASSWORD
 CREATE ROLE questor LOGIN PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE CONNECTION LIMIT $ROLE_CONNECTION_LIMIT;
 SQL
   ok "role questor created (connection limit $ROLE_CONNECTION_LIMIT)"
+elif pg_questor_login; then
+  pg_admin -c "ALTER ROLE questor NOSUPERUSER NOCREATEDB NOCREATEROLE CONNECTION LIMIT $ROLE_CONNECTION_LIMIT;"
+  ok "role questor TCP login works; safety attributes re-asserted"
 else
   pg_admin <<SQL
+SET log_statement='none';
+SET log_min_error_statement='panic';
 \getenv pw QUESTOR_PG_PASSWORD
-ALTER ROLE questor PASSWORD :'pw' CONNECTION LIMIT $ROLE_CONNECTION_LIMIT;
+ALTER ROLE questor PASSWORD :'pw' NOSUPERUSER NOCREATEDB NOCREATEROLE CONNECTION LIMIT $ROLE_CONNECTION_LIMIT;
 SQL
-  ok "role questor exists (created by an earlier run); password and limit synced"
+  ok "role questor password re-synced after TCP login failed; safety attributes re-asserted"
 fi
+pg_questor_login || die "questor cannot log in over TCP to 127.0.0.1:5432 after role setup"
+ok "questor TCP login to Postgres verified"
 unset QUESTOR_PG_PASSWORD
 
 create_database() {
   local name="$1"
   [ "$(pg_admin -c "SELECT 1 FROM pg_database WHERE datname = '$name';")" != 1 ] || return 1
-  pg_admin -c "CREATE DATABASE \"$name\" OWNER questor;"
+  local create_result revoke_result
+  create_result="$(pg_admin -c "CREATE DATABASE "$name" OWNER questor;")" || return 1
+  [ "$create_result" = "CREATE DATABASE" ] || { echo "unexpected CREATE DATABASE result: $create_result" >&2; return 1; }
   # Nobody but questor (and the superuser) can connect to candidate data.
-  pg_admin -c "REVOKE ALL ON DATABASE \"$name\" FROM PUBLIC;"
+  revoke_result="$(pg_admin -c "REVOKE ALL ON DATABASE "$name" FROM PUBLIC;")" || return 1
+  [ "$revoke_result" = "REVOKE" ] || { echo "unexpected REVOKE result: $revoke_result" >&2; return 1; }
 }
 
 pg_url() { printf 'postgresql://questor:%s@127.0.0.1:5432/%s?schema=public&connection_limit=%s' "$PG_PASSWORD" "$1" "$POOL_SIZE"; }
@@ -172,7 +241,7 @@ migrate_into() {
   local server_dir="$1" sqlite_file="$2" database="$3"
   local url
   url="$(pg_url "$database")"
-  (cd "$server_dir" && DATABASE_URL="file:$sqlite_file" run_logged export node ../scripts/migrate-sqlite-to-postgres.mjs export --out "$EXPORT") || return 1
+  (cd "$server_dir" && DATABASE_URL="file:$sqlite_file" NODE_OPTIONS="--max-old-space-size=2048" run_logged export node ../scripts/migrate-sqlite-to-postgres.mjs export --out "$EXPORT") || return 1
   (cd "$server_dir" && run_logged pg-schema node ../scripts/generate-postgres-schema.mjs) || return 1
   (cd "$server_dir" && DATABASE_URL="$url" run_logged pg-generate npx prisma generate --schema prisma/postgres/schema.prisma) || return 1
   (cd "$server_dir" && DATABASE_URL="$url" run_logged pg-push npx prisma db push --skip-generate --schema prisma/postgres/schema.prisma) || return 1
@@ -193,7 +262,7 @@ if [ "$MODE" = --rehearse ]; then
   # A private copy of the repo, so generating the Postgres client never touches
   # the node_modules the live process is using.
   WORK="$(mktemp -d /root/Questor/rehearsal-XXXXXX)"
-  run_logged copy-repo cp -a "$REPO_DIR/." "$WORK/" || die "could not copy the repo for the rehearsal"
+  run_logged copy-repo rsync -a --exclude server/prisma/data/ "$REPO_DIR/" "$WORK/" || die "could not copy the repo for the rehearsal"
   # A consistent snapshot of the live database, taken online.
   run_logged snapshot sq "$SQLITE_PATH" ".backup '$WORK/rehearsal.db'" || die "SQLite snapshot failed"
 
@@ -274,21 +343,25 @@ chmod 400 "$SQLITE_PATH"
 cat > /root/Questor/backup-questor-pg.sh <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo "ALERT: questor nightly Postgres backup failed; inspect $BACKUP_DIR/pg-backup.log" >&2' ERR
 umask 077
 . "$PG_ENV_FILE"
-OUT="$BACKUP_DIR/questor-\$(date +%Y%m%d-%H%M%S).dump"
+OUT="$BACKUP_DIR/questor-nightly-\$(date +%Y%m%d-%H%M%S).dump"
 PGPASSWORD="\$PG_PASSWORD" pg_dump -h 127.0.0.1 -U questor --format=custom --file="\$OUT" questor
 # Listed to a file rather than piped: grep -q closing the pipe early would fail
 # pipefail. pg_restore prints table names unquoted.
 pg_restore --list "\$OUT" > "\$OUT.list"
 grep -Eq 'TABLE DATA public "?Candidate"? ' "\$OUT.list"
 rm -f "\$OUT.list"
-find "$BACKUP_DIR" -name 'questor-*.dump' -mtime +14 -delete
+find "$BACKUP_DIR" -name 'questor-nightly-*.dump' -mtime +14 -delete
 EOF
 chmod 700 /root/Questor/backup-questor-pg.sh
 # Its own cron.d file: root's crontab and other jobs are never rewritten.
-printf '30 2 * * * root /root/Questor/backup-questor-pg.sh >> %s/pg-backup.log 2>&1\n' "$BACKUP_DIR" > "$CRON_FILE"
+printf 'MAILTO=root\n30 2 * * * root /root/Questor/backup-questor-pg.sh >> %s/pg-backup.log 2>&1\n' "$BACKUP_DIR" > "$CRON_FILE"
 chmod 644 "$CRON_FILE"
+# The SQLite backup job is obsolete once writes move to Postgres; leave ad-hoc
+# deploy backups alone because they are named differently and still useful.
+rm -f /etc/cron.d/questor-sqlite-backup /etc/cron.d/questor-backup
 if run_logged first-pg-backup /root/Questor/backup-questor-pg.sh; then
   ok "nightly Postgres backup installed and verified once"
 else

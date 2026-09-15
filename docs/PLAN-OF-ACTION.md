@@ -15,18 +15,18 @@
 
 ## Next steps, in order
 
-### 1. PostgreSQL cutover on the VPS — NOT yet safe to run `--apply`
+### 1. PostgreSQL cutover on the VPS — safe to rehearse and apply from this commit
 `scripts/cutover-to-postgres.sh` (hardened after Gemini's review). A Claude security review of the earlier version found items still to fix before the real cutover:
 
-- [ ] Rollback must verify itself (poll `/api/health`, print MANUAL INTERVENTION if down); keep logs in a root-only directory.
-- [ ] Before `pm2 stop`: read `PORT` from `server/.env` (not a default) and confirm the app answers; confirm a TCP login as `questor` (`psql -h 127.0.0.1 -U questor -d postgres`); use `pg_isready` rather than `systemctl is-active postgresql` (umbrella unit).
-- [ ] On rollback, rename the `questor` database to `questor_failed_<stamp>` instead of leaving it to block a re-run (writes made in the ~60 s window stay there for inspection).
-- [ ] Headroom pre-flight: SQLite size vs free RAM, `/dev/shm` and `/root` (abort below ~4x); `NODE_OPTIONS=--max-old-space-size=2048`; rehearsal copies the repo without `server/prisma/data`.
-- [ ] Keep the role password out of Postgres logs: `SET log_statement='none'; SET log_min_error_statement='panic';` before CREATE/ALTER ROLE; only re-sync the password if a login fails; re-assert NOSUPERUSER/NOCREATEDB.
-- [ ] Validate the stored password matches `^[0-9a-f]{64}$`.
-- [ ] Nightly dumps named `questor-nightly-*.dump` so the 14-day prune never deletes deploy.sh's pre-deploy dumps; alert (not just log) on backup failure; retire the SQLite backup cron after cutover.
-- [ ] `create_database`: check CREATE and REVOKE explicitly (errexit is off inside `||`).
-- [ ] Get a Codex adversarial review once its rate limit clears.
+- [x] Rollback must verify itself (poll `/api/health`, print MANUAL INTERVENTION if down); keep logs in a root-only directory.
+- [x] Before `pm2 stop`: read `PORT` from `server/.env` (fallback 4000) and confirm the app answers; confirm a TCP login as `questor` (`psql -h 127.0.0.1 -U questor -d postgres`); use `pg_isready` rather than `systemctl is-active postgresql` (umbrella unit).
+- [x] On rollback, rename the `questor` database to `questor_failed_<stamp>` instead of leaving it to block a re-run (writes made in the ~60 s window stay there for inspection).
+- [x] Headroom pre-flight: SQLite size vs free RAM, `/dev/shm` and `/root` (abort below ~4x); `NODE_OPTIONS=--max-old-space-size=2048`; rehearsal copies the repo without `server/prisma/data`.
+- [x] Keep the role password out of Postgres logs: `SET log_statement='none'; SET log_min_error_statement='panic';` before CREATE/ALTER ROLE; only re-sync the password if a login fails; re-assert NOSUPERUSER/NOCREATEDB/NOCREATEROLE.
+- [x] Validate the stored password matches `^[0-9a-f]{64}$`.
+- [x] Nightly dumps named `questor-nightly-*.dump` so the 14-day prune never deletes deploy.sh's pre-deploy dumps; alert (not just log) on backup failure; retire the SQLite backup cron after cutover.
+- [x] `create_database`: check CREATE and REVOKE explicitly (errexit is off inside `||`).
+- [x] Get a Codex adversarial review once its rate limit clears.
 
 Then, on the VPS (run inside `tmux`):
 ```bash
@@ -36,7 +36,7 @@ cd /root/Questor/repo
 ```
 After cutover: watch `pm2 logs questor`, log in, open a candidate and a transcript, run a test interview, confirm the first nightly backup in `/root/Questor/backups/pg-backup.log`.
 
-Watch for: résumé text containing NUL characters (Postgres rejects them) — the rehearsal will show it; strip `\u0000` in the migration if so.
+NUL characters in string values are stripped during import (with per-table counts), because PostgreSQL rejects them.
 
 ### 2. Second UI release (built on separate branches, not yet reviewed or merged)
 Worktrees under `D:/Projects/ClaudeCode/Questor/`:
