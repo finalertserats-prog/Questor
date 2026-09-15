@@ -20,6 +20,7 @@ import { startInterview, submitCandidateTurn, finalizeInterview, withdrawIntervi
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
+import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
 export const portalRouter = Router();
@@ -121,14 +122,29 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
 
   const consent = parseJson<any>(s.consentJson, {});
   const proctoringEnabled = await proctoringEnabledForSession({ tenantId: s.tenantId, scorecardId: s.scorecardId });
-  const aiDisclosure = await disclosureWithProctoringPolicy({ tenantId: s.tenantId, scorecardId: s.scorecardId }, consent.disclosureText ?? '');
+  const englishDisclosure = await disclosureWithProctoringPolicy({ tenantId: s.tenantId, scorecardId: s.scorecardId }, consent.disclosureText ?? '');
+
+  // The disclosure is resolved through the locale registry AFTER the proctoring
+  // sentence is appended, so the resolver sees the complete English notice it
+  // may one day have an approved translation of — rather than a translation of
+  // half of it.
+  //
+  // For every language but English this returns that English text back with
+  // `translationReviewed: false`. That is the intended behaviour, not a gap:
+  // showing the reviewed English notice and SAYING it is English is lawful;
+  // showing a machine translation of a consent notice nobody reviewed is not.
+  // `languageSupport` is what lets the portal say which of the two happened —
+  // and, via `sttLikelySupported`, stop implying a voice path we cannot promise
+  // in that language. The typed-answer fallback exists for exactly that case.
+  const disclosure = getDisclosureText(s.language, englishDisclosure);
   res.json({
     candidateName: s.candidate.fullName,
     roleTitle: s.role.title,
     state: s.state,
     durationMinutes: s.durationMinutes,
     language: s.language,
-    aiDisclosure,
+    languageSupport: describeLanguageSupport(s.language),
+    aiDisclosure: disclosure.text,
     recordingRequested: !!consent.recordingRequested,
     privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
     accommodationsEnabled: true,

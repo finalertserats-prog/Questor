@@ -18,6 +18,7 @@ import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
+import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -147,6 +148,27 @@ interviewsRouter.get('/pipeline-summary', requireCapability('interview:read'), a
     return;
   }
   res.json(summary);
+}));
+
+/**
+ * What languages this build can actually DELIVER an interview in.
+ *
+ * Declared before `/:id` because Express matches in order and a literal path
+ * would otherwise be swallowed as a session id.
+ *
+ * The point of exposing this is honesty at scheduling time. `language` accepts
+ * any string, so HR could always create a `fr` session — and until now nothing
+ * told them that doing so meant an English disclosure and no voice support.
+ * `translationReviewed: false` is the flag that says "this is a placeholder, a
+ * human translator has not signed off the consent copy yet", and it is more
+ * useful to see before the invitation goes out than after.
+ *
+ * Gated on interview:read rather than being public: it describes product
+ * capability, not candidate data, but it is an authenticated HR surface and
+ * there is no reason for it to be the one route that is not.
+ */
+interviewsRouter.get('/supported-languages', requireCapability('interview:read'), asyncHandler(async (_req, res) => {
+  res.json({ languages: SUPPORTED_LANGUAGES });
 }));
 
 const bulkInviteRowSchema = z.object({ candidateId: z.string().min(1) });
