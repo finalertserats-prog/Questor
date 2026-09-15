@@ -327,6 +327,11 @@ model AuditEvent {
   afterJson   String   @default("")
   requestId   String   @default("")
   createdAt   DateTime @default(now())
+
+  // The audit log is read newest-first per tenant, and filtered by action;
+  // without these every page reads the whole tenant's history.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action])
 }
 
 model ModelExecution {

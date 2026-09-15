@@ -8,6 +8,7 @@ import { initialsFor, profileMenuItems } from './profileMenuModel';
 const MENU_ICONS: Record<string, IconName> = {
   settings: 'settings',
   admin: 'admin',
+  audit: 'audit',
   about: 'about',
   contact: 'contact',
 };

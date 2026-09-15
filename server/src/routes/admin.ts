@@ -46,9 +46,61 @@ adminRouter.get('/providers', asyncHandler(async (_req, res) => {
 // who acted on which entity id and when — a recruiter could enumerate every
 // candidate id in the tenant from it without ever being assigned one, which is
 // precisely the disclosure object scoping exists to close.
+const auditQuerySchema = z.object({
+  action: z.string().min(1).max(100).optional(),
+  actorId: z.string().min(1).max(100).optional(),
+  from: z.string().datetime({ offset: true }).optional(),
+  to: z.string().datetime({ offset: true }).optional(),
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+}).strict();
+
 adminRouter.get('/audit', requireCapability('audit:read'), asyncHandler(async (req, res) => {
-  const events = await prisma.auditEvent.findMany({ where: { tenantId: req.auth!.tenantId }, orderBy: { createdAt: 'desc' }, take: 200 });
-  res.json({ events: events.map((e) => ({ id: e.id, actorId: e.actorId, actorType: e.actorType, action: e.action, entityType: e.entityType, entityId: e.entityId, createdAt: e.createdAt })) });
+  const query = auditQuerySchema.parse(req.query);
+  const tenantId = req.auth!.tenantId;
+  const where: Prisma.AuditEventWhereInput = {
+    tenantId,
+    ...(query.action ? { action: query.action } : {}),
+    ...(query.actorId ? { actorId: query.actorId } : {}),
+    ...(query.from || query.to
+      ? { createdAt: { ...(query.from ? { gte: new Date(query.from) } : {}), ...(query.to ? { lte: new Date(query.to) } : {}) } }
+      : {}),
+  };
+
+  const total = await prisma.auditEvent.count({ where });
+  const skip = (query.page - 1) * query.limit;
+  const [events, actionRows, actorRows] = await Promise.all([
+    // Past the last page there is nothing to read: asking the database to sort
+    // the tenant's whole history and discard it costs the same as reading it.
+    skip >= total
+      ? Promise.resolve([])
+      : prisma.auditEvent.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take: query.limit }),
+    // Filter options are tenant-wide (not narrowed by the current filter) so
+    // choosing one action does not make every other option disappear. They are
+    // the same on every page, so they are built once, for the first one.
+    query.page === 1 ? prisma.auditEvent.groupBy({ by: ['action'], where: { tenantId }, orderBy: { action: 'asc' } }) : Promise.resolve([]),
+    query.page === 1 ? prisma.auditEvent.groupBy({ by: ['actorId', 'actorType'], where: { tenantId } }) : Promise.resolve([]),
+  ]);
+
+  // Names only for users in THIS tenant; an actorId that is not one of them
+  // (system, model, a deleted user) falls back to the raw id.
+  const users = await prisma.user.findMany({
+    where: { tenantId, id: { in: actorRows.map((a) => a.actorId) } },
+    select: { id: true, name: true },
+  });
+  const nameOf = new Map(users.map((u) => [u.id, u.name]));
+  const actors = [...new Map(actorRows.map((a) => [a.actorId, {
+    id: a.actorId, type: a.actorType, name: nameOf.get(a.actorId) ?? a.actorId,
+  }])).values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  res.json({
+    events: events.map((e) => ({
+      id: e.id, actorId: e.actorId, actorType: e.actorType, actorName: nameOf.get(e.actorId) ?? null,
+      action: e.action, entityType: e.entityType, entityId: e.entityId, createdAt: e.createdAt,
+    })),
+    meta: { total, page: query.page, limit: query.limit },
+    filters: { actions: actionRows.map((a) => a.action), actors },
+  });
 }));
 
 // Model execution log (FR-045 traceability)

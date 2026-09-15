@@ -19,7 +19,6 @@ interface Analytics {
   reviews: number;
   quality: { avgEvidenceCoverage: number };
 }
-interface AuditEvent { id: string; actorId: string; actorType: string; action: string; entityType: string; entityId: string; createdAt: string; }
 interface ModelExecution { id: string; provider: string; model: string; function: string; latencyMs: number; inputTokens: number; outputTokens: number; createdAt: string; }
 interface Webhook { id: string; url: string; events: string[]; active: boolean; }
 
@@ -34,7 +33,6 @@ function check(v: boolean) {
 export function Admin() {
   const [providers, setProviders] = useState<Providers | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [executions, setExecutions] = useState<ModelExecution[]>([]);
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,13 +55,12 @@ export function Admin() {
     Promise.all([
       api.get<Providers>('/admin/providers'),
       api.get<Analytics>('/admin/analytics'),
-      api.get<{ events: AuditEvent[] }>('/admin/audit'),
       api.get<{ executions: ModelExecution[] }>('/admin/model-executions'),
       api.get<{ webhooks: Webhook[] }>('/admin/webhooks'),
     ])
-      .then(([p, a, au, ex, wh]) => {
+      .then(([p, a, ex, wh]) => {
         setProviders(p); setAnalytics(a);
-        setAudit(au.events ?? []); setExecutions(ex.executions ?? []); setWebhooks(wh.webhooks ?? []);
+        setExecutions(ex.executions ?? []); setWebhooks(wh.webhooks ?? []);
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
@@ -238,25 +235,6 @@ export function Admin() {
             <div className="muted small" style={{ marginTop: 8 }}>Human reviews: {analytics?.reviews ?? 0}</div>
           </div>
         </div>
-      </div>
-
-      <div className="card">
-        <h2>Audit log</h2>
-        {audit.length === 0 ? <div className="muted small">No events.</div> : (
-          <table>
-            <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th></tr></thead>
-            <tbody>
-              {audit.map((e) => (
-                <tr key={e.id}>
-                  <td className="muted small">{new Date(e.createdAt).toLocaleString()}</td>
-                  <td>{e.actorType}</td>
-                  <td>{e.action}</td>
-                  <td className="muted">{e.entityType}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
 
       <div className="card">
