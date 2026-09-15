@@ -172,7 +172,7 @@ async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt:
   // Stage labels are configurable, so strip control characters before they
   // reach a subject line or plain-text body, where a line break could forge
   // headers or text. HTML escaping below does not cover these.
-  const label = o.stageLabel.replace(/[ -]+/g, ' ').trim();
+  const label = o.stageLabel.replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
   const intro = o.aiRound
     ? `The ${label} AI interview is scheduled for ${when}. You can observe it live here:`
     : `The ${label} interview is scheduled for ${when}. The candidate and their pipeline are here:`;

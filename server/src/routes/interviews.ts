@@ -532,6 +532,37 @@ interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'
  */
 interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
+  if (!(await mayObserveLive(session))) {
+    throw new HttpError(409, 'Live observation opens once the candidate has joined, heard that a member of the hiring team may observe, and answered. The transcript is available once the interview ends.');
+  }
+
+  const turns = await prisma.turn.findMany({
+    where: { sessionId: session.id },
+    orderBy: { index: 'asc' },
+    select: { index: true, speaker: true, text: true, createdAt: true },
+  });
+
+  const alreadyRecorded = await prisma.auditEvent.findFirst({
+    where: { action: 'interview.observed', entityId: session.id, actorId: req.auth!.userId },
+    select: { id: true },
+  });
+  if (!alreadyRecorded) {
+    await logAudit({
+      tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
+      action: 'interview.observed', entityType: 'InterviewSession', entityId: session.id,
+    });
+  }
+
+  res.json({ session: { id: session.id, state: session.state }, turns });
+}));
+
+/** States in which the candidate may be on the call right now. */
+const LIVE_INTERVIEW_STATES = new Set([
+  'READY_CHECK', 'WAITING', 'CONNECTING', 'DISCLOSURE', 'CONSENTED', 'WARMUP',
+  'ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING',
+]);
+
+async function mayObserveLive(session: { id: string; consentJson: string }): Promise<boolean> {
   const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
   // Two conditions. The consent flag comes from the portal page and could be
   // sent by anyone holding the candidate's link, so on its own it proves
@@ -557,32 +588,16 @@ interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncH
     where: { entityId: session.id, action: { in: ['interview.started.by_recruiter', 'interview.turn.by_recruiter'] } },
     select: { id: true },
   });
-  if (consent.observerDisclosed !== true || !answeredAfterNotice || staffDriven) {
-    throw new HttpError(409, 'Live observation opens once the candidate has joined, heard that a member of the hiring team may observe, and answered. The transcript is available once the interview ends.');
-  }
-
-  const turns = await prisma.turn.findMany({
-    where: { sessionId: session.id },
-    orderBy: { index: 'asc' },
-    select: { index: true, speaker: true, text: true, createdAt: true },
-  });
-
-  const alreadyRecorded = await prisma.auditEvent.findFirst({
-    where: { action: 'interview.observed', entityId: session.id, actorId: req.auth!.userId },
-    select: { id: true },
-  });
-  if (!alreadyRecorded) {
-    await logAudit({
-      tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
-      action: 'interview.observed', entityType: 'InterviewSession', entityId: session.id,
-    });
-  }
-
-  res.json({ session: { id: session.id, state: session.state }, turns });
-}));
+  return consent.observerDisclosed === true && answeredAfterNotice !== null && staffDriven === null;
+}
 
 interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
+  // While the candidate may still be on the call, reading the transcript is
+  // live observation, and gets the same consent gate as /observe.
+  if (LIVE_INTERVIEW_STATES.has(session.state) && !(await mayObserveLive(session))) {
+    throw new HttpError(409, 'The transcript is available once the interview ends.');
+  }
   const [turns, integrityEvents] = await Promise.all([
     prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
     prisma.integrityEvent.findMany({ where: { sessionId: session.id }, orderBy: { createdAt: 'asc' }, select: { type: true, createdAt: true } }),

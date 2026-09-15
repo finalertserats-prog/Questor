@@ -166,6 +166,27 @@ describe('watching the interview live', () => {
     expect(audit).not.toBeNull();
   });
 
+  it('refuses the full transcript of a live interview the candidate was not told may be observed', async () => {
+    const ids = await seeded();
+    await silverRound(ids);
+    await candidateConsents(ids.token, false);
+    await interviewStarts(ids.token);
+    await candidateAnswers(ids.token);
+
+    const res = await request(app).get(`/api/interviews/${ids.sessionId}/transcript`).set('Authorization', ids.auth);
+
+    expect(res.status).toBe(409);
+  });
+
+  it('serves the full transcript once the interview has ended', async () => {
+    const ids = await seeded();
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state: 'REVIEW_READY' } });
+
+    const res = await request(app).get(`/api/interviews/${ids.sessionId}/transcript`).set('Authorization', ids.auth);
+
+    expect(res.status).toBe(200);
+  });
+
   it('is not available to another organisation', async () => {
     const ids = await seeded();
     await silverRound(ids);

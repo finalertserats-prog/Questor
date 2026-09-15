@@ -31,7 +31,16 @@ async function completedGoldRound(scheduledAt: Date, completedAt?: Date) {
   const roundId = round.body.round.id as string;
   await request(app).post(`/api/pipelines/${id}/rounds/${roundId}/complete`).set('Authorization', auth).send({ notes: NOTES });
   if (completedAt) await prisma.interviewRound.update({ where: { id: roundId }, data: { completedAt } });
-  return { pipelineId: id, roundId, sessionId: ids.sessionId };
+  return { pipelineId: id, roundId, sessionId: ids.sessionId, candidateId: ids.candidateId };
+}
+
+/** The candidate's AI interview is past its retention window, so the sweep purges it. */
+async function expireInterview(sessionId: string) {
+  await prisma.interviewSession.update({ where: { id: sessionId }, data: { retainUntil: longAgo(), legalHold: false } });
+}
+
+async function candidateExists(candidateId: string) {
+  return (await prisma.candidate.count({ where: { id: candidateId } })) > 0;
 }
 
 async function notesOf(roundId: string) {
@@ -82,6 +91,35 @@ describe('retention of human round notes', () => {
     await runRetentionSweep(new Date());
 
     expect(await notesOf(roundId)).toBe('');
+  });
+
+  it('keeps a candidate whose pipeline is still active after their AI interview expires', async () => {
+    const { sessionId, candidateId } = await completedGoldRound(longAgo(), longAgo());
+    await expireInterview(sessionId);
+
+    await runRetentionSweep(new Date());
+
+    expect(await candidateExists(candidateId)).toBe(true);
+  });
+
+  it('keeps a decided candidate whose latest round is inside the retention window', async () => {
+    const { sessionId, candidateId, pipelineId } = await completedGoldRound(new Date(Date.now() - DAY_MS));
+    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { status: 'DECIDED', decision: 'REJECTED' } });
+    await expireInterview(sessionId);
+
+    await runRetentionSweep(new Date());
+
+    expect(await candidateExists(candidateId)).toBe(true);
+  });
+
+  it('purges a decided candidate once their interview and every round are past the window', async () => {
+    const { sessionId, candidateId, pipelineId } = await completedGoldRound(longAgo(), longAgo());
+    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { status: 'DECIDED', decision: 'REJECTED' } });
+    await expireInterview(sessionId);
+
+    await runRetentionSweep(new Date());
+
+    expect(await candidateExists(candidateId)).toBe(false);
   });
 
   it('audits the purge without recording the notes themselves', async () => {

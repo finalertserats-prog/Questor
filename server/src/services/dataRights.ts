@@ -379,6 +379,29 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
     const remaining = await prisma.interviewSession.count({ where: { candidateId } });
     if (remaining > 0) continue;
 
+    // The AI interview is only one stage. A candidate still moving through the
+    // pipeline, or with a human round or decision inside the window, still has a
+    // recruitment purpose; their data goes once all of it has aged out.
+    const cutoff = new Date(now.getTime() - retentionDays() * DAY_MS);
+    const stillInPipeline = await prisma.candidatePipeline.count({
+      where: {
+        candidateId,
+        OR: [
+          { status: 'ACTIVE' },
+          { decidedAt: { gt: cutoff } },
+          { rounds: { some: { OR: [
+            { status: 'SCHEDULED' },
+            { completedAt: { gt: cutoff } },
+            { completedAt: null, scheduledAt: { gt: cutoff } },
+          ] } } },
+        ],
+      },
+    });
+    if (stillInPipeline > 0) {
+      logger.info({ candidateId }, 'Skipped candidate purge: pipeline still in progress or inside the retention window');
+      continue;
+    }
+
     // Candidate-level artifacts (the uploaded résumé) can carry their own hold
     // even with no session left. deleteProfileCascade + the candidate delete
     // below are unconditional, so the hold has to be checked before, not
