@@ -95,7 +95,7 @@ describe('proctoring-lite integrity events', () => {
     await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ proctoringEnabled: true }) } });
     await request(app).post(`/api/portal/${ids.token}/accept`).send({});
 
-    const res = await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true });
+    const res = await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true, monitoringNoticeShown: true });
 
     expect(res.status).toBe(200);
     const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: ids.sessionId } });
@@ -136,5 +136,20 @@ describe('proctoring-lite integrity events', () => {
 
     expect(res.body.accepted).toBe(false);
     expect(await prisma.integrityEvent.count({ where: { sessionId: ids.sessionId } })).toBe(0);
+  });
+
+  it('does not record monitoring as disclosed when the notice was not on the page the candidate saw', async () => {
+    const ids = await createDemoData();
+    await request(app).post(`/api/portal/${ids.token}/accept`).send({});
+    // The candidate loaded the portal while monitoring was off...
+    const page = await request(app).get(`/api/portal/${ids.token}`);
+    expect(page.body.proctoringEnabled).toBe(false);
+    // ...and monitoring was switched on before they pressed consent.
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ proctoringEnabled: true }) } });
+
+    await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true, monitoringNoticeShown: page.body.proctoringEnabled });
+
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: ids.sessionId } });
+    expect(parseJson<any>(session.consentJson, {}).monitoringDisclosed).toBe(false);
   });
 });

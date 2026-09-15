@@ -199,7 +199,14 @@ portalRouter.post('/:token/accept', asyncHandler(async (req, res) => {
   res.json({ ok: true, state: 'ACCEPTED' });
 }));
 
-const consentSchema = z.object({ recordingConsent: z.boolean(), accepted: z.boolean(), accommodationRequest: z.string().optional() });
+const consentSchema = z.object({
+  recordingConsent: z.boolean(),
+  accepted: z.boolean(),
+  accommodationRequest: z.string().optional(),
+  // Whether the portal page the candidate consented on displayed the browser
+  // monitoring notice. Policy can change between page load and consent.
+  monitoringNoticeShown: z.boolean().optional(),
+});
 portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token);
   const body = consentSchema.parse(req.body);
@@ -236,14 +243,19 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   // Record what the candidate was actually shown. Without this there is no
   // durable proof browser monitoring was disclosed, and switching monitoring on
   // later would silently extend to people who consented before it existed.
+  // Disclosure requires BOTH that the page showed the notice and that policy
+  // still enables monitoring now: policy can flip either way between the page
+  // loading and the candidate pressing consent.
   const policyScope = { tenantId: inv.session.tenantId, scorecardId: inv.session.scorecardId };
-  const monitoringDisclosed = await proctoringEnabledForSession(policyScope);
+  const monitoringDisclosed = body.monitoringNoticeShown === true && await proctoringEnabledForSession(policyScope);
   consent.recording = body.recordingConsent;
   consent.consentVersion = 'v2';
   consent.consentedAt = new Date().toISOString();
   consent.channel = 'portal';
   consent.monitoringDisclosed = monitoringDisclosed;
-  consent.disclosureShown = await disclosureWithProctoringPolicy(policyScope, consent.disclosureText ?? '');
+  consent.disclosureShown = monitoringDisclosed
+    ? await disclosureWithProctoringPolicy(policyScope, consent.disclosureText ?? '')
+    : (consent.disclosureText ?? '');
   await prisma.interviewSession.update({
     where: { id: inv.sessionId },
     data: { consentJson: JSON.stringify(consent), recordingConsent: body.recordingConsent },

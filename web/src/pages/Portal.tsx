@@ -88,6 +88,7 @@ export function Portal() {
     try {
       const res = await api.post<{ handoff?: boolean; message?: string }>(`/portal/${token}/consent`, {
         recordingConsent, accepted, accommodationRequest: accommodation || undefined,
+        monitoringNoticeShown: info?.proctoringEnabled === true,
       });
       if (res.handoff) { setHandoff(res.message || 'Your request has been recorded.'); return; }
       setStep('techcheck');

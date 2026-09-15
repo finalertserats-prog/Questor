@@ -336,22 +336,33 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
     `Hello, I'm ${persona.name ? `${persona.name}, an AI interviewer` : 'an AI interviewer'} for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
-  const retake = await prisma.interviewSession.create({
-    data: {
-      tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: original.roleId, scorecardId: scorecard.id,
-      state: 'PROVISIONED', provider: original.provider, language: original.language, durationMinutes: original.durationMinutes,
-      personaJson: original.personaJson,
-      // Consent is captured fresh for the new session — it is a new interview,
-      // not a continuation, and re-showing disclosure is cheap insurance
-      // against relying on a consent event that belongs to a different session.
-      consentJson: JSON.stringify({ disclosureText, recordingRequested: false, humanReviewRequired: true }),
-      recordingConsent: false,
-      attemptNumber: original.attemptNumber + 1,
-      retakeOfSessionId: original.id,
-    },
+  // Claim the original atomically. The conditional close succeeds for exactly
+  // one request, so a double-click or two HR users acting at once cannot both
+  // pass the attempt cap and create two retakes.
+  const retake = await prisma.$transaction(async (tx) => {
+    const claimed = await tx.interviewSession.updateMany({
+      where: { id: original.id, state: original.state, attemptNumber: original.attemptNumber },
+      data: { state: 'CLOSED' },
+    });
+    if (claimed.count !== 1) throw new HttpError(409, 'A retake for this interview has already been created.');
+
+    const created = await tx.interviewSession.create({
+      data: {
+        tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: original.roleId, scorecardId: scorecard.id,
+        state: 'PROVISIONED', provider: original.provider, language: original.language, durationMinutes: original.durationMinutes,
+        personaJson: original.personaJson,
+        // Consent is captured fresh for the new session — it is a new interview,
+        // not a continuation, and re-showing disclosure is cheap insurance
+        // against relying on a consent event that belongs to a different session.
+        consentJson: JSON.stringify({ disclosureText, recordingRequested: false, humanReviewRequired: true }),
+        recordingConsent: false,
+        attemptNumber: original.attemptNumber + 1,
+        retakeOfSessionId: original.id,
+      },
+    });
+    await tx.interviewPlanVersion.create({ data: { sessionId: created.id, version: 1, planJson: JSON.stringify(plan) } });
+    return created;
   });
-  await prisma.interviewPlanVersion.create({ data: { sessionId: retake.id, version: 1, planJson: JSON.stringify(plan) } });
-  await prisma.interviewSession.update({ where: { id: original.id }, data: { state: 'CLOSED' } });
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.retake_created',
     entityType: 'InterviewSession', entityId: retake.id,

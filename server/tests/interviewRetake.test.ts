@@ -119,4 +119,20 @@ describe('no-fault retake', () => {
     const original = await prisma.interviewSession.findUniqueOrThrow({ where: { id: ids.sessionId } });
     expect(original.state).toBe('CLOSED');
   });
+
+  it('creates only one retake when two requests race', async () => {
+    await wipe();
+    const ids = await createDemoData();
+    await driveToIncomplete(ids);
+    const hr = await asHr(ids);
+    const reason = 'Network dropped mid-interview, candidate asked to try again.';
+
+    const results = await Promise.all([
+      hr('post', `/api/interviews/${ids.sessionId}/retake`).send({ reason }),
+      hr('post', `/api/interviews/${ids.sessionId}/retake`).send({ reason }),
+    ]);
+
+    expect(results.map((r: { status: number }) => r.status).sort()).toEqual([201, 409]);
+    expect(await prisma.interviewSession.count({ where: { retakeOfSessionId: ids.sessionId } })).toBe(1);
+  });
 });
