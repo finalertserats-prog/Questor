@@ -88,17 +88,58 @@ Implementation: `server/src/providers/ats/`.
 
 ## Meeting platforms
 
-Default `MEETING_PROVIDER=hosted` — the fully-implemented Questor browser room. Teams / Zoom / Meet
-adapters publish their capabilities and graceful-fallback behavior and are wired as connector seams
-(`server/src/providers/meeting/`). Each references the official SDK docs (BRD §13, §25.5). When SDK
-credentials are added, the adapter creates/joins the meeting and streams media; on missing
-credentials it falls back to the hosted room.
+Default `MEETING_PROVIDER=hosted` — the fully-implemented Questor browser room. It needs **no vendor
+account and no credentials**; it only needs a reachable database and `WEB_ORIGIN` set to the public
+https address (browsers block camera/microphone on plain http).
+
+Teams / Zoom / Meet adapters publish their capabilities and graceful-fallback behavior and are wired
+as connector seams (`server/src/providers/meeting/`). **Current status:** their credentials can be set
+and verified, but meeting creation / media through them is not built yet — interviews use the
+hosted room regardless of which adapter is configured.
+
+### Setting up and testing an adapter
+
+**Admin → Connectors → Meeting adapters** shows, per adapter:
+
+- **Status** — *Not configured* / *Configured*, computed from which variable **names** are set.
+  Values never leave the server; `GET /api/admin/providers` returns `env: [{ name, present }]` only.
+- **How to set up** — what to create at the vendor, the exact variables, required
+  scopes/permissions, redirect/webhook URLs (none for these app-only flows), and the vendor docs.
+  The same text lives in `web/src/components/connectorGuides.ts`.
+- **Test connection** — `POST /api/admin/connectors/meeting/:adapterId/test`. Requires
+  `admin:manage`, rate limited to 10 tests per user per 10 minutes, and audited as
+  `connector.tested` with the adapter id and outcome (`ok` / `failed` / `not_configured`) only.
+  Returns `{ ok, message }`; unknown adapter → 404; missing variables → 409 naming them. The test
+  makes the lightest authenticated call (obtaining an OAuth token, 8 s timeout). No meeting is
+  created, and neither tokens nor vendor response bodies are returned or logged.
+
+| Adapter | Create at the vendor | Variables (`server/.env`) | Test performs |
+|---|---|---|---|
+| `hosted` | nothing | none | database `SELECT 1`; `WEB_ORIGIN` valid (https in production) |
+| `zoom` | Zoom Marketplace **Server-to-Server OAuth** app, activated | `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET` | `POST https://zoom.us/oauth/token` (`account_credentials`) |
+| `teams` | Microsoft Entra **app registration** + client secret; Graph application permissions `OnlineMeetings.ReadWrite.All`, `Calls.JoinGroupCall.All`, `Calls.AccessMedia.All` with admin consent; Teams application access policy | `MS_GRAPH_TENANT_ID`, `MS_GRAPH_CLIENT_ID`, `MS_GRAPH_CLIENT_SECRET` | client-credentials token from `login.microsoftonline.com/<tenant>/oauth2/v2.0/token` |
+| `meet` | Google Cloud project with Meet REST API enabled, **service account** + JSON key, Workspace **domain-wide delegation** for `https://www.googleapis.com/auth/meetings.space.created` | `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_IMPERSONATED_USER` | signed JWT exchanged at `https://oauth2.googleapis.com/token` |
 
 ```env
-MEETING_PROVIDER=teams     # Microsoft Graph + real-time media
-MEETING_PROVIDER=zoom      # Meeting SDK + RTMS
-MEETING_PROVIDER=meet      # Google Meet API (post-conference artifacts)
+MEETING_PROVIDER=hosted    # or teams | zoom | meet
+
+ZOOM_ACCOUNT_ID=<Account ID>
+ZOOM_CLIENT_ID=<Client ID>
+ZOOM_CLIENT_SECRET=<Client Secret>
+
+MS_GRAPH_TENANT_ID=<Directory (tenant) ID>
+MS_GRAPH_CLIENT_ID=<Application (client) ID>
+MS_GRAPH_CLIENT_SECRET=<client secret Value>
+
+GOOGLE_SERVICE_ACCOUNT_EMAIL=<client_email from the JSON key>
+GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY="<private_key from the JSON key, keeping its \n sequences>"
+GOOGLE_IMPERSONATED_USER=<Workspace user meetings are created as>
 ```
+
+**Why credentials stay in `server/.env` (not a settings screen):** connectors are deployment-wide
+(one server, one Zoom app), not per-tenant settings, and keeping keys out of the database means a
+database backup, export or injection bug cannot hand out vendor access. There is intentionally no
+API that accepts or stores a key. Edit `server/.env`, restart the server, then use *Test connection*.
 
 ---
 

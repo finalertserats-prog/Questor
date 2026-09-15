@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
+import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
-interface MeetingAdapter {
-  provider: string; configured: boolean;
-  capabilities: { createSpace: boolean; liveMedia: boolean; recording: boolean; transcript: boolean; botJoin: boolean };
-  fallback: string; reference: string;
-}
 interface Providers {
   llm: ProviderComponent; stt: ProviderComponent; tts: ProviderComponent;
   email: ProviderComponent; ats: ProviderComponent; meeting: MeetingAdapter[];
@@ -26,9 +22,6 @@ interface Webhook { id: string; url: string; events: string[]; active: boolean; 
 function activeBadge(c: ProviderComponent) {
   if (c.enabled || c.configured) return <Badge kind="green">Active</Badge>;
   return <Badge kind="gray">Built-in</Badge>;
-}
-function check(v: boolean) {
-  return v ? <span style={{ color: 'var(--green)' }}>✓</span> : <span className="muted">—</span>;
 }
 
 export function Admin() {
@@ -185,29 +178,13 @@ export function Admin() {
           </tbody>
         </table>
 
+        <OtherConnectorGuides ids={['email-sendgrid', 'email-smtp', 'ats']} />
+
         <h3 style={{ marginTop: 18 }}>Meeting adapters</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Provider</th><th>Configured</th><th>Space</th><th>Live</th>
-              <th>Recording</th><th>Transcript</th><th>Bot</th><th>Fallback</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(providers?.meeting ?? []).map((m) => (
-              <tr key={m.provider}>
-                <td>{m.provider}</td>
-                <td>{m.configured ? <Badge kind="green">Yes</Badge> : <Badge kind="gray">No</Badge>}</td>
-                <td>{check(m.capabilities.createSpace)}</td>
-                <td>{check(m.capabilities.liveMedia)}</td>
-                <td>{check(m.capabilities.recording)}</td>
-                <td>{check(m.capabilities.transcript)}</td>
-                <td>{check(m.capabilities.botJoin)}</td>
-                <td className="muted small">{m.fallback}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="muted small" style={{ marginBottom: 10 }}>
+          Open "How to set up" for what to create at each vendor and which variables to add to server/.env. Keys are set on the server and take effect after a restart; they are never stored or shown here.
+        </div>
+        <MeetingAdapterSetup adapters={providers?.meeting ?? []} />
       </div>
 
       <div className="card">
