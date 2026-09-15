@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
+import { Icon, type IconName } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { PageSkeleton, Skeleton } from '../components/Skeleton';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -108,11 +112,19 @@ export function ValidationStatus() {
   );
 }
 
+const STRING_CARD_ICONS: Readonly<Record<string, IconName>> = {
+  Strengths: 'check-circle',
+  Concerns: 'alert',
+  Contradictions: 'x-circle',
+  'Open questions': 'question',
+  Limitations: 'about',
+};
+
 function StringCard({ title, items }: { title: string; items: string[] }) {
   if (!items || items.length === 0) return null;
   return (
     <div className="card">
-      <h3>{title}</h3>
+      <h3 className="card-title"><Icon name={STRING_CARD_ICONS[title] ?? 'list'} size={16} />{title}</h3>
       <ul style={{ margin: 0 }}>{items.map((s, i) => <li key={i}>{s}</li>)}</ul>
     </div>
   );
@@ -161,19 +173,19 @@ export function AssessmentView() {
     } catch (e) { setError((e as Error).message); }
   };
 
-  if (loading) return <div className="muted">Loading…</div>;
+  if (loading) return <PageSkeleton label="Loading assessment…" cards={3} />;
 
   if (blocked) {
     return (
       <div className="stack">
-        <h2>Independent review required</h2>
+        <h2 className="card-title"><Icon name="lock" />Independent review required</h2>
         <Banner kind="info">
           The AI's recommendation and scores are hidden until you record your own judgement.
           This keeps your read independent — which is both the point of a second opinion and
           what keeps the AI advisory rather than the decision-maker.
         </Banner>
         <div className="card">
-          <Link className="btn" to={`/assessments/${id}/review`}>Review the evidence blind</Link>
+          <Link className="btn" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review the evidence blind</Link>
         </div>
         <details className="card">
           <summary>I need to open it without reviewing</summary>
@@ -185,7 +197,7 @@ export function AssessmentView() {
           <label htmlFor="skip-reason">Reason</label>
           <textarea id="skip-reason" rows={3} value={skipReason} onChange={(e) => setSkipReason(e.target.value)} />
           <button className="btn secondary" disabled={skipReason.trim().length < 10} onClick={skipBlind}>
-            Open without blind review
+            <Icon name="eye" size={16} />Open without blind review
           </button>
         </details>
         {error && <Banner kind="error">{error}</Banner>}
@@ -194,7 +206,16 @@ export function AssessmentView() {
   }
 
   if (error && !data) return <Banner kind="error">{error}</Banner>;
-  if (!data) return <Banner kind="info">Assessment not found.</Banner>;
+  if (!data) {
+    return (
+      <EmptyState
+        icon="evidence"
+        title="Assessment not found"
+        message="It may not have been produced yet, or the link is out of date."
+        action={<Link className="btn secondary" to="/interviews"><Icon name="arrow-left" size={16} />All interviews</Link>}
+      />
+    );
+  }
 
   const { candidate, role, result, reviews } = data;
 
@@ -246,26 +267,25 @@ export function AssessmentView() {
 
   return (
     <div>
-      <div className="topbar">
-        <div className="row">
-          <h1 style={{ margin: 0 }}>Assessment</h1>
-          {recBadge(result.recommendation)}
-        </div>
-        <div className="row">
-          {/* Offered here because this page shows the recommendation on sight —
-              once a reviewer has read it they cannot un-read it, so the blind
-              route has to be reachable before they form a view, not after. */}
-          <Link className="btn secondary" to={`/assessments/${id}/review`}>Review this blind</Link>
-          <button className="btn secondary" onClick={doExport}>Export to ATS</button>
-          <button className="btn ghost" onClick={toggleReport}>
-            {showReport ? 'Hide full report' : 'View full report'}
-          </button>
-        </div>
-      </div>
-
-      <div className="muted small" style={{ marginBottom: 12 }}>
-        <Link to={`/candidates/${candidate.id}`}>{candidate.name}</Link> · {role.title}
-      </div>
+      <PageHeader
+        icon="evidence"
+        title="Assessment"
+        badge={recBadge(result.recommendation)}
+        subtitle={<><Link to={`/candidates/${candidate.id}`}>{candidate.name}</Link> · {role.title}</>}
+        actions={
+          <>
+            {/* Offered here because this page shows the recommendation on sight —
+                once a reviewer has read it they cannot un-read it, so the blind
+                route has to be reachable before they form a view, not after. */}
+            <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>
+            <button className="btn secondary" onClick={doExport}><Icon name="export" size={16} />Export to ATS</button>
+            <button className="btn ghost" onClick={toggleReport}>
+              <Icon name={showReport ? 'eye-off' : 'eye'} size={16} />
+              {showReport ? 'Hide full report' : 'View full report'}
+            </button>
+          </>
+        }
+      />
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
@@ -282,19 +302,20 @@ export function AssessmentView() {
       </div>
 
       <div className="card">
-        <h2>Summary</h2>
+        <h2 className="card-title"><Icon name="about" />Summary</h2>
         <p style={{ marginBottom: 0 }}>{result.summary}</p>
       </div>
 
       {showReport && (
         <div className="card">
-          <h2>Full report</h2>
-          {reportLoading ? <div className="muted">Loading…</div> : <Markdown text={report} />}
+          <h2 className="card-title"><Icon name="job" />Full report</h2>
+          {reportLoading ? <Skeleton lines={6} label="Loading report…" /> : <Markdown text={report} />}
         </div>
       )}
 
       <div className="card">
-        <h2>Competency scorecard</h2>
+        <h2 className="card-title"><Icon name="evidence" />Competency scorecard</h2>
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency scorecard">
         <table>
           <thead>
             <tr><th>Competency</th><th>Level</th><th>Required</th><th>Confidence</th><th>Evidence</th></tr>
@@ -327,6 +348,7 @@ export function AssessmentView() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
 
       <div className="grid cols-2">
@@ -338,7 +360,7 @@ export function AssessmentView() {
       </div>
 
       <div className="card">
-        <h2>Human review</h2>
+        <h2 className="card-title"><Icon name="check-circle" />Human review</h2>
         <form onSubmit={submitReview}>
           <div className="grid cols-2">
             <div>
@@ -357,6 +379,7 @@ export function AssessmentView() {
           <textarea value={comments} onChange={(e) => setComments(e.target.value)} style={{ minHeight: 60 }} />
           <div className="row" style={{ marginTop: 12 }}>
             <button className="btn" type="submit" disabled={submitting || reason.trim().length < 3}>
+              <Icon name={submitting ? 'hourglass' : 'send'} size={16} />
               {submitting ? 'Submitting…' : 'Submit review'}
             </button>
           </div>
@@ -365,6 +388,7 @@ export function AssessmentView() {
         {(reviews ?? []).length > 0 && (
           <div style={{ marginTop: 16 }}>
             <h3>Previous reviews</h3>
+            <div className="table-scroll" tabIndex={0} role="region" aria-label="Previous reviews">
             <table>
               <thead><tr><th>Disposition</th><th>Reason</th><th>Status</th><th>Completed</th></tr></thead>
               <tbody>
@@ -378,6 +402,7 @@ export function AssessmentView() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </div>

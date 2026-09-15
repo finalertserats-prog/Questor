@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { PageSkeleton } from '../components/Skeleton';
 
 interface Role {
   id: string; title: string; level: string; status: string;
@@ -34,7 +37,7 @@ export function CandidateCreate() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="muted">Loading…</div>;
+  if (loading) return <PageSkeleton label="Loading roles…" cards={1} />;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,14 +64,13 @@ export function CandidateCreate() {
 
   return (
     <div>
-      <div className="topbar">
-        <h1>Add Candidate</h1>
-      </div>
+      <PageHeader icon="add-candidate" title="Add Candidate" />
 
       {error && <Banner kind="error">{error}</Banner>}
       {roles.length === 0 && (
         <Banner kind="info">
-          No roles with an approved scorecard yet. Approve a role scorecard before adding candidates.
+          No roles with an approved scorecard yet. Approve a role scorecard before adding candidates.{' '}
+          <Link className="link-action" to="/roles/new"><Icon name="role" size={15} />Create a role</Link>
         </Banner>
       )}
 
@@ -116,6 +118,7 @@ export function CandidateCreate() {
             type="submit"
             disabled={submitting || roles.length === 0 || !fullName || !email || (!file && !resumeText.trim())}
           >
+            <Icon name={submitting ? 'hourglass' : 'sparkle'} size={16} />
             {submitting ? 'Uploading & analysing…' : 'Add candidate & analyse resume'}
           </button>
         </div>

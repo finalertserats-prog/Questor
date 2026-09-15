@@ -1,26 +1,26 @@
 import { useAuth } from '../auth';
 import { ThemeToggle } from '../components/theme';
+import { Icon, type IconName } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
 
 export function Settings() {
   const { user, tenant } = useAuth();
 
-  const rows: Array<[string, string]> = [
-    ['Name', user?.name ?? '—'],
-    ['Email', user?.email ?? '—'],
-    ['Role', user?.role ?? '—'],
-    ['Organisation', tenant?.name ?? '—'],
+  const rows: Array<[string, string, IconName]> = [
+    ['Name', user?.name ?? '—', 'candidates'],
+    ['Email', user?.email ?? '—', 'mail'],
+    ['Role', user?.role ?? '—', 'admin'],
+    ['Organisation', tenant?.name ?? '—', 'role'],
   ];
 
   return (
     <div>
-      <div className="topbar">
-        <h1>Settings</h1>
-      </div>
+      <PageHeader icon="settings" title="Settings" />
       <div className="card settings-card">
         <dl className="settings-list">
-          {rows.map(([label, value]) => (
+          {rows.map(([label, value, icon]) => (
             <div key={label} className="settings-row">
-              <dt className="small muted">{label}</dt>
+              <dt className="small muted card-title"><Icon name={icon} size={14} />{label}</dt>
               <dd>{value}</dd>
             </div>
           ))}

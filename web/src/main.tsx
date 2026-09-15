@@ -10,6 +10,7 @@ import './styles/workflow.css';
 import './styles/login.css';
 import './styles/pipeline.css';
 import './styles/dashboard.css';
+import './styles/polish.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

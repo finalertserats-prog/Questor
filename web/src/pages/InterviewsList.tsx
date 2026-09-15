@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { recBadge, stateBadge, Banner } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { PageSkeleton } from '../components/Skeleton';
 
 interface Session {
   id: string; state: string; provider: string; scheduledAt: string | null;
@@ -21,45 +25,56 @@ export function InterviewsList() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) return <div className="muted">Loading…</div>;
+  if (loading) return <PageSkeleton label="Loading interviews…" />;
 
   return (
     <div>
-      <div className="topbar">
-        <h1>Interviews</h1>
-        <Link className="btn secondary" to="/candidates/new">Add Candidate</Link>
-      </div>
+      <PageHeader
+        icon="interviews"
+        title="Interviews"
+        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add Candidate</Link>}
+      />
 
       {error && <Banner kind="error">{error}</Banner>}
 
       <div className="card">
         {sessions.length === 0 ? (
-          <div className="muted small">No interviews yet.</div>
+          <EmptyState
+            icon="interviews"
+            illustration="/brand/empty-interviews.webp"
+            illustrationWidth={360}
+            illustrationHeight={331}
+            title="No interviews yet"
+            message="Interviews are set up from a candidate’s page. Add a candidate to create the first one."
+            action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+          />
         ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Candidate</th><th>Role</th><th>State</th><th>Provider</th>
-                <th>Recommendation</th><th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(sessions ?? []).map((s) => (
-                <tr key={s.id}>
-                  <td>{s.candidate?.name}</td>
-                  <td>{s.role?.title}</td>
-                  <td>{stateBadge(s.state)}</td>
-                  <td className="muted">{s.provider}</td>
-                  <td>{recBadge(s.recommendation)}</td>
-                  <td>
-                    {s.assessmentId
-                      ? <Link to={`/assessments/${s.assessmentId}`}>View assessment</Link>
-                      : <Link to={`/interviews/${s.id}`}>Open</Link>}
-                  </td>
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interviews">
+            <table>
+              <thead>
+                <tr>
+                  <th>Candidate</th><th>Role</th><th>State</th><th>Provider</th>
+                  <th>Recommendation</th><th>Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {(sessions ?? []).map((s) => (
+                  <tr key={s.id}>
+                    <td>{s.candidate?.name}</td>
+                    <td>{s.role?.title}</td>
+                    <td>{stateBadge(s.state)}</td>
+                    <td className="muted">{s.provider}</td>
+                    <td>{recBadge(s.recommendation)}</td>
+                    <td>
+                      {s.assessmentId
+                        ? <Link to={`/assessments/${s.assessmentId}`}><Icon name="evidence" size={15} />View assessment</Link>
+                        : <Link to={`/interviews/${s.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>

@@ -4,6 +4,10 @@ import { api } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
 import { isInFlight } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { PageSkeleton } from '../components/Skeleton';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -66,9 +70,18 @@ export function CandidateDetail() {
       .catch(() => undefined);
   }, [id]);
 
-  if (loading) return <div className="muted">Loading…</div>;
+  if (loading) return <PageSkeleton label="Loading candidate…" cards={3} />;
   if (error) return <Banner kind="error">{error}</Banner>;
-  if (!data) return <Banner kind="info">Candidate not found.</Banner>;
+  if (!data) {
+    return (
+      <EmptyState
+        icon="user-x"
+        title="Candidate not found"
+        message="They may have been removed, or the link is out of date."
+        action={<Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>}
+      />
+    );
+  }
 
   const { candidate, profile, fit, interviews } = data;
 
@@ -98,22 +111,23 @@ export function CandidateDetail() {
 
   return (
     <div>
-      <div className="topbar">
-        <div>
-          <h1 style={{ margin: 0 }}>{candidate.fullName}</h1>
-          <div className="muted small">{candidate.email}{candidate.phone ? ` · ${candidate.phone}` : ''}</div>
-        </div>
-        <div className="row">
-          <Link className="btn secondary" to="/candidates">All candidates</Link>
-          <Link className="btn secondary" to={`/roles/${candidate.roleId}`}>View role</Link>
-        </div>
-      </div>
+      <PageHeader
+        icon="candidates"
+        title={candidate.fullName}
+        subtitle={`${candidate.email}${candidate.phone ? ` · ${candidate.phone}` : ''}`}
+        actions={
+          <>
+            <Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>
+            <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
+          </>
+        }
+      />
 
       <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} />
 
       {fit && (
         <div className="card">
-          <h2>Resume fit</h2>
+          <h2 className="card-title"><Icon name="sparkle" />Resume fit</h2>
           <div className="grid cols-2">
             <div>
               <div className="row spread">
@@ -125,7 +139,8 @@ export function CandidateDetail() {
             <Stat label="Confidence" value={`${Math.round(fit.confidence * 100)}%`} />
           </div>
 
-          <table style={{ marginTop: 14 }}>
+          <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Resume fit components">
+          <table>
             <thead>
               <tr><th>Component</th><th>Weight</th><th>Score</th><th>Rule</th></tr>
             </thead>
@@ -145,6 +160,7 @@ export function CandidateDetail() {
               ))}
             </tbody>
           </table>
+          </div>
 
           <div className="grid cols-2" style={{ marginTop: 14 }}>
             <div>
@@ -174,7 +190,7 @@ export function CandidateDetail() {
 
       {profile && (
         <div className="card">
-          <h2>Parsed profile{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>
+          <h2 className="card-title"><Icon name="job" />Parsed profile{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>
           {(profile.skills ?? []).length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <h3>Skills</h3>
@@ -202,7 +218,7 @@ export function CandidateDetail() {
       )}
 
       <div className="card">
-        <h2>Set up interview</h2>
+        <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
         {createError && <Banner kind="error">{createError}</Banner>}
         <div className="grid cols-3">
           <div>
@@ -246,16 +262,26 @@ export function CandidateDetail() {
         </div>
         <div className="row" style={{ marginTop: 16 }}>
           <button className="btn" onClick={createInterview} disabled={creating}>
+            <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />
             {creating ? 'Creating…' : 'Approve & create interview'}
           </button>
         </div>
       </div>
 
       <div className="card">
-        <h2>Interviews</h2>
+        <h2 className="card-title"><Icon name="interviews" />Interviews</h2>
         {(interviews ?? []).length === 0 ? (
-          <div className="muted small">No interviews yet.</div>
+          <EmptyState
+            compact
+            icon="interviews"
+            illustration="/brand/empty-interviews.webp"
+            illustrationWidth={360}
+            illustrationHeight={331}
+            title="No interviews yet"
+            message="Use “Set up interview” above to create one for this candidate."
+          />
         ) : (
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interviews for this candidate">
           <table>
             <thead>
               <tr>
@@ -282,9 +308,9 @@ export function CandidateDetail() {
                           where the invitation lives — resend, portal link, schedule —
                           and that is the only thing that helps when it does not. */}
                       <span className="row" style={{ gap: 10 }}>
-                        <Link to={`/interviews/${iv.id}`}>Interview</Link>
+                        <Link to={`/interviews/${iv.id}`}><Icon name="interviews" size={15} />Interview</Link>
                         {s?.assessmentId
-                          ? <Link to={`/assessments/${s.assessmentId}`}>Assessment</Link>
+                          ? <Link to={`/assessments/${s.assessmentId}`}><Icon name="evidence" size={15} />Assessment</Link>
                           : <Link
                               className="muted"
                               to={`/interviews/${iv.id}`}
@@ -301,6 +327,7 @@ export function CandidateDetail() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

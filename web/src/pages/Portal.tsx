@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from '../components/ui';
 import { sttSupported, ttsSupported, speak } from '../speech';
+import { Icon } from '../components/Icon';
+import { Skeleton } from '../components/Skeleton';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -114,7 +116,15 @@ export function Portal() {
   };
 
   if (err && !info) return <div className="center-screen"><div className="card auth-card"><Banner kind="error">{err}</Banner></div></div>;
-  if (!info) return <div className="center-screen muted">Loading…</div>;
+  if (!info) {
+    return (
+      <div className="center-screen">
+        <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
+          <Skeleton lines={6} label="Loading your interview details…" />
+        </div>
+      </div>
+    );
+  }
   if (handoff) return <div className="center-screen"><div className="card auth-card"><Banner kind="ok">{handoff}</Banner></div></div>;
 
   return (
@@ -128,21 +138,21 @@ export function Portal() {
         {step === 'review' && (
           <>
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
-              <b>What to expect</b>
+              <b className="check-label"><Icon name="about" size={16} />What to expect</b>
               <p className="small">{info.aiDisclosure}</p>
             </div>
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
-              <b>What happens to your voice</b>
+              <b className="check-label"><Icon name="mic" size={16} />What happens to your voice</b>
               <VoiceHandling stt={info.speech.stt} />
             </div>
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
-              <b>Privacy</b>
+              <b className="check-label"><Icon name="lock" size={16} />Privacy</b>
               <p className="small">{info.privacy}</p>
             </div>
             {(!sttSupported() || !ttsSupported()) && (
               <Banner kind="info">For the best voice experience use Chrome or Edge. You can still complete the interview by typing your answers.</Banner>
             )}
-            <button className="btn" style={{ width: '100%' }} onClick={() => setStep('consent')}>Continue</button>
+            <button className="btn" style={{ width: '100%' }} onClick={() => setStep('consent')}>Continue<Icon name="arrow-right" size={16} /></button>
           </>
         )}
 
@@ -175,6 +185,7 @@ export function Portal() {
               </>
             )}
             <button className="btn" style={{ width: '100%', marginTop: 12 }} disabled={busy || (!accepted && !accommodation)} onClick={submitConsent}>
+              <Icon name={accommodation ? 'send' : 'check-circle'} size={16} />
               {accommodation ? 'Submit accommodation request' : 'I consent — continue'}
             </button>
           </>
@@ -184,15 +195,21 @@ export function Portal() {
           <>
             <h3>Quick audio check</h3>
             <div className="row spread card tight" style={{ background: 'var(--panel-2)' }}>
-              <span>🎤 Microphone {mic && <span className="badge green">ready</span>}</span>
-              <button className="btn secondary sm" onClick={requestMic}>Enable mic</button>
+              <span className="check-label">
+                <Icon name="mic" size={16} />Microphone
+                {mic && <span className="badge green status-badge"><Icon name="check" size={13} />ready</span>}
+              </span>
+              <button className="btn secondary sm" onClick={requestMic}><Icon name="mic" size={14} />Enable mic</button>
             </div>
             <div className="row spread card tight" style={{ background: 'var(--panel-2)' }}>
-              <span>🔊 Speaker {speaker && <span className="badge green">ok</span>}</span>
-              <button className="btn secondary sm" onClick={testSpeaker}>Play test sound</button>
+              <span className="check-label">
+                <Icon name="speaker" size={16} />Speaker
+                {speaker && <span className="badge green status-badge"><Icon name="check" size={13} />ok</span>}
+              </span>
+              <button className="btn secondary sm" onClick={testSpeaker}><Icon name="speaker" size={14} />Play test sound</button>
             </div>
             <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={finishTechCheck}>
-              {mic && speaker ? 'Start interview →' : 'Continue anyway →'}
+              {mic && speaker ? 'Start interview' : 'Continue anyway'}<Icon name="arrow-right" size={16} />
             </button>
             <p className="small muted" style={{ marginTop: 8 }}>You can ask the interviewer to repeat a question, request a pause, or type your answers at any time.</p>
           </>

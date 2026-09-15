@@ -7,6 +7,7 @@ import {
   sttSupported, ttsSupported, type Recognizer, type MicMeter, type Recording,
 } from '../speech';
 import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } from './Portal';
+import { Icon } from '../components/Icon';
 
 // The interview room is the only screen a candidate ever sees, and it is the
 // screen they judge the company by. It is deliberately built as a call surface
@@ -408,7 +409,13 @@ export function InterviewRoom() {
   };
 
   if (err && !info) return <div className="center-screen"><div className="card auth-card"><div className="banner error">{err}</div></div></div>;
-  if (!info) return <div className="center-screen muted">Connecting to the interview room…</div>;
+  if (!info) {
+    return (
+      <div className="center-screen muted" role="status">
+        <span className="check-label"><Icon name="refresh" size={18} />Connecting to the interview room…</span>
+      </div>
+    );
+  }
 
   const live = phase !== 'ready' && phase !== 'done';
   const speaking = phase === 'speaking';
@@ -478,17 +485,21 @@ export function InterviewRoom() {
             <div className="muted" style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto' }}>
               <VoiceHandling stt={info.speech.stt} />
             </div>
-            <button className="btn btn-join" onClick={begin}>Join interview</button>
+            <button className="btn btn-join" onClick={begin}><Icon name="play" size={18} />Join interview</button>
           </div>
         )}
 
         {listening && (
           <>
-            <button className="ctl" onClick={repeat}>↻<span>Repeat</span></button>
-            <button className="ctl" onClick={() => setCaptionsOn((c) => !c)}>CC<span>{captionsOn ? 'On' : 'Off'}</span></button>
-            <button className="btn btn-done" onClick={doneAnswering}>Done answering</button>
-            <button className="ctl" onClick={() => setTextMode(true)}>⌨<span>Type</span></button>
-            <button className="ctl" onClick={() => setShowTranscript((s) => !s)}>☰<span>Transcript</span></button>
+            <button className="ctl" onClick={repeat}><Icon name="refresh" /><span>Repeat</span></button>
+            <button className="ctl" onClick={() => setCaptionsOn((c) => !c)} aria-pressed={captionsOn}>
+              <Icon name="captions" label="Captions" /><span>{captionsOn ? 'On' : 'Off'}</span>
+            </button>
+            <button className="btn btn-done" onClick={doneAnswering}><Icon name="check" size={18} />Done answering</button>
+            <button className="ctl" onClick={() => setTextMode(true)}><Icon name="keyboard" /><span>Type</span></button>
+            <button className="ctl" onClick={() => setShowTranscript((s) => !s)} aria-expanded={showTranscript}>
+              <Icon name="list" /><span>Transcript</span>
+            </button>
           </>
         )}
 
@@ -502,8 +513,8 @@ export function InterviewRoom() {
               data-answer-input="true"
             />
             <div className="type-actions">
-              <button className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}>Send</button>
-              {sttSupported() && <button className="ctl" onClick={() => setTextMode(false)}>🎤<span>Voice</span></button>}
+              <button className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}><Icon name="send" size={16} />Send</button>
+              {sttSupported() && <button className="ctl" onClick={() => setTextMode(false)}><Icon name="mic" /><span>Voice</span></button>}
             </div>
           </div>
         )}
@@ -511,7 +522,7 @@ export function InterviewRoom() {
         {(speaking || phase === 'thinking') && (
           <div className="controls-hint">
             <span>{speaking ? 'Listen to the question…' : 'One moment…'}</span>
-            {speaking && <button className="ctl" onClick={repeat}>↻<span>Repeat</span></button>}
+            {speaking && <button className="ctl" onClick={repeat}><Icon name="refresh" /><span>Repeat</span></button>}
           </div>
         )}
 
@@ -535,7 +546,7 @@ export function InterviewRoom() {
       <aside className={`transcript-panel ${showTranscript ? 'open' : ''}`}>
         <div className="row spread" style={{ marginBottom: 10 }}>
           <strong>Transcript</strong>
-          <button className="ctl" onClick={() => setShowTranscript(false)}>✕</button>
+          <button className="ctl" onClick={() => setShowTranscript(false)}><Icon name="close" label="Close transcript" /></button>
         </div>
         <div className="transcript-scroll" ref={scrollRef}>
           {msgs.length === 0 && <p className="muted small">The conversation will appear here as you go.</p>}

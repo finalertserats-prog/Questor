@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { Badge, recBadge, stateBadge, Banner } from '../components/ui';
+import { recBadge, stateBadge, Banner } from '../components/ui';
+import { Icon, type IconName } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { PageSkeleton } from '../components/Skeleton';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null; }
@@ -36,9 +40,18 @@ export function InterviewDetail() {
   };
   useEffect(() => { setLoading(true); load(); }, [id]);
 
-  if (loading) return <div className="muted">Loading…</div>;
+  if (loading) return <PageSkeleton label="Loading interview…" cards={3} />;
   if (error && !data) return <Banner kind="error">{error}</Banner>;
-  if (!data) return <Banner kind="info">Interview not found.</Banner>;
+  if (!data) {
+    return (
+      <EmptyState
+        icon="interviews"
+        title="Interview not found"
+        message="It may have been removed, or the link is out of date."
+        action={<Link className="btn secondary" to="/interviews"><Icon name="arrow-left" size={16} />All interviews</Link>}
+      />
+    );
+  }
 
   const { session, plan, turns, assessment, invitation } = data;
 
@@ -74,13 +87,12 @@ export function InterviewDetail() {
 
   return (
     <div>
-      <div className="topbar">
-        <div className="row">
-          <h1 style={{ margin: 0 }}>Interview</h1>
-          {stateBadge(session.state)}
-        </div>
-        <button className="btn danger" onClick={cancel} disabled={busy}>Cancel interview</button>
-      </div>
+      <PageHeader
+        icon="interviews"
+        title="Interview"
+        badge={stateBadge(session.state)}
+        actions={<button className="btn danger" onClick={cancel} disabled={busy}><Icon name="x-circle" size={16} />Cancel interview</button>}
+      />
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
@@ -88,7 +100,7 @@ export function InterviewDetail() {
         <Banner kind="ok">
           <span className="row" style={{ display: 'inline-flex' }}>
             Assessment ready — {recBadge(assessment.recommendation)}
-            <Link to={`/assessments/${assessment.id}`}>View assessment</Link>
+            <Link className="link-action" to={`/assessments/${assessment.id}`}><Icon name="evidence" size={15} />View assessment</Link>
           </span>
         </Banner>
       )}
@@ -108,34 +120,41 @@ export function InterviewDetail() {
       </div>
 
       <div className="card">
-        <h2>Interview plan</h2>
+        <h2 className="card-title"><Icon name="list" />Interview plan</h2>
         {plan && (plan.blocks ?? []).length > 0 ? (
-          <table>
-            <thead><tr><th>Competency</th><th>Intent</th><th>Target</th></tr></thead>
-            <tbody>
-              {plan.blocks.map((b, i) => (
-                <tr key={i}>
-                  <td>{b.competencyName}</td>
-                  <td className="muted">{b.intent}</td>
-                  <td>{b.targetMinutes} min</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <div className="muted small">No plan available.</div>}
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interview plan">
+            <table>
+              <thead><tr><th>Competency</th><th>Intent</th><th>Target</th></tr></thead>
+              <tbody>
+                {plan.blocks.map((b, i) => (
+                  <tr key={i}>
+                    <td>{b.competencyName}</td>
+                    <td className="muted">{b.intent}</td>
+                    <td>{b.targetMinutes} min</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState compact icon="list" title="No plan available" message="A plan is built from the role’s approved scorecard when the interview is created." />
+        )}
       </div>
 
       <div className="card">
-        <h2>Invitation</h2>
+        <h2 className="card-title"><Icon name="mail" />Invitation</h2>
         {invitation ? (
           <div>
             {/* Delivery is reported in three distinct states, because "sent"
                 alone told recruiters nothing useful: a mail provider accepting
                 a message is not the same as a candidate seeing it. */}
             <div className="row" style={{ marginBottom: 6, gap: 8 }}>
-              <Badge kind={invitation.openedAt ? 'green' : invitation.sentAt ? 'blue' : 'amber'}>
-                {invitation.openedAt ? 'opened by candidate' : invitation.sentAt ? 'email sent' : 'not sent'}
-              </Badge>
+              {(() => {
+                const [kind, icon, text]: [string, IconName, string] = invitation.openedAt
+                  ? ['green', 'eye', 'opened by candidate']
+                  : invitation.sentAt ? ['blue', 'send', 'email sent'] : ['amber', 'mail', 'not sent'];
+                return <span className={`badge ${kind} status-badge`}><Icon name={icon} size={13} />{text}</span>;
+              })()}
               {invitation.sentAt && (
                 <span className="muted small">
                   {invitation.openedAt
@@ -153,19 +172,21 @@ export function InterviewDetail() {
             <label>Candidate portal link</label>
             <div className="row">
               <input readOnly value={invitation.portalUrl} style={{ flex: 1 }} />
-              <button className="btn secondary" type="button" onClick={copyUrl}>{copied ? 'Copied!' : 'Copy'}</button>
+              <button className="btn secondary" type="button" onClick={copyUrl}>
+                <Icon name={copied ? 'check' : 'copy'} size={16} />{copied ? 'Copied!' : 'Copy'}
+              </button>
             </div>
             <div className="muted small" style={{ marginTop: 6 }}>Share this link with the candidate.</div>
             <div className="row" style={{ marginTop: 14, gap: 8 }}>
-              <Link className="btn" to={`/room/${invitation.token}`}>Open interview room (recruiter preview)</Link>
+              <Link className="btn" to={`/room/${invitation.token}`}><Icon name="play" size={16} />Open interview room (recruiter preview)</Link>
               <button className="btn secondary" type="button" onClick={resend} disabled={busy}>
-                {busy ? 'Sending…' : 'Resend email'}
+                <Icon name={busy ? 'hourglass' : 'send'} size={16} />{busy ? 'Sending…' : 'Resend email'}
               </button>
             </div>
           </div>
         ) : (
           <div>
-            <button className="btn" onClick={invite} disabled={busy}>Send invitation</button>
+            <button className="btn" onClick={invite} disabled={busy}><Icon name="send" size={16} />Send invitation</button>
             <div className="muted small" style={{ marginTop: 8 }}>
               Send an invitation to generate the candidate portal link and enable the interview room.
             </div>
@@ -176,15 +197,15 @@ export function InterviewDetail() {
           <label>Schedule</label>
           <div className="row">
             <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ flex: 1 }} />
-            <button className="btn secondary" onClick={schedule} disabled={busy || !scheduleAt}>Save</button>
+            <button className="btn secondary" onClick={schedule} disabled={busy || !scheduleAt}><Icon name="schedule" size={16} />Save</button>
           </div>
         </div>
       </div>
 
       <div className="card">
-        <h2>Transcript</h2>
+        <h2 className="card-title"><Icon name="interviews" />Transcript</h2>
         {(turns ?? []).length === 0 ? (
-          <div className="muted small">No transcript yet.</div>
+          <EmptyState compact icon="interviews" title="No transcript yet" message="The conversation appears here once the candidate starts the interview." />
         ) : (
           <div className="transcript">
             {turns.map((t) => (

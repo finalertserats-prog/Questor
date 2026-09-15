@@ -11,12 +11,16 @@
 - PostgreSQL support in code: provider-swap schema generator, full test suite passes on Postgres (519/519), migration script with row-count verification.
 - Deploy script fixes: applies new unique constraints safely; live-interview check actually works now (it never matched before); reads the database the app really uses and fails closed; Postgres password kept out of process lists.
 
-**Verified before shipping:** 519/519 server tests on SQLite and on Postgres, 24/24 web tests, web build; Claude pre-deploy review CLEAN (its two MEDIUM findings fixed with tests); Gemini reviewed the cutover plan and script (findings fixed). Codex was rate-limited for the whole session and has not reviewed this release.
+**Also deployed (2026-09-16, commit 4f9219c):** the HR dashboard overhaul (workflow, KPI cards, trend charts, recent interviews) with the audit log moved to its own page in the profile menu, and the meeting-connector setup guides with an admin-only "Test connection".
+
+**Verified before shipping:** 576/576 server tests (and the same suite green on PostgreSQL), 58/58 web tests, clean types and web build. Claude reviewed each branch: the pre-deploy review was CLEAN, and the dashboard and connector reviews' findings were fixed with tests (AI interviews double-counted, audit-log query bounds and indexes, connector configuration detail reaching non-admins). Gemini reviewed the cutover plan and script. Codex hardened the cutover script once its usage limit reset; its `create_database` check compared psql's command tag, which quiet mode never prints, and that was fixed.
+
+**PostgreSQL cutover: DONE (2026-09-16).** Production runs on PostgreSQL 16 in the cluster shared with insyght.org: database `questor`, role capped at 20 connections, verified row for row (23 candidates, 30 interviews, 224 turns), rehearsed against real data first. Restore points: `/root/Questor/backups/pre-postgres-<stamp>.db`, the original SQLite file (now read-only) and `/root/Questor/secrets/server.env.sqlite-<stamp>`. Nightly `pg_dump` runs from `/etc/cron.d/questor-pg-backup`, verified with `pg_restore --list`, kept 14 days. The app listens on port 4100.
 
 ## Next steps, in order
 
-### 1. PostgreSQL cutover on the VPS — safe to rehearse and apply from this commit
-`scripts/cutover-to-postgres.sh` (hardened after Gemini's review). A Claude security review of the earlier version found items still to fix before the real cutover:
+### 1. PostgreSQL cutover on the VPS — COMPLETED 2026-09-16
+`scripts/cutover-to-postgres.sh` was hardened after Gemini's and Claude's reviews, rehearsed against production data with the app still running, and then applied. Everything below was done before the switch; the script stays in the repo for the next environment:
 
 - [x] Rollback must verify itself (poll `/api/health`, print MANUAL INTERVENTION if down); keep logs in a root-only directory.
 - [x] Before `pm2 stop`: read `PORT` from `server/.env` (fallback 4000) and confirm the app answers; confirm a TCP login as `questor` (`psql -h 127.0.0.1 -U questor -d postgres`); use `pg_isready` rather than `systemctl is-active postgresql` (umbrella unit).
@@ -38,16 +42,17 @@ After cutover: watch `pm2 logs questor`, log in, open a candidate and a transcri
 
 NUL characters in string values are stripped during import (with per-table counts), because PostgreSQL rejects them.
 
-### 2. Second UI release (built on separate branches, not yet reviewed or merged)
-Worktrees under `D:/Projects/ClaudeCode/Questor/`:
+### 2. Third UI release — in flight
+Merged and awaiting deploy: `feature/ui-icons-polish` (icons, status badges, empty states, skeleton loaders across the older pages, keyboard-reachable scrollable tables, Gemini empty-state art). Already deployed: `feature/dashboard-overhaul`, `feature/meeting-connectors`.
+
+Still building, in worktrees under `D:/Projects/ClaudeCode/Questor/`:
 
 | Branch | Worktree | What |
 |---|---|---|
-| `feature/dashboard-overhaul` | `wt-dashboard` | Dashboard: workflow on top, KPI cards, charts (interviews per week, pipeline funnel, outcomes), recent interviews at the bottom; `GET /api/dashboard/metrics` respecting assignment scope; Audit log moved to its own page in the profile menu |
-| `feature/meeting-connectors` | `wt-connectors` | Per-adapter setup guides (vendor app, env var names, scopes, redirect URLs), configured status, "Test connection" endpoint (admin-only, audited, rate-limited, keys stay in `server/.env`) |
-| `feature/ui-icons-polish` | `wt-icons` | Icons, status badges, empty states, skeleton loaders across the older pages; Gemini empty-state art in `web/brand-source/empty-*.png` |
+| `feature/sidebar-default-open` | `wt-sidebar` | Sidebar docked and open by default on desktop, collapsible to an icon rail with the Questor name always visible, overlay drawer kept for phones, choice remembered |
+| `feature/landing-showcase` | `wt-landing` | Sign-in page shows the workflow and what Questor actually does, moving through the steps, instead of the static medallion grid |
 
-For each: check the builder's commits, run server + web tests and the web build, get a review (Codex when available, else Claude), merge into `feature/postgres` (expect small conflicts in `web/src/pages/Admin.tsx`), then deploy with `scripts/deploy.sh`.
+For each: run server + web tests and the web build, get a review (Codex when available, else Claude), merge into `feature/postgres`, then deploy with `scripts/deploy.sh`.
 
 ### 3. Backlog
 - AI observer transcription for human rounds (needs a decision: hosted Questor room vs Teams/Zoom).

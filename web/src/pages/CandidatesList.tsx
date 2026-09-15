@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { stateBadge, Banner } from '../components/ui';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { PageSkeleton } from '../components/Skeleton';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
@@ -98,7 +102,7 @@ export function CandidatesList() {
       [c.fullName, c.email, c.roleTitle ?? ''].some((field) => field.toLowerCase().includes(q)));
   }, [candidates, query]);
 
-  if (loading) return <div className="muted">Loading…</div>;
+  if (loading) return <PageSkeleton label="Loading candidates…" />;
 
   // Counted apart because they need different action. Someone who never started
   // gets a nudge; someone who stopped half-way needs looking at, and may have
@@ -108,10 +112,11 @@ export function CandidatesList() {
 
   return (
     <div>
-      <div className="topbar">
-        <h1>Candidates</h1>
-        <Link className="btn secondary" to="/candidates/new">Add Candidate</Link>
-      </div>
+      <PageHeader
+        icon="candidates"
+        title="Candidates"
+        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add Candidate</Link>}
+      />
 
       {error && <Banner kind="error">{error}</Banner>}
 
@@ -150,12 +155,23 @@ export function CandidatesList() {
         </div>
 
         {candidates.length === 0 ? (
-          <div className="muted small">
-            No candidates yet. <Link to="/candidates/new">Add one</Link> to get started.
-          </div>
+          <EmptyState
+            icon="candidates"
+            illustration="/brand/empty-candidates.webp"
+            title="No candidates yet"
+            message="Add a candidate and their resume to see their fit and set up a first-round interview."
+            action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+          />
         ) : filtered.length === 0 ? (
-          <div className="muted small">No candidate matches “{query}”.</div>
+          <EmptyState
+            compact
+            icon="search"
+            title="No matches"
+            message={`No candidate matches “${query}”.`}
+            action={<button type="button" className="btn secondary sm" onClick={() => setQuery('')}><Icon name="close" size={14} />Clear filter</button>}
+          />
         ) : (
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Candidates">
           <table>
             <thead>
               <tr>
@@ -181,13 +197,14 @@ export function CandidatesList() {
                         page existed, a candidate whose interview had not produced an
                         assessment had no route to it from anywhere in the app. */}
                     {c.latestInterview
-                      ? <Link to={`/interviews/${c.latestInterview.id}`}>Interview</Link>
-                      : <Link to={`/candidates/${c.id}`}>Open</Link>}
+                      ? <Link to={`/interviews/${c.latestInterview.id}`}><Icon name="interviews" size={15} />Interview</Link>
+                      : <Link to={`/candidates/${c.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
