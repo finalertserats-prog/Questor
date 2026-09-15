@@ -102,7 +102,9 @@ export function Dashboard() {
 
       {loading && <div className="muted">Loading metrics…</div>}
 
-      {k && k.openRoles === 0 && k.candidates === 0 && (
+      {/* Counts are scoped to what this user may see, so an unassigned recruiter
+          in a busy tenant would otherwise be told the product is empty. */}
+      {k && k.openRoles === 0 && k.candidates === 0 && user?.role === 'admin' && (
         <Banner kind="info">
           Getting started: create your first <Link to="/roles/new">role</Link> from a job description,
           approve its scorecard, then add candidates to interview.

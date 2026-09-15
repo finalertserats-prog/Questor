@@ -77,10 +77,12 @@ async function makePipeline(o: {
 
 async function makeRound(o: {
   tenantId: string; pipelineId: string; scheduledAt: Date; status?: string; completedAt?: Date;
+  conductedBy?: string; sessionId?: string;
 }) {
   return prisma.interviewRound.create({
     data: {
-      tenantId: o.tenantId, pipelineId: o.pipelineId, stageKey: 'gold', conductedBy: 'HUMAN',
+      tenantId: o.tenantId, pipelineId: o.pipelineId, stageKey: 'gold',
+      conductedBy: o.conductedBy ?? 'HUMAN', sessionId: o.sessionId ?? null,
       scheduledAt: o.scheduledAt, status: o.status ?? 'SCHEDULED', completedAt: o.completedAt ?? null,
     },
   });
@@ -359,6 +361,27 @@ describe('GET /api/dashboard/metrics — assignment scoping', () => {
     const res = await getMetrics(roleOwner.token);
     expect({ openRoles: res.body.kpis.openRoles, candidates: res.body.kpis.candidates, decisions: res.body.kpis.decisions })
       .toEqual({ openRoles: 1, candidates: 2, decisions: { APPROVED: 0, REJECTED: 1, WITHDRAWN: 0 } });
+  });
+
+  it('counts an AI round and the session it runs in as one interview', async () => {
+    const tenant = await makeTenant('AI round tenant');
+    const admin = await makeUser(tenant.id, 'ai.admin@m.local', 'admin');
+    const { role, scorecard } = await makeRole(tenant.id, 'Engineer');
+    const candidate = await makeCandidate(tenant.id, role.id, 'Ada Lovelace');
+    const session = await makeSession({
+      tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
+      state: 'INVITED', scheduledAt: ahead(2),
+    });
+    const pipeline = await makePipeline({ tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, stage: 'silver' });
+    // The Silver round IS that session; scheduling it must not add a second interview.
+    await makeRound({
+      tenantId: tenant.id, pipelineId: pipeline.id, scheduledAt: ahead(2),
+      conductedBy: 'AI', sessionId: session.id,
+    });
+
+    const res = await getMetrics(admin.token);
+
+    expect(res.body.kpis.scheduledNext7Days).toBe(1);
   });
 
   it('gives an admin the whole tenant', async () => {

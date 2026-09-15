@@ -67,13 +67,19 @@ adminRouter.get('/audit', requireCapability('audit:read'), asyncHandler(async (r
       : {}),
   };
 
-  const [total, events, actionRows, actorRows] = await Promise.all([
-    prisma.auditEvent.count({ where }),
-    prisma.auditEvent.findMany({ where, orderBy: { createdAt: 'desc' }, skip: (query.page - 1) * query.limit, take: query.limit }),
+  const total = await prisma.auditEvent.count({ where });
+  const skip = (query.page - 1) * query.limit;
+  const [events, actionRows, actorRows] = await Promise.all([
+    // Past the last page there is nothing to read: asking the database to sort
+    // the tenant's whole history and discard it costs the same as reading it.
+    skip >= total
+      ? Promise.resolve([])
+      : prisma.auditEvent.findMany({ where, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip, take: query.limit }),
     // Filter options are tenant-wide (not narrowed by the current filter) so
-    // choosing one action does not make every other option disappear.
-    prisma.auditEvent.groupBy({ by: ['action'], where: { tenantId }, orderBy: { action: 'asc' } }),
-    prisma.auditEvent.groupBy({ by: ['actorId', 'actorType'], where: { tenantId } }),
+    // choosing one action does not make every other option disappear. They are
+    // the same on every page, so they are built once, for the first one.
+    query.page === 1 ? prisma.auditEvent.groupBy({ by: ['action'], where: { tenantId }, orderBy: { action: 'asc' } }) : Promise.resolve([]),
+    query.page === 1 ? prisma.auditEvent.groupBy({ by: ['actorId', 'actorType'], where: { tenantId } }) : Promise.resolve([]),
   ]);
 
   // Names only for users in THIS tenant; an actorId that is not one of them

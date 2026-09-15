@@ -8,6 +8,8 @@ import { EXCEPTION_STATES } from '../domain/stateMachine.js';
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
+/** Ceiling on the rows any one chart series reads, so a huge tenant cannot pull its whole history into memory. */
+const SERIES_ROW_LIMIT = 20_000;
 const SCHEDULE_HORIZON_DAYS = 7;
 const COMPLETED_WINDOW_DAYS = 30;
 // Wider than the 30-day completion KPI so a quiet month still yields an average.
@@ -79,7 +81,10 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
 
   const sessionWhere: Prisma.InterviewSessionWhereInput = { tenantId, candidate };
   const pipelineWhere: Prisma.CandidatePipelineWhereInput = { tenantId, candidate };
-  const roundWhere: Prisma.InterviewRoundWhereInput = { tenantId, pipeline: { candidate } };
+  // Human rounds only. An AI round carries the interview session it is run in,
+  // and that session is already counted as an interview — counting the round
+  // too showed one scheduled AI interview as two.
+  const roundWhere: Prisma.InterviewRoundWhereInput = { tenantId, pipeline: { candidate }, conductedBy: 'HUMAN' };
 
   const windowStart = new Date(nowMs - options.weeks * WEEK_MS);
   const horizon = new Date(nowMs + SCHEDULE_HORIZON_DAYS * DAY_MS);
@@ -107,21 +112,30 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
     prisma.interviewSession.groupBy({ by: ['state'], where: sessionWhere, _count: { _all: true } }),
     prisma.candidatePipeline.groupBy({ by: ['currentStageKey'], where: { ...pipelineWhere, status: 'ACTIVE' }, _count: { _all: true } }),
     prisma.candidatePipeline.groupBy({ by: ['decision'], where: { ...pipelineWhere, status: 'DECIDED' }, _count: { _all: true } }),
+    // These three read rows rather than counts, so they carry a ceiling: a
+    // dashboard must not pull an unbounded tenant history into memory. The
+    // averages and bars are indicative, and SERIES_ROW_LIMIT is far above what
+    // any real tenant produces in the window.
     prisma.interviewSession.findMany({
       where: { ...sessionWhere, completedAt: { gte: turnaroundSince }, state: { in: COMPLETED_STATES }, invitation: { isNot: null } },
       select: { completedAt: true, invitation: { select: { sentAt: true, createdAt: true } } },
+      take: SERIES_ROW_LIMIT,
     }),
     prisma.interviewSession.findMany({
       where: { ...sessionWhere, OR: [{ createdAt: { gte: windowStart } }, { completedAt: { gte: windowStart } }] },
       select: { createdAt: true, completedAt: true, state: true },
+      take: SERIES_ROW_LIMIT,
     }),
     prisma.interviewRound.findMany({
       where: { ...roundWhere, OR: [{ createdAt: { gte: windowStart } }, { completedAt: { gte: windowStart } }] },
       select: { createdAt: true, completedAt: true, status: true },
+      take: SERIES_ROW_LIMIT,
     }),
     prisma.interviewSession.findMany({
       where: sessionWhere,
-      orderBy: { createdAt: 'desc' },
+      // id breaks ties so rows created in the same millisecond order the same
+      // way on SQLite and Postgres.
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: options.recent,
       select: {
         id: true, state: true, createdAt: true, scheduledAt: true, completedAt: true,

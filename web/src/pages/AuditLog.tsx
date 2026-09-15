@@ -83,7 +83,12 @@ export function AuditLog() {
       </div>
 
       <div className="card">
-        {loading && !data ? <div className="muted">Loading…</div> : !data || data.events.length === 0 ? (
+        {loading && !data ? <div className="muted">Loading…</div> : error ? (
+          // The banner above already says what went wrong; "No events" here
+          // would tell the reader the tenant has no history when in fact the
+          // request failed.
+          <div className="muted small">The audit log could not be loaded.</div>
+        ) : !data || data.events.length === 0 ? (
           <div className="muted small">{hasFilter ? 'No events match these filters.' : 'No events.'}</div>
         ) : (
           <>
