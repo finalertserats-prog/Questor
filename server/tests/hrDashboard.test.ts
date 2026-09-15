@@ -224,6 +224,22 @@ describe('GET /api/interviews/pipeline-summary CSV export', () => {
     expect(res.body).toEqual({ stateCounts: { PROVISIONED: 1 }, total: 1 });
   });
 
+  it('neutralises spreadsheet formulas in exported cells', async () => {
+    const tenant = await prisma.tenant.create({ data: { name: 'CSV Injection Org' } });
+    const recruiter = await makeUser(tenant.id, 'recruiter@csvinj.local');
+    const { role, scorecard } = await makeRoleSet(tenant.id);
+    await makeCandidateSession({
+      tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id,
+      fullName: 'One', email: 'one@csvinj.local', state: '=HYPERLINK("http://evil.example","x")', assignToUserId: recruiter.id,
+    });
+
+    const res = await request(app)
+      .get('/api/interviews/pipeline-summary?format=csv')
+      .set('Authorization', `Bearer ${recruiter.token}`);
+
+    expect(res.text.trim().split('\n')[1]).toBe(`"'=HYPERLINK(""http://evil.example"",""x"")",1`);
+  });
+
   it('rejects an unrecognised format value', async () => {
     const tenant = await prisma.tenant.create({ data: { name: 'Bad Format Org' } });
     const recruiter = await makeUser(tenant.id, 'recruiter@badformat.local');

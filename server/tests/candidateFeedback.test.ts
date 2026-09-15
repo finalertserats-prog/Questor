@@ -135,4 +135,36 @@ describe('candidate feedback delivery', () => {
     expect(serialized).not.toContain('confidence');
     expect(serialized).not.toContain('draft');
   });
+
+  it('refuses to rewrite feedback that has already been sent', async () => {
+    const ids = await seededAssessment();
+    await completeHumanReview(ids.assessmentId, ids.userId);
+    const text = 'We appreciated your concrete data-platform examples and collaborative approach.';
+    await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/draft`).set(auth(ids.auth)).send({ draftText: text });
+    await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/approve`).set(auth(ids.auth)).send({ approvedText: text });
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ candidateFeedbackEnabled: true }) } });
+    await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/send`).set(auth(ids.auth)).send({});
+
+    const rewrite = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/draft`).set(auth(ids.auth))
+      .send({ draftText: 'A different message replacing what the candidate already received.' });
+
+    expect(rewrite.status).toBe(409);
+    const portal = await request(app).get(`/api/portal/${ids.token}/feedback`);
+    expect(portal.body.approvedText).toBe(text);
+  });
+
+  it('says whether the candidate was actually notified when feedback is sent', async () => {
+    const ids = await seededAssessment();
+    await completeHumanReview(ids.assessmentId, ids.userId);
+    const text = 'We appreciated your concrete data-platform examples and collaborative approach.';
+    await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/draft`).set(auth(ids.auth)).send({ draftText: text });
+    await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/approve`).set(auth(ids.auth)).send({ approvedText: text });
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ candidateFeedbackEnabled: true }) } });
+
+    const sent = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/send`).set(auth(ids.auth)).send({});
+
+    // Tests run with the console email provider, which delivers nothing — the
+    // response must say so and hand HR the link rather than implying delivery.
+    expect(sent.body.delivery).toMatchObject({ delivered: false, portalUrl: expect.stringContaining(`/portal/${ids.token}`) });
+  });
 });

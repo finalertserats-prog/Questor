@@ -7,6 +7,9 @@ import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { getAts } from '../providers/ats/index.js';
+import { getEmail } from '../providers/email/index.js';
+import { config } from '../config.js';
+import { logger } from '../logger.js';
 import { candidateFeedbackEnabledForTenant } from '../services/candidateFeedbackPolicy.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import {
@@ -133,6 +136,11 @@ assessmentsRouter.post('/:id/feedback/draft', requireCapability('assessment:revi
   await assertCompletedHumanReview(a.id);
 
   const existing = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
+  // What a candidate has been sent is a record, not a draft: rewriting it would
+  // erase the delivered text and could replace what they already read.
+  if (existing?.status === 'SENT') {
+    throw new HttpError(409, 'This feedback has already been sent to the candidate and can no longer be changed.');
+  }
   const feedback = await prisma.candidateFeedbackDelivery.upsert({
     where: { assessmentId: a.id },
     create: { assessmentId: a.id, draftText: body.draftText, status: 'DRAFT' },
@@ -181,18 +189,52 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
     throw new HttpError(409, 'Candidate feedback delivery is disabled for this tenant.');
   }
 
+  const session = await prisma.interviewSession.findUnique({
+    where: { id: a.sessionId },
+    include: { candidate: { select: { email: true } }, role: { select: { title: true } }, invitation: { select: { token: true } } },
+  });
+  const portalUrl = session?.invitation ? `${config.webOrigin}/portal/${session.invitation.token}` : null;
+
+  // SENT means released to the candidate's portal. Whether the candidate was
+  // actually TOLD is a separate fact, reported honestly below — marking it sent
+  // and saying nothing about delivery is how feedback silently goes unseen.
   const feedback = await prisma.candidateFeedbackDelivery.update({
     where: { assessmentId: a.id },
     data: { sentAt: new Date(), status: 'SENT' },
   });
+
+  const email = getEmail();
+  let delivered = false;
+  let deliveryNote: string;
+  if (!session || !portalUrl) {
+    deliveryNote = 'This candidate has no interview link, so they cannot open the feedback. Contact them directly.';
+  } else if (!email.delivers) {
+    deliveryNote = `Email is not configured to deliver (provider "${email.name}"). Share the candidate's link yourself.`;
+  } else {
+    const title = session.role.title.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    try {
+      await email.send({
+        to: session.candidate.email,
+        subject: `Feedback on your interview for ${session.role.title}`,
+        text: `Feedback on your interview for ${session.role.title} is ready.\n\nRead it here: ${portalUrl}\n\nThanks,\nRecruiting Team`,
+        html: `<p>Feedback on your interview for <b>${title}</b> is ready.</p><p><a href="${portalUrl}">Read your feedback</a></p>`,
+      });
+      delivered = true;
+      deliveryNote = `Sent to ${session.candidate.email}.`;
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err), assessmentId: a.id }, 'Feedback notification email failed');
+      deliveryNote = 'The notification email could not be sent. Share the candidate\'s link yourself, or try again.';
+    }
+  }
+
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'feedback.sent',
     entityType: 'AssessmentVersion', entityId: a.id,
     before: { feedbackId: existing.id, status: existing.status },
-    after: { feedbackId: feedback.id, status: feedback.status, sentAt: feedback.sentAt },
+    after: { feedbackId: feedback.id, status: feedback.status, sentAt: feedback.sentAt, candidateNotified: delivered },
   });
-  await emitEvent(req.auth!.tenantId, 'feedback.sent', { assessmentId: a.id, feedbackId: feedback.id });
-  res.json({ feedback: presentFeedback(feedback) });
+  await emitEvent(req.auth!.tenantId, 'feedback.sent', { assessmentId: a.id, feedbackId: feedback.id, candidateNotified: delivered });
+  res.json({ feedback: presentFeedback(feedback), delivery: { delivered, portalUrl, deliveryNote } });
 }));
 
 assessmentsRouter.get('/:id/feedback', requireCapability('assessment:review'), asyncHandler(async (req, res) => {

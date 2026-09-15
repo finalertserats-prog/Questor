@@ -134,9 +134,19 @@ const pipelineSummaryQuerySchema = z.object({
   format: z.enum(['csv']).optional(),
 });
 
+/**
+ * One CSV cell. A value starting with =, +, -, @, tab or CR is prefixed with an
+ * apostrophe so a spreadsheet opens it as text rather than running it as a
+ * formula; values containing quotes, commas or newlines are quoted.
+ */
+function csvCell(value: string): string {
+  const defused = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  return /[",\n\r]/.test(defused) ? `"${defused.replace(/"/g, '""')}"` : defused;
+}
+
 /** `state,count` — one row per state present in the summary, in no particular order. */
 function pipelineSummaryToCsv(summary: PipelineSummary): string {
-  const lines = ['state,count', ...Object.entries(summary.stateCounts).map(([state, count]) => `${state},${count}`)];
+  const lines = ['state,count', ...Object.entries(summary.stateCounts).map(([state, count]) => `${csvCell(state)},${count}`)];
   return `${lines.join('\n')}\n`;
 }
 
