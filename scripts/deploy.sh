@@ -97,7 +97,7 @@ if [ "$DB_KIND" = postgres ]; then
     WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
                           'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
       AND EXISTS (SELECT 1 FROM \"Turn\" t WHERE t.\"sessionId\" = s.id
-                  AND t.\"createdAt\" > now() - interval '15 minutes');")" \
+                  AND t.\"createdAt\" > (now() AT TIME ZONE 'UTC') - interval '15 minutes');")" \
     || die "could not query Postgres for live interviews — not deploying blind"
 else
   DB="$(ls server/prisma/data/*.db 2>/dev/null | head -1 || true)"
@@ -107,7 +107,10 @@ else
       WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
                             'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
         AND EXISTS (SELECT 1 FROM Turn t WHERE t.sessionId = s.id
-                    AND t.createdAt > datetime('now','-15 minutes'));" 2>/dev/null || echo 0)"
+                    AND t.createdAt > (strftime('%s','now','-15 minutes') * 1000));" 2>/dev/null || echo 0)"
+    # Prisma stores SQLite DateTimes as epoch milliseconds. This used to compare
+    # them with datetime('now', …) text, which an integer never exceeds, so the
+    # check found no live interview however many there were.
   fi
 fi
 if [ -n "$ACTIVE" ]; then
