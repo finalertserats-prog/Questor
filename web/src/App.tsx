@@ -1,6 +1,8 @@
-import { Navigate, Route, Routes, NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
-import { ThemeToggle } from './components/theme';
+import { Icon } from './components/Icon';
+import { ProfileMenu } from './components/ProfileMenu';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
@@ -15,45 +17,88 @@ import BlindReview from './pages/BlindReview';
 import { Admin } from './pages/Admin';
 import { Portal } from './pages/Portal';
 import { InterviewRoom } from './pages/InterviewRoom';
+import { Settings } from './pages/Settings';
+import { About } from './pages/About';
+import { Contact } from './pages/Contact';
 
 function Layout({ children }: { children: React.ReactNode }) {
-  const { user, tenant, logout } = useAuth();
-  const nav = useNavigate();
+  // The sidebar is a drawer: hidden until asked for, so pages get the full width.
+  const [navOpen, setNavOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const location = useLocation();
+
+  // Following a link is the end of the errand the drawer was opened for.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    closeRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      // The profile menu handles Escape first (capture phase) and marks it, so
+      // one press closes only the innermost layer.
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        setNavOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [navOpen]);
+
+  const closeNav = () => {
+    setNavOpen(false);
+    toggleRef.current?.focus();
+  };
+
   return (
     <div className="app">
-      <aside className="sidebar">
+      <button
+        ref={toggleRef}
+        type="button"
+        className="nav-toggle"
+        aria-controls="app-sidebar"
+        aria-expanded={navOpen}
+        onClick={() => setNavOpen(true)}
+      >
+        <Icon name="menu" />
+        <span>Menu</span>
+      </button>
+
+      {navOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
+
+      <aside id="app-sidebar" className={navOpen ? 'sidebar is-open' : 'sidebar'} aria-label="Main navigation">
+        <button ref={closeRef} type="button" className="nav-close" aria-label="Close menu" onClick={closeNav}>
+          <Icon name="close" />
+        </button>
         <div>
           <div className="logo">QUES<span>TOR</span></div>
           {/* The ticked rule is the instrument's edge; it recurs under every
               page title, which is what ties the console together. */}
           <div className="brand-line" aria-hidden="true" />
-          <div className="small muted" style={{ marginTop: 8 }}>First-round interview screening</div>
+          <div className="small muted" style={{ marginTop: 8 }}>Hire through evidence</div>
         </div>
         {/* Grouped by cadence, not by entity: the top group is the daily
-            reviewing loop, the bottom is what you set up once. The old flat
-            list gave a connector settings page the same weight as the
-            candidate queue. */}
+            reviewing loop, the bottom is what you set up once. The admin console
+            lives in the profile menu, beside the other account-level pages. */}
         <nav>
           <div className="nav-group">Review</div>
-          <NavLink to="/" end>Dashboard</NavLink>
+          <NavLink to="/" end><Icon name="dashboard" /><span>Dashboard</span></NavLink>
           {/* Candidates sits above "Add Candidate" because finding an existing
               one is the far more frequent errand — and for a long time it was
               the impossible one: creation had a nav entry, retrieval had none. */}
-          <NavLink to="/candidates" end>Candidates</NavLink>
-          <NavLink to="/interviews">Interviews</NavLink>
+          <NavLink to="/candidates" end><Icon name="candidates" /><span>Candidates</span></NavLink>
+          <NavLink to="/interviews"><Icon name="interviews" /><span>Interviews</span></NavLink>
 
           <div className="nav-group">Set up</div>
-          <NavLink to="/candidates/new">Add candidate</NavLink>
-          <NavLink to="/roles/new">New role</NavLink>
-          <NavLink to="/admin">Admin &amp; connectors</NavLink>
+          <NavLink to="/candidates/new"><Icon name="add-candidate" /><span>Add candidate</span></NavLink>
+          <NavLink to="/roles/new"><Icon name="role" /><span>New role</span></NavLink>
         </nav>
-        <div className="foot small muted">
-          <div className="who">{user?.name}</div>
-          <div>{tenant?.name}</div>
-          <ThemeToggle />
-          <a onClick={() => { logout(); nav('/login'); }} style={{ cursor: 'pointer' }}>Sign out</a>
-        </div>
+        <ProfileMenu />
       </aside>
+
       <main className="main">{children}</main>
     </div>
   );
@@ -86,6 +131,9 @@ export function App() {
           the score by accident. */}
       <Route path="/assessments/:id/review" element={<Protected><BlindReview /></Protected>} />
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
+      <Route path="/settings" element={<Protected><Settings /></Protected>} />
+      <Route path="/about" element={<Protected><About /></Protected>} />
+      <Route path="/contact" element={<Protected><Contact /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

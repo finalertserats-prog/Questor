@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, recBadge, stateBadge, Banner, Stat } from '../components/ui';
+import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { interviewCell, isInFlight } from './CandidatesList';
 
 interface Analytics {
@@ -70,6 +71,8 @@ export function Dashboard() {
           <Link className="btn secondary" to="/candidates/new">Add Candidate</Link>
         </div>
       </div>
+
+      <WorkflowDiagram />
 
       {error && <Banner kind="error">{error}</Banner>}
 

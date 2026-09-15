@@ -5,6 +5,8 @@ import { AuthProvider } from './auth';
 import { ThemeProvider } from './components/theme';
 import { App } from './App';
 import './styles/app.css';
+import './styles/sidebar.css';
+import './styles/workflow.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
