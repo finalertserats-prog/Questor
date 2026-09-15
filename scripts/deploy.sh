@@ -140,6 +140,13 @@ say "Install"
 run_logged npm-ci npm ci
 run_logged prisma npx prisma generate --schema server/prisma/schema.prisma
 
+# Apply the schema to the database. `prisma generate` only rebuilds the client,
+# and a deploy once shipped code querying a table and columns the database did
+# not have. Run from server/ so Prisma loads server/.env for DATABASE_URL. The
+# backup above is the restore point; `db push` refuses any change that would
+# drop data unless explicitly told to accept it, and it is never told to here.
+run_logged schema bash -c 'cd server && npx prisma db push --skip-generate'
+
 for pkg in express @prisma/client dotenv; do
   [ -d "node_modules/$pkg" ] || die "node_modules/$pkg missing after install — the tree is incomplete"
 done

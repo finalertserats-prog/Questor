@@ -22,7 +22,7 @@ describe('proctoring-lite integrity events', () => {
     await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ proctoringEnabled: true }) } });
     await prisma.interviewSession.update({
       where: { id: ids.sessionId },
-      data: { state: 'CONSENTED', consentJson: JSON.stringify({ consentedAt: new Date().toISOString(), disclosureText: 'ok' }) },
+      data: { state: 'CONSENTED', consentJson: JSON.stringify({ consentedAt: new Date().toISOString(), disclosureText: 'ok', monitoringDisclosed: true }) },
     });
 
     const accepted = await request(app).post(`/api/portal/${ids.token}/integrity-event`).send({ type: 'PASTE_DETECTED', detail: { source: 'keyboard' } });
@@ -88,5 +88,53 @@ describe('proctoring-lite integrity events', () => {
     expect(onInterview.status).toBe(201);
     const onSession = await prisma.interviewSession.findUniqueOrThrow({ where: { id: onInterview.body.session.id } });
     expect(parseJson<any>(onSession.consentJson, {}).disclosureText).toContain('Basic browser activity');
+  });
+
+  it('records at consent time that browser monitoring was disclosed', async () => {
+    const ids = await createDemoData();
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ proctoringEnabled: true }) } });
+    await request(app).post(`/api/portal/${ids.token}/accept`).send({});
+
+    const res = await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true });
+
+    expect(res.status).toBe(200);
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: ids.sessionId } });
+    const consent = parseJson<any>(session.consentJson, {});
+    expect(consent).toMatchObject({ monitoringDisclosed: true, consentVersion: 'v2' });
+    expect(consent.disclosureShown).toContain('Basic browser activity');
+  });
+
+  it('ignores events for a session whose consent did not cover monitoring', async () => {
+    const ids = await createDemoData();
+    await request(app).post(`/api/portal/${ids.token}/accept`).send({});
+    await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true });
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state: 'ASSESSING' } });
+    // Monitoring switched on AFTER this candidate consented.
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ proctoringEnabled: true }) } });
+
+    const res = await request(app).post(`/api/portal/${ids.token}/integrity-event`).send({ type: 'TAB_BLUR' });
+
+    expect(res.body.accepted).toBe(false);
+    expect(await prisma.integrityEvent.count({ where: { sessionId: ids.sessionId } })).toBe(0);
+  });
+
+  it('ignores events for a session with an accommodation request', async () => {
+    const ids = await createDemoData();
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ proctoringEnabled: true }) } });
+    await prisma.interviewSession.update({
+      where: { id: ids.sessionId },
+      data: {
+        state: 'ASSESSING',
+        consentJson: JSON.stringify({
+          consentedAt: new Date().toISOString(), monitoringDisclosed: true,
+          accommodationRequest: 'I use a screen reader and need extra time to navigate.',
+        }),
+      },
+    });
+
+    const res = await request(app).post(`/api/portal/${ids.token}/integrity-event`).send({ type: 'FOCUS_LOST' });
+
+    expect(res.body.accepted).toBe(false);
+    expect(await prisma.integrityEvent.count({ where: { sessionId: ids.sessionId } })).toBe(0);
   });
 });

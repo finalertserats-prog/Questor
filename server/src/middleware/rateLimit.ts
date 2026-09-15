@@ -66,6 +66,8 @@ export interface RateLimitOptions {
   name: string;
   /** Derive the bucket key. Defaults to client IP. */
   keyOf?: (req: Request) => string;
+  /** Requests for which this limiter does not count or block. */
+  skip?: (req: Request) => boolean;
 }
 
 export function rateLimit(opts: RateLimitOptions) {
@@ -76,6 +78,7 @@ export function rateLimit(opts: RateLimitOptions) {
     // Tests drive endpoints in tight loops; limiting there would test the
     // limiter rather than the behaviour under test.
     if (config.nodeEnv === 'test') return next();
+    if (opts.skip?.(req)) return next();
 
     const now = Date.now();
     sweep(now);

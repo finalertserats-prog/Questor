@@ -256,10 +256,15 @@ interviewsRouter.post('/:id/reopen', requireCapability('interview:invite'), asyn
  * them, and it would quietly move the population the bias audit is measuring.
  *
  * This creates a NEW session rather than resuming the old one (contrast
- * /reopen, which resumes MANUAL_HANDOFF in place). The old session, and
- * whatever partial transcript it holds, is left exactly as it was — it is the
- * historical record of what happened, not something this endpoint edits.
+ * /reopen, which resumes MANUAL_HANDOFF in place). The old session keeps its
+ * partial transcript as the record of what happened, but is moved to CLOSED so
+ * it stops sitting in HR's "needs action" views for ever.
+ *
+ * Attempts are capped: a candidate whose interviews keep failing needs a human
+ * interviewer, not an unbounded loop of retakes.
  */
+const MAX_INTERVIEW_ATTEMPTS = 2;
+
 interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const original = await getSession(req, req.params.id);
   const { reason } = z.object({ reason: z.string().min(10, 'Say why this candidate is being offered a retake.') }).parse(req.body);
@@ -269,6 +274,16 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   }
   const priorAssessment = await prisma.assessmentVersion.findFirst({ where: { sessionId: original.id } });
   if (priorAssessment) throw new HttpError(409, 'This interview was already scored — a retake would duplicate an assessment. Use human review instead.');
+  if (original.attemptNumber >= MAX_INTERVIEW_ATTEMPTS) {
+    throw new HttpError(409, `This candidate has already had ${MAX_INTERVIEW_ATTEMPTS} attempts at this interview. Arrange a human interviewer instead.`);
+  }
+  assertTransition(original.state, 'CLOSED');
+
+  // A retake is the same interview again, so it keeps the original's modules
+  // (a work sample, say) and its interviewer persona.
+  const originalPlan = await prisma.interviewPlanVersion.findUnique({ where: { sessionId: original.id } });
+  const originalModules = parseJson<{ modules?: string[] }>(originalPlan?.planJson ?? '{}', {}).modules ?? [];
+  const persona = parseJson<{ name?: string }>(original.personaJson, {});
 
   const candidate = await assertCanAccessCandidate(req.auth!, original.candidateId);
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: original.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
@@ -281,7 +296,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const banding = resolveCandidateBand({ profile: parsed, resumeText: latestProfile?.rawText ?? '', roleSeniority: profile.seniority ?? '' });
 
   const plan = buildInterviewPlan({
-    role: profile, fit, durationMinutes: original.durationMinutes, language: original.language, modules: [],
+    role: profile, fit, durationMinutes: original.durationMinutes, language: original.language, modules: originalModules,
     band: banding.band.id,
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
   });
@@ -289,7 +304,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
   const baseDisclosureText = tenantPolicy.disclosureText ??
-    `Hello, I'm an AI interviewer for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+    `Hello, I'm ${persona.name ? `${persona.name}, an AI interviewer` : 'an AI interviewer'} for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   const retake = await prisma.interviewSession.create({
@@ -307,11 +322,12 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
     },
   });
   await prisma.interviewPlanVersion.create({ data: { sessionId: retake.id, version: 1, planJson: JSON.stringify(plan) } });
+  await prisma.interviewSession.update({ where: { id: original.id }, data: { state: 'CLOSED' } });
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.retake_created',
     entityType: 'InterviewSession', entityId: retake.id,
     before: { originalSessionId: original.id, originalState: original.state },
-    after: { attemptNumber: retake.attemptNumber, reason },
+    after: { attemptNumber: retake.attemptNumber, reason, originalClosed: true },
   });
   await emitEvent(req.auth!.tenantId, 'interview.retake_created', { originalSessionId: original.id, sessionId: retake.id, candidateId: candidate.id, attemptNumber: retake.attemptNumber });
   res.status(201).json({ session: { id: retake.id, state: retake.state, attemptNumber: retake.attemptNumber, retakeOfSessionId: original.id }, plan });

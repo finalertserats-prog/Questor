@@ -134,7 +134,12 @@ portalRouter.post('/:token/integrity-event', asyncHandler(async (req, res) => {
   const enabled = await proctoringEnabledForSession({ tenantId: inv.session.tenantId, scorecardId: inv.session.scorecardId });
   const consent = parseJson<Record<string, unknown>>(inv.session.consentJson, {});
 
-  if (!enabled || !consent.consentedAt || !INTEGRITY_EVENT_STATES.includes(inv.session.state)) {
+  // Stored only when this candidate's own consent covered monitoring, and never
+  // for a candidate who asked for an accommodation: screen readers and switch
+  // access produce exactly the focus-loss signals being recorded.
+  const consentCoveredMonitoring = consent.monitoringDisclosed === true;
+  const accommodated = typeof consent.accommodationRequest === 'string' && consent.accommodationRequest.length > 0;
+  if (!enabled || !consent.consentedAt || !consentCoveredMonitoring || accommodated || !INTEGRITY_EVENT_STATES.includes(inv.session.state)) {
     return res.status(202).json({ ok: true, accepted: false });
   }
 
@@ -197,15 +202,22 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   }
 
   const consent = parseJson<any>(inv.session.consentJson, {});
+  // Record what the candidate was actually shown. Without this there is no
+  // durable proof browser monitoring was disclosed, and switching monitoring on
+  // later would silently extend to people who consented before it existed.
+  const policyScope = { tenantId: inv.session.tenantId, scorecardId: inv.session.scorecardId };
+  const monitoringDisclosed = await proctoringEnabledForSession(policyScope);
   consent.recording = body.recordingConsent;
-  consent.consentVersion = 'v1';
+  consent.consentVersion = 'v2';
   consent.consentedAt = new Date().toISOString();
   consent.channel = 'portal';
+  consent.monitoringDisclosed = monitoringDisclosed;
+  consent.disclosureShown = await disclosureWithProctoringPolicy(policyScope, consent.disclosureText ?? '');
   await prisma.interviewSession.update({
     where: { id: inv.sessionId },
     data: { consentJson: JSON.stringify(consent), recordingConsent: body.recordingConsent },
   });
-  await logAudit({ tenantId: inv.session.tenantId, actorType: 'user', actorId: 'candidate', action: 'consent.recorded', entityType: 'InterviewSession', entityId: inv.sessionId, after: { recording: body.recordingConsent } });
+  await logAudit({ tenantId: inv.session.tenantId, actorType: 'user', actorId: 'candidate', action: 'consent.recorded', entityType: 'InterviewSession', entityId: inv.sessionId, after: { recording: body.recordingConsent, monitoringDisclosed } });
   res.json({ ok: true, recordingConsent: body.recordingConsent });
 }));
 

@@ -109,7 +109,11 @@ export function createApp() {
   // with retries and still caps a script at a bounded hourly spend.
   app.use('/api/portal/:token/transcribe', rateLimit({ name: 'portal-transcribe', windowMs: 60 * 60_000, max: 60, keyOf: portalKey }));
   app.use('/api/portal/:token/integrity-event', rateLimit({ name: 'portal-integrity', windowMs: 60 * 60_000, max: 600, keyOf: portalKey }));
-  app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey }));
+  // Integrity events have their own limiter above and must not also draw on this
+  // shared budget: a candidate who switches tabs often (assistive technology
+  // does exactly that) would otherwise be throttled out of their own interview.
+  const isIntegrityEvent = (req: Request) => /^\/api\/portal\/[^/]+\/integrity-event(?:[/?]|$)/.test(req.originalUrl);
+  app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey, skip: isIntegrityEvent }));
 
   app.use('/api/auth', authRouter);
   app.use('/api/roles', rolesRouter);
