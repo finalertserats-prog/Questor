@@ -39,6 +39,7 @@ model User {
   role         String   @default("recruiter")
   createdAt    DateTime @default(now())
   reviews      HumanReview[]
+  approvedFeedbackDeliveries CandidateFeedbackDelivery[]
   roleAssignments      RoleAssignment[]
   candidateAssignments CandidateAssignment[]
 }
@@ -256,6 +257,7 @@ model AssessmentVersion {
   modelExecId   String?
   createdAt     DateTime @default(now())
   reviews       HumanReview[]
+  candidateFeedback CandidateFeedbackDelivery?
 }
 
 model HumanReview {
@@ -272,6 +274,20 @@ model HumanReview {
   reason         String   @default("")
   createdAt      DateTime @default(now())
   completedAt    DateTime?
+}
+
+model CandidateFeedbackDelivery {
+  id               String   @id @default(cuid())
+  assessmentId     String   @unique
+  assessment       AssessmentVersion @relation(fields: [assessmentId], references: [id])
+  draftText        String
+  approvedText     String?
+  approvedByUserId String?
+  approvedByUser   User?    @relation(fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime?
+  sentAt           DateTime?
+  status           String   @default("DRAFT") // DRAFT | APPROVED | SENT
+  createdAt        DateTime @default(now())
 }
 
 model Artifact {

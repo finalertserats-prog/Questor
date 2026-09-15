@@ -1,12 +1,13 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
-import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
+import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { getAts } from '../providers/ats/index.js';
+import { candidateFeedbackEnabledForTenant } from '../services/candidateFeedbackPolicy.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
@@ -91,6 +92,113 @@ assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asy
     note: 'Advisory only. Agreement between this output and blind human review has not been established — '
       + 'see GET /api/assessments/shadow-metrics and docs/VALIDATION.md.',
   });
+}));
+
+
+const feedbackTextSchema = z.object({ draftText: z.string().min(10) });
+const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10) });
+
+function presentFeedback(feedback: {
+  id: string;
+  assessmentId: string;
+  draftText: string;
+  approvedText: string | null;
+  approvedByUserId: string | null;
+  approvedAt: Date | null;
+  sentAt: Date | null;
+  status: string;
+  createdAt: Date;
+}) {
+  return {
+    id: feedback.id,
+    assessmentId: feedback.assessmentId,
+    draftText: feedback.draftText,
+    approvedText: feedback.approvedText,
+    approvedByUserId: feedback.approvedByUserId,
+    approvedAt: feedback.approvedAt,
+    sentAt: feedback.sentAt,
+    status: feedback.status,
+    createdAt: feedback.createdAt,
+  };
+}
+
+async function assertCompletedHumanReview(assessmentId: string): Promise<void> {
+  const completed = await prisma.humanReview.findFirst({ where: { assessmentId, status: 'COMPLETED' }, select: { id: true } });
+  if (!completed) throw new HttpError(409, 'Candidate feedback can only be drafted after a completed human review.');
+}
+
+assessmentsRouter.post('/:id/feedback/draft', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const body = feedbackTextSchema.parse(req.body);
+  const a = await getAssessment(req.auth!, req.params.id);
+  await assertCompletedHumanReview(a.id);
+
+  const existing = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
+  const feedback = await prisma.candidateFeedbackDelivery.upsert({
+    where: { assessmentId: a.id },
+    create: { assessmentId: a.id, draftText: body.draftText, status: 'DRAFT' },
+    update: {
+      draftText: body.draftText,
+      approvedText: null,
+      approvedByUserId: null,
+      approvedAt: null,
+      sentAt: null,
+      status: 'DRAFT',
+    },
+  });
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'feedback.drafted',
+    entityType: 'AssessmentVersion', entityId: a.id,
+    before: existing ? { status: existing.status, approvedAt: existing.approvedAt, sentAt: existing.sentAt } : undefined,
+    after: { feedbackId: feedback.id, status: feedback.status },
+  });
+  res.status(existing ? 200 : 201).json({ feedback: presentFeedback(feedback) });
+}));
+
+assessmentsRouter.post('/:id/feedback/approve', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const body = feedbackApprovalSchema.parse(req.body);
+  const a = await getAssessment(req.auth!, req.params.id);
+  const existing = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
+  if (!existing || existing.status !== 'DRAFT') throw new HttpError(409, 'Candidate feedback must be in DRAFT status before approval.');
+
+  const feedback = await prisma.candidateFeedbackDelivery.update({
+    where: { assessmentId: a.id },
+    data: { approvedText: body.approvedText, approvedByUserId: req.auth!.userId, approvedAt: new Date(), status: 'APPROVED' },
+  });
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'feedback.approved',
+    entityType: 'AssessmentVersion', entityId: a.id,
+    before: { feedbackId: existing.id, status: existing.status },
+    after: { feedbackId: feedback.id, status: feedback.status, approvedByUserId: req.auth!.userId, approvedAt: feedback.approvedAt },
+  });
+  res.json({ feedback: presentFeedback(feedback) });
+}));
+
+assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
+  const existing = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
+  if (!existing || existing.status !== 'APPROVED') throw new HttpError(409, 'Candidate feedback must be approved before it can be sent.');
+  if (!await candidateFeedbackEnabledForTenant(req.auth!.tenantId)) {
+    throw new HttpError(409, 'Candidate feedback delivery is disabled for this tenant.');
+  }
+
+  const feedback = await prisma.candidateFeedbackDelivery.update({
+    where: { assessmentId: a.id },
+    data: { sentAt: new Date(), status: 'SENT' },
+  });
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'feedback.sent',
+    entityType: 'AssessmentVersion', entityId: a.id,
+    before: { feedbackId: existing.id, status: existing.status },
+    after: { feedbackId: feedback.id, status: feedback.status, sentAt: feedback.sentAt },
+  });
+  await emitEvent(req.auth!.tenantId, 'feedback.sent', { assessmentId: a.id, feedbackId: feedback.id });
+  res.json({ feedback: presentFeedback(feedback) });
+}));
+
+assessmentsRouter.get('/:id/feedback', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
+  const feedback = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
+  res.json({ feedback: feedback ? presentFeedback(feedback) : null });
 }));
 
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {

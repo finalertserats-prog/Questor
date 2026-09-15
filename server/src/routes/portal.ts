@@ -88,6 +88,21 @@ async function loadByToken(token: string, opts?: { requireUnconsumed?: boolean }
   return inv;
 }
 
+
+portalRouter.get('/:token/feedback', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token);
+  const assessment = await prisma.assessmentVersion.findFirst({
+    where: { sessionId: inv.sessionId },
+    orderBy: { createdAt: 'desc' },
+    include: { candidateFeedback: true },
+  });
+  const feedback = assessment?.candidateFeedback;
+  if (!feedback || feedback.status !== 'SENT' || !feedback.approvedText || !feedback.sentAt) {
+    return res.status(404).json({ feedback: null });
+  }
+  return res.json({ approvedText: feedback.approvedText, sentAt: feedback.sentAt });
+}));
+
 portalRouter.get('/:token', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token);
   const s = inv.session;
