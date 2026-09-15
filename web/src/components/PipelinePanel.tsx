@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from './ui';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
@@ -17,6 +18,7 @@ interface Round {
 
 interface Pipeline {
   id: string;
+  candidateId: string;
   stages: PipelineStageView[];
   currentStageKey: string;
   status: 'ACTIVE' | 'DECIDED';
@@ -76,21 +78,34 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // Only the newest load may write state, so a slow response for a previously
+  // viewed candidate can never replace this candidate's pipeline.
+  const latestLoad = useRef(0);
 
   const [scheduledAt, setScheduledAt] = useState('');
   const [interviewers, setInterviewers] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [decision, setDecision] = useState<Decision>('APPROVED');
   const [reason, setReason] = useState('');
+  const [roundToComplete, setRoundToComplete] = useState('');
+  const [roundNotes, setRoundNotes] = useState('');
 
   const load = useCallback(async () => {
+    const loadId = ++latestLoad.current;
     const { pipelines } = await api.get<{ pipelines: Pipeline[] }>(`/pipelines?candidateId=${encodeURIComponent(candidateId)}`);
     const current = pipelines[0] ?? null;
+    const nextSummary = current ? (await api.get<{ summary: Summary }>(`/pipelines/${current.id}/summary`)).summary : null;
+    if (loadId !== latestLoad.current) return;
     setPipeline(current);
-    setSummary(current ? (await api.get<{ summary: Summary }>(`/pipelines/${current.id}/summary`)).summary : null);
+    setSummary(nextSummary);
   }, [candidateId]);
 
   useEffect(() => {
+    // A different candidate: drop the previous one's pipeline before anything can act on it.
+    setPipeline(null);
+    setSummary(null);
+    setError('');
+    setLoading(true);
     load().catch((e: unknown) => setError(errorMessage(e))).finally(() => setLoading(false));
   }, [load]);
 
@@ -109,7 +124,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
 
   if (loading) return <div className="card muted">Loading pipeline…</div>;
 
-  if (!pipeline) {
+  if (!pipeline || pipeline.candidateId !== candidateId) {
     return (
       <section className="card pipeline">
         <h2>Hiring pipeline</h2>
@@ -129,6 +144,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
   const next = nextStage(pipeline.stages, pipeline.currentStageKey);
   const labelFor = (key: string | null) => pipeline.stages.find((s) => s.key === key)?.label ?? key ?? '';
   const isInterviewStage = current?.kind === 'ai_interview' || current?.kind === 'human_interview';
+  const openHumanRounds = pipeline.rounds.filter((r) => r.conductedBy === 'HUMAN' && r.status === 'SCHEDULED');
 
   const scheduleRound = (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,6 +156,14 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
       ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
       ...(current.kind === 'human_interview' && names.length > 0 ? { interviewers: names } : {}),
     }).then(() => { setScheduledAt(''); setInterviewers(''); setSessionId(''); }));
+  };
+
+  const completeRound = (e: React.FormEvent) => {
+    e.preventDefault();
+    const roundId = roundToComplete || openHumanRounds[0]?.id;
+    if (!roundId) return;
+    void run(() => api.post(`/pipelines/${pipeline.id}/rounds/${roundId}/complete`, { notes: roundNotes })
+      .then(() => { setRoundNotes(''); setRoundToComplete(''); }));
   };
 
   const recordDecision = (e: React.FormEvent) => {
@@ -238,12 +262,37 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
                   <td>{round.conductedBy === 'AI' ? 'AI (Schranders)' : round.interviewers.join(', ') || 'Human interviewer'}</td>
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
                   <td>{new Date(round.scheduledAt).toLocaleString()}</td>
-                  <td>{round.status.toLowerCase()}</td>
+                  <td>
+                    {round.status.toLowerCase()}
+                    {round.conductedBy === 'AI' && round.sessionId && round.status === 'SCHEDULED' && (
+                      <> · <Link to={`/interviews/${round.sessionId}/observe`}>Observe live</Link></>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </>
+      )}
+
+      {openHumanRounds.length > 0 && (
+        <form className="pipeline-action pipeline-complete" onSubmit={completeRound}>
+          <h3>Complete a human round</h3>
+          <p className="muted small">What the interviewers recorded becomes the evidence for this stage.</p>
+          {openHumanRounds.length > 1 && (
+            <>
+              <label htmlFor="complete-round">Round</label>
+              <select id="complete-round" value={roundToComplete || openHumanRounds[0].id} onChange={(e) => setRoundToComplete(e.target.value)}>
+                {openHumanRounds.map((round) => (
+                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {new Date(round.scheduledAt).toLocaleString()}</option>
+                ))}
+              </select>
+            </>
+          )}
+          <label htmlFor="round-notes">Round notes</label>
+          <textarea id="round-notes" value={roundNotes} onChange={(e) => setRoundNotes(e.target.value)} minLength={20} required placeholder="What the candidate demonstrated, with specific examples." />
+          <button className="btn secondary" style={{ marginTop: 10 }} disabled={busy}>Complete round</button>
+        </form>
       )}
 
       {summary && (

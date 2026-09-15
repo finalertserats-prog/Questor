@@ -522,6 +522,40 @@ interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'
   res.json({ assessmentId, partial: true });
 }));
 
+/**
+ * HR silently observing the AI interview: the transcript so far, read-only.
+ *
+ * Refused unless the candidate consented on a page that told them a member of
+ * the hiring team may observe. Each observer is audited once per interview
+ * rather than once per poll.
+ */
+interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const session = await getSession(req, req.params.id);
+  const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
+  if (consent.observerDisclosed !== true) {
+    throw new HttpError(409, "The candidate wasn't told this interview may be observed, so it can't be watched live. The transcript is available once the interview ends.");
+  }
+
+  const turns = await prisma.turn.findMany({
+    where: { sessionId: session.id },
+    orderBy: { index: 'asc' },
+    select: { index: true, speaker: true, text: true, createdAt: true },
+  });
+
+  const alreadyRecorded = await prisma.auditEvent.findFirst({
+    where: { action: 'interview.observed', entityId: session.id, actorId: req.auth!.userId },
+    select: { id: true },
+  });
+  if (!alreadyRecorded) {
+    await logAudit({
+      tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
+      action: 'interview.observed', entityType: 'InterviewSession', entityId: session.id,
+    });
+  }
+
+  res.json({ session: { id: session.id, state: session.state }, turns });
+}));
+
 interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
   const [turns, integrityEvents] = await Promise.all([

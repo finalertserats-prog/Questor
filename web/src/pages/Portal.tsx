@@ -10,6 +10,8 @@ export interface SttCapability { provider: string; mode: 'browser' | 'server'; c
 interface PortalInfo {
   candidateName: string; roleTitle: string; state: string; durationMinutes: number;
   aiDisclosure: string; recordingRequested: boolean; privacy: string; accommodationsEnabled: boolean; proctoringEnabled: boolean;
+  /** True when the disclosure says a member of the hiring team may observe. */
+  observerNotice?: boolean;
   speech: { stt: SttCapability; tts: { provider: string } };
 }
 
@@ -89,6 +91,7 @@ export function Portal() {
       const res = await api.post<{ handoff?: boolean; message?: string }>(`/portal/${token}/consent`, {
         recordingConsent, accepted, accommodationRequest: accommodation || undefined,
         monitoringNoticeShown: info?.proctoringEnabled === true,
+        observerNoticeShown: info?.observerNotice === true,
       });
       if (res.handoff) { setHandoff(res.message || 'Your request has been recorded.'); return; }
       setStep('techcheck');

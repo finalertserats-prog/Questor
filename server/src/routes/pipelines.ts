@@ -5,6 +5,7 @@ import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessRole } from '../services/access.js';
 import { logAudit } from '../services/audit.js';
+import { withObserverNotice } from '../services/observerPolicy.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
@@ -182,6 +183,22 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
       data: { updatedAt: new Date() },
     });
     if (stillHere.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
+
+    // HR may silently observe the AI interview, so the candidate must be told
+    // before they consent. After consent the notice cannot be added
+    // retroactively; observation of that session then stays unavailable.
+    if (roles.hrMayObserve && body.sessionId) {
+      const session = await tx.interviewSession.findUniqueOrThrow({ where: { id: body.sessionId }, select: { consentJson: true } });
+      const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
+      if (!consent.consentedAt) {
+        const disclosureText = withObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : '');
+        await tx.interviewSession.update({
+          where: { id: body.sessionId },
+          data: { consentJson: JSON.stringify({ ...consent, disclosureText }) },
+        });
+      }
+    }
+
     return tx.interviewRound.create({
       data: {
         tenantId, pipelineId: pipeline.id, stageKey: stage.key,

@@ -21,6 +21,7 @@ import { InterviewRoom } from './pages/InterviewRoom';
 import { Settings } from './pages/Settings';
 import { About } from './pages/About';
 import { Contact } from './pages/Contact';
+import { ObserveInterview } from './pages/ObserveInterview';
 
 function Layout({ children }: { children: React.ReactNode }) {
   // The sidebar is a drawer: hidden until asked for, so pages get the full width.
@@ -28,6 +29,9 @@ function Layout({ children }: { children: React.ReactNode }) {
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  // Set when the user closes the drawer themselves, so focus returns to the
+  // toggle — but only after the toggle stops being inert.
+  const restoreFocusRef = useRef(false);
   const location = useLocation();
 
   // While the drawer is open, the page behind it is inert: keyboard focus and
@@ -35,6 +39,10 @@ function Layout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     mainRef.current?.toggleAttribute('inert', navOpen);
     toggleRef.current?.toggleAttribute('inert', navOpen);
+    if (!navOpen && restoreFocusRef.current) {
+      restoreFocusRef.current = false;
+      toggleRef.current?.focus();
+    }
   }, [navOpen]);
 
   // Following a link is the end of the errand the drawer was opened for.
@@ -49,8 +57,8 @@ function Layout({ children }: { children: React.ReactNode }) {
       // The profile menu handles Escape first (capture phase) and marks it, so
       // one press closes only the innermost layer.
       if (event.key === 'Escape' && !event.defaultPrevented) {
+        restoreFocusRef.current = true;
         setNavOpen(false);
-        toggleRef.current?.focus();
       }
     };
     document.addEventListener('keydown', onKeyDown);
@@ -58,8 +66,8 @@ function Layout({ children }: { children: React.ReactNode }) {
   }, [navOpen]);
 
   const closeNav = () => {
+    restoreFocusRef.current = true;
     setNavOpen(false);
-    toggleRef.current?.focus();
   };
 
   return (
@@ -135,6 +143,7 @@ export function App() {
       <Route path="/candidates/:id" element={<Protected><CandidateDetail /></Protected>} />
       <Route path="/interviews" element={<Protected><InterviewsList /></Protected>} />
       <Route path="/interviews/:id" element={<Protected><InterviewDetail /></Protected>} />
+      <Route path="/interviews/:id/observe" element={<Protected><ObserveInterview /></Protected>} />
       <Route path="/assessments/:id" element={<Protected><AssessmentView /></Protected>} />
       {/* Declared before nothing else claims it; the blind view is a distinct
           surface from the full assessment precisely so a reviewer cannot land on

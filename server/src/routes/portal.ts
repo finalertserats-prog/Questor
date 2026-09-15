@@ -20,6 +20,7 @@ import { startInterview, submitCandidateTurn, finalizeInterview, withdrawIntervi
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
+import { hasObserverNotice } from '../services/observerPolicy.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
@@ -149,6 +150,7 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
     accommodationsEnabled: true,
     proctoringEnabled,
+    observerNotice: hasObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : ''),
     speech: { stt: sttCapability(), tts: ttsCapability() },
   });
 }));
@@ -206,6 +208,8 @@ const consentSchema = z.object({
   // Whether the portal page the candidate consented on displayed the browser
   // monitoring notice. Policy can change between page load and consent.
   monitoringNoticeShown: z.boolean().optional(),
+  // Whether that page also told the candidate a member of the hiring team may observe.
+  observerNoticeShown: z.boolean().optional(),
 });
 portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token);
@@ -253,6 +257,9 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   consent.consentedAt = new Date().toISOString();
   consent.channel = 'portal';
   consent.monitoringDisclosed = monitoringDisclosed;
+  // Live observation by HR is allowed only if the page they consented on said so.
+  consent.observerDisclosed = body.observerNoticeShown === true
+    && hasObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : '');
   consent.disclosureShown = monitoringDisclosed
     ? await disclosureWithProctoringPolicy(policyScope, consent.disclosureText ?? '')
     : (consent.disclosureText ?? '');
