@@ -64,22 +64,53 @@ say "Pre-flight"
 
 [ -d "$REPO_DIR" ] || die "repo not found at $REPO_DIR"
 command -v pm2 >/dev/null || die "pm2 not on PATH"
-command -v sqlite3 >/dev/null || die "sqlite3 not on PATH (needed to check for live interviews)"
-
 cd "$REPO_DIR"
+
+# Which database this deployment runs on, read from the server's own config so
+# the script can never check or back up a different database than the app uses.
+DB_URL="$(grep -E '^DATABASE_URL=' server/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"' || true)"
+case "$DB_URL" in
+  postgresql://*|postgres://*) DB_KIND=postgres ;;
+  *) DB_KIND=sqlite ;;
+esac
+# psql and pg_dump do not understand Prisma's ?schema= parameter.
+PG_URL="${DB_URL%%\?*}"
+if [ "$DB_KIND" = postgres ]; then
+  command -v psql >/dev/null || die "psql not on PATH (needed to check for live interviews)"
+  command -v pg_dump >/dev/null || die "pg_dump not on PATH (needed for the pre-deploy backup)"
+  command -v pg_restore >/dev/null || die "pg_restore not on PATH (needed to verify the backup)"
+else
+  command -v sqlite3 >/dev/null || die "sqlite3 not on PATH (needed to check for live interviews)"
+fi
+ok "database: $DB_KIND"
 
 # Refuse to restart out from under someone who is being interviewed. There is
 # no SIGTERM drain, so a restart drops live sockets and ends their interview
 # with no warning and no way back in. A candidate mid-answer is a person, not
 # a deployment window.
-DB="$(ls server/prisma/data/*.db 2>/dev/null | head -1 || true)"
-if [ -n "$DB" ]; then
-  ACTIVE="$(sqlite3 "$DB" "
-    SELECT COUNT(*) FROM InterviewSession s
+ACTIVE=""
+if [ "$DB_KIND" = postgres ]; then
+  # A failed query is fatal here rather than read as "nobody is interviewing":
+  # skipping this check silently is exactly how a live interview gets cut off.
+  ACTIVE="$(psql "$PG_URL" -tAc "
+    SELECT COUNT(*) FROM \"InterviewSession\" s
     WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
                           'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
-      AND EXISTS (SELECT 1 FROM Turn t WHERE t.sessionId = s.id
-                  AND t.createdAt > datetime('now','-15 minutes'));" 2>/dev/null || echo 0)"
+      AND EXISTS (SELECT 1 FROM \"Turn\" t WHERE t.\"sessionId\" = s.id
+                  AND t.\"createdAt\" > now() - interval '15 minutes');")" \
+    || die "could not query Postgres for live interviews — not deploying blind"
+else
+  DB="$(ls server/prisma/data/*.db 2>/dev/null | head -1 || true)"
+  if [ -n "$DB" ]; then
+    ACTIVE="$(sqlite3 "$DB" "
+      SELECT COUNT(*) FROM InterviewSession s
+      WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
+                            'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
+        AND EXISTS (SELECT 1 FROM Turn t WHERE t.sessionId = s.id
+                    AND t.createdAt > datetime('now','-15 minutes'));" 2>/dev/null || echo 0)"
+  fi
+fi
+if [ -n "$ACTIVE" ]; then
   if [ "${ACTIVE:-0}" -gt 0 ]; then
     if [ "$FORCE" -eq 1 ]; then
       warn "$ACTIVE interview(s) active in the last 15 min — deploying anyway (--force)"
@@ -105,7 +136,20 @@ say "Backup"
 # Taken BEFORE the pull, and restore-verified rather than assumed. For most of
 # this system's life the backup cron had never once fired and no restore had
 # ever been tested, so "a backup exists" was not evidence of anything.
-if [ -x "$BACKUP_SCRIPT" ]; then
+if [ "$DB_KIND" = postgres ]; then
+  mkdir -p /root/Questor/backups
+  LATEST="/root/Questor/backups/questor-$(date +%Y%m%d-%H%M%S).dump"
+  # Owner-only: the dump holds every candidate's transcript and résumé.
+  run_logged backup bash -c 'umask 077 && pg_dump --format=custom --file="$1" "$2"' -- "$LATEST" "$PG_URL"
+  # A dump pg_restore cannot read back, or one without the candidate table, is
+  # not a restore point.
+  pg_restore --list "$LATEST" > "$LOG_DIR/restore-list.txt" 2>&1 \
+    || die "backup could not be read back by pg_restore — not deploying without a restore point"
+  grep -Eq 'TABLE DATA public "?Candidate"?' "$LOG_DIR/restore-list.txt" \
+    || die "backup is missing the Candidate table — not deploying without a restore point"
+  ROWS="$(psql "$PG_URL" -tAc 'SELECT COUNT(*) FROM "Candidate";')"
+  ok "$(basename "$LATEST") verified restorable ($ROWS candidates)"
+elif [ -x "$BACKUP_SCRIPT" ]; then
   run_logged backup "$BACKUP_SCRIPT"
   LATEST="$(ls -t /root/Questor/backups/*.db.gz 2>/dev/null | head -1 || true)"
   [ -n "$LATEST" ] || die "backup script ran but produced no file"
@@ -138,14 +182,24 @@ say "Install"
 # workspace's tree while the app resolved express from the root — which is how
 # the app ended up crash-looping on ERR_MODULE_NOT_FOUND.
 run_logged npm-ci npm ci
-run_logged prisma npx prisma generate --schema server/prisma/schema.prisma
+if [ "$DB_KIND" = postgres ]; then
+  # The Postgres schema is generated from the SQLite source of truth.
+  run_logged pg-schema node scripts/generate-postgres-schema.mjs
+  run_logged prisma npx prisma generate --schema server/prisma/postgres/schema.prisma
+else
+  run_logged prisma npx prisma generate --schema server/prisma/schema.prisma
+fi
 
 # Apply the schema to the database. `prisma generate` only rebuilds the client,
 # and a deploy once shipped code querying a table and columns the database did
 # not have. Run from server/ so Prisma loads server/.env for DATABASE_URL. The
 # backup above is the restore point; `db push` refuses any change that would
 # drop data unless explicitly told to accept it, and it is never told to here.
-run_logged schema bash -c 'cd server && npx prisma db push --skip-generate'
+if [ "$DB_KIND" = postgres ]; then
+  run_logged schema bash -c 'cd server && npx prisma db push --skip-generate --schema prisma/postgres/schema.prisma'
+else
+  run_logged schema bash -c 'cd server && npx prisma db push --skip-generate'
+fi
 
 for pkg in express @prisma/client dotenv; do
   [ -d "node_modules/$pkg" ] || die "node_modules/$pkg missing after install — the tree is incomplete"
@@ -213,6 +267,11 @@ if [ "$API_OK" -ne 1 ]; then
 
   git reset --hard "$PREV_COMMIT" >/dev/null 2>&1 || true
   npm ci >/dev/null 2>&1 || true
+  # npm ci regenerates the client from the SQLite schema; a Postgres deployment
+  # needs the Postgres client back or the rolled-back app cannot reach its data.
+  if [ "$DB_KIND" = postgres ]; then
+    { node scripts/generate-postgres-schema.mjs && npx prisma generate --schema server/prisma/postgres/schema.prisma; } >/dev/null 2>&1 || true
+  fi
   ( cd server && npx tsc -p tsconfig.json ) >/dev/null 2>&1 || true
   if [ -d "${WEB_ROOT}.old" ]; then
     rm -rf "$WEB_ROOT"; mv "${WEB_ROOT}.old" "$WEB_ROOT"
