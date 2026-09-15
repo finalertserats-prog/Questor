@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { logAudit } from '../services/audit.js';
+import { logger } from '../logger.js';
 import { isMeetingAdapterId, missingEnv } from '../providers/meeting/connectorEnv.js';
 import { testMeetingConnection } from '../providers/meeting/connectionTest.js';
 
@@ -27,11 +28,24 @@ const connectorTestLimiter = rateLimit({
   keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
 });
 
+// The credentials are deployment-wide, but every tenant admin can run a test,
+// and an admin can mint more admin users to get fresh per-user allowances. This
+// second limiter is keyed by adapter alone, so the vendor app sees a bounded
+// request rate however many tenants or users are testing.
+const CONNECTOR_TEST_GLOBAL_MAX = 30;
+const connectorTestGlobalLimiter = rateLimit({
+  name: 'connector-test-global',
+  windowMs: CONNECTOR_TEST_WINDOW_MS,
+  max: CONNECTOR_TEST_GLOBAL_MAX,
+  keyOf: (req) => String(req.params.adapterId),
+});
+
 connectorsRouter.post(
   '/meeting/:adapterId/test',
   // Capability before anything else, so a non-admin cannot probe adapter ids.
   requireCapability('admin:manage'),
   connectorTestLimiter,
+  connectorTestGlobalLimiter,
   asyncHandler(async (req, res) => {
     const { adapterId } = req.params;
     if (!isMeetingAdapterId(adapterId)) {
@@ -41,7 +55,11 @@ connectorsRouter.post(
     }
 
     const auth = req.auth!;
-    const audit = (outcome: 'ok' | 'failed' | 'not_configured') => logAudit({
+    const audit = (outcome: 'ok' | 'failed' | 'not_configured') => {
+      // The audit row lands in the caller's tenant only; the operator who owns
+      // the shared vendor app needs a cross-tenant trail, so log it too.
+      logger.info({ tenantId: auth.tenantId, userId: auth.userId, adapterId, outcome }, 'connector.tested');
+      return logAudit({
       tenantId: auth.tenantId,
       actorType: 'user',
       actorId: auth.userId,
@@ -52,7 +70,8 @@ connectorsRouter.post(
       // derived from vendor behaviour and does not belong in a compliance log.
       after: { adapterId, outcome },
       requestId: req.requestId,
-    });
+      });
+    };
 
     const missing = missingEnv(adapterId);
     if (missing.length > 0) {

@@ -5,7 +5,7 @@ import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
-import { isRoleName, ROLES } from '../domain/capabilities.js';
+import { capabilitiesOf, isRoleName, ROLES } from '../domain/capabilities.js';
 import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { getLlm } from '../providers/llm/index.js';
@@ -28,15 +28,19 @@ adminRouter.use(authenticate);
 const MAX_RETENTION_EXTENSION_DAYS = 365 * 7;
 
 // Provider / connector status — shows which paid components are plugged in.
-adminRouter.get('/providers', asyncHandler(async (_req, res) => {
+adminRouter.get('/providers', asyncHandler(async (req, res) => {
   const llm = getLlm();
+  // Which vendor variables are set is setup detail for admins; other roles
+  // still see capability and configured/not-configured status.
+  const showEnv = capabilitiesOf(req.auth!.role).includes('admin:manage');
+  const meeting = allMeetingCapabilities().map(({ env, ...rest }) => (showEnv ? { ...rest, env } : rest));
   res.json({
     llm: { provider: llm.name, enabled: llm.enabled, configured: llm.enabled, mode: llm.enabled ? 'remote' : 'built-in heuristic' },
     stt: sttCapability(),
     tts: ttsCapability(),
     email: { provider: getEmail().name, configured: getEmail().configured },
     ats: { provider: getAts().name, configured: getAts().configured },
-    meeting: allMeetingCapabilities(),
+    meeting,
   });
 }));
 

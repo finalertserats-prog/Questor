@@ -63,6 +63,9 @@ async function requestToken(adapter: VendorAdapterId, req: TokenRequest): Promis
       method: 'POST',
       headers: req.headers,
       body: req.body,
+      // A 307/308 would re-send this body (client secret / signed assertion)
+      // to wherever the redirect points. Token endpoints never redirect.
+      redirect: 'error',
       signal: AbortSignal.timeout(VENDOR_TIMEOUT_MS),
     });
   } catch (err) {
@@ -75,6 +78,8 @@ async function requestToken(adapter: VendorAdapterId, req: TokenRequest): Promis
   }
 
   if (!res.ok) {
+    // Discard the unread error body so the socket is released now, not at GC.
+    await res.body?.cancel().catch(() => undefined);
     logger.warn({ adapter, status: res.status }, 'Meeting connector test: vendor rejected the request');
     return { ok: false, message: rejectionMessage(adapter, res.status) };
   }

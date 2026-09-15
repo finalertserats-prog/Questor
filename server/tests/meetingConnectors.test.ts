@@ -117,6 +117,14 @@ describe('connection tests call the lightest authenticated vendor endpoint', () 
     expect(String(fetchMock.mock.calls[0][0])).toContain('https://zoom.us/oauth/token');
   });
 
+  it('refuses to follow vendor redirects, so the secret-bearing body cannot be re-posted elsewhere', async () => {
+    configureZoom();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { access_token: VENDOR_TOKEN }));
+    vi.stubGlobal('fetch', fetchMock);
+    await testAs(adminA, 'zoom');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ redirect: 'error' });
+  });
+
   it('zoom success response echoes neither the client secret nor the vendor token', async () => {
     configureZoom();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(200, { access_token: VENDOR_TOKEN })));
@@ -219,6 +227,13 @@ describe('GET /api/admin/providers — meeting status exposes variable names, ne
         { name: 'ZOOM_CLIENT_SECRET', present: true },
       ],
     });
+  });
+
+  it('hides which variables are set from a non-admin', async () => {
+    configureZoom();
+    const res = await request(app).get('/api/admin/providers').set('Authorization', `Bearer ${recruiterA}`);
+    const zoom = res.body.meeting.find((m: { provider: string }) => m.provider === 'zoom');
+    expect(zoom.env).toBeUndefined();
   });
 
   it('does not include any credential value in the providers payload', async () => {
