@@ -3,7 +3,7 @@ import { asyncHandler, authenticate, requireCapability } from '../middleware/ind
 import { rateLimit } from '../middleware/rateLimit.js';
 import { logAudit } from '../services/audit.js';
 import { logger } from '../logger.js';
-import { isMeetingAdapterId, missingEnv } from '../providers/meeting/connectorEnv.js';
+import { isMeetingAdapterId, missingEnv, type MeetingAdapterId } from '../providers/meeting/connectorEnv.js';
 import { testMeetingConnection } from '../providers/meeting/connectionTest.js';
 
 // Connector connection tests.
@@ -44,15 +44,17 @@ connectorsRouter.post(
   '/meeting/:adapterId/test',
   // Capability before anything else, so a non-admin cannot probe adapter ids.
   requireCapability('admin:manage'),
+  // Then the adapter id, before the limiters: a typo should not spend an
+  // admin's quota, and an arbitrary id should not open a rate-limit bucket.
+  (req, res, next) => {
+    if (isMeetingAdapterId(req.params.adapterId)) { next(); return; }
+    const message = 'Unknown meeting adapter.';
+    res.status(404).json({ ok: false, message, error: message });
+  },
   connectorTestLimiter,
   connectorTestGlobalLimiter,
   asyncHandler(async (req, res) => {
-    const { adapterId } = req.params;
-    if (!isMeetingAdapterId(adapterId)) {
-      const message = 'Unknown meeting adapter.';
-      res.status(404).json({ ok: false, message, error: message });
-      return;
-    }
+    const adapterId = req.params.adapterId as MeetingAdapterId;
 
     const auth = req.auth!;
     const audit = (outcome: 'ok' | 'failed' | 'not_configured') => {

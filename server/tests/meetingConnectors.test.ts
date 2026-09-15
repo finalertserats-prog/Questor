@@ -4,6 +4,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { createApp } from '../src/app.js';
 import { wipe } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
+import { meetingCapability } from '../src/providers/meeting/index.js';
 
 // Connection tests for meeting adapters. Every outbound call is a mocked fetch:
 // a test that reached Zoom or Microsoft would need real credentials and would
@@ -248,5 +249,16 @@ describe('GET /api/admin/providers — meeting status exposes variable names, ne
     const res = await request(app).get('/api/admin/providers').set('Authorization', `Bearer ${adminA}`);
     const teams = res.body.meeting.find((m: { provider: string }) => m.provider === 'teams');
     expect(teams.configured).toBe(false);
+  });
+});
+
+describe('meeting capability keeps configuration detail out of non-admin routes', () => {
+  it('omits the variable-presence list unless the caller asked for it', () => {
+    expect(meetingCapability('zoom').env).toBeUndefined();
+  });
+
+  it('includes it when asked, with names only', () => {
+    const env = meetingCapability('zoom', { includeEnv: true }).env;
+    expect(env?.every((e) => typeof e.name === 'string' && typeof e.present === 'boolean')).toBe(true);
   });
 });

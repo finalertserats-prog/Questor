@@ -109,7 +109,7 @@ export function MeetingAdapterSetup({ adapters }: { adapters: readonly MeetingAd
       <thead>
         <tr>
           <th>Provider</th><th>Status</th><th>Space</th><th>Live</th>
-          <th>Recording</th><th>Transcript</th><th>Bot</th><th>Fallback</th><th />
+          <th>Recording</th><th>Transcript</th><th>Bot</th><th>Fallback</th><th scope="col" aria-label="Actions" />
         </tr>
       </thead>
       <tbody>
@@ -136,7 +136,7 @@ export function MeetingAdapterSetup({ adapters }: { adapters: readonly MeetingAd
                 <td>
                   <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                     {guide && (
-                      <button type="button" className="btn sm secondary" aria-expanded={isOpen} onClick={() => toggleGuide(m.provider)}>
+                      <button type="button" className="btn sm secondary" aria-expanded={isOpen} aria-controls={`connector-guide-${m.provider}`} onClick={() => toggleGuide(m.provider)}>
                         {isOpen ? 'Hide setup' : 'How to set up'}
                       </button>
                     )}
@@ -155,13 +155,14 @@ export function MeetingAdapterSetup({ adapters }: { adapters: readonly MeetingAd
               </tr>
               {test && test !== 'pending' && (
                 <tr>
-                  <td colSpan={ADAPTER_COLUMNS}>
+                  {/* The result arrives after an async call, so it is announced. */}
+                  <td colSpan={ADAPTER_COLUMNS} role="status" aria-live="polite">
                     <Banner kind={test.ok ? 'ok' : 'error'}>{test.message}</Banner>
                   </td>
                 </tr>
               )}
               {isOpen && guide && (
-                <tr>
+                <tr id={`connector-guide-${m.provider}`}>
                   <td colSpan={ADAPTER_COLUMNS}><GuidePanel guide={guide} env={m.env} /></td>
                 </tr>
               )}

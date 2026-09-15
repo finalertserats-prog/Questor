@@ -14,8 +14,13 @@ export interface MeetingCapability {
   configured: boolean;
   /** Whether MEETING_PROVIDER currently selects this adapter. */
   selected: boolean;
-  /** Variable names and whether each is set — names only, never values. */
-  env: EnvPresence[];
+  /**
+   * Variable names and whether each is set — names only, never values, and
+   * only for callers that asked for it. Which vendor credentials a deployment
+   * holds is setup detail for admins, so it is absent by default rather than
+   * filtered out at each route.
+   */
+  env?: EnvPresence[];
   capabilities: {
     createSpace: boolean;
     liveMedia: boolean;
@@ -34,7 +39,7 @@ function status(id: MeetingAdapterId) {
   return { configured: isConfigured(id), selected: selectedId === id, env: envPresence(id) };
 }
 
-export function meetingCapability(provider = config.meeting.provider): MeetingCapability {
+function capabilityWithEnv(provider: string): MeetingCapability {
   switch (provider) {
     case 'teams':
       return {
@@ -71,6 +76,19 @@ export function meetingCapability(provider = config.meeting.provider): MeetingCa
   }
 }
 
+/**
+ * The adapter's capabilities, without the variable-presence list unless it is
+ * asked for. The default is the safe one: every route that returns a capability
+ * to a non-admin (interview creation, for one) gets no configuration detail
+ * without having to remember to strip it.
+ */
+export function meetingCapability(provider = config.meeting.provider, options: { includeEnv?: boolean } = {}): MeetingCapability {
+  const capability = capabilityWithEnv(provider);
+  if (options.includeEnv) return capability;
+  const { env: _env, ...withoutEnv } = capability;
+  return withoutEnv;
+}
+
 export function allMeetingCapabilities(): MeetingCapability[] {
-  return ['hosted', 'teams', 'zoom', 'meet'].map((p) => meetingCapability(p));
+  return ['hosted', 'teams', 'zoom', 'meet'].map((p) => capabilityWithEnv(p));
 }

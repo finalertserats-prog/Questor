@@ -107,7 +107,9 @@ hosted room regardless of which adapter is configured.
   scopes/permissions, redirect/webhook URLs (none for these app-only flows), and the vendor docs.
   The same text lives in `web/src/components/connectorGuides.ts`.
 - **Test connection** — `POST /api/admin/connectors/meeting/:adapterId/test`. Requires
-  `admin:manage`, rate limited to 10 tests per user and 30 per adapter across the whole deployment
+  `admin:manage`, rate limited to 10 tests per user and 30 per adapter across the whole deployment.
+  The per-adapter limit is deployment-wide on purpose — the vendor app is shared by every organisation —
+  so heavy testing by one organisation's admin can make another's wait out the window
   per 10 minutes, and audited as `connector.tested` with the adapter id and outcome
   (`ok` / `failed` / `not_configured`) only. The same event is also written to the server log with
   tenant and user ids, because credentials are shared by every tenant and each tenant's audit trail
