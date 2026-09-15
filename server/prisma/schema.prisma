@@ -64,6 +64,10 @@ model Role {
   candidates    Candidate[]
   interviews    InterviewSession[]
   assignments   RoleAssignment[]
+  // JSON stage plan for new pipelines on this role (see domain/pipelineStages.ts).
+  // Empty means the default medallion stages.
+  pipelineStagesJson String @default("")
+  pipelines     CandidatePipeline[]
 }
 
 model RoleScorecardVersion {
@@ -95,6 +99,7 @@ model Candidate {
   interviews    InterviewSession[]
   artifacts     Artifact[]
   assignments   CandidateAssignment[]
+  pipelines     CandidatePipeline[]
 }
 
 model CandidateProfileVersion {
@@ -401,4 +406,59 @@ model CandidateAssignment {
 
   @@unique([candidateId, userId])
   @@index([userId])
+}
+
+// ---- Medallion pipeline ----
+//
+// One candidate moving through ordered stages for one role (see
+// domain/pipelineStages.ts). The stage plan is snapshotted at creation so a
+// later change to the role's configuration never rewrites an in-flight path.
+
+model CandidatePipeline {
+  id                String    @id @default(cuid())
+  tenantId          String
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  roleId            String
+  role              Role      @relation(fields: [roleId], references: [id])
+  stagesJson        String
+  currentStageKey   String
+  status            String    @default("ACTIVE") // ACTIVE | DECIDED
+  decision          String?   // APPROVED | REJECTED | WITHDRAWN
+  decisionReason    String?
+  decidedAtStageKey String?
+  decidedById       String?
+  decidedAt         DateTime?
+  createdById       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  rounds            InterviewRound[]
+
+  @@unique([candidateId, roleId])
+  @@index([tenantId])
+}
+
+// An interview scheduled at a pipeline stage. The AI conducts only the AI
+// interview stage (HR may silently observe); every other round is led by a
+// person with the AI as silent observer.
+model InterviewRound {
+  id               String   @id @default(cuid())
+  tenantId         String
+  pipelineId       String
+  pipeline         CandidatePipeline @relation(fields: [pipelineId], references: [id])
+  stageKey         String
+  conductedBy      String   // AI | HUMAN
+  aiObserver       Boolean  @default(false)
+  hrMayObserve     Boolean  @default(false)
+  // The AI interview session for an AI-conducted round.
+  sessionId        String?
+  interviewersJson String   @default("[]")
+  scheduledAt      DateTime
+  status           String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED
+  notes            String   @default("")
+  createdById      String?
+  createdAt        DateTime @default(now())
+
+  @@index([pipelineId])
+  @@index([tenantId])
 }

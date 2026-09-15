@@ -209,6 +209,8 @@ export async function eraseCandidate(o: {
     // Access-control rows hold a foreign key onto Candidate, so they must go
     // first or the delete below fails the constraint and erasure — a legal
     // obligation — errors out entirely.
+    await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
+    await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
@@ -399,6 +401,8 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('artifacts', () => tx.artifact.deleteMany({ where: { candidateId } }));
         // Same foreign-key ordering as erasure: assignment rows reference the
         // candidate and must go first.
+        await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId } } }));
+        await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId } }));
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));
       });

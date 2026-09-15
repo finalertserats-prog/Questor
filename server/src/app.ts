@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { orgsRouter } from './routes/orgs.js';
+import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
 import { candidatesRouter } from './routes/candidates.js';
@@ -121,8 +122,10 @@ export function createApp() {
   app.use('/api/orgs', rateLimit({ name: 'orgs', windowMs: 15 * 60_000, max: 120 }), orgsRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/roles', rolesRouter);
+  app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/interviews', interviewsRouter);
+  app.use('/api/pipelines', pipelinesRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);
   app.use('/api/admin', adminRouter);
