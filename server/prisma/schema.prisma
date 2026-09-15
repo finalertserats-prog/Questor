@@ -456,6 +456,8 @@ model InterviewRound {
   scheduledAt      DateTime
   status           String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED
   notes            String   @default("")
+  // When the round was completed with notes; the notes' retention runs from here.
+  completedAt      DateTime?
   createdById      String?
   createdAt        DateTime @default(now())
 

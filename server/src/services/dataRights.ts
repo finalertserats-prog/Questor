@@ -491,7 +491,19 @@ export async function purgeExpiredArtifacts(now = new Date()): Promise<number> {
 export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - retentionDays() * DAY_MS);
   const expired = await prisma.interviewRound.findMany({
-    where: { status: 'COMPLETED', notes: { not: '' }, scheduledAt: { lte: cutoff } },
+    where: {
+      notes: { not: '' },
+      // Counted from completion, when the notes were written. A round with notes
+      // but no completion time (never marked complete) falls back to its
+      // scheduled date rather than keeping its notes for ever.
+      OR: [
+        { completedAt: { lte: cutoff } },
+        { completedAt: null, scheduledAt: { lte: cutoff } },
+      ],
+      // A legal hold on any of the candidate's sessions or artifacts spares
+      // their round notes too, matching the rest of the sweep.
+      pipeline: { candidate: { interviews: { none: { legalHold: true } }, artifacts: { none: { legalHold: true } } } },
+    },
     select: { id: true, pipelineId: true, tenantId: true },
   });
   if (expired.length === 0) return 0;

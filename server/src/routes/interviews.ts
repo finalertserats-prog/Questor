@@ -18,6 +18,7 @@ import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
+import { OBSERVER_NOTICE } from '../services/observerPolicy.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 
 export const interviewsRouter = Router();
@@ -532,8 +533,16 @@ interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'
 interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
   const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
-  if (consent.observerDisclosed !== true) {
-    throw new HttpError(409, "The candidate wasn't told this interview may be observed, so it can't be watched live. The transcript is available once the interview ends.");
+  // Two conditions. The consent flag comes from the portal page and could be
+  // sent by anyone holding the candidate's link, so on its own it proves
+  // nothing. The server-side proof is the transcript: an AI turn in which the
+  // interviewer actually told the candidate they may be observed.
+  const spokenNotice = await prisma.turn.findFirst({
+    where: { sessionId: session.id, speaker: 'agent', text: { contains: OBSERVER_NOTICE } },
+    select: { id: true },
+  });
+  if (consent.observerDisclosed !== true || !spokenNotice) {
+    throw new HttpError(409, 'Live observation opens once the interview has started and the AI has told the candidate a member of the hiring team may observe. The transcript is available once the interview ends.');
   }
 
   const turns = await prisma.turn.findMany({

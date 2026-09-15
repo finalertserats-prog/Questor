@@ -47,6 +47,12 @@ interface InterviewOption {
 
 type Decision = 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
 
+interface SchedulingNotice {
+  delivered: boolean;
+  link: string;
+  deliveryNote: string;
+}
+
 const STATE_TEXT: Record<StageState, string> = {
   done: 'Completed',
   current: 'Current stage',
@@ -89,6 +95,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
   const [reason, setReason] = useState('');
   const [roundToComplete, setRoundToComplete] = useState('');
   const [roundNotes, setRoundNotes] = useState('');
+  const [schedulingNotice, setSchedulingNotice] = useState<SchedulingNotice | null>(null);
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -106,7 +113,12 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
     setSummary(null);
     setError('');
     setLoading(true);
-    load().catch((e: unknown) => setError(errorMessage(e))).finally(() => setLoading(false));
+    // load() claims the next id synchronously; a failure from an older load must
+    // not set this candidate's error or loading state either.
+    const loadId = latestLoad.current + 1;
+    load()
+      .catch((e: unknown) => { if (latestLoad.current === loadId) setError(errorMessage(e)); })
+      .finally(() => { if (latestLoad.current === loadId) setLoading(false); });
   }, [load]);
 
   const run = async (action: () => Promise<unknown>) => {
@@ -150,12 +162,17 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
     e.preventDefault();
     if (!current || !scheduledAt) return;
     const names = interviewers.split(',').map((n) => n.trim()).filter(Boolean);
-    void run(() => api.post(`/pipelines/${pipeline.id}/rounds`, {
+    void run(() => api.post<{ notification?: SchedulingNotice }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
       scheduledAt: new Date(scheduledAt).toISOString(),
       ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
       ...(current.kind === 'human_interview' && names.length > 0 ? { interviewers: names } : {}),
-    }).then(() => { setScheduledAt(''); setInterviewers(''); setSessionId(''); }));
+    }).then((resp) => {
+      setSchedulingNotice(resp.notification ?? null);
+      setScheduledAt('');
+      setInterviewers('');
+      setSessionId('');
+    }));
   };
 
   const completeRound = (e: React.FormEvent) => {
@@ -175,6 +192,12 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
     <section className="card pipeline">
       <h2>Hiring pipeline</h2>
       {error && <Banner kind="error">{error}</Banner>}
+
+      {schedulingNotice && (
+        <Banner kind={schedulingNotice.delivered ? 'ok' : 'info'}>
+          Round scheduled. {schedulingNotice.deliveryNote} <a href={schedulingNotice.link}>{schedulingNotice.link}</a>
+        </Banner>
+      )}
 
       <ol className="stage-track">
         {pipeline.stages.map((stage, index) => (

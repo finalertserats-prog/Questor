@@ -5,7 +5,10 @@ import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessRole } from '../services/access.js';
 import { logAudit } from '../services/audit.js';
-import { withObserverNotice } from '../services/observerPolicy.js';
+import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
+import { getEmail } from '../providers/email/index.js';
+import { config } from '../config.js';
+import { logger } from '../logger.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
@@ -147,6 +150,42 @@ pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyn
   res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
 }));
 
+interface SchedulingNotice {
+  readonly delivered: boolean;
+  readonly link: string;
+  readonly deliveryNote: string;
+}
+
+const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+/**
+ * Email the person who scheduled a round the link they need. Reports whether it
+ * was actually delivered — the console provider delivers nothing, and saying
+ * "sent" regardless is how links silently go unseen.
+ */
+async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; link: string; aiRound: boolean }): Promise<SchedulingNotice> {
+  const email = getEmail();
+  if (!email.delivers) {
+    return { delivered: false, link: o.link, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Use the link here.` };
+  }
+  const when = o.scheduledAt.toUTCString();
+  const intro = o.aiRound
+    ? `The ${o.stageLabel} AI interview is scheduled for ${when}. You can observe it live here:`
+    : `The ${o.stageLabel} interview is scheduled for ${when}. The candidate and their pipeline are here:`;
+  try {
+    await email.send({
+      to: o.to,
+      subject: `${o.stageLabel} interview scheduled`,
+      text: `${intro}\n${o.link}`,
+      html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(o.link)}">${escapeHtml(o.link)}</a></p>`,
+    });
+    return { delivered: true, link: o.link, deliveryNote: `Sent to ${o.to}.` };
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Round scheduling email failed');
+    return { delivered: false, link: o.link, deliveryNote: 'The email could not be sent. Use the link here.' };
+  }
+}
+
 const roundSchema = z.object({
   stageKey: z.string().min(1),
   scheduledAt: z.string().datetime(),
@@ -177,7 +216,8 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   // Re-check the pipeline inside the same transaction as the insert. Checking
   // it only on load left a gap in which a concurrent decision or advance could
   // land, producing a round after a decision or for a stage already left.
-  const round = await prisma.$transaction(async (tx) => {
+  const { round, noticeAdded } = await prisma.$transaction(async (tx) => {
+    let noticeAdded = false;
     const stillHere = await tx.candidatePipeline.updateMany({
       where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: stage.key },
       data: { updatedAt: new Date() },
@@ -192,14 +232,20 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
       const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
       if (!consent.consentedAt) {
         const disclosureText = withObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : '');
-        await tx.interviewSession.update({
-          where: { id: body.sessionId },
-          data: { consentJson: JSON.stringify({ ...consent, disclosureText }) },
-        });
+        if (disclosureText !== consent.disclosureText) {
+          // Conditional on the consent record being exactly what was read: if the
+          // candidate consents in between, their fresh consent must not be
+          // overwritten by this stale copy — the notice is simply not added.
+          const updated = await tx.interviewSession.updateMany({
+            where: { id: body.sessionId, consentJson: session.consentJson },
+            data: { consentJson: JSON.stringify({ ...consent, disclosureText }) },
+          });
+          noticeAdded = updated.count === 1;
+        }
       }
     }
 
-    return tx.interviewRound.create({
+    const created = await tx.interviewRound.create({
       data: {
         tenantId, pipelineId: pipeline.id, stageKey: stage.key,
         conductedBy: roles.conductedBy, aiObserver: roles.aiObserver, hrMayObserve: roles.hrMayObserve,
@@ -207,14 +253,35 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         scheduledAt: new Date(body.scheduledAt), createdById: req.auth!.userId,
       },
     });
+    return { round: created, noticeAdded };
   });
+
+  // Changing what a candidate is told is a legal disclosure change: record who
+  // made it and when. Written after the transaction commits, so the audit can
+  // never claim a change that rolled back.
+  if (noticeAdded && body.sessionId) {
+    await logAudit({
+      tenantId, actorType: 'user', actorId: req.auth!.userId,
+      action: 'interview.observer_notice_added', entityType: 'InterviewSession', entityId: body.sessionId,
+      after: { notice: OBSERVER_NOTICE, pipelineId: pipeline.id },
+    });
+  }
 
   await logAudit({
     tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.round_scheduled', entityType: 'CandidatePipeline', entityId: pipeline.id,
     after: { roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy, scheduledAt: body.scheduledAt },
   });
-  res.status(201).json({ round: presentRound(round) });
+
+  // HR gets the link they need: the live observe page for the AI interview,
+  // otherwise the candidate's page, where the pipeline lives.
+  const aiRound = round.conductedBy === 'AI' && round.sessionId !== null;
+  const link = aiRound
+    ? `${config.webOrigin}/interviews/${round.sessionId}/observe`
+    : `${config.webOrigin}/candidates/${pipeline.candidateId}`;
+  const notification = await notifyScheduler({ to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt, link, aiRound });
+
+  res.status(201).json({ round: presentRound(round), notification });
 }));
 
 const completeSchema = z.object({
@@ -231,7 +298,7 @@ pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('intervi
 
   const completed = await prisma.interviewRound.updateMany({
     where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED' },
-    data: { status: 'COMPLETED', notes },
+    data: { status: 'COMPLETED', notes, completedAt: new Date() },
   });
   if (completed.count !== 1) throw new HttpError(409, 'This round has already been completed or cancelled.');
 

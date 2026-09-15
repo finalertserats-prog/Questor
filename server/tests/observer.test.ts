@@ -44,6 +44,11 @@ async function candidateConsents(token: string, observerNoticeShown: boolean) {
   await request(app).post(`/api/portal/${token}/consent`).send({ recordingConsent: false, accepted: true, observerNoticeShown });
 }
 
+/** The interview begins: the AI's opening turn reads the disclosure aloud. */
+async function interviewStarts(token: string) {
+  await request(app).post(`/api/portal/${token}/start`).send({});
+}
+
 describe('disclosing that HR may observe', () => {
   beforeEach(async () => { await wipe(); });
 
@@ -54,6 +59,15 @@ describe('disclosing that HR may observe', () => {
 
     const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: ids.sessionId } });
     expect(parseJson<{ disclosureText?: string }>(session.consentJson, {}).disclosureText).toContain('may observe this interview');
+  });
+
+  it('records in the audit log that the observer notice was added to the candidate disclosure', async () => {
+    const ids = await seeded();
+
+    await silverRound(ids);
+
+    const audit = await prisma.auditEvent.findFirst({ where: { action: 'interview.observer_notice_added', entityId: ids.sessionId, actorId: ids.userId } });
+    expect(audit).not.toBeNull();
   });
 
   it('does not add the notice to an interview the candidate has already consented to', async () => {
@@ -78,14 +92,26 @@ describe('disclosing that HR may observe', () => {
 describe('watching the interview live', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('lets HR read the live transcript when the candidate consented to the observer notice', async () => {
+  it('lets HR read the live transcript once the AI has told the candidate they may be observed', async () => {
     const ids = await seeded();
     await silverRound(ids);
     await candidateConsents(ids.token, true);
+    await interviewStarts(ids.token);
 
     const res = await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
 
     expect(res.status).toBe(200);
+  });
+
+  it('refuses observation until the AI has spoken the observer notice, whatever the consent flag says', async () => {
+    const ids = await seeded();
+    await silverRound(ids);
+    // A consent flag alone is client-supplied and could be sent by anyone holding the portal link.
+    await candidateConsents(ids.token, true);
+
+    const res = await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
+
+    expect(res.status).toBe(409);
   });
 
   it('refuses when the candidate consented without seeing the observer notice', async () => {
@@ -102,6 +128,7 @@ describe('watching the interview live', () => {
     const ids = await seeded();
     await silverRound(ids);
     await candidateConsents(ids.token, true);
+    await interviewStarts(ids.token);
     await request(app).get(`/api/interviews/${ids.sessionId}/observe`).set('Authorization', ids.auth);
 
     const audit = await prisma.auditEvent.findFirst({ where: { action: 'interview.observed', entityId: ids.sessionId, actorId: ids.userId } });
