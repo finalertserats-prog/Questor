@@ -13,7 +13,7 @@ recommendation. A named human records the final decision, with a reason.
 
 | You need | Detail |
 | --- | --- |
-| The Questor address | Your IT admin gives you this. On a local install it is **http://localhost:5173** |
+| The Questor address | **https://questor.187-127-166-193.sslip.io** — the pilot deployment. (A local development install runs at `http://localhost:5173` instead) |
 | Your own account | One login per person — never a shared one (see §2) |
 | A browser | **Chrome or Edge.** Voice capture uses the browser's speech engine, which Safari and Firefox do not fully implement. Candidates on other browsers can still type their answers |
 | A microphone | Only for the interview room; not needed for reviewing |
@@ -26,30 +26,26 @@ Go to the Questor address and enter your email and password on the sign-in page.
 
 ### Your credentials
 
-**Questor does not ship with a personal account for you.** There are exactly two
-ways an account exists:
+**Everyone gets their own personal account.** Ask Vishnu, who administers the
+pilot deployment, for one — and say which of the roles in section 3 matches what
+you actually do. Your password should reach you through something other than
+email, and should be treated like any other HR system credential.
 
-1. **The demo account** — created by the setup script on a development machine:
+There is no shared team login, and there is no self-service sign-up:
 
-   ```
-   Email:    demo@questor.local
-   Password: questor123
-   ```
+- **The "Register" link on the sign-in page is not your way in.** It creates a
+  brand-new, separate organisation with its own empty database — it would not
+  show you your colleagues' candidates. It is switched off on the pilot
+  deployment.
+- **`demo@questor.local` is not an account on the pilot deployment.** It is a
+  development-machine login whose password is published in the public source
+  code, and the script that creates it refuses to run against a production
+  install. If you have seen those credentials in the README or a demo, they do
+  not apply here — ask for a real account instead.
 
-   This password is published in the public source code. It is for trying the
-   product out on a test machine only. It must be **deleted before the first real
-   candidate** — this is a required item on the go-live checklist in
-   `docs/DEPLOYMENT.md`.
-
-2. **A real account** — created for you by your Questor administrator. Ask them
-   to create one and to tell you your role (see §3). They should send you the
-   password through a channel that is not email, and you should treat it like any
-   other HR system credential.
-
-There is **no "Register" shortcut for real use.** The register link on the login
-page creates a brand-new, separate organisation with its own empty database — it
-does not give you access to your colleagues' candidates. It is switched off
-entirely on a production install.
+> **The pilot deployment holds real candidate data.** As of the last handoff there
+> were 19 real candidates in it. Everything you do in Questor is done to live
+> records, and is attributed to you by name.
 
 ### Rules the login enforces
 
@@ -63,9 +59,10 @@ entirely on a production install.
 ### Forgotten password
 
 Questor currently has **no self-service password reset and no "change my
-password" screen.** If you forget your password, your administrator has to issue
-you a new account or reset the stored password directly. Flag this to IT before
-rollout — see the appendix.
+password" screen.** If you forget your password, Vishnu has to reset it for you
+directly on the server — there is no email you can trigger yourself. Passwords
+are stored only as one-way hashes, so nobody, including the administrator, can
+look up your existing one; it can only be replaced. See the appendix.
 
 ### Signing out
 
@@ -152,10 +149,10 @@ Click **Create interview**. Questor generates a versioned interview plan.
 ### Step 4 — Invite the candidate  ·  *on the interview page*
 
 1. Click **Send invitation**. This generates the candidate's private portal link.
-2. **Check what the screen tells you about delivery.** Out of the box Questor does
-   **not** actually send email — it logs it. If the badge does not say *email
-   sent*, or a note tells you the email could not be sent, **copy the portal link
-   and send it to the candidate yourself.**
+2. **Check what the screen tells you about delivery.** If no mail provider is
+   configured, Questor **logs** the invitation instead of sending it. If the badge
+   does not say *email sent*, or a note tells you the email could not be sent,
+   **copy the portal link and send it to the candidate yourself.**
 3. The status badge then tracks three real states: *not sent* → *email sent* →
    *opened by candidate*. "Sent" only means the mail provider accepted it; if it
    has been a day and it is still unopened, ask them to check spam.
@@ -226,7 +223,7 @@ Then, if your ATS is connected, **Export to ATS**.
 | Signed out unexpectedly | Sessions last 1 hour. Sign in again |
 | Can't find the Approve button | You are a recruiter. Ask a manager or admin to approve |
 | "Role scorecard must be approved before interviewing" | Step 1.5 — someone needs to approve the scorecard |
-| Candidate says they got no email | Expected on a default install. Copy the portal link from the interview page and send it yourself |
+| Candidate says they got no email | Check the delivery badge on the interview page. If it is not *email sent*, copy the portal link and send it yourself |
 | Candidate's link doesn't work | It expires after 14 days. Click **Resend email** for a new one |
 | Candidate's voice isn't being picked up | Ask them to use **Chrome or Edge**, allow the microphone, and reload. They can type answers instead — the interview still counts |
 | A candidate asks not to be interviewed by an AI | They can request a human alternative on the consent screen. Route them to a human interview |
@@ -238,22 +235,31 @@ Then, if your ATS is connected, **Export to ATS**.
 
 These are real gaps in the current build, not caveats for the sake of it.
 
-- **No user-management screen.** Accounts are created through the API by an
+- **No user-management screen.** Accounts are created through the API by the
   administrator (see the appendix). There is no "invite a colleague" button.
-- **No password reset or password change.** Plan for how IT handles a forgotten
-  password before you roll out.
-- **Email is not delivered by default.** Until SendGrid or SMTP is configured,
-  every invitation must be copied and sent manually.
-- **The database is not encrypted.** Candidate names, resumes and full transcripts
-  sit in plain text in the database file. Filesystem permissions and separate
-  operating-system accounts are the controls actually protecting it —
-  see `docs/DEPLOYMENT.md`.
-- **The demo account must be deleted** before any real candidate data goes in.
-- **The AI's judgement is advisory and has not been validated on your roles.** Run
-  it in shadow mode alongside your existing process and measure agreement before
-  you rely on it — see `docs/VALIDATION.md`.
+- **No password reset or password change.** A forgotten password means the
+  administrator resets it on the server.
+- **Check that invitation emails are actually being delivered.** Unless a mail
+  provider is configured, Questor logs invitations rather than sending them, and
+  the interview page tells you which happened. Read that badge every time.
+- **No bias audit has been done.** Questor recommends outcomes that affect
+  people's employment. Its design avoids protected characteristics, but nobody
+  has yet tested it for disparate impact across real demographic groups. In
+  several jurisdictions that testing is a legal requirement, not a
+  nice-to-have — it needs real data and counsel.
+- **No load testing.** Behaviour at 20 or more simultaneous interviews is
+  unknown, and the database is single-writer. **Stagger the first batch of
+  invitations** rather than sending them all at once.
+- **No monitoring or alerting.** A failure at 3am mid-interview notifies nobody.
+  If a candidate reports a problem, say so — you are the alerting.
+- **Results so far are measured against simulated candidates**, not real ones.
+  Read the first real transcripts next to their assessments before you trust the
+  scoring.
+- **The database is not encrypted.** Candidate names, resumes and full
+  transcripts sit in plain text. Server access controls are what is actually
+  protecting them — see `docs/DEPLOYMENT.md`.
 - **Candidate notices need your counsel's review.** Drafts are in
-  `docs/compliance/`. Nobody inside this repository can sign those off.
+  `docs/compliance/`. Nobody on the engineering side can sign those off.
 
 ---
 
@@ -280,7 +286,7 @@ There is no UI for this yet. An existing admin creates accounts via the API.
 
 ```bash
 # 1. Sign in as an admin and capture the token
-TOKEN=$(curl -s -X POST http://localhost:4000/api/auth/login \
+TOKEN=$(curl -s -X POST https://questor.187-127-166-193.sslip.io/api/auth/login \
   -H 'content-type: application/json' \
   -d '{"email":"admin@yourcompany.com","password":"<admin password>"}' \
   | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
@@ -288,14 +294,14 @@ TOKEN=$(curl -s -X POST http://localhost:4000/api/auth/login \
 # 2. Create an HR user
 #    role: recruiter | manager | reviewer | auditor | admin
 #    password: minimum 12 characters
-curl -s -X POST http://localhost:4000/api/admin/users \
+curl -s -X POST https://questor.187-127-166-193.sslip.io/api/admin/users \
   -H "authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"email":"jane@yourcompany.com","name":"Jane Doe","role":"recruiter","password":"<12+ char password>"}'
 
 # 3. List users / change a role
-curl -s -H "authorization: Bearer $TOKEN" http://localhost:4000/api/admin/users
-curl -s -X PATCH http://localhost:4000/api/admin/users/<userId>/role \
+curl -s -H "authorization: Bearer $TOKEN" https://questor.187-127-166-193.sslip.io/api/admin/users
+curl -s -X PATCH https://questor.187-127-166-193.sslip.io/api/admin/users/<userId>/role \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
   -d '{"role":"manager"}'
 ```
@@ -313,14 +319,24 @@ Notes:
   `POST /api/admin/users/:id/roles/:roleId` and the matching candidate endpoint.
   Without an assignment they will see an empty console.
 
-### Before the first real candidate
+### Operating the pilot deployment
 
-The full go-live checklist is in [`docs/DEPLOYMENT.md`](DEPLOYMENT.md). The items
-HR will notice most:
+The pilot runs at `https://questor.187-127-166-193.sslip.io` — a temporary
+address for the pilot. It already holds real candidate data, so treat it as a
+live system.
 
-- [ ] Delete the `demo@questor.local` account
-- [ ] Generate a real `AUTH_SECRET` — the default is published on GitHub
-- [ ] Configure SendGrid or SMTP so invitations actually reach candidates
-- [ ] Restrict filesystem permissions on the database (`scripts/harden-windows.ps1`)
-- [ ] One operating-system account per HR user
-- [ ] Set up backups, and restrict the backup location too
+- `GET /api/health` returns the running commit. Check it before sending a batch
+  of invitations.
+- Never run the interview simulator against it. `session.ts` refuses without
+  `ALLOW_SIM_SEED` — leave it that way.
+- The full hardening and go-live checklist is in
+  [`docs/DEPLOYMENT.md`](DEPLOYMENT.md); the standing gaps are tracked in
+  [`docs/Questor-update-2026-08-06.md`](Questor-update-2026-08-06.md).
+
+Worth confirming for this deployment, since HR feels each one directly:
+
+- [ ] A mail provider (SendGrid or SMTP) is configured, so invitations reach candidates
+- [ ] `AUTH_SECRET` is a generated value, not the published default
+- [ ] No `demo@questor.local` account exists
+- [ ] Backups are running, and the backup location is restricted too
+- [ ] Each HR user has their own account, with the narrowest role that fits their job
