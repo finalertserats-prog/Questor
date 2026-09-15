@@ -3,39 +3,33 @@
    Imported after app.css; overrides the static sidebar layout there.
    ========================================================================== */
 
-.app {
-  display: block;
-}
-
-.main {
-  margin: 0 auto;
-}
-
-/* The drawer is hidden until opened. `visibility` (not just transform) keeps
-   its links out of the tab order while it is closed. */
-.sidebar {
-  position: fixed;
-  inset: 0 auto 0 0;
-  width: 248px;
-  height: 100dvh;
-  box-sizing: border-box;
-  z-index: 60;
-  box-shadow: 0 0 0 transparent;
-  transform: translateX(-100%);
-  visibility: hidden;
-  transition: transform 0.2s ease, visibility 0s linear 0.2s, box-shadow 0.2s ease;
-}
-.sidebar.is-open {
-  transform: none;
-  visibility: visible;
-  box-shadow: 0 12px 40px rgba(12, 12, 24, 0.18);
-  transition: transform 0.2s ease, visibility 0s, box-shadow 0.2s ease;
-}
-
 .sidebar nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* The wordmark row: the mark on the left, the collapse control on the right. */
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rail-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 5px;
+  border: var(--hair) solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.rail-toggle:hover {
+  color: var(--ink);
+  background: var(--sheet-sunk);
 }
 
 .nav-backdrop {
@@ -72,7 +66,8 @@
   background: var(--sheet-sunk);
 }
 .nav-toggle:focus-visible,
-.nav-close:focus-visible {
+.nav-close:focus-visible,
+.rail-toggle:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -94,9 +89,177 @@
   background: var(--sheet-sunk);
 }
 
-/* Leave room for the toggle so it never sits on a page title. */
-.main {
-  padding-top: 64px;
+/* ==========================================================================
+   Docked — wide viewports.
+
+   The sidebar is in the page's flow beside the content: it overlays nothing,
+   needs no backdrop, and leaves the page perfectly usable while it is open,
+   which is why it can afford to be open by default. Collapsing it narrows it
+   to an icon rail rather than taking it away.
+   ========================================================================== */
+
+@media (min-width: 821px) {
+  .nav-toggle,
+  .nav-backdrop,
+  .nav-close {
+    display: none;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100dvh;
+    box-sizing: border-box;
+    transition: width 0.18s ease, padding 0.18s ease;
+  }
+
+  /* ---- The collapsed rail ---- */
+
+  .app.is-rail .sidebar {
+    width: 72px;
+    padding-left: 10px;
+    padding-right: 10px;
+    gap: 16px;
+  }
+
+  /* The mark stays, stacked above the control and simply set smaller. The one
+     thing a collapse must never do is take the product's name off the screen. */
+  .app.is-rail .sidebar-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .app.is-rail .logo-rail {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    line-height: 1;
+  }
+
+  /* The tagline and the ticked rule are the flourish, and those do go. */
+  .app.is-rail .brand-line,
+  .app.is-rail .sidebar-tagline {
+    display: none;
+  }
+
+  /* Group names become the hairline they were already drawing, while staying
+     in the accessibility tree for anyone reading the nav out. */
+  .app.is-rail .nav-group {
+    height: var(--hair);
+    margin: 14px 6px 10px;
+    padding: 0;
+    overflow: hidden;
+    text-indent: -999em;
+    background: var(--rule);
+  }
+
+  /* Tooltips have to escape the nav box, so in the rail it stops scrolling —
+     five items and two rules always fit. */
+  .app.is-rail .sidebar nav {
+    overflow: visible;
+  }
+
+  .app.is-rail .sidebar nav a {
+    position: relative;
+    justify-content: center;
+    gap: 0;
+    padding: 9px 0;
+    border-left-width: 0;
+  }
+
+  /* Labels are clipped, not removed: the icon keeps its accessible name. */
+  .app.is-rail .nav-label,
+  .app.is-rail .profile-details {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* ...and the name is shown again on hover and on keyboard focus. */
+  .app.is-rail .sidebar nav a[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 12px);
+    transform: translateY(-50%);
+    z-index: 80;
+    padding: 4px 9px;
+    border: var(--hair) solid var(--rule-strong);
+    border-radius: var(--radius);
+    background: var(--sheet);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+  .app.is-rail .sidebar nav a:hover::after,
+  .app.is-rail .sidebar nav a:focus-visible::after {
+    opacity: 1;
+  }
+
+  /* The profile stays pinned at the foot and stays usable: the avatar alone,
+     with its menu opening out over the page rather than inside 72px. */
+  .app.is-rail .profile-trigger {
+    justify-content: center;
+    padding: 8px 0;
+  }
+  .app.is-rail .profile-menu-popover {
+    right: auto;
+    left: 0;
+    width: 212px;
+  }
+}
+
+/* ==========================================================================
+   Overlay drawer — narrow viewports. Closed until asked for, over the content,
+   with a backdrop behind it. The rail is a desktop idea and does not apply.
+   ========================================================================== */
+
+@media (max-width: 820px) {
+  .app {
+    display: block;
+  }
+
+  /* Leave room for the toggle so it never sits on a page title. */
+  .main {
+    margin: 0 auto;
+    padding-top: 64px;
+  }
+
+  .rail-toggle {
+    display: none;
+  }
+
+  /* app.css hides the static sidebar at this width; the drawer needs it back.
+     It is hidden until opened — `visibility` (not just transform) keeps its
+     links out of the tab order while it is closed. */
+  .sidebar {
+    display: flex;
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(86vw, 280px);
+    height: 100dvh;
+    box-sizing: border-box;
+    z-index: 60;
+    box-shadow: 0 0 0 transparent;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s, box-shadow 0.2s ease;
+  }
+  .sidebar.is-open {
+    transform: none;
+    visibility: visible;
+    box-shadow: 0 12px 40px rgba(12, 12, 24, 0.18);
+    transition: transform 0.2s ease, visibility 0s, box-shadow 0.2s ease;
+  }
 }
 
 /* ---- Profile, pinned to the bottom of the drawer ---- */
@@ -247,18 +410,10 @@
   border-top: var(--hair) solid var(--rule);
 }
 
-/* app.css hides the static sidebar on narrow screens; the drawer works at every
-   width, so it is shown again here. */
-@media (max-width: 820px) {
-  .sidebar {
-    display: flex;
-    width: min(86vw, 280px);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
-  .sidebar.is-open {
+  .sidebar.is-open,
+  .sidebar nav a::after {
     transition: none;
   }
 }

@@ -17,11 +17,15 @@ export type IconName =
   | 'hourglass' | 'refresh' | 'mic' | 'speaker' | 'lock' | 'stop' | 'handoff' | 'user-x'
   | 'question' | 'draft' | 'plus' | 'copy' | 'save' | 'export' | 'eye' | 'eye-off'
   | 'arrow-left' | 'search' | 'inbox' | 'keyboard' | 'captions' | 'list' | 'sparkle' | 'flag'
-  | 'link' | 'build';
+  | 'link' | 'build'
+  | 'sidebar-collapse' | 'sidebar-expand';
 
 const PATHS: Record<IconName, ReactNode> = {
   menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
   close: <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>,
+  // A panel with its rail drawn in, and the direction the rail is about to go.
+  'sidebar-collapse': <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 4v16" /><path d="M7 9l-2 3 2 3" /></>,
+  'sidebar-expand': <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 4v16" /><path d="M5 9l2 3-2 3" /></>,
   'arrow-right': <><path d="M5 12h14" /><path d="M13 6l6 6-6 6" /></>,
   dashboard: <><rect x="4" y="4" width="7" height="7" rx="1" /><rect x="13" y="4" width="7" height="5" rx="1" /><rect x="13" y="11" width="7" height="9" rx="1" /><rect x="4" y="13" width="7" height="7" rx="1" /></>,
   candidates: <><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" /><circle cx="17" cy="9" r="2.5" /><path d="M16 14.2c2.9.4 5 2.8 5 5.8" /></>,
