@@ -23,7 +23,7 @@ export function LandingHero() {
 
   return (
     <section className="landing-hero">
-      {!heroFailed && <img className="landing-hero-art" src="/brand/login-hero.png" alt="" onError={() => setHeroFailed(true)} />}
+      {!heroFailed && <img className="landing-hero-art" src="/brand/login-hero.jpg" alt="" onError={() => setHeroFailed(true)} />}
       <div className="landing-hero-copy">
         <p className="landing-eyebrow">Questor</p>
         <h2 className="landing-headline">Hire through evidence, in one place.</h2>
