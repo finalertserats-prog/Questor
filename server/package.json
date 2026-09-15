@@ -14,6 +14,7 @@
     "db:seed": "tsx src/seed/seed.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:pg": "node ../scripts/test-postgres.mjs",
     "test:e2e": "tsx src/seed/simulateInterview.ts",
     "sim": "tsx src/sim/run.ts",
     "sim:smoke": "tsx src/sim/smoke.ts",

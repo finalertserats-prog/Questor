@@ -18,6 +18,10 @@ export const TEMPLATE_DB = join(DATA_DIR, 'template.db');
  * worker, and gives each file a database nothing else can touch.
  */
 export default function setup() {
+  // Postgres runs (npm run test:pg) isolate each test file in its own schema
+  // instead; see perFileDb.ts. The SQLite template is not needed.
+  if (process.env.TEST_DATABASE_URL?.startsWith('postgresql://')) return;
+
   mkdirSync(DATA_DIR, { recursive: true });
 
   // Leftovers from a killed run would otherwise accumulate and, worse, a stale
