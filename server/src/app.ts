@@ -108,6 +108,7 @@ export function createApp() {
   // interview and each upload is one answer, so 60/hour covers a real session
   // with retries and still caps a script at a bounded hourly spend.
   app.use('/api/portal/:token/transcribe', rateLimit({ name: 'portal-transcribe', windowMs: 60 * 60_000, max: 60, keyOf: portalKey }));
+  app.use('/api/portal/:token/integrity-event', rateLimit({ name: 'portal-integrity', windowMs: 60 * 60_000, max: 600, keyOf: portalKey }));
   app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey }));
 
   app.use('/api/auth', authRouter);

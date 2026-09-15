@@ -19,6 +19,7 @@ import { logger } from '../logger.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from '../realtime/interviewEngine.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
+import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
 export const portalRouter = Router();
@@ -42,6 +43,8 @@ const MAX_TRANSCRIBE_BYTES = 10 * 1024 * 1024;
 // interview has nothing to transcribe, and paying to transcribe audio for one
 // would be spending on a session no reviewer will ever read.
 const TRANSCRIBABLE_STATES = ['ASSESSING', 'CANDIDATE_QUESTIONS'];
+const INTEGRITY_EVENT_TYPES = ['TAB_BLUR', 'FOCUS_LOST', 'PASTE_DETECTED', 'MULTI_TAB', 'DEVTOOLS_OPENED'] as const;
+const INTEGRITY_EVENT_STATES = ['CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED'];
 
 const uploadAudio = multer({
   storage: multer.memoryStorage(),
@@ -102,18 +105,51 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
   }
 
   const consent = parseJson<any>(s.consentJson, {});
+  const proctoringEnabled = await proctoringEnabledForSession({ tenantId: s.tenantId, scorecardId: s.scorecardId });
+  const aiDisclosure = await disclosureWithProctoringPolicy({ tenantId: s.tenantId, scorecardId: s.scorecardId }, consent.disclosureText ?? '');
   res.json({
     candidateName: s.candidate.fullName,
     roleTitle: s.role.title,
     state: s.state,
     durationMinutes: s.durationMinutes,
     language: s.language,
-    aiDisclosure: consent.disclosureText,
+    aiDisclosure,
     recordingRequested: !!consent.recordingRequested,
     privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
     accommodationsEnabled: true,
+    proctoringEnabled,
     speech: { stt: sttCapability(), tts: ttsCapability() },
   });
+}));
+
+
+const integrityEventSchema = z.object({
+  type: z.enum(INTEGRITY_EVENT_TYPES),
+  detail: z.record(z.unknown()).optional(),
+});
+
+portalRouter.post('/:token/integrity-event', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  const body = integrityEventSchema.parse(req.body);
+  const enabled = await proctoringEnabledForSession({ tenantId: inv.session.tenantId, scorecardId: inv.session.scorecardId });
+  const consent = parseJson<Record<string, unknown>>(inv.session.consentJson, {});
+
+  if (!enabled || !consent.consentedAt || !INTEGRITY_EVENT_STATES.includes(inv.session.state)) {
+    return res.status(202).json({ ok: true, accepted: false });
+  }
+
+  const detail = JSON.stringify(body.detail ?? {});
+  if (detail.length > 2000) {
+    return res.status(202).json({ ok: true, accepted: false });
+  }
+
+  try {
+    await prisma.integrityEvent.create({ data: { sessionId: inv.sessionId, type: body.type, detail } });
+    return res.status(202).json({ ok: true, accepted: true });
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId: inv.sessionId, type: body.type }, 'Integrity event was not stored');
+    return res.status(202).json({ ok: true, accepted: false });
+  }
 }));
 
 portalRouter.post('/:token/accept', asyncHandler(async (req, res) => {

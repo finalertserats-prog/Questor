@@ -34,6 +34,7 @@ export interface RoleSuccessProfile {
     prohibitedTopics: string[];
     requiredDisclosures: string[];
     accommodationsEnabled: boolean;
+    proctoringEnabled?: boolean;
     jurisdiction: string;
   };
   redFlags: string[];

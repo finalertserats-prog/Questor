@@ -19,6 +19,7 @@ interface Msg { speaker: 'agent' | 'candidate'; text: string }
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
   speech: { stt: SttCapability };
+  proctoringEnabled: boolean;
 }
 type Phase = 'ready' | 'speaking' | 'listening' | 'thinking' | 'done';
 
@@ -140,6 +141,33 @@ export function InterviewRoom() {
   }, []);
 
   const addMsg = (m: Msg) => setMsgs((prev) => [...prev, m]);
+
+  const sendIntegrityEvent = useCallback((type: 'TAB_BLUR' | 'FOCUS_LOST' | 'PASTE_DETECTED', detail?: Record<string, unknown>) => {
+    // Fire-and-forget by design: browser-integrity telemetry must never make the
+    // interview feel broken to the candidate. The server gates this on consent
+    // and tenant policy before storing anything.
+    void fetch(`/api/portal/${token}/integrity-event`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, detail }),
+      credentials: 'include',
+    }).catch(() => undefined);
+  }, [token]);
+
+  useEffect(() => {
+    if (!info?.proctoringEnabled || phase === 'ready' || phase === 'done') return undefined;
+    const onVisibility = () => { if (document.hidden) sendIntegrityEvent('TAB_BLUR'); };
+    const onBlur = () => sendIntegrityEvent('FOCUS_LOST');
+    const onPaste = () => sendIntegrityEvent('PASTE_DETECTED');
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('blur', onBlur);
+    document.addEventListener('paste', onPaste);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('blur', onBlur);
+      document.removeEventListener('paste', onPaste);
+    };
+  }, [info?.proctoringEnabled, phase, sendIntegrityEvent]);
 
   const submitAnswer = useCallback(async (text: string) => {
     if (!text.trim()) return;

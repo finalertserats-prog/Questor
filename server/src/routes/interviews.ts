@@ -16,6 +16,7 @@ import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
+import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -81,12 +82,13 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
-  const disclosureText = tenantPolicy.disclosureText ??
+  const baseDisclosureText = tenantPolicy.disclosureText ??
     // No `recordingRequested` branch: it offered two different sentences for a
     // distinction that does not exist, since no audio artefact is produced
     // either way. Stating capture, transcription and retention plainly is both
     // true and more useful than the flag ever was.
     `Hello, I'm ${body.persona.name}, an AI interviewer for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+  const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   const session = await prisma.interviewSession.create({
     data: {
@@ -180,17 +182,22 @@ interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), asy
 // lifting another's portal link.
 interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  const [plan, turns, assessment, invitation] = await Promise.all([
+  const [plan, turns, assessment, invitation, integrityEvents] = await Promise.all([
     prisma.interviewPlanVersion.findUnique({ where: { sessionId: session.id } }),
     prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
     prisma.assessmentVersion.findFirst({ where: { sessionId: session.id }, orderBy: { version: 'desc' } }),
     prisma.invitation.findUnique({ where: { sessionId: session.id } }),
+    prisma.integrityEvent.findMany({ where: { sessionId: session.id }, orderBy: { createdAt: 'asc' }, select: { type: true, createdAt: true } }),
   ]);
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
     session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, persona: parseJson(session.personaJson, {}), consent: parseJson(session.consentJson, {}) },
     plan: plan ? parseJson(plan.planJson, {}) : null,
     turns: turns.map((t) => ({ id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId })),
     assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJson(assessment.resultJson, {}) } : null,
+    // Integrity events are human-review context only. They are deliberately not
+    // passed into assessment generation or score fields.
+    integrityEvents: { count: integrityEvents.length, events: integrityEvents },
     invitation: invitation ? {
       token: invitation.token, status: invitation.status,
       portalUrl: `${config.webOrigin}/portal/${invitation.token}`,
@@ -281,8 +288,9 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
-  const disclosureText = tenantPolicy.disclosureText ??
+  const baseDisclosureText = tenantPolicy.disclosureText ??
     `Hello, I'm an AI interviewer for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+  const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   const retake = await prisma.interviewSession.create({
     data: {
@@ -450,8 +458,16 @@ interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'
 
 interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  const turns = await prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } });
-  res.json({ transcript: turns.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs })) });
+  const [turns, integrityEvents] = await Promise.all([
+    prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
+    prisma.integrityEvent.findMany({ where: { sessionId: session.id }, orderBy: { createdAt: 'asc' }, select: { type: true, createdAt: true } }),
+  ]);
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.transcript_read', entityType: 'InterviewSession', entityId: session.id });
+  res.json({
+    transcript: turns.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs })),
+    // Human-review context only; never an automated scoring input.
+    integrityEvents: { count: integrityEvents.length, events: integrityEvents },
+  });
 }));
 
 /**
