@@ -25,8 +25,8 @@ describe('initialsFor', () => {
 });
 
 describe('profileMenuItems', () => {
-  it('lists Settings, Admin console, Audit log, About, Contact and Take the tour in that order for an admin', () => {
-    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'Audit log', 'About', 'Contact', 'Take the tour']);
+  it('lists Settings, Admin console, Account requests, Audit log, About, Contact and Take the tour in that order for an admin', () => {
+    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'Account requests', 'Audit log', 'About', 'Contact', 'Take the tour']);
   });
 
   it('omits Admin console and Audit log for a recruiter', () => {
@@ -37,13 +37,17 @@ describe('profileMenuItems', () => {
     expect(profileMenuItems('auditor').map((item) => item.label)).toEqual(['Settings', 'Audit log', 'About', 'Contact', 'Take the tour']);
   });
 
+  it('keeps Account requests to admins, who alone may decide them', () => {
+    expect(profileMenuItems('auditor').some((item) => item.key === 'signups')).toBe(false);
+  });
+
   it('omits Audit log for a manager, who does not hold audit:read', () => {
     expect(profileMenuItems('manager').some((item) => item.key === 'audit')).toBe(false);
   });
 
   it('points each page link at its route', () => {
     const routes = profileMenuItems('admin').flatMap((item) => (item.kind === 'link' ? [item.to] : []));
-    expect(routes).toEqual(['/settings', '/admin', '/audit', '/about', '/contact']);
+    expect(routes).toEqual(['/settings', '/admin', '/admin/signups', '/audit', '/about', '/contact']);
   });
 
   it('offers the tour to every role as an action rather than a page', () => {

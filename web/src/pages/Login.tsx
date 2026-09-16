@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
@@ -103,6 +103,13 @@ export function Login() {
               </button>
             </form>
           )}
+
+          {/* The only route to an account for someone who has none. Kept out of
+              the dev-only block below: asking is open in production, which is
+              the point — it is self-registration that is closed. */}
+          <div className="small muted" style={{ marginTop: 14, textAlign: 'center' }}>
+            No account yet? <Link to="/signup">Ask for one</Link>
+          </div>
 
           {/* Self-registration is closed in production, so offering it there
               would only lead to an error. The seed credentials are a published
