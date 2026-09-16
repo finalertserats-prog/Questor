@@ -9,6 +9,7 @@ import './styles/sidebar.css';
 import './styles/workflow.css';
 import './styles/login.css';
 import './styles/pipeline.css';
+import './styles/journey.css';
 import './styles/dashboard.css';
 import './styles/polish.css';
 
