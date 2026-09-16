@@ -395,6 +395,13 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
 assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
+  // An assessment with no score must not reach the system of record. The ATS
+  // has no way to render "unavailable": it stores whatever number arrives, and
+  // a 0 born of a grading outage becomes a permanent hiring signal that nobody
+  // can trace back to our vendor being down.
+  if (result.overallScore === null) {
+    throw new HttpError(409, 'This assessment could not be scored, so there is nothing to export. It needs a human assessment first.');
+  }
   const externalId = (req.body?.externalCandidateId as string) || a.session.candidateId;
   const out = await getAts().pushAssessment(externalId, {
     candidate: a.session.candidate.fullName, role: a.session.role.title,

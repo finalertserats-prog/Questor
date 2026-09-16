@@ -10,11 +10,22 @@ export function renderReportMarkdown(opts: {
 }): string {
   const a = opts.assessment;
   const recLabel = a.recommendation.replace(/_/g, ' ');
+  // No score exists when grading failed for every competency. Printing the 0
+  // that a mean over an empty set produces is how a vendor outage became
+  // "Overall: 0/100" on a document that gets forwarded to hiring managers.
+  const scored = a.overallScore !== null && a.overallScore !== undefined;
+  const overall = scored ? `${a.overallScore}/100` : 'scoring unavailable';
   const lines: string[] = [];
   lines.push(`# Interview Assessment — ${opts.candidateName}`);
   lines.push(`**Role:** ${opts.roleTitle}`);
-  lines.push(`**Recommendation:** ${recLabel}  |  **Confidence:** ${pct(a.confidence)}  |  **Evidence coverage:** ${pct(a.evidenceCoverage)}  |  **Overall:** ${a.overallScore}/100`);
+  lines.push(`**Recommendation:** ${recLabel}  |  **Confidence:** ${pct(a.confidence)}  |  **Evidence coverage:** ${pct(a.evidenceCoverage)}  |  **Overall:** ${overall}`);
   lines.push('');
+  if (!scored) {
+    lines.push('> **Automated scoring was unavailable for this interview.** No competency could be graded, so there');
+    lines.push('> is no score and no recommendation. This is a failure of our system, not a finding about the');
+    lines.push('> candidate. The transcript below needs a human assessment.');
+    lines.push('');
+  }
   // Welded to the recommendation line, not filed under Limitations at the
   // bottom. This artifact is what gets pasted into an ATS or forwarded to a
   // hiring manager — the number travels and the on-screen warning does not, so
