@@ -175,7 +175,11 @@ export function CandidatesList() {
           <table>
             <thead>
               <tr>
-                <th>Name</th><th>Email</th><th>Role</th><th>Fit</th>
+                <th>Name</th><th>Email</th><th>Role</th>
+                {/* From the resume against the role's scorecard, before any
+                    interview. Named so, because a bare "Fit" beside an
+                    interview column read as an interview result. */}
+                <th><abbr title="Scored from the resume against the role's scorecard. Not an interview result.">Resume fit</abbr></th>
                 <th>Interview</th><th>Added</th><th></th>
               </tr>
             </thead>

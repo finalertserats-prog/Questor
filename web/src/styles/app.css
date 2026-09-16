@@ -1513,3 +1513,28 @@ tr.in-flight td:first-child {
     margin: 0 14px 4px;
   }
 }
+
+/* --------------------------------------------------------------------------
+   Red flags on the scorecard editor. A list with a rule down its left edge and
+   a remove action per row; no tinted fills.
+   -------------------------------------------------------------------------- */
+.flag-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  border-left: var(--rail) solid var(--rule);
+}
+.flag-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0 6px 12px;
+  border-bottom: var(--hair) solid var(--rule);
+}
+.flag-item:last-child {
+  border-bottom: 0;
+}
+.field-problem {
+  color: var(--danger, #a12d2d);
+}

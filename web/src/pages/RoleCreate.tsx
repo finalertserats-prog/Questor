@@ -4,21 +4,13 @@ import { api } from '../api/client';
 import { Banner } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 
 interface CreateResp {
   role: { id: string; title: string; level: string; location: string; employmentType: string; status: string };
   scorecard: { id: string; version: number; status: string; profile: unknown };
   jdWarnings: { term: string; suggestion: string }[];
 }
-
-const SAMPLE_JD = `Senior Data Engineer — Platform Team
-We are hiring a Senior Data Engineer to design and operate our batch and streaming data platform.
-Responsibilities: build reliable ETL/ELT pipelines, own data quality and lineage, and mentor engineers.
-Requirements: 5+ years building production data systems; expert SQL and Python.
-Deep experience with Spark or Flink and cloud data warehouses (Snowflake/BigQuery).
-Strong grasp of data modeling, orchestration (Airflow), and CI/CD for data.
-Nice to have: streaming (Kafka), dbt, and infrastructure-as-code.
-Location: Remote (EU). Employment: Full-time.`;
 
 export function RoleCreate() {
   const nav = useNavigate();
@@ -28,6 +20,18 @@ export function RoleCreate() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<{ term: string; suggestion: string }[]>([]);
+
+  // The sample is a demonstration. It loads only into an empty form, and it
+  // fills the title as well as the description, because loading one without
+  // the other produced a role named for one job with a scorecard for another.
+  const sampleAllowed = canLoadSample({ sourceText, title });
+
+  const loadSample = () => {
+    if (!sampleAllowed) return;
+    const draft = sampleDraft();
+    setTitle(draft.title);
+    setSourceText(draft.sourceText);
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,8 +51,8 @@ export function RoleCreate() {
       } else {
         nav(`/roles/${resp.role.id}`);
       }
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'The role could not be created.');
       setSubmitting(false);
     }
   };
@@ -70,11 +74,12 @@ export function RoleCreate() {
       )}
 
       <form className="card" onSubmit={submit}>
-        <label>Role title (optional — inferred from the JD if left blank)</label>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
+        <label htmlFor="role-title">Role title (optional — inferred from the JD if left blank)</label>
+        <input id="role-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
 
-        <label>Job description</label>
+        <label htmlFor="role-jd">Job description</label>
         <textarea
+          id="role-jd"
           value={sourceText}
           onChange={(e) => setSourceText(e.target.value)}
           placeholder="Paste the full job description here…"
@@ -92,7 +97,7 @@ export function RoleCreate() {
           Use AI extraction (falls back to built-in extractor)
         </label>
 
-        <div className="row" style={{ marginTop: 16 }}>
+        <div className="row" style={{ marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn" type="submit" disabled={submitting || !sourceText.trim()}>
             <Icon name={submitting ? 'hourglass' : 'sparkle'} size={16} />
             {submitting ? 'Creating…' : 'Create role'}
@@ -100,11 +105,18 @@ export function RoleCreate() {
           <button
             className="btn secondary"
             type="button"
-            onClick={() => setSourceText(SAMPLE_JD)}
+            onClick={loadSample}
+            disabled={!sampleAllowed}
+            aria-describedby="sample-jd-hint"
           >
             <Icon name="job" size={16} />
             Load sample JD
           </button>
+          {!sampleAllowed && (
+            <span id="sample-jd-hint" className="muted small">
+              The sample only loads into an empty form, so it never replaces what you have written.
+            </span>
+          )}
         </div>
       </form>
     </div>

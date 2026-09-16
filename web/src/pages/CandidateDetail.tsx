@@ -563,9 +563,13 @@ function CandidateProfileTab({
       )}
 
       <div className="card">
-        <h2 className="card-title"><Icon name="sparkle" />Fit for applied role</h2>
+        <h2 className="card-title"><Icon name="sparkle" />Resume fit for applied role</h2>
+        <p className="muted small">
+          Scored from the resume against the role's scorecard. It says nothing about the interview, which is
+          assessed separately from what the candidate actually said.
+        </p>
         <Banner kind="info">{caveat}</Banner>
-        {fit ? <FitScoreBlock fit={fit} /> : <p className="muted">No fit score is available until a resume profile has been parsed against an approved scorecard.</p>}
+        {fit ? <FitScoreBlock fit={fit} /> : <p className="muted">No resume fit is available until a resume has been parsed against an approved scorecard.</p>}
         <div style={{ marginTop: 12 }}>
           <div className="muted small" style={{ marginBottom: 4 }}>Deliberately ignored by the fit engine:</div>
           <div>{STATIC_IGNORED_SIGNALS.map((s) => <span key={s} className="chip muted">{s}</span>)}</div>
@@ -612,7 +616,7 @@ function FitScoreBlock({ fit }: { fit: Fit }) {
       <div className="grid cols-2" style={{ marginTop: 14 }}>
         <div>
           <div className="row spread">
-            <span className="muted small">Overall fit</span>
+            <span className="muted small">Overall resume fit</span>
             <b>{Math.round(fit.overall)}/100</b>
           </div>
           <Meter value={fit.overall} />

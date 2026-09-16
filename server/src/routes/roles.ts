@@ -4,6 +4,7 @@ import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { extractRole, extractRoleHeuristic } from '../engines/roleIntelligence.js';
 import type { RoleSuccessProfile } from '../domain/types.js';
+import { roleSuccessProfileSchema } from '../domain/profileSchema.js';
 import { logAudit } from '../services/audit.js';
 import { assertCanAccessRole, assignRole, roleScope } from '../services/access.js';
 import { getAts } from '../providers/ats/index.js';
@@ -79,7 +80,9 @@ rolesRouter.get('/:id', asyncHandler(async (req, res) => {
   res.json({ role: shapeRole(role), scorecards: scorecards.map(shapeScorecard) });
 }));
 
-const updateScorecardSchema = z.object({ profile: z.any() });
+// Bounded on purpose. This used to be `z.any()`, and one Save could store a
+// threshold of 6500 or a weight of 40 into the JSON every engine reads.
+const updateScorecardSchema = z.object({ profile: roleSuccessProfileSchema });
 
 // Edit the draft scorecard (calibrate competencies/weights) — creates a new version if approved one exists
 rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyncHandler(async (req, res) => {

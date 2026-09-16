@@ -6,6 +6,16 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import {
+  PASS_THRESHOLD_MAX,
+  PASS_THRESHOLD_MIN,
+  RED_FLAG_MAX_LENGTH,
+  addRedFlag,
+  clampPassThreshold,
+  formatPassThreshold,
+  redFlagProblem,
+  removeRedFlag,
+} from '../components/scorecardModel';
 
 type Category = 'technical' | 'domain' | 'behavioral' | 'situational' | 'communication';
 type Classification = 'essential' | 'preferred' | 'trainable' | 'non_scoring';
@@ -44,6 +54,8 @@ export function RoleDetail() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  const [newFlag, setNewFlag] = useState('');
+  const [flagProblem, setFlagProblem] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -77,6 +89,28 @@ export function RoleDetail() {
       const competencies = p.competencies.map((c, idx) => (idx === i ? { ...c, ...patch } : c));
       return { ...p, competencies };
     });
+  };
+
+  // Points out of 100, unlike the weights above, which are fractions. Mixing
+  // the two up is how this page once showed "Pass threshold: 6500%".
+  const updateThreshold = (raw: number) => {
+    setProfile((p) => (p ? { ...p, scoringRules: { ...p.scoringRules, passThreshold: clampPassThreshold(raw) } } : p));
+  };
+
+  const submitFlag = () => {
+    if (!profile) return;
+    const problem = redFlagProblem(profile.redFlags ?? [], newFlag);
+    if (problem) {
+      setFlagProblem(problem);
+      return;
+    }
+    setProfile((p) => (p ? { ...p, redFlags: [...addRedFlag(p.redFlags ?? [], newFlag)] } : p));
+    setNewFlag('');
+    setFlagProblem('');
+  };
+
+  const dropFlag = (index: number) => {
+    setProfile((p) => (p ? { ...p, redFlags: [...removeRedFlag(p.redFlags ?? [], index)] } : p));
   };
 
   const save = async () => {
@@ -194,16 +228,72 @@ export function RoleDetail() {
           </tbody>
         </table>
         </div>
-        <div className="muted small" style={{ marginTop: 8 }}>
-          Pass threshold: {Math.round((profile.scoringRules?.passThreshold ?? 0) * 100)}% ·
-          Must-pass competencies: {(profile.scoringRules?.mustPassCompetencyIds ?? []).length}
+        <div className="row" style={{ marginTop: 10, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <label htmlFor="pass-threshold" className="muted small" style={{ margin: 0 }}>Pass threshold</label>
+          <input
+            id="pass-threshold"
+            type="number"
+            min={PASS_THRESHOLD_MIN}
+            max={PASS_THRESHOLD_MAX}
+            step={1}
+            value={profile.scoringRules?.passThreshold ?? ''}
+            onChange={(e) => updateThreshold(Number(e.target.value))}
+            aria-describedby="pass-threshold-hint"
+            style={{ width: 80 }}
+          />
+          <span className="muted small">out of 100 · currently {formatPassThreshold(profile.scoringRules?.passThreshold)}</span>
+          <span className="muted small">· Must-pass competencies: {(profile.scoringRules?.mustPassCompetencyIds ?? []).length}</span>
         </div>
+        <p id="pass-threshold-hint" className="field-hint" style={{ marginTop: 4 }}>
+          The overall score a candidate needs to be recommended to proceed. Weights are shares of that score; the
+          threshold is the score itself.
+        </p>
       </div>
 
       <div className="grid cols-2">
         <div className="card">
           <h3 className="card-title"><Icon name="alert" size={16} />Red flags</h3>
-          <div>{(profile.redFlags ?? []).map((r, i) => <span key={i} className="chip">{r}</span>)}</div>
+          <p className="muted small">
+            Things the interviewer should note if they come up. They are flagged for a person to weigh, never
+            scored.
+          </p>
+          {(profile.redFlags ?? []).length === 0 && <p className="muted small">None yet.</p>}
+          <ul className="flag-list" aria-label="Red flags">
+            {(profile.redFlags ?? []).map((r, i) => (
+              <li key={`${i}-${r}`} className="flag-item">
+                <span>{r}</span>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => dropFlag(i)}
+                  aria-label={`Remove red flag: ${r}`}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+          <form
+            className="row"
+            style={{ gap: 8, alignItems: 'flex-start', marginTop: 8 }}
+            onSubmit={(e) => { e.preventDefault(); submitFlag(); }}
+          >
+            <div style={{ flex: 1 }}>
+              <label htmlFor="new-red-flag" className="muted small">Add a red flag</label>
+              <input
+                id="new-red-flag"
+                value={newFlag}
+                maxLength={RED_FLAG_MAX_LENGTH}
+                onChange={(e) => { setNewFlag(e.target.value); if (flagProblem) setFlagProblem(''); }}
+                placeholder="e.g. Cannot describe their own contribution to a team result"
+                aria-describedby={flagProblem ? 'new-red-flag-problem' : undefined}
+                aria-invalid={flagProblem ? true : undefined}
+              />
+              {flagProblem && <p id="new-red-flag-problem" className="field-hint field-problem">{flagProblem}</p>}
+            </div>
+            <button type="submit" className="btn secondary" style={{ marginTop: 22 }}>Add</button>
+          </form>
+          <p className="muted small" style={{ marginTop: 8 }}>Changes take effect when you save.</p>
         </div>
         <div className="card">
           <h3 className="card-title"><Icon name="stop" size={16} />Prohibited topics</h3>
