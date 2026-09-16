@@ -1,45 +1,75 @@
-import { useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
+import { Icon } from './Icon';
+import { WorkflowDiagram } from './WorkflowDiagram';
+import {
+  SHOWCASE_FEATURES,
+  SHOWCASE_STEPS,
+  STEP_INTERVAL_MS,
+  initialShowcaseState,
+  prefersReducedMotion,
+  showcaseReducer,
+} from './landingShowcase';
 
-// The medallion path, as HR sees it. Candidates are never shown these labels.
-const STAGES: ReadonlyArray<{ key: string; label: string; detail: string }> = [
-  { key: 'participation', label: 'Participation', detail: 'Profile onboarded' },
-  { key: 'bronze', label: 'Bronze', detail: 'AI profile summary and job fit' },
-  { key: 'silver', label: 'Silver', detail: 'AI interview with Schranders' },
-  { key: 'gold', label: 'Gold', detail: 'Human interview' },
-  { key: 'platinum', label: 'Platinum', detail: 'Further human round' },
-  { key: 'diamond', label: 'Diamond', detail: 'Final rounds' },
-];
-
-/** Badge artwork is decorative; if an image is missing the label still reads. */
-function StageBadge({ stageKey }: { stageKey: string }) {
-  const [failed, setFailed] = useState(false);
-  if (failed) return <span className={`stage-dot stage-dot-${stageKey}`} aria-hidden="true" />;
-  return <img className="stage-badge" src={`/brand/medal-${stageKey}.png`} alt="" onError={() => setFailed(true)} />;
-}
-
-/** The left half of the login page: what Questor is, and how hiring flows through it. */
+/**
+ * The showcase half of the sign-in page: what Questor does, the order it does it
+ * in, and what is actually in the product. The workflow highlight advances on its
+ * own and follows a pointer or the keyboard; anyone who asks for reduced motion
+ * gets the same sequence held still on its first step.
+ */
 export function LandingHero() {
-  const [heroFailed, setHeroFailed] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(prefersReducedMotion);
+  const [state, dispatch] = useReducer(showcaseReducer, reducedMotion, initialShowcaseState);
+
+  // The preference can change while the page is open, and asking for reduced
+  // motion has to stop the sequence there and then, not on the next reload.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = () => {
+      setReducedMotion(query.matches);
+      dispatch({ type: query.matches ? 'pause' : 'resume' });
+    };
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+
+  useEffect(() => {
+    if (state.paused) return undefined;
+    const timer = window.setInterval(() => dispatch({ type: 'tick' }), STEP_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [state.paused]);
 
   return (
-    <section className="landing-hero">
-      {!heroFailed && <img className="landing-hero-art" src="/brand/login-hero.jpg" alt="" onError={() => setHeroFailed(true)} />}
+    <section className={reducedMotion ? 'landing-hero is-still' : 'landing-hero'}>
       <div className="landing-hero-copy">
         <p className="landing-eyebrow">Questor</p>
-        <h2 className="landing-headline">Hire through evidence, in one place.</h2>
+        <h2 className="landing-headline">Hire through evidence, not impressions.</h2>
         <p className="landing-lede">
-          Create the job description, onboard the profile, run an AI first round with Schranders, schedule
-          human rounds, and decide on what the evidence shows. A person makes every final call.
+          Questor turns a job description into an agreed scorecard, runs the first interview round itself,
+          schedules the human rounds around it, and ties every rating back to what the candidate actually
+          said. A person still makes the decision.
         </p>
-        <ol className="stage-path" aria-label="Hiring stages">
-          {STAGES.map((stage) => (
-            <li key={stage.key} className="stage-path-item">
-              <StageBadge stageKey={stage.key} />
-              <span className="stage-path-label">{stage.label}</span>
-              <span className="stage-path-detail">{stage.detail}</span>
+
+        <WorkflowDiagram
+          className="workflow-showcase"
+          label="How hiring runs in Questor"
+          steps={SHOWCASE_STEPS}
+          activeStep={state.step}
+          onActivate={(step) => dispatch({ type: 'select', step })}
+          onPause={() => dispatch({ type: 'pause' })}
+          onResume={() => dispatch({ type: 'resume' })}
+        />
+
+        <h3 className="showcase-heading">What is in the product</h3>
+        <ul className="showcase-features">
+          {SHOWCASE_FEATURES.map((feature) => (
+            <li key={feature.key} className="showcase-feature">
+              <span className="showcase-feature-icon"><Icon name={feature.icon} size={15} /></span>
+              <span className="showcase-feature-title">{feature.title}</span>
+              <span className="showcase-feature-detail">{feature.detail}</span>
             </li>
           ))}
-        </ol>
+        </ul>
       </div>
     </section>
   );
