@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { wipe, DEMO_JD, DEMO_RESUME } from '../src/seed/demoData.js';
+import { prisma } from '../src/db.js';
 import {
   computeCohenKappa, computeAgreementReport, MINIMUM_N, AGREEMENT_GATE,
   type ShadowObservation,
@@ -221,6 +222,22 @@ beforeAll(async () => {
   const session = await request(app).post('/api/interviews').set(auth)
     .send({ candidateId: cand.body.candidate.id, durationMinutes: 45, approve: true });
   const sessionId = session.body.session.id;
+
+  // An interview cannot start without a consent record, and the recruiter
+  // routes used here create the disclosure but never record the candidate's
+  // answer — that happens on the portal. Recorded directly rather than
+  // detouring through an invitation flow this file is not about.
+  const created = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId } });
+  await prisma.interviewSession.update({
+    where: { id: sessionId },
+    data: {
+      consentJson: JSON.stringify({
+        ...JSON.parse(created.consentJson) as Record<string, unknown>,
+        consentedAt: new Date().toISOString(),
+        channel: 'test',
+      }),
+    },
+  });
 
   const start = await request(app).post(`/api/interviews/${sessionId}/start`).set(auth).send({});
   let done = start.body.turn.done;

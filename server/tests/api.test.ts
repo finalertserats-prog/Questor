@@ -5,6 +5,25 @@ import { wipe, DEMO_JD, DEMO_RESUME } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
 
 const app = createApp();
+
+/**
+ * Stand in for the candidate accepting the disclosure.
+ *
+ * An interview cannot start without a consent record. The recruiter-driven
+ * routes exercised below create the session and its disclosure but never record
+ * the candidate's answer — that happens on the portal — so these tests record
+ * it directly rather than detouring through the invitation flow they are not
+ * about.
+ */
+async function recordConsent(id: string) {
+  const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id } });
+  const consent = JSON.parse(session.consentJson) as Record<string, unknown>;
+  await prisma.interviewSession.update({
+    where: { id },
+    data: { consentJson: JSON.stringify({ ...consent, consentedAt: new Date().toISOString(), channel: 'test' }) },
+  });
+}
+
 let token = '';
 let roleId = '';
 let candidateId = '';
@@ -59,6 +78,7 @@ describe('Questor API end-to-end', () => {
   });
 
   it('runs the interview in text mode to completion', async () => {
+    await recordConsent(sessionId);
     const start = await request(app).post(`/api/interviews/${sessionId}/start`).set('Authorization', `Bearer ${token}`).send({});
     expect(start.status).toBe(200);
     let done = start.body.turn.done;

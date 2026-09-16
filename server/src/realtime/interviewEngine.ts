@@ -169,6 +169,19 @@ export async function withdrawInterview(sessionId: string, reason: 'candidate_wi
   logger.info({ sessionId, reason }, 'Interview ended at candidate request — not assessed');
 }
 
+/**
+ * Whether this session carries a consent record.
+ *
+ * `consentedAt` is the field every consent path stamps (portal, seed, sim), and
+ * its presence is what distinguishes "the candidate agreed" from "a disclosure
+ * was drafted for them". A session created by the recruiter routes carries the
+ * disclosure text but no `consentedAt` until the candidate accepts it.
+ */
+function hasRecordedConsent(consentJson: string): boolean {
+  const consent = parseJson<{ consentedAt?: unknown }>(consentJson, {});
+  return typeof consent.consentedAt === 'string' && consent.consentedAt.length > 0;
+}
+
 /** Begin the assessed conversation: move to ASSESSING and emit the opening. */
 export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   const { session } = await loadContext(sessionId);
@@ -183,6 +196,15 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   // decision a human had already made. That also defeated the turn-state guard
   // below, since the guard only checks the state this function could reset.
   if (!LIVE_STATES.includes(session.state)) {
+    // Consent is checked before the state converges, not after. Without this,
+    // any caller holding a valid invitation could skip the disclosure entirely
+    // and still reach a scored assessment: a transcript and a recommendation
+    // would exist with nothing on the session saying the person agreed to
+    // either. That record is the first thing a GDPR Art. 22 or LL144 enquiry
+    // asks for, and it cannot be reconstructed afterwards.
+    if (!hasRecordedConsent(session.consentJson)) {
+      throw new HttpError(409, 'This interview cannot start until the disclosure has been read and consent recorded. Please go back to your invitation link and accept the disclosure first.');
+    }
     if (!STARTABLE_STATES.includes(session.state)) {
       // Candidate-facing. An internal state name reads as a crash to the person
       // it is shown to, and MANUAL_HANDOFF in particular means "a human is
