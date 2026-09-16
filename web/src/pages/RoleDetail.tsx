@@ -7,6 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { hasScore } from '../components/scoreFormat';
+import { weightsProblem, weightsTotal } from '../components/scorecardModel';
 
 type Category = 'technical' | 'domain' | 'behavioral' | 'situational' | 'communication';
 type Classification = 'essential' | 'preferred' | 'trainable' | 'non_scoring';
@@ -33,14 +34,13 @@ const CLASSIFICATIONS: Classification[] = ['essential', 'preferred', 'trainable'
 function catKind(c: Category): 'blue' | 'gray' {
   return c === 'technical' || c === 'domain' ? 'blue' : 'gray';
 }
-function classKind(c: Classification): 'green' | 'amber' | 'gray' {
-  return c === 'essential' ? 'green' : c === 'preferred' ? 'amber' : 'gray';
-}
-
 export function RoleDetail() {
   const { id } = useParams();
   const [data, setData] = useState<RoleResp | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  // The profile exactly as it was loaded. "Dirty" is the difference from this,
+  // not a flag someone has to remember to set on every edit path.
+  const [saved, setSaved] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -49,11 +49,28 @@ export function RoleDetail() {
   const load = () => {
     setLoading(true);
     api.get<RoleResp>(`/roles/${id}`)
-      .then((d) => { setData(d); setProfile(d.scorecards?.[0]?.profile ?? null); })
-      .catch((err) => setError(err.message))
+      .then((d) => {
+        const next = d.scorecards?.[0]?.profile ?? null;
+        setData(d);
+        setProfile(next);
+        setSaved(JSON.stringify(next));
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not load this role.'))
       .finally(() => setLoading(false));
   };
   useEffect(load, [id]);
+
+  const dirty = profile !== null && JSON.stringify(profile) !== saved;
+
+  // Closing the tab is the one departure the browser will let us question.
+  // In-app navigation cannot be blocked here — this router has no data router
+  // to hang a blocker on — so the unsaved marker beside Save carries that job.
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   if (loading) return <PageSkeleton label="Loading role…" cards={3} />;
   if (error) return <Banner kind="error">{error}</Banner>;
@@ -72,15 +89,25 @@ export function RoleDetail() {
   const scorecard = data.scorecards[0];
   const approved = scorecard?.status === 'approved';
 
+  const weightsError = weightsProblem(profile.competencies ?? []);
+  const total = weightsTotal(profile.competencies ?? []);
+
   const updateComp = (i: number, patch: Partial<Competency>) => {
     setProfile((p) => {
       if (!p) return p;
-      const competencies = p.competencies.map((c, idx) => (idx === i ? { ...c, ...patch } : c));
+      const competencies = p.competencies.map((c, idx) => {
+        if (idx !== i) return c;
+        const next = { ...c, ...patch };
+        // A non-scoring competency weighs nothing by definition. Leaving its old
+        // weight behind would keep it in a total it no longer contributes to.
+        return next.classification === 'non_scoring' ? { ...next, weight: 0 } : next;
+      });
       return { ...p, competencies };
     });
   };
 
   const save = async () => {
+    if (weightsError || !dirty) return;
     setSaving(true);
     setError('');
     setNotice('');
@@ -88,8 +115,8 @@ export function RoleDetail() {
       await api.put<{ scorecard: Scorecard }>(`/roles/${id}/scorecard`, { profile });
       setNotice('Changes saved.');
       load();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not save the scorecard.');
     } finally {
       setSaving(false);
     }
@@ -100,8 +127,8 @@ export function RoleDetail() {
     try {
       await api.post<{ scorecard: Scorecard }>(`/roles/${id}/approve`, {});
       load();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not approve the scorecard.');
     }
   };
 
@@ -117,9 +144,17 @@ export function RoleDetail() {
         }
         actions={
           <>
-            <button className="btn secondary" onClick={save} disabled={saving}>
+            {/* Marked with words rather than a colour: nothing to save, and a
+                total the server will refuse, are different reasons for the same
+                disabled button. */}
+            <button
+              className="btn secondary"
+              onClick={save}
+              disabled={saving || !dirty || weightsError !== null}
+              title={weightsError ?? (dirty ? undefined : 'No changes to save')}
+            >
               <Icon name={saving ? 'hourglass' : 'save'} size={16} />
-              {saving ? 'Saving…' : 'Save changes'}
+              {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
             </button>
             <button className="btn" onClick={approve} disabled={approved}>
               <Icon name="check-circle" size={16} />
@@ -131,6 +166,7 @@ export function RoleDetail() {
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
+      {dirty && <p className="muted small">Unsaved changes — they are lost if you leave this page.</p>}
       {approved && (
         <Banner kind="ok">
           Scorecard approved — ready to interview candidates.{' '}
@@ -198,6 +234,13 @@ export function RoleDetail() {
           </tbody>
         </table>
         </div>
+        {/* The total the server checks, shown where the weights are edited —
+            otherwise the first anyone hears of it is a refused save. */}
+        <div className="row spread" style={{ marginTop: 8 }}>
+          <span className="small">Scored weights total {total}%</span>
+          {weightsError && <span className="small">[ must total 100% ]</span>}
+        </div>
+        {weightsError && <Banner kind="error">{weightsError}</Banner>}
         <div className="muted small" style={{ marginTop: 8 }}>
           Pass threshold: {Math.round((profile.scoringRules?.passThreshold ?? 0) * 100)}% ·
           Must-pass competencies: {(profile.scoringRules?.mustPassCompetencyIds ?? []).length}
