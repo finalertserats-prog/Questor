@@ -28,10 +28,13 @@ adminRouter.use(authenticate);
 const MAX_RETENTION_EXTENSION_DAYS = 365 * 7;
 
 // Provider / connector status — shows which paid components are plugged in.
-adminRouter.get('/providers', asyncHandler(async (req, res) => {
+//
+// Admin-only. Which external systems a deployment is wired to, and which of
+// them are configured, is operations detail: a recruiter has no workflow that
+// needs it, and the answer describes the whole deployment rather than their
+// tenant. Only the Admin console reads this.
+adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const llm = getLlm();
-  // Which vendor variables are set is setup detail for admins; other roles
-  // still see capability and configured/not-configured status.
   const showEnv = capabilitiesOf(req.auth!.role).includes('admin:manage');
   const meeting = allMeetingCapabilities().map(({ env, ...rest }) => (showEnv ? { ...rest, env } : rest));
   res.json({
@@ -87,9 +90,13 @@ adminRouter.get('/audit', requireCapability('audit:read'), asyncHandler(async (r
   ]);
 
   // Names only for users in THIS tenant; an actorId that is not one of them
-  // (system, model, a deleted user) falls back to the raw id.
+  // (system, model, a deleted user) falls back to the raw id. Resolved from the
+  // events actually on this page as well as the filter options, because the
+  // options are only built for page 1 — reading them alone left every event
+  // after the first page with no actor name.
+  const actorIds = [...new Set([...actorRows.map((a) => a.actorId), ...events.map((e) => e.actorId)])];
   const users = await prisma.user.findMany({
-    where: { tenantId, id: { in: actorRows.map((a) => a.actorId) } },
+    where: { tenantId, id: { in: actorIds } },
     select: { id: true, name: true },
   });
   const nameOf = new Map(users.map((u) => [u.id, u.name]));

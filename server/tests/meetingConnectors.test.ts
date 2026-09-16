@@ -230,11 +230,12 @@ describe('GET /api/admin/providers — meeting status exposes variable names, ne
     });
   });
 
-  it('hides which variables are set from a non-admin', async () => {
+  it('is not readable by a non-admin at all', async () => {
     configureZoom();
+
     const res = await request(app).get('/api/admin/providers').set('Authorization', `Bearer ${recruiterA}`);
-    const zoom = res.body.meeting.find((m: { provider: string }) => m.provider === 'zoom');
-    expect(zoom.env).toBeUndefined();
+
+    expect(res.status).toBe(403);
   });
 
   it('does not include any credential value in the providers payload', async () => {

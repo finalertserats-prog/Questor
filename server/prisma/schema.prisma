@@ -68,6 +68,9 @@ model Role {
   // Empty means the default medallion stages.
   pipelineStagesJson String @default("")
   pipelines     CandidatePipeline[]
+
+  // Every list and dashboard count starts from the tenant.
+  @@index([tenantId, createdAt])
 }
 
 model RoleScorecardVersion {
@@ -100,6 +103,8 @@ model Candidate {
   artifacts     Artifact[]
   assignments   CandidateAssignment[]
   pipelines     CandidatePipeline[]
+
+  @@index([tenantId, createdAt])
 }
 
 model CandidateProfileVersion {
@@ -202,6 +207,14 @@ model InterviewSession {
   assessments       AssessmentVersion[]
   artifacts         Artifact[]
   integrityEvents   IntegrityEvent[]
+
+  // The dashboard counts interviews per tenant by when they were created,
+  // scheduled and completed, and groups them by state; the lists read newest
+  // first. Without these, each of those is a scan of the whole table.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, scheduledAt])
+  @@index([tenantId, completedAt])
+  @@index([tenantId, state])
 }
 
 model IntegrityEvent {
