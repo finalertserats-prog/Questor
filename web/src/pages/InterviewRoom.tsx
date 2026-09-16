@@ -48,6 +48,10 @@ function Elapsed({ since }: { since: number }) {
   return <span>{String(Math.floor(s / 60)).padStart(2, '0')}:{String(s % 60).padStart(2, '0')}</span>;
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Something went wrong.';
+}
+
 /** Concentric rings that breathe while a participant is active. */
 function SpeakingRings({ active, level }: { active: boolean; level: number }) {
   const scale = 1 + (active ? Math.max(0.06, level) * 0.5 : 0);
@@ -262,12 +266,12 @@ export function InterviewRoom() {
       setTyped('');
       addMsg({ speaker: 'agent', text: res.turn.text });
       sayAndListen(res.turn);
-    } catch (e) {
+    } catch (e: unknown) {
       // Keep the text so they can retry rather than reconstruct what they said.
       turnClosedRef.current = false;
       setTyped(text);
       setTextMode(true);
-      setErr(`${(e as Error).message} — your answer was not sent. It's in the box below; press Send to try again.`);
+      setErr(`${errorMessage(e)} — your answer was not sent. It's in the box below; press Send to try again.`);
       setPhase('listening');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -380,6 +384,11 @@ export function InterviewRoom() {
         return;
       }
       setInterim('');
+      turnClosedRef.current = false;
+      setTextMode(true);
+      setPhase('listening');
+      setErr('We could not transcribe that just now. Nothing you have said is lost — please type this answer below.');
+      return;
     }
 
     // Nothing usable from either path. The turn did NOT close — reopen it, or
@@ -496,7 +505,7 @@ export function InterviewRoom() {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/start`, {});
       addMsg({ speaker: 'agent', text: res.turn.text });
       sayAndListen(res.turn);
-    } catch (e) { setErr((e as Error).message); setPhase('ready'); }
+    } catch (e: unknown) { setErr(errorMessage(e)); setPhase('ready'); }
   };
 
   const repeat = () => {
