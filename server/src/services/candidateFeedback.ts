@@ -328,19 +328,22 @@ export async function resolveHumanRequest(token: string, now = new Date()): Prom
  * first request is the one kept, so a double-click or a mail client that
  * follows the link twice cannot rewrite when they asked.
  */
-export async function recordHumanRequest(token: string, now = new Date()): Promise<boolean> {
+export async function recordHumanRequest(token: string, now = new Date()): Promise<ResolvedHumanRequest | null> {
   const row = await resolveHumanRequest(token, now);
-  if (row.status === 'REQUESTED') return false;
+  if (row.status === 'REQUESTED') return null;
 
   // Conditional on the status just read. Two simultaneous clicks both see
   // ISSUED, and an unconditional update would let the second one move the
   // timestamp off the first click — and tell the hiring team twice that one
   // person asked to talk.
+  // expiresAt is re-checked here and not only in the read above: the link can
+  // expire in the gap between the two, and an expired link must not be able to
+  // put a candidate in front of the hiring team.
   const { count } = await prisma.candidateHumanRequest.updateMany({
-    where: { id: row.id, status: 'ISSUED' },
+    where: { id: row.id, status: 'ISSUED', expiresAt: { gt: now } },
     data: { status: 'REQUESTED', requestedAt: now },
   });
-  if (count === 0) return false;
+  if (count === 0) return null;
 
   await logAudit({
     tenantId: row.tenantId,
@@ -351,7 +354,9 @@ export async function recordHumanRequest(token: string, now = new Date()): Promi
     entityId: row.candidateId,
     after: { sessionId: row.sessionId, requestedAt: now },
   });
-  return true;
+  // The caller gets the claimed row from the write itself, so it never has to
+  // re-resolve the token after mutating it.
+  return { ...row, status: 'REQUESTED', requestedAt: now };
 }
 
 // ---------------------------------------------------------------------------
