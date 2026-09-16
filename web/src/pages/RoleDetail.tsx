@@ -45,6 +45,9 @@ export function RoleDetail() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
+  // Half-typed weights, by competency id. They live here rather than in the
+  // profile so that "" never reaches the scorecard as 0%.
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
 
   const load = () => {
     setLoading(true);
@@ -88,6 +91,9 @@ export function RoleDetail() {
   const role = data.role;
   const scorecard = data.scorecards[0];
   const approved = scorecard?.status === 'approved';
+
+  const clearWeightDraft = (competencyId: string) =>
+    setWeightDrafts((drafts) => Object.fromEntries(Object.entries(drafts).filter(([key]) => key !== competencyId)));
 
   const weightsError = weightsProblem(profile.competencies ?? []);
   const total = weightsTotal(profile.competencies ?? []);
@@ -156,7 +162,16 @@ export function RoleDetail() {
               <Icon name={saving ? 'hourglass' : 'save'} size={16} />
               {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
             </button>
-            <button className="btn" onClick={approve} disabled={approved}>
+            {/* Approving with edits still on screen approved the version the
+                server holds — the one nobody was looking at — while the page
+                showed the edited values. Save first, then approve what you can
+                see. */}
+            <button
+              className="btn"
+              onClick={approve}
+              disabled={approved || dirty}
+              title={dirty ? 'Save your changes first — approving would approve the saved version, not these edits.' : undefined}
+            >
               <Icon name="check-circle" size={16} />
               {approved ? 'Approved' : 'Approve scorecard'}
             </button>
@@ -212,17 +227,34 @@ export function RoleDetail() {
                 <td>
                   <select
                     value={c.classification}
-                    onChange={(e) => updateComp(i, { classification: e.target.value as Classification })}
+                    onChange={(e) => {
+                      // A non-scoring competency has its weight zeroed, so any
+                      // half-typed weight beside it is no longer what it says.
+                      clearWeightDraft(c.id);
+                      updateComp(i, { classification: e.target.value as Classification });
+                    }}
                   >
                     {CLASSIFICATIONS.map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
                 </td>
                 <td style={{ minWidth: 120 }}>
                   <div className="row" style={{ gap: 6 }}>
+                    {/* An empty field is someone part-way through typing, not a
+                        weight of nothing: Number('') is 0, and clearing the box
+                        used to set the competency to 0% on the spot. The draft
+                        holds the half-typed value; the stored weight only moves
+                        when there is a number to move it to. */}
                     <input
                       type="number" min={0} max={100} step={5}
-                      value={Math.round(c.weight * 100)}
-                      onChange={(e) => updateComp(i, { weight: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })}
+                      aria-label={`Weight for ${c.name}, percent`}
+                      value={weightDrafts[c.id] ?? String(Math.round(c.weight * 100))}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        setWeightDrafts((drafts) => ({ ...drafts, [c.id]: raw }));
+                        if (!raw.trim() || !Number.isFinite(Number(raw))) return;
+                        updateComp(i, { weight: Math.max(0, Math.min(100, Number(raw))) / 100 });
+                      }}
+                      onBlur={() => clearWeightDraft(c.id)}
                       style={{ width: 70 }}
                     />
                     <span className="muted small">%</span>
