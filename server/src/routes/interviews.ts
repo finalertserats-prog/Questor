@@ -19,7 +19,7 @@ import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
-import { OBSERVER_NOTICE } from '../services/observerPolicy.js';
+import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 
 export const interviewsRouter = Router();
@@ -562,40 +562,8 @@ interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncH
   res.json({ session: { id: session.id, state: session.state }, turns });
 }));
 
-/** States in which the candidate may be on the call right now. */
-const LIVE_INTERVIEW_STATES = new Set([
-  'READY_CHECK', 'WAITING', 'CONNECTING', 'DISCLOSURE', 'CONSENTED', 'WARMUP',
-  'ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING',
-]);
-
-async function mayObserveLive(session: { id: string; consentJson: string }): Promise<boolean> {
-  const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
-  // Two conditions. The consent flag comes from the portal page and could be
-  // sent by anyone holding the candidate's link, so on its own it proves
-  // nothing. The server-side proof is the transcript: an AI turn in which the
-  // interviewer actually told the candidate they may be observed.
-  const spokenNotice = await prisma.turn.findFirst({
-    where: { sessionId: session.id, speaker: 'agent', text: { contains: OBSERVER_NOTICE } },
-    orderBy: { index: 'asc' },
-    select: { index: true },
-  });
-  // The notice being in the transcript is not enough on its own: staff can
-  // start an interview with no candidate present. So the candidate must also
-  // have answered after hearing it...
-  const answeredAfterNotice = spokenNotice
-    ? await prisma.turn.findFirst({
-      where: { sessionId: session.id, speaker: 'candidate', index: { gt: spokenNotice.index } },
-      select: { id: true },
-    })
-    : null;
-  // ...and the interview must not have been started or answered from the
-  // recruiter console, where nobody may be on the other end to have heard it.
-  const staffDriven = await prisma.auditEvent.findFirst({
-    where: { entityId: session.id, action: { in: ['interview.started.by_recruiter', 'interview.turn.by_recruiter'] } },
-    select: { id: true },
-  });
-  return consent.observerDisclosed === true && answeredAfterNotice !== null && staffDriven === null;
-}
+// The live-state set and the observer-consent gate live in
+// services/observerPolicy.ts, shared with the socket transport.
 
 interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);

@@ -4,6 +4,8 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { verifyToken } from '../services/auth.js';
+import { assertCanAccessSession, capabilitiesOf } from '../services/access.js';
+import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 
@@ -25,6 +27,13 @@ interface AuthorizedSession {
   id: string;
   state: string;
 }
+
+/**
+ * What a staff socket is asking to do. Observing a session is reading its
+ * transcript as it is spoken; driving it is starting or finalising it. The
+ * HTTP routes gate these differently and so does the socket.
+ */
+export type SocketIntent = 'observe' | 'drive';
 
 // Turns written here become the transcript the evaluator scores and a human
 // reads, so a failure must never hint at what exists. Denials are
@@ -79,8 +88,20 @@ async function resolveHandshakeAuth(raw: Record<string, unknown>): Promise<Socke
  * Single authorisation gate for every event. Session ids are cuids that appear
  * in ordinary API responses, so possession of one proves nothing — the caller's
  * own credential decides which session they may touch.
+ *
+ * For staff this is the same three questions the HTTP routes ask, in the same
+ * order: may this person read candidates at all (capability), may they read
+ * THIS candidate (object scope, via assertCanAccessSession), and if the
+ * candidate may be on the call right now, were they told someone might be
+ * watching (the observer-consent gate)? It used to ask only whether the tenant
+ * matched, which let any user of the tenant sit in on any live interview and
+ * force any session to be assessed.
  */
-async function authorizeSession(auth: SocketAuth, requestedSessionId?: string): Promise<AuthorizedSession | null> {
+export async function authorizeSession(
+  auth: SocketAuth,
+  requestedSessionId: string | undefined,
+  intent: SocketIntent,
+): Promise<AuthorizedSession | null> {
   if (auth.kind === 'candidate') {
     const inv = await loadInvitation(auth.token);
     if (!inv) return null;
@@ -94,11 +115,23 @@ async function authorizeSession(auth: SocketAuth, requestedSessionId?: string): 
   const claims = verifyToken(auth.token);
   if (!claims) return null;
   if (!requestedSessionId) return null;
-  const session = await prisma.interviewSession.findUnique({
-    where: { id: requestedSessionId },
-    select: { id: true, tenantId: true, state: true },
-  });
-  if (!session || session.tenantId !== claims.tenantId) return null;
+
+  const capabilities = capabilitiesOf(claims.role);
+  const needed = intent === 'drive' ? 'interview:drive' : 'candidate:read';
+  if (!capabilities.includes(needed)) return null;
+
+  let session: { id: string; state: string; consentJson: string };
+  try {
+    session = await assertCanAccessSession(claims, requestedSessionId);
+  } catch {
+    // assertCanAccessSession answers "not found" for both a missing session and
+    // one outside the caller's scope; the socket says the same thing.
+    return null;
+  }
+
+  if (intent === 'observe' && LIVE_INTERVIEW_STATES.has(session.state) && !(await mayObserveLive(session))) {
+    return null;
+  }
   return { id: session.id, state: session.state };
 }
 
@@ -132,7 +165,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
 
     socket.on('join', async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
       try {
-        const session = await authorizeSession(socket.data.auth, payload?.sessionId);
+        const session = await authorizeSession(socket.data.auth, payload?.sessionId, 'observe');
         if (!session) { ack?.({ error: DENIED }); return; }
         joinedSessionId = session.id;
         socket.join(session.id);
@@ -150,7 +183,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
 
     socket.on('start', async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
       try {
-        const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId));
+        const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'drive');
         if (!session) { ack?.({ error: DENIED }); return; }
         const turn = await startInterview(session.id);
         io.to(session.id).emit('agent_turn', turn);
@@ -163,7 +196,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
 
     socket.on('candidate_turn', async (payload: { text: string; sessionId?: string; startMs?: number; endMs?: number; confidence?: number }, ack?: (r: unknown) => void) => {
       try {
-        const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId));
+        const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'observe');
         if (!session) { ack?.({ error: DENIED }); return; }
         // Only the candidate may add to their own transcript. A recruiter with a
         // valid tenant JWT could otherwise inject text that feeds the evaluator
@@ -172,8 +205,11 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         // so it authenticates as the candidate and is unaffected.
         if (socket.data.auth?.kind !== 'candidate') { ack?.({ error: DENIED }); return; }
         if (!payload?.text?.trim()) { ack?.({ error: 'empty' }); return; }
-        socket.to(session.id).emit('candidate_turn', { text: payload.text });
         const turn = await submitCandidateTurn(session.id, payload.text, payload);
+        // Echoed to observers only now, once the words are in the transcript. An
+        // echo before the write showed observers an answer the engine then
+        // rejected, which the evaluator never saw and the reviewer never read.
+        socket.to(session.id).emit('candidate_turn', { text: payload.text });
         io.to(session.id).emit('agent_turn', turn);
         if (turn.withdrawn) {
           // Ended at the candidate's request — closed, never scored.
@@ -191,7 +227,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
 
     socket.on('finalize', async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
       try {
-        const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId));
+        const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'drive');
         if (!session) { ack?.({ error: DENIED }); return; }
         // Candidates must not be able to force assessment. Otherwise they could
         // connect, start, and immediately finalise — skipping the interview and
