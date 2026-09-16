@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
-import { isInFlight } from './CandidatesList';
+import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
 import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
 import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
@@ -11,6 +11,9 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
+import {
+  MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
+} from '../components/interviewSetupModel';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -288,7 +291,10 @@ export function CandidateDetail() {
     window.requestAnimationFrame(() => document.getElementById(candidateDetailTabId(next))?.focus());
   };
 
-  const createInterview = async () => {
+  const createInterview = async (event: React.FormEvent) => {
+    event.preventDefault();
+    // Checked here as well as on the button: Enter in a field submits too.
+    if (creating || setupProblem) return;
     setCreating(true);
     setCreateError('');
     try {
@@ -306,11 +312,13 @@ export function CandidateDetail() {
         approve: true,
       });
       nav(`/interviews/${resp.session.id}`);
-    } catch (err: any) {
-      setCreateError(err.message);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Could not create this interview.');
       setCreating(false);
     }
   };
+
+  const setupProblem = interviewSetupProblem({ durationMinutes, personaName });
 
   return (
     <div>
@@ -386,15 +394,26 @@ export function CandidateDetail() {
       <div className="card">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
         {createError && <Banner kind="error">{createError}</Banner>}
+        {/* A form, so Enter works and the browser checks the field bounds it is
+            given — the button used to be a plain onClick, which meant neither. */}
+        <form onSubmit={createInterview}>
         <div className="grid cols-3">
           <div>
-            <label>Duration (minutes)</label>
-            <input type="number" min={15} max={120} value={durationMinutes}
-              onChange={(e) => setDurationMinutes(Number(e.target.value))} />
+            <label htmlFor="interview-duration">Duration (minutes)</label>
+            <input
+              id="interview-duration"
+              type="number"
+              min={MIN_DURATION_MINUTES}
+              max={MAX_DURATION_MINUTES}
+              value={durationMinutes}
+              onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              onBlur={() => setDurationMinutes(clampDuration(durationMinutes))}
+              required
+            />
           </div>
           <div>
-            <label>Persona name</label>
-            <input value={personaName} onChange={(e) => setPersonaName(e.target.value)} />
+            <label htmlFor="interview-persona">Persona name</label>
+            <input id="interview-persona" value={personaName} onChange={(e) => setPersonaName(e.target.value)} required />
           </div>
           <div>
             <label>Tone</label>
@@ -426,12 +445,14 @@ export function CandidateDetail() {
             </div>
           </div>
         </div>
+        {setupProblem && <p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
         <div className="row" style={{ marginTop: 16 }}>
-          <button className="btn" onClick={createInterview} disabled={creating}>
+          <button className="btn" type="submit" disabled={creating || setupProblem !== null}>
             <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />
             {creating ? 'Creating…' : 'Approve & create interview'}
           </button>
         </div>
+        </form>
       </div>
 
       <div className="card">
@@ -462,7 +483,11 @@ export function CandidateDetail() {
                     <td>
                       <span className="row" style={{ gap: 6 }}>
                         {stateBadge(iv.state)}
-                        {isInFlight(iv.state) && <span className="inflight-note">in progress</span>}
+                        {/* An invited candidate who has not turned up is not
+                            "in progress"; the candidates list already makes
+                            that distinction, and this row now makes the same one. */}
+                        {isAwaitingCandidate(iv.state) && <span className="inflight-note">not started yet</span>}
+                        {isUnderway(iv.state) && <span className="inflight-note">in progress</span>}
                       </span>
                     </td>
                     <td>{recBadge(s?.recommendation)}</td>
