@@ -91,7 +91,8 @@ export function Dashboard() {
         </div>
       </div>
 
-      <WorkflowDiagram />
+      {/* data-tour marks what the guided tour points at (components/tourModel.ts). */}
+      <WorkflowDiagram anchor="workflow" />
 
       {error?.status === 403 ? (
         <Banner kind="info">
@@ -113,7 +114,7 @@ export function Dashboard() {
 
       {metrics && k && (
         <>
-          <section aria-labelledby="dash-kpis">
+          <section aria-labelledby="dash-kpis" data-tour="kpis">
             <h2 id="dash-kpis" className="dash-heading">Key metrics</h2>
             <ul className="kpi-grid">
               <Kpi icon="role" label="Open roles" value={k.openRoles} hint="Draft or approved" />
@@ -132,7 +133,7 @@ export function Dashboard() {
             </ul>
           </section>
 
-          <section aria-labelledby="dash-charts" className="dash-charts">
+          <section aria-labelledby="dash-charts" className="dash-charts" data-tour="trends">
             <h2 id="dash-charts" className="dash-heading">Trends</h2>
             <div className="card dash-chart-wide">
               <h3>Interviews per week</h3>
@@ -140,7 +141,7 @@ export function Dashboard() {
               <WeeklyColumnChart data={metrics.interviewsPerWeek} />
             </div>
             <div className="grid cols-2">
-              <div className="card">
+              <div className="card" data-tour="pipeline-stages">
                 <h3>Pipeline by stage</h3>
                 <p className="muted small">{inPipeline} active candidates, by current medallion stage.</p>
                 <HorizontalBarChart items={stageItems} title="Active pipelines by stage" summary={`${inPipeline} active candidates.`} />
@@ -153,7 +154,7 @@ export function Dashboard() {
             </div>
           </section>
 
-          <section className="card" aria-labelledby="dash-recent">
+          <section className="card" aria-labelledby="dash-recent" data-tour="recent-interviews">
             <div className="spread row" style={{ marginBottom: 8 }}>
               <h2 id="dash-recent" style={{ margin: 0 }}>Recent interviews</h2>
               <Link className="btn sm secondary" to="/interviews">View all</Link>

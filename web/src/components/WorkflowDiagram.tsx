@@ -22,6 +22,8 @@ interface WorkflowDiagramProps {
   readonly steps?: readonly WorkflowStep[];
   readonly label?: string;
   readonly className?: string;
+  /** The `data-tour` anchor the guided tour points at, on the pages it runs on. */
+  readonly anchor?: string;
   /** The step drawn as current. Left undefined, no step is singled out. */
   readonly activeStep?: number;
   /** Called when a pointer or the keyboard reaches a step that has no link. */
@@ -40,6 +42,7 @@ export function WorkflowDiagram({
   steps = STEPS,
   label = 'Hiring workflow',
   className,
+  anchor,
   activeStep,
   onActivate,
   onPause,
@@ -49,6 +52,7 @@ export function WorkflowDiagram({
     <section
       className={className ? `workflow card ${className}` : 'workflow card'}
       aria-label={label}
+      data-tour={anchor}
       onMouseEnter={onPause}
       onMouseLeave={onResume}
       onFocus={onPause}

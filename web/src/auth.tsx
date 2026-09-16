@@ -1,11 +1,20 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, setToken, getToken } from './api/client';
 
-export interface User { id: string; name: string; email: string; role: string; }
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  /** When this user finished or skipped the guided tour; null means it has never run for them. */
+  tourCompletedAt: string | null;
+}
 interface AuthCtx { user: User | null; tenant: { id: string; name: string } | null; loading: boolean;
   login: (email: string, password: string, orgSlug?: string) => Promise<void>;
   register: (b: { email: string; password: string; name: string; tenantName?: string }) => Promise<void>;
-  logout: () => void; }
+  logout: () => void;
+  /** Records on the server that the guided tour is done, so it never auto-runs again on any browser. */
+  markTourComplete: () => Promise<void>; }
 
 const Ctx = createContext<AuthCtx>(null as any);
 export const useAuth = () => useContext(Ctx);
@@ -34,6 +43,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const me = await api.get<{ tenant: any }>('/auth/me'); setTenant(me.tenant);
   };
   const logout = () => { setToken(null); setUser(null); setTenant(null); };
+  const markTourComplete = async () => {
+    const d = await api.post<{ tourCompletedAt: string | null }>('/auth/tour/complete');
+    setUser((current) => (current ? { ...current, tourCompletedAt: d.tourCompletedAt } : current));
+  };
 
-  return <Ctx.Provider value={{ user, tenant, loading, login, register, logout }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, tenant, loading, login, register, logout, markTourComplete }}>{children}</Ctx.Provider>;
 }

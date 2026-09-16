@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
 import { ProfileMenu } from './components/ProfileMenu';
+import { ProductTour } from './components/ProductTour';
+import { TourProvider } from './components/tourContext';
 import {
   brandDisplay,
   navItemTooltip,
@@ -158,6 +160,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         ref={toggleRef}
         type="button"
         className="nav-toggle"
+        data-tour="nav-toggle"
         aria-controls="app-sidebar"
         aria-expanded={overlayOpen}
         onClick={() => setNavOpen(true)}
@@ -205,24 +208,31 @@ function Layout({ children }: { children: React.ReactNode }) {
 
             Each label stays in the markup in both states: in the rail it is
             clipped rather than removed, so every icon keeps its name for a
-            screen reader, and data-tip shows that name on hover and on focus. */}
+            screen reader, and data-tip shows that name on hover and on focus.
+
+            data-tour is what the guided tour points at (components/tourModel.ts):
+            an explicit anchor, so moving the markup cannot silently strand a step. */}
         <nav>
           <div className="nav-group">Review</div>
-          <NavLink to="/" end data-tip={tip('Dashboard')}><Icon name="dashboard" /><span className="nav-label">Dashboard</span></NavLink>
+          <NavLink to="/" end data-tip={tip('Dashboard')} data-tour="nav-dashboard"><Icon name="dashboard" /><span className="nav-label">Dashboard</span></NavLink>
           {/* Candidates sits above "Add Candidate" because finding an existing
               one is the far more frequent errand — and for a long time it was
               the impossible one: creation had a nav entry, retrieval had none. */}
-          <NavLink to="/candidates" end data-tip={tip('Candidates')}><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
-          <NavLink to="/interviews" data-tip={tip('Interviews')}><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
+          <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
+          <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
 
           <div className="nav-group">Set up</div>
-          <NavLink to="/candidates/new" data-tip={tip('Add candidate')}><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
-          <NavLink to="/roles/new" data-tip={tip('New role')}><Icon name="role" /><span className="nav-label">New role</span></NavLink>
+          <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
+          <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="role" /><span className="nav-label">New role</span></NavLink>
         </nav>
         <ProfileMenu />
       </aside>
 
       <main ref={mainRef} className="main">{children}</main>
+
+      {/* Outside <main>, which is inert while the drawer is open: a tour step
+          that opens the drawer to point into it must stay reachable itself. */}
+      <ProductTour isNarrow={isNarrow} setDrawerOpen={setNavOpen} />
     </div>
   );
 }
@@ -236,6 +246,7 @@ function Protected({ children }: { children: React.ReactNode }) {
 
 export function App() {
   return (
+    <TourProvider>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/o/:slug" element={<OrgLogin />} />
@@ -262,5 +273,6 @@ export function App() {
       <Route path="/contact" element={<Protected><Contact /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </TourProvider>
   );
 }
