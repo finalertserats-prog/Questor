@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton, Skeleton } from '../components/Skeleton';
-import { DISPOSITIONS, canSubmitVerdict, isDisposition, isScored, type Disposition } from '../components/assessmentModel';
+import {
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored, type Disposition,
+} from '../components/assessmentModel';
 import { recommendationStatus } from '../components/statusModel';
 import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
 
@@ -103,7 +105,9 @@ export function ValidationStatus() {
         Nothing here becomes validated by accumulating verdicts. {sufficiency.minimumN} paired blind
         verdicts is only the point at which the confidence interval starts to mean anything — a floor for
         reading the statistic, not a pass mark. Clearing the gate additionally requires the LOWER bound of
-        that interval to reach {gate.threshold}, which a larger sample does not bring about on its own.
+        {/* Named, because every other number on this page is out of 100 or a
+            percentage, and a bare "0.75" beside them reads as one of those. */}
+        that interval to reach a kappa of {gate.threshold}, which a larger sample does not bring about on its own.
         Treat the recommendation and score as one opinion to argue with, not as a measurement.
       </div>
       <details style={{ marginTop: 8 }}>
@@ -149,24 +153,28 @@ export function AssessmentView() {
   const [submitting, setSubmitting] = useState(false);
 
   const [exportStatus, setExportStatus] = useState('');
+  const [exporting, setExporting] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [report, setReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [skipReason, setSkipReason] = useState('');
 
-  const load = () => {
+  // Returns its promise so callers can wait for fresh data before re-enabling
+  // the button that asked for it.
+  const load = () =>
     api.get<AssessmentResp>(`/assessments/${id}`)
       .then((d) => { setData(d); setBlocked(false); })
-      .catch((err: Error) => {
+      .catch((err: unknown) => {
         // The server withholds this page from a reviewer who has not yet
         // recorded their own verdict. That is a workflow state, not a failure,
-        // so it gets a route forward rather than a red error box.
-        if (/independent verdict/i.test(err.message)) setBlocked(true);
-        else setError(err.message);
+        // so it gets a route forward rather than a red error box. Read from the
+        // status, not from the prose: rewording the server's sentence used to
+        // turn this gate into a red error nobody could get past.
+        if (err instanceof ApiError && err.status === 409) setBlocked(true);
+        else setError(err instanceof Error ? err.message : 'Could not load this assessment.');
       })
       .finally(() => setLoading(false));
-  };
   useEffect(() => { setLoading(true); load(); }, [id]);
 
   const skipBlind = async () => {
@@ -242,36 +250,44 @@ export function AssessmentView() {
       setDisposition('');
       setReason('');
       setComments('');
-      load();
-    } catch (err: any) {
-      setError(err.message);
+      // Awaited: the button used to re-enable over a page still showing the
+      // state from before the review landed.
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not submit your review.');
     } finally {
       setSubmitting(false);
     }
   };
 
   const doExport = async () => {
+    if (exporting) return;
     setExportStatus('');
+    setExporting(true);
     try {
       const r = await api.post<{ status: string }>(`/assessments/${id}/export`, {});
       setExportStatus(r.status);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not export this assessment.');
+    } finally {
+      setExporting(false);
     }
   };
 
   const toggleReport = async () => {
     if (showReport) { setShowReport(false); return; }
+    if (reportLoading) return;
     if (!report) {
       setReportLoading(true);
       try {
         const r = await api.get<{ report: string; result: AssessmentResult }>(`/assessments/${id}/report?format=json`);
         setReport(r.report);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Could not load the full report.');
         setReportLoading(false);
+        return;
       }
+      setReportLoading(false);
     }
     setShowReport(true);
   };
@@ -289,10 +305,13 @@ export function AssessmentView() {
                 once a reviewer has read it they cannot un-read it, so the blind
                 route has to be reachable before they form a view, not after. */}
             <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>
-            <button className="btn secondary" onClick={doExport}><Icon name="export" size={16} />Export to ATS</button>
-            <button className="btn ghost" onClick={toggleReport}>
+            <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
+              <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
+              {exporting ? 'Exporting…' : 'Export to ATS'}
+            </button>
+            <button type="button" className="btn ghost" onClick={toggleReport} disabled={reportLoading}>
               <Icon name={showReport ? 'eye-off' : 'eye'} size={16} />
-              {showReport ? 'Hide full report' : 'View full report'}
+              {reportLoading ? 'Loading…' : showReport ? 'Hide full report' : 'View full report'}
             </button>
           </>
         }
@@ -300,7 +319,7 @@ export function AssessmentView() {
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
-      {exportStatus && <Banner kind="info">Export status: {exportStatus}</Banner>}
+      {exportStatus && <Banner kind="info">{exportStatusSentence(exportStatus)}</Banner>}
 
       {/* Above the score, not below it. A reviewer who has already read
           "76/100" has formed the impression the notice is meant to qualify. */}

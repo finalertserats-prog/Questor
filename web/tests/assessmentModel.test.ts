@@ -1,5 +1,30 @@
 import { describe, it, expect } from 'vitest';
-import { DISPOSITIONS, canSubmitVerdict, isDisposition, isScored } from '../src/components/assessmentModel';
+import {
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored,
+} from '../src/components/assessmentModel';
+
+describe('exportStatusSentence', () => {
+  it('says what a queued export means', () => {
+    expect(exportStatusSentence('QUEUED')).toBe('Queued for export to your ATS.');
+  });
+
+  it('explains a skipped export rather than leaving the reader to guess', () => {
+    expect(exportStatusSentence('SKIPPED')).toContain('no ATS is configured');
+  });
+
+  it('offers a way forward when the export failed', () => {
+    expect(exportStatusSentence('FAILED')).toContain('Try again');
+  });
+
+  it('reads the status whatever case it arrives in', () => {
+    expect(exportStatusSentence(' sent ')).toBe('Sent to your ATS.');
+  });
+
+  // A token nobody planned for is still information; it is shown, not hidden.
+  it('shows an unrecognised status as it came', () => {
+    expect(exportStatusSentence('PARTIAL')).toBe('Export status: PARTIAL');
+  });
+});
 import { recommendationStatus } from '../src/components/statusModel';
 
 describe('isDisposition', () => {

@@ -27,6 +27,25 @@ export function isScored(result: { overallScore?: unknown } | null | undefined):
   return hasScore(result?.overallScore);
 }
 
+/**
+ * The ATS export result, as a sentence rather than the raw token.
+ *
+ * "Export status: QUEUED" asks the reader to know what the server's vocabulary
+ * means. An unrecognised status is still shown — a token nobody planned for is
+ * information — but the known ones say what actually happened.
+ */
+const EXPORT_SENTENCES: Readonly<Record<string, string>> = {
+  QUEUED: 'Queued for export to your ATS.',
+  SENT: 'Sent to your ATS.',
+  DELIVERED: 'Delivered to your ATS.',
+  SKIPPED: 'Not exported: no ATS is configured for this tenant.',
+  FAILED: 'The export did not go through. Try again, or check the ATS connector in Admin.',
+};
+
+export function exportStatusSentence(status: string): string {
+  return EXPORT_SENTENCES[status.trim().toUpperCase()] ?? `Export status: ${status}`;
+}
+
 /** The shortest reason that says anything; the server enforces the same floor. */
 const MIN_REASON = 3;
 
