@@ -128,8 +128,11 @@ export function Dashboard() {
               <Kpi icon="role" label="Open roles" value={k.openRoles} hint="Draft or approved" />
               <Kpi icon="candidates" label="Candidates" value={k.candidates} to="/candidates" hint="You can access" />
               <Kpi icon="funnel" label="In pipeline" value={k.activePipelines} hint="Active, not yet decided" />
-              <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="Next 7 days" />
-              <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="Last 30 days" />
+              {/* Both counts include the human rounds, not only the AI sessions
+                  the list they link to shows. Said in the hint rather than left
+                  for someone to discover by counting rows. */}
+              <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="AI interviews and human rounds, next 7 days" />
+              <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="AI interviews and human rounds, last 30 days" />
               <Kpi icon="eye" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
               <Kpi
                 icon="user-x"
@@ -138,7 +141,9 @@ export function Dashboard() {
                 to="/interviews?state=stopped"
                 hint="No-show, withdrew or cut short"
               />
-              <Kpi icon="clock" label="Invite to interview" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
+              {/* It measures invitation to COMPLETED interview, which is a
+                  longer thing than the old label described. */}
+              <Kpi icon="clock" label="Invite to completed" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
               <Kpi
                 icon="scale"
                 label="Approved"
