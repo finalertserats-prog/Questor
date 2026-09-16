@@ -3,11 +3,11 @@
 Updated 2026-09-16, late evening, at the end of the enterprise hardening pass.
 Everything here is either unfinished, unverified, or a decision someone still
 has to make. Work that is done is in `git log`; the shape of the system is in
-`docs/ARCHITECTURE.md` once the ops lane lands it.
+`docs/ARCHITECTURE.md`; operations in `docs/RUNBOOK.md`.
 
 **Production tracks `origin/claude/open-source-app-build-lnrqia`.** `deploy.sh`
 runs on the VPS and resets to that branch, so `feature/postgres` is pushed to
-both names on every release. After this evening's deploy all three (local,
+both names on every release. After this evening's second deploy all three (local,
 GitHub, VPS) are on the same commit; check `/api/health` `commit` before
 promising parity to anyone.
 
@@ -45,23 +45,31 @@ items in §3. Highlights, so nobody re-audits them:
 
 ---
 
-## 2. Lanes still to land (Codex, briefs in the session scratchpad)
+## 2. Lanes: three landed, one to finish
 
-- [ ] **Playwright e2e smoke suite** under `e2e/`, wired into CI. Nothing in CI
-      drives a real browser today; HR keeps finding by hand what a browser run
-      would catch.
-- [ ] **Runbook, restore drill, architecture note** (`docs/RUNBOOK.md`,
-      `scripts/restore-drill.sh`, `docs/ARCHITECTURE.md`). Backups exist on the
-      VPS; a tested restore does not.
-- [ ] **Prisma migrations replacing `db push`** on the VPS, with a committed
-      baseline and a one-time `migrate resolve`. Until then schema changes have
-      no history and no backfill step.
-- [ ] **Web checklist verification**: confirm the last web-review items
-      (InterviewRoom transcription failure recovery, blank-weight editing,
-      export busy guards, kappa label, banner roles) against the merged code
-      and fix only what is missing.
+Landed after the first deploy of the evening and deployed again (`f62f5d5`):
 
----
+- **Prisma migrations** replace `db push` on the VPS (`scripts/migrations.mjs`,
+  `scripts/deploy.sh`, `server/prisma/postgres/migrations/0001_baseline`).
+  Production recorded the baseline on this deploy; every schema change from
+  now on is `node scripts/migrations.mjs new <name>` against a scratch
+  Postgres, committed, and applied by `migrate deploy`. `scripts/test-
+  migrations.mjs` proves migrations == schema; it needs a scratch Postgres
+  (`docker compose up -d db`), which was not available on the dev machine.
+- **Runbook, restore drill, architecture note** (`docs/RUNBOOK.md`,
+  `scripts/restore-drill.sh`, `docs/ARCHITECTURE.md`). The drill has been
+  dry-run only; run it for real against a nightly dump on the VPS.
+- **Web checklist verification**: three remaining gaps fixed (transcription
+  failure recovery, deliberate signup declines, shared date helper).
+
+Still to finish:
+
+- [ ] **Playwright e2e smoke suite** (`codex/e2e` branch, worktree
+      `.claude/worktrees/codex-e2e`, WIP commit). Five specs exist; login
+      passes, four fail on selectors that do not match the live pages. Codex
+      hit its usage limit mid-verification (resets 17 Sep 00:47 IST). Resume
+      with the brief in the session scratchpad `codex/brief-e2e.txt`, fix the
+      selectors, run twice green, then merge and enable the CI job.
 
 ## 3. Decisions for the owner
 
