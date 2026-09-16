@@ -126,6 +126,10 @@ async function deleteSessionCascade(
   // Model executions record prompts/outputs that can quote the candidate.
   await count('modelExecutions', () => tx.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   await count('artifacts', () => tx.artifact.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+  // Browser-integrity events (tab blur, paste) key on the session; without
+  // this line the foreign key blocked the session delete below, and an erasure
+  // that is a legal obligation failed for any candidate who ever switched tabs.
+  await count('integrityEvents', () => tx.integrityEvent.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   // A pipeline round may outlive a purged session; unlink it rather than keep a dangling reference.
   await count('roundSessionLinks', () => tx.interviewRound.updateMany({ where: { sessionId: { in: sessionIds } }, data: { sessionId: null } }));
   await count('sessions', () => tx.interviewSession.deleteMany({ where: { id: { in: sessionIds } } }));
@@ -195,7 +199,10 @@ export async function eraseCandidate(o: {
       OR: [{ legalHold: true }, { artifacts: { some: { legalHold: true } } }],
     },
   });
-  if (held > 0) {
+  // Resume uploads hang off the candidate, not a session, so a hold on one was
+  // invisible to the session-based check above and the file was deleted anyway.
+  const heldArtifacts = await prisma.artifact.count({ where: { candidateId: o.candidateId, tenantId: o.tenantId, legalHold: true } });
+  if (held > 0 || heldArtifacts > 0) {
     throw new HttpError(
       409,
       'This candidate has interview data under legal hold and cannot be erased. Release the hold first if erasure is appropriate.',
@@ -231,7 +238,9 @@ export async function eraseCandidate(o: {
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
 
-  // Retained intentionally, and free of personal data.
+  // Retained intentionally, and free of personal data: the free-text reason
+  // is not stored here, because a sentence like "asked for deletion after a
+  // health disclosure" would outlive the very erasure it explains.
   await logAudit({
     tenantId: o.tenantId,
     actorType: 'user',
@@ -239,7 +248,7 @@ export async function eraseCandidate(o: {
     action: 'candidate.erased',
     entityType: 'Candidate',
     entityId: o.candidateId,
-    after: { reason: o.reason, deleted },
+    after: { reasonProvided: o.reason.trim().length > 0, deleted },
   });
   logger.info({ candidateId: o.candidateId, deleted }, 'Candidate data erased');
 

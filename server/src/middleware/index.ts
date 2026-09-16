@@ -12,6 +12,7 @@ import {
   type AuthClaims,
 } from '../services/auth.js';
 import { logger } from '../logger.js';
+import { prisma } from '../db.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -53,8 +54,20 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   if (!token) return res.status(401).json({ error: 'Missing authentication token' });
   const claims = verifyToken(token);
   if (!claims) return res.status(401).json({ error: 'Invalid or expired token' });
-  req.auth = claims;
-  next();
+  // The token proves who signed in; the database says what they are now. Role
+  // used to be read from the token alone, so a demoted or deleted user kept
+  // their old authority until the hour ran out. One indexed lookup per request
+  // is the price of revocation taking effect immediately.
+  prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true } })
+    .then((user) => {
+      if (!user || user.tenantId !== claims.tenantId) {
+        res.status(401).json({ error: 'Invalid or expired token' });
+        return;
+      }
+      req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
+      next();
+    })
+    .catch(next);
 }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

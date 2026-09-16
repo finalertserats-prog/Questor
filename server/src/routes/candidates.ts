@@ -87,7 +87,12 @@ candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   })) });
 }));
 
-const createSchema = z.object({ fullName: z.string().min(1), email: z.string().email(), phone: z.string().optional(), roleId: z.string() });
+const createSchema = z.object({
+  fullName: z.string().trim().min(1).max(200),
+  email: z.string().trim().email().max(254),
+  phone: z.string().trim().max(40).optional(),
+  roleId: z.string().min(1).max(64),
+});
 
 // Create a candidate under a role
 candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(async (req, res) => {

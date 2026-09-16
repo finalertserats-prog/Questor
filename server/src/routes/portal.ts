@@ -47,6 +47,16 @@ const MAX_TRANSCRIBE_BYTES = 10 * 1024 * 1024;
 // interview has nothing to transcribe, and paying to transcribe audio for one
 // would be spending on a session no reviewer will ever read.
 const TRANSCRIBABLE_STATES = ['ASSESSING', 'CANDIDATE_QUESTIONS'];
+/**
+ * Before the interview: the only states in which accepting, consenting or a
+ * tech check make sense. A completed interview's link used to accept a consent
+ * post and could be moved from REVIEW_READY, or even CLOSED, to MANUAL_HANDOFF
+ * by anyone who still had the link.
+ */
+const PRE_INTERVIEW_STATES = ['PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'DISCLOSURE', 'CONSENTED'];
+const FINISHED_MESSAGE = 'This interview has already started or finished, so this can no longer be changed.';
+/** A day. Timings beyond it are not measurements of anything. */
+const MAX_TURN_MS = 24 * 60 * 60 * 1000;
 /** Shorter than this and a person cannot act on it; the candidate is told so. */
 export const ACCOMMODATION_MIN_LENGTH = 10;
 const INTEGRITY_EVENT_TYPES = ['TAB_BLUR', 'FOCUS_LOST', 'PASTE_DETECTED', 'MULTI_TAB', 'DEVTOOLS_OPENED'] as const;
@@ -244,7 +254,7 @@ portalRouter.post('/:token/integrity-event', asyncHandler(async (req, res) => {
 }));
 
 portalRouter.post('/:token/accept', asyncHandler(async (req, res) => {
-  const inv = await loadByToken(req.params.token);
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
   if (inv.session.state === 'INVITED') {
     await prisma.interviewSession.update({ where: { id: inv.sessionId }, data: { state: 'ACCEPTED' } });
     await prisma.invitation.update({ where: { id: inv.id }, data: { status: 'accepted', acceptedAt: new Date() } });
@@ -265,7 +275,8 @@ const consentSchema = z.object({
   observerNoticeShown: z.boolean().optional(),
 });
 portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
-  const inv = await loadByToken(req.params.token);
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  if (!PRE_INTERVIEW_STATES.includes(inv.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
   const body = consentSchema.parse(req.body);
   if (!body.accepted) throw new HttpError(400, 'Consent to proceed is required, or choose the human-alternative path.');
 
@@ -333,7 +344,8 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
 }));
 
 portalRouter.post('/:token/techcheck', asyncHandler(async (req, res) => {
-  const inv = await loadByToken(req.params.token);
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  if (!PRE_INTERVIEW_STATES.includes(inv.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
   const body = z.object({ mic: z.boolean(), speaker: z.boolean() }).parse(req.body);
   const quality = parseJson<any>(inv.session.qualityJson, {});
   quality.techCheck = { ...body, at: new Date().toISOString() };
@@ -354,7 +366,13 @@ portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
   // Unauthenticated route where every call funds an LLM prompt. The 2mb Express
   // JSON limit is not a spend limit, so bound the answer here: a spoken reply
   // runs a few hundred characters, far under this ceiling.
-  const { text, startMs, endMs } = z.object({ text: z.string().min(1).max(MAX_TURN_TEXT_CHARS), startMs: z.number().optional(), endMs: z.number().optional() }).parse(req.body);
+  const { text, startMs, endMs } = z.object({
+    text: z.string().min(1).max(MAX_TURN_TEXT_CHARS),
+    // Stored and shown to reviewers as when the answer was given; unbounded
+    // numbers let a browser distort pacing and the transcript's timestamps.
+    startMs: z.number().int().min(0).max(MAX_TURN_MS).optional(),
+    endMs: z.number().int().min(0).max(MAX_TURN_MS).optional(),
+  }).refine((b) => b.startMs === undefined || b.endMs === undefined || b.endMs >= b.startMs, { message: 'endMs must not be before startMs.' }).parse(req.body);
   const turn = await submitCandidateTurn(inv.sessionId, text, { startMs, endMs });
   let assessmentReady = false;
   // Withdrawal ends the interview WITHOUT assessing it. Finalising here scored

@@ -202,7 +202,9 @@ async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt:
 
 const roundSchema = z.object({
   stageKey: z.string().min(1),
-  scheduledAt: z.string().datetime(),
+  // Offset-aware, like interview scheduling. Deliberately NOT limited to the
+  // future: a round that already happened is recorded here too, notes and all.
+  scheduledAt: z.string().datetime({ offset: true }),
   sessionId: z.string().min(1).optional(),
   interviewers: z.array(z.string().trim().min(1).max(120)).max(10).optional(),
 });

@@ -15,10 +15,15 @@ const loginSchema = z.object({
   orgSlug: z.string().max(64).optional(),
 });
 
+// Compared against when no account matches, so the response takes as long as
+// a wrong password does and the timing does not say which addresses exist.
+const NO_SUCH_USER_HASH = hashPassword('placeholder-compared-only-when-no-account-matches');
+
 authRouter.post('/login', asyncHandler(async (req, res) => {
   const { email, password, orgSlug } = loginSchema.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !verifyPassword(password, user.passwordHash)) {
+  const passwordOk = user ? verifyPassword(password, user.passwordHash) : verifyPassword(password, NO_SUCH_USER_HASH) && false;
+  if (!user || !passwordOk) {
     // Sign-ins were absent from the audit trail entirely. A failed attempt on
     // a known account is recorded against that account; an unknown address is
     // not, since recording it would store whatever a stranger typed.

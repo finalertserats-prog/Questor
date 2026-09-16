@@ -71,6 +71,26 @@ export interface RateLimitOptions {
   skip?: (req: Request) => boolean;
 }
 
+/**
+ * Take one unit from a window, answering whether the caller is still inside
+ * it. Shared by the Express middleware below and the socket transport, which
+ * used to have no per-invitation limit at all while the equivalent HTTP
+ * routes did. Returns the seconds until the window resets when refused.
+ */
+export function consume(name: string, key: string, windowMs: number, max: number): { allowed: true } | { allowed: false; retryAfter: number } {
+  const now = Date.now();
+  sweep(now);
+  const bucketKey = `${name}:${key}`;
+  const bucket = buckets.get(bucketKey);
+  if (!bucket || bucket.resetAt <= now) {
+    buckets.set(bucketKey, { count: 1, resetAt: now + windowMs, max });
+    return { allowed: true };
+  }
+  bucket.count += 1;
+  if (bucket.count > max) return { allowed: false, retryAfter: Math.ceil((bucket.resetAt - now) / 1000) };
+  return { allowed: true };
+}
+
 export function rateLimit(opts: RateLimitOptions) {
   const { windowMs, max, name } = opts;
   const keyOf = opts.keyOf ?? ((req: Request) => req.ip ?? 'unknown');
@@ -81,19 +101,10 @@ export function rateLimit(opts: RateLimitOptions) {
     if (config.nodeEnv === 'test') return next();
     if (opts.skip?.(req)) return next();
 
-    const now = Date.now();
-    sweep(now);
-    const key = `${name}:${keyOf(req)}`;
-    const bucket = buckets.get(key);
-
-    if (!bucket || bucket.resetAt <= now) {
-      buckets.set(key, { count: 1, resetAt: now + windowMs, max });
-      return next();
-    }
-
-    bucket.count += 1;
-    if (bucket.count > max) {
-      const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
+    const verdict = consume(name, keyOf(req), windowMs, max);
+    if (!verdict.allowed) {
+      const retryAfter = verdict.retryAfter;
+      const bucket = { count: max + 1 };
       res.setHeader('Retry-After', String(retryAfter));
       // The key may be a live credential (the portal limiters key on the
       // invitation token), and a log line is not where those belong.

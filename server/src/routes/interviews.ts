@@ -46,9 +46,9 @@ function buildInvite(candidateName: string, roleTitle: string, portalUrl: string
 const createSchema = z.object({
   candidateId: z.string(),
   durationMinutes: z.number().int().min(10).max(120).default(45),
-  language: z.string().default('en'),
-  modules: z.array(z.string()).default([]),
-  persona: z.object({ name: z.string(), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ name: 'Schranders', tone: 'warm' }),
+  language: z.string().trim().min(2).max(16).default('en'),
+  modules: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
+  persona: z.object({ name: z.string().trim().min(1).max(80), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ name: DEFAULT_PERSONA_NAME, tone: 'warm' }),
   provider: z.enum(['hosted', 'teams', 'zoom', 'meet']).default('hosted'),
   recordingRequested: z.boolean().default(false),
   humanReviewRequired: z.boolean().default(true),

@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { verifyToken } from '../services/auth.js';
 import { assertCanAccessSession, capabilitiesOf } from '../services/access.js';
+import { consume } from '../middleware/rateLimit.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
@@ -41,6 +42,17 @@ export type SocketIntent = 'observe' | 'drive';
 // underlying Prisma/engine text to the client.
 const DENIED = 'Session not found';
 const FAILED = 'Unable to complete request';
+const SLOW_DOWN = 'Too many requests';
+
+// Per session, per minute. The HTTP room has per-invitation limiters in app.ts;
+// the socket, the primary transport, had none, so a candidate's browser could
+// fire turns as fast as it liked against a route that funds a model call each.
+const SOCKET_WINDOW_MS = 60_000;
+const SOCKET_LIMITS = { start: 5, candidate_turn: 30, finalize: 5 } as const;
+function withinLimit(event: keyof typeof SOCKET_LIMITS, sessionId: string): boolean {
+  if (config.nodeEnv === 'test') return true;
+  return consume(`socket-${event}`, sessionId, SOCKET_WINDOW_MS, SOCKET_LIMITS[event]).allowed;
+}
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -185,6 +197,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
       try {
         const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'drive');
         if (!session) { ack?.({ error: DENIED }); return; }
+        if (!withinLimit('start', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
         const turn = await startInterview(session.id);
         io.to(session.id).emit('agent_turn', turn);
         ack?.({ ok: true });
@@ -205,6 +218,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         // so it authenticates as the candidate and is unaffected.
         if (socket.data.auth?.kind !== 'candidate') { ack?.({ error: DENIED }); return; }
         if (!payload?.text?.trim()) { ack?.({ error: 'empty' }); return; }
+        if (!withinLimit('candidate_turn', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
         const turn = await submitCandidateTurn(session.id, payload.text, payload);
         // Echoed to observers only now, once the words are in the transcript. An
         // echo before the write showed observers an answer the engine then
@@ -235,6 +249,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         // system-generated result. Finalisation happens automatically when the
         // interviewer signs off, or is driven by a recruiter.
         if (socket.data.auth?.kind !== 'user') { ack?.({ error: DENIED }); return; }
+        if (!withinLimit('finalize', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
         const { assessmentId } = await finalizeInterview(session.id);
         io.to(session.id).emit('assessment_ready', { assessmentId });
         ack?.({ ok: true, assessmentId });

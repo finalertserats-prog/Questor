@@ -120,6 +120,14 @@ rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), as
   if (!latest) throw new HttpError(404, 'No scorecard to approve');
   const profile = parseJson<RoleSuccessProfile>(latest.profileJson, {} as RoleSuccessProfile);
   if (!profile.competencies?.length) throw new HttpError(400, 'Scorecard has no competencies');
+  // A scorecard stored before the edit schema existed can hold anything. The
+  // approval is the gate that lets it drive interviews, so it is checked here
+  // as strictly as a save would be.
+  const valid = roleSuccessProfileSchema.safeParse(profile);
+  if (!valid.success) {
+    const first = valid.error.issues[0];
+    throw new HttpError(400, `This scorecard cannot be approved until its scoring settings are fixed: ${first?.message ?? 'invalid scorecard'} Open it, correct it, save, and approve again.`);
+  }
 
   const approved = await prisma.roleScorecardVersion.update({
     where: { id: latest.id }, data: { status: 'approved', approvedById: req.auth!.userId, approvedAt: new Date() },
