@@ -345,3 +345,64 @@ describe('retention of a request nobody ever opened', () => {
     expect(await prisma.signupRequest.findUnique({ where: { id: row.id } })).toBeNull();
   });
 });
+
+/**
+ * The queue belongs to the deployment operator. admin:manage alone let the
+ * admin of any customer read every applicant in the deployment and approve a
+ * join request into another customer's organisation.
+ */
+describe('who may see the operator queue', () => {
+  async function tenantAdminAuth() {
+    const tenant = await prisma.tenant.create({ data: { name: 'Some Customer', slug: 'some-customer' } });
+    const user = await prisma.user.create({
+      data: { tenantId: tenant.id, email: 'admin@some-customer.example', name: 'Customer Admin', passwordHash: hashPassword(PASSWORD), role: 'admin' },
+    });
+    return `Bearer ${signToken({ userId: user.id, tenantId: tenant.id, role: 'admin', email: user.email })}`;
+  }
+
+  it('refuses a tenant admin who is not the operator', async () => {
+    const auth = await tenantAdminAuth();
+
+    const res = await request(app).get('/api/admin/signups?status=pending').set('Authorization', auth);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a tenant admin approving a request', async () => {
+    const auth = await tenantAdminAuth();
+    await request(app).post('/api/signup').send(signupBody({ email: 'someone@example.com' }));
+    const row = await prisma.signupRequest.findFirstOrThrow();
+
+    const res = await request(app).post(`/api/admin/signups/${row.id}/approve`).set('Authorization', auth);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('leaves the request pending after a refused approval', async () => {
+    const auth = await tenantAdminAuth();
+    await request(app).post('/api/signup').send(signupBody({ email: 'someone@example.com' }));
+    const row = await prisma.signupRequest.findFirstOrThrow();
+
+    await request(app).post(`/api/admin/signups/${row.id}/approve`).set('Authorization', auth);
+
+    expect(await prisma.signupRequest.findUniqueOrThrow({ where: { id: row.id } })).toHaveProperty('status', 'PENDING');
+  });
+
+  it('matches the operator address without regard to capitals', async () => {
+    config.signupApproverEmail = 'Operator@Example.com';
+    const auth = await adminAuth();
+
+    const res = await request(app).get('/api/admin/signups?status=pending').set('Authorization', auth);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('fails closed when no operator is configured', async () => {
+    const auth = await adminAuth();
+    config.signupApproverEmail = '';
+
+    const res = await request(app).get('/api/admin/signups?status=pending').set('Authorization', auth);
+
+    expect(res.status).toBe(503);
+  });
+});

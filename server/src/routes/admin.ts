@@ -56,7 +56,23 @@ const signupStatusSchema = z.object({
   status: z.enum(['pending', 'approved', 'declined', 'expired']).optional().default('pending'),
 }).strict();
 
-adminRouter.get('/signups', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+/**
+ * The queue is the operator's, not every tenant admin's. `admin:manage` alone
+ * let the admin of any customer read every applicant in the deployment, approve
+ * a join request into another customer's organisation, or decline everyone
+ * else's applicants. The operator is whoever the decision emails go to; with no
+ * approver configured the queue, like signup itself, fails closed.
+ */
+function requireOperator(req: Parameters<typeof authenticate>[0], _res: Parameters<typeof authenticate>[1], next: Parameters<typeof authenticate>[2]) {
+  const approver = config.signupApproverEmail.trim().toLowerCase();
+  if (!approver) return next(new HttpError(503, 'Signup is temporarily unavailable.'));
+  if ((req.auth?.email ?? '').trim().toLowerCase() !== approver) {
+    return next(new HttpError(403, 'Only the deployment operator can review account requests.'));
+  }
+  return next();
+}
+
+adminRouter.get('/signups', requireCapability('admin:manage'), requireOperator, asyncHandler(async (req, res) => {
   const query = signupStatusSchema.parse(req.query);
   const rows = await prisma.signupRequest.findMany({
     where: { status: query.status.toUpperCase() },
@@ -69,13 +85,13 @@ adminRouter.get('/signups', requireCapability('admin:manage'), asyncHandler(asyn
   res.json({ signups: rows.map((row) => ({ ...row, applicant: signupApplicant(row as never) })) });
 }));
 
-adminRouter.post('/signups/:id/approve', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+adminRouter.post('/signups/:id/approve', requireCapability('admin:manage'), requireOperator, asyncHandler(async (req, res) => {
   const { transitioned } = await decideSignupRequest({ id: req.params.id, decision: 'approve', actorId: req.auth!.userId });
   if (!transitioned) throw new HttpError(409, 'This request has already been decided.');
   res.json({ recorded: true });
 }));
 
-adminRouter.post('/signups/:id/decline', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+adminRouter.post('/signups/:id/decline', requireCapability('admin:manage'), requireOperator, asyncHandler(async (req, res) => {
   const { transitioned } = await decideSignupRequest({ id: req.params.id, decision: 'decline', actorId: req.auth!.userId });
   if (!transitioned) throw new HttpError(409, 'This request has already been decided.');
   res.json({ recorded: true });
