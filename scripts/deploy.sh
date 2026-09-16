@@ -141,6 +141,14 @@ fi
 if [ "$DRY_RUN" -eq 1 ]; then
   say "Dry run — stopping before any change"
   ok "pre-flight passed"
+  if [ "$DB_KIND" = postgres ]; then
+    ok "would generate server/prisma/postgres/schema.prisma"
+    ok "would run: npx prisma generate --schema server/prisma/postgres/schema.prisma"
+    ok "would baseline existing databases without _prisma_migrations: cd server && npx prisma migrate resolve --applied 0001_baseline --schema prisma/postgres/schema.prisma"
+    ok "would run: cd server && npx prisma migrate deploy --schema prisma/postgres/schema.prisma"
+  else
+    ok "would keep SQLite local/dev path on prisma db push"
+  fi
   exit 0
 fi
 
@@ -204,42 +212,28 @@ else
   run_logged prisma npx prisma generate --schema server/prisma/schema.prisma
 fi
 
-# Apply the schema to the database. `prisma generate` only rebuilds the client,
-# and a deploy once shipped code querying a table and columns the database did
-# not have. Run from server/ so Prisma loads server/.env for DATABASE_URL. The
-# backup above is the restore point; `db push` refuses any change that would
-# drop data unless explicitly told to accept it.
-#
-# One refusal is not about data at all: adding a unique constraint (Tenant.slug)
-# is reported as "might lose data" only because it fails when duplicates exist.
-# It deletes nothing, and on duplicates the push itself errors out. So when
-# every warning is that one, and nothing else, the push is retried with the
-# flag. Any other warning still stops the deploy.
-push_schema() {
-  local log="$LOG_DIR/schema.log"
-  local unique_warning='A unique constraint covering the columns `\[[A-Za-z0-9_, ]*\]` on the table `[A-Za-z0-9_]*` will be added\. If there are existing duplicate values, this will fail\.$'
-  if (cd server && npx prisma db push --skip-generate "$@") >"$log" 2>&1; then
-    tail -3 "$log" | sed 's/^/    /'
-    return
+# Apply committed migrations to the database. `prisma generate` only rebuilds
+# the client, and a deploy once shipped code querying a table and columns the
+# database did not have. Postgres production is now migration-driven: the first
+# deploy over an already-existing database records the committed baseline as
+# already applied, then every deploy runs pending migrations. SQLite local/dev
+# intentionally keeps using db push.
+apply_postgres_migrations() {
+  local table_exists
+  table_exists="$(psql -X -tAc "SELECT CASE WHEN to_regclass('_prisma_migrations') IS NULL THEN 'no' ELSE 'yes' END;")"     || die "could not check Prisma migration history — not deploying blind"
+  if [ "$table_exists" = no ]; then
+    ok "no _prisma_migrations table; recording 0001_baseline as already applied"
+    run_logged migration-baseline bash -c 'cd server && npx prisma migrate resolve --applied 0001_baseline --schema prisma/postgres/schema.prisma'
+  else
+    ok "Prisma migration history present"
   fi
-  # Prisma colours its output; strip the escape codes before matching lines.
-  local plain="$LOG_DIR/schema.plain.log" warnings others
-  sed 's/\x1b\[[0-9;]*m//g' "$log" >"$plain"
-  warnings="$(grep -c '^ *• ' "$plain" || true)"
-  others="$(grep '^ *• ' "$plain" | grep -vc "$unique_warning" || true)"
-  if ! grep -q -- '--accept-data-loss' "$plain" || [ "$warnings" -eq 0 ] || [ "$others" -ne 0 ]; then
-    printf '\n\033[31m--- schema failed, last 25 lines ---\033[0m\n' >&2
-    tail -25 "$log" >&2
-    die "schema"
-  fi
-  grep '^ *• ' "$plain" | sed 's/^ */    /'
-  ok "only new unique constraints pending; applying them"
-  run_logged schema-unique bash -c 'cd server && npx prisma db push --skip-generate --accept-data-loss "$@"' -- "$@"
+  run_logged migration-deploy bash -c 'cd server && npx prisma migrate deploy --schema prisma/postgres/schema.prisma'
 }
+
 if [ "$DB_KIND" = postgres ]; then
-  push_schema --schema prisma/postgres/schema.prisma
+  apply_postgres_migrations
 else
-  push_schema
+  run_logged schema bash -c 'cd server && npx prisma db push --skip-generate'
 fi
 
 for pkg in express @prisma/client dotenv; do
@@ -308,6 +302,9 @@ if [ "$API_OK" -ne 1 ]; then
 
   git reset --hard "$PREV_COMMIT" >/dev/null 2>&1 || true
   npm ci >/dev/null 2>&1 || true
+  # Rollback restores code and static assets only. Prisma migrations are not
+  # automatically reverted; if a migration itself caused the outage, restore
+  # from the verified backup or apply an explicit forward fix.
   # npm ci regenerates the client from the SQLite schema; a Postgres deployment
   # needs the Postgres client back or the rolled-back app cannot reach its data.
   if [ "$DB_KIND" = postgres ]; then
@@ -320,9 +317,9 @@ if [ "$API_OK" -ne 1 ]; then
   pm2 restart "$PM2_NAME" --update-env >/dev/null 2>&1 || true
   sleep 6
   if verify_api; then
-    die "deploy failed — ROLLED BACK to $PREV_COMMIT and the API is healthy again"
+    die "deploy failed — ROLLED BACK code/assets to $PREV_COMMIT and the API is healthy again. Database migrations were not rolled back."
   fi
-  die "deploy failed AND rollback did not restore the API. Manual intervention needed. Backup: $LATEST"
+  die "deploy failed AND rollback did not restore the API. Database migrations were not rolled back. Manual intervention needed. Backup: $LATEST"
 fi
 ok "API healthy"
 
