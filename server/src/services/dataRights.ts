@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
+import { startJob } from './jobs.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 
@@ -670,11 +671,15 @@ export function startRetentionSweep(intervalMs = 24 * 60 * 60_000): () => void {
     );
     return () => {};
   }
-  const tick = () => {
-    runRetentionSweep().catch((e) => logger.error({ err: String(e) }, 'Retention sweep failed'));
-  };
-  tick();
-  const timer = setInterval(tick, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  // Under a database lease: two instances must not sweep the same rows, and a
+  // failed sweep must be recorded and alerted, not just logged.
+  return startJob({
+    name: 'retention-sweep',
+    intervalMs,
+    ttlMs: 60 * 60_000,
+    fn: async () => {
+      const result = await runRetentionSweep();
+      return JSON.stringify(result.deleted ?? {});
+    },
+  });
 }

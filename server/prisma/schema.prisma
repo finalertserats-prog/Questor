@@ -240,7 +240,15 @@ model Invitation {
   id            String   @id @default(cuid())
   sessionId     String   @unique
   session       InterviewSession @relation(fields: [sessionId], references: [id])
-  token         String   @unique
+  // Plaintext lives here only until backfillInvitationSecrets() has run once;
+  // new rows never set it. Kept nullable so a deploy over an old database
+  // starts, hashes what it finds, and clears this column.
+  token         String?  @unique
+  // SHA-256 of the token: the only thing a link is looked up by.
+  tokenHash     String?  @unique
+  // The token encrypted under a key derived from AUTH_SECRET, so the app can
+  // still show and resend the link. See services/invitations.ts.
+  tokenSealed   String   @default("")
   channel       String   @default("email")
   status        String   @default("created") // created | sent | opened | accepted | consumed | expired | cancelled
   sentAt        DateTime?
@@ -485,7 +493,37 @@ model WebhookDelivery {
   status      String   @default("pending") // pending | delivered | failed
   attempts    Int      @default(0)
   lastError   String   @default("")
+  // When the next attempt is due. Retries used to be setTimeout chains in one
+  // process; now a job picks up whatever is due, on whichever instance runs it.
+  nextAttemptAt DateTime?
   createdAt   DateTime @default(now())
+
+  @@index([status, nextAttemptAt])
+}
+
+// ---- Background jobs ----
+//
+// One row per job name, holding a time-limited lease. A job runs only where the
+// lease was won, so two instances (or one restarting mid-run) never sweep the
+// same rows twice. The lease outlives a crash by at most its TTL.
+model JobLease {
+  name      String   @id
+  holder    String
+  expiresAt DateTime
+}
+
+// What each run did, for the operations view and for alerting. A sweep that has
+// failed quietly for a month is exactly what this table exists to make visible.
+model JobRun {
+  id         String    @id @default(cuid())
+  name       String
+  holder     String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean?
+  note       String    @default("")
+
+  @@index([name, startedAt])
 }
 
 // ---- Object-level access control ----

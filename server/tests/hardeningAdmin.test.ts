@@ -133,3 +133,21 @@ describe('sign-ins in the audit trail', () => {
     expect(event).not.toBeNull();
   });
 });
+
+describe('the operations view', () => {
+  it('reports jobs, webhook counts and model failures in one place', async () => {
+    const res = await request(app).get('/api/admin/ops').set(auth());
+
+    expect([res.status, Array.isArray(res.body.jobs), typeof res.body.webhooks.pending, typeof res.body.model.last24h.calls]).toEqual([200, true, 'number', 'number']);
+  });
+
+  it('is not for recruiters', async () => {
+    const recruiter = await prisma.user.create({ data: { tenantId, email: 'rec@policy.local', name: 'Rec', passwordHash: 'x', role: 'recruiter' } });
+    const { signToken } = await import('../src/services/auth.js');
+    const token = signToken({ userId: recruiter.id, tenantId, role: 'recruiter', email: recruiter.email });
+
+    const res = await request(app).get('/api/admin/ops').set({ Authorization: `Bearer ${token}` });
+
+    expect(res.status).toBe(403);
+  });
+});

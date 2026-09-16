@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { invitationLink } from '../services/invitations.js';
 import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
@@ -219,9 +220,9 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
 
   const session = await prisma.interviewSession.findUnique({
     where: { id: a.sessionId },
-    include: { candidate: { select: { email: true } }, role: { select: { title: true } }, invitation: { select: { token: true } } },
+    include: { candidate: { select: { email: true } }, role: { select: { title: true } }, invitation: { select: { tokenSealed: true } } },
   });
-  const portalUrl = session?.invitation ? `${config.webOrigin}/portal/${session.invitation.token}` : null;
+  const portalUrl = session?.invitation ? invitationLink(session.invitation) : null;
 
   // SENT means released to the candidate's portal. Whether the candidate was
   // actually TOLD is a separate fact, reported honestly below — marking it sent

@@ -1,7 +1,6 @@
 import { Router, type Request } from 'express';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { nanoid } from 'nanoid';
 import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
@@ -22,6 +21,7 @@ import { startInterview, submitCandidateTurn, finalizeInterview, withdrawIntervi
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
+import { invitationLink, invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 
 export const interviewsRouter = Router();
@@ -254,8 +254,9 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     // passed into assessment generation or score fields.
     integrityEvents: { count: integrityEvents.length, events: integrityEvents },
     invitation: invitation ? {
-      token: invitation.token, status: invitation.status,
-      portalUrl: `${config.webOrigin}/portal/${invitation.token}`,
+      status: invitation.status,
+      // Rebuilt from the sealed copy; null only if the secret has changed since it was minted.
+      portalUrl: invitationLink(invitation),
       // Both timestamps, so the recruiter can tell "we sent it" from "they saw it".
       sentAt: invitation.sentAt, openedAt: invitation.openedAt,
     } : null,
@@ -421,7 +422,8 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
 
   const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
   const role = await prisma.role.findUnique({ where: { id: session.roleId } });
-  const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
+  const portalUrl = invitationLink(invitation);
+  if (!portalUrl) throw new HttpError(409, 'This invitation link can no longer be reconstructed. Create a new interview for this candidate.');
   const email = getEmail();
 
   if (!email.delivers) {
@@ -621,15 +623,16 @@ async function inviteSession(req: Request, session: InvitableSession) {
   const previous = await prisma.invitation.findUnique({ where: { sessionId: session.id }, select: { eventsJson: true } });
   const priorEvents = previous ? parseJson<unknown[]>(previous.eventsJson, []) : [];
 
-  const token = nanoid(24);
+  const token = mintInvitationToken();
+  const secret = invitationSecretColumns(token);
   const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);
   const invitation = await prisma.invitation.upsert({
     where: { sessionId: session.id },
-    create: { sessionId: session.id, token, status: 'sent', sentAt: new Date(), expiresAt, eventsJson: JSON.stringify([{ type: 'sent', at: new Date().toISOString() }]) },
-    update: { token, status: 'sent', sentAt: new Date(), expiresAt },
+    create: { sessionId: session.id, ...secret, status: 'sent', sentAt: new Date(), expiresAt, eventsJson: JSON.stringify([{ type: 'sent', at: new Date().toISOString() }]) },
+    update: { ...secret, token: null, status: 'sent', sentAt: new Date(), expiresAt },
   });
 
-  const portalUrl = `${config.webOrigin}/portal/${invitation.token}`;
+  const portalUrl = `${config.webOrigin}/portal/${token}`;
   const email = getEmail();
 
   // Delivery is reported honestly, and a failure never loses the invitation.
@@ -665,7 +668,7 @@ async function inviteSession(req: Request, session: InvitableSession) {
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
   await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
-  return { token: invitation.token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote };
+  return { token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote };
 }
 
 async function getSession(req: Request, id: string) {

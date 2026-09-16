@@ -6,6 +6,7 @@ import { logger } from '../logger.js';
 import { verifyToken } from '../services/auth.js';
 import { assertCanAccessSession, capabilitiesOf } from '../services/access.js';
 import { consume } from '../middleware/rateLimit.js';
+import { findInvitationByToken } from '../services/invitations.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
@@ -63,10 +64,10 @@ function describe(err: unknown): string {
  * never expires, anything already past is dead.
  */
 async function loadInvitation(token: string) {
-  const inv = await prisma.invitation.findUnique({
-    where: { token },
+  const inv = await findInvitationByToken(token, (tokenHash) => prisma.invitation.findUnique({
+    where: { tokenHash },
     include: { session: { select: { id: true, tenantId: true, state: true } } },
-  });
+  }));
   if (!inv) return null;
   if (inv.expiresAt && inv.expiresAt < new Date()) return null;
   // A consumed invitation must not authenticate. Checking only existence and

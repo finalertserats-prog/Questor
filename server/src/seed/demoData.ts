@@ -1,6 +1,6 @@
-import { nanoid } from 'nanoid';
 import { config } from '../config.js';
 import { prisma } from '../db.js';
+import { invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { hashPassword } from '../services/auth.js';
 import { assignRole, assignCandidate } from '../services/access.js';
 import { extractRoleHeuristic } from '../engines/roleIntelligence.js';
@@ -180,8 +180,8 @@ export async function createDemoData(): Promise<DemoIds> {
     },
   });
   await prisma.interviewPlanVersion.create({ data: { sessionId: session.id, version: 1, planJson: JSON.stringify(plan) } });
-  const token = nanoid(24);
-  await prisma.invitation.create({ data: { sessionId: session.id, token, status: 'accepted', sentAt: new Date(), acceptedAt: new Date(), expiresAt: new Date(Date.now() + 14 * 864e5) } });
+  const token = mintInvitationToken();
+  await prisma.invitation.create({ data: { sessionId: session.id, ...invitationSecretColumns(token), status: 'accepted', sentAt: new Date(), acceptedAt: new Date(), expiresAt: new Date(Date.now() + 14 * 864e5) } });
 
   return { tenantId: tenant.id, userId: user.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, sessionId: session.id, token, email, password };
 }

@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { wipe } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
 import { signToken } from '../src/services/auth.js';
+import { invitationSecretColumns, mintInvitationToken } from '../src/services/invitations.js';
 
 // GET /api/dashboard/metrics — the HR dashboard's KPIs and chart series.
 //
@@ -56,7 +57,7 @@ async function makeSession(o: {
   });
   if (o.invitedAt) {
     await prisma.invitation.create({
-      data: { sessionId: session.id, token: `tok${session.id}`, status: 'sent', sentAt: o.invitedAt },
+      data: { sessionId: session.id, ...invitationSecretColumns(mintInvitationToken()), status: 'sent', sentAt: o.invitedAt },
     });
   }
   return session;

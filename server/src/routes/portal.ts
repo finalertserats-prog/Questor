@@ -22,6 +22,7 @@ import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
 import { hasObserverNotice } from '../services/observerPolicy.js';
 import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
+import { findInvitationByToken } from '../services/invitations.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
 
@@ -94,14 +95,11 @@ function receiveAudio(req: Request, res: Response, next: NextFunction): void {
  * must always be able to see that their interview is complete, and locking them
  * out of that view reads as the link being broken.
  */
-/** The shape nanoid(24) produces. Anything else never reaches the database. */
-const INVITATION_TOKEN_SHAPE = /^[A-Za-z0-9_-]{16,128}$/;
-
 async function loadByToken(token: string, opts?: { requireUnconsumed?: boolean }) {
-  // Checked before the lookup, as the feedback and signup tokens are: an
-  // arbitrary string should be refused for its shape, not by a table scan.
-  if (!INVITATION_TOKEN_SHAPE.test(token)) throw new HttpError(404, 'Invitation not found or expired');
-  const inv = await prisma.invitation.findUnique({ where: { token }, include: { session: { include: { candidate: true, role: true } } } });
+  // Shape-checked, hashed, compared in constant time; the plaintext is never
+  // stored or queried. See services/invitations.ts.
+  const inv = await findInvitationByToken(token, (tokenHash) =>
+    prisma.invitation.findUnique({ where: { tokenHash }, include: { session: { include: { candidate: true, role: true } } } }));
   if (!inv) throw new HttpError(404, 'Invitation not found or expired');
   if (inv.expiresAt && inv.expiresAt < new Date()) throw new HttpError(410, 'This invitation has expired');
   if (opts?.requireUnconsumed && inv.status === INVITATION_CONSUMED) {

@@ -5,6 +5,7 @@ import { prisma } from '../src/db.js';
 import { wipe, createDemoData, DEMO_JD } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
 import { consume } from '../src/middleware/rateLimit.js';
+import { invitationSecretColumns, mintInvitationToken } from '../src/services/invitations.js';
 
 /**
  * Findings from the Codex auth and integrity audits, pinned.
@@ -65,8 +66,9 @@ describe('authority after a role change', () => {
 describe('a finished interview is read-only through its link', () => {
   const finished = async () => {
     const session = await prisma.interviewSession.create({ data: { tenantId, candidateId, roleId, scorecardId, state: 'REVIEW_READY' } });
-    const invitation = await prisma.invitation.create({ data: { sessionId: session.id, token: `finished-${session.id.slice(0, 12)}-abcdefgh`, status: 'sent' } });
-    return { session, token: invitation.token };
+    const token = mintInvitationToken();
+    await prisma.invitation.create({ data: { sessionId: session.id, ...invitationSecretColumns(token), status: 'sent' } });
+    return { session, token };
   };
 
   it('refuses a consent post and does not move the session to manual handoff', async () => {

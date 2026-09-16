@@ -20,6 +20,8 @@ import { ORG_SLUG } from './orgs.js';
 import { decideSignupRequest, signupApplicant } from '../services/signup.js';
 import { webhookUrlProblem } from '../services/webhookUrl.js';
 import { resolveCommit } from '../services/build.js';
+import { INSTANCE_ID, latestJobRuns } from '../services/jobs.js';
+import { webhookHealth } from '../services/webhooks.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -51,6 +53,27 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
   });
 }));
 
+
+// Operations view: is the background machinery alive, and is anything failing
+// quietly? Everything here used to be answerable only by reading logs.
+adminRouter.get('/ops', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const dayAgo = new Date(Date.now() - 24 * 60 * 60_000);
+  const [jobs, webhooks, modelCalls, modelFailures] = await Promise.all([
+    latestJobRuns(),
+    webhookHealth(),
+    prisma.modelExecution.count({ where: { createdAt: { gte: dayAgo } } }),
+    prisma.modelExecution.count({ where: { createdAt: { gte: dayAgo }, safetyJson: { contains: '"error"' } } }),
+  ]);
+  res.json({
+    build: { commit: resolveCommit() },
+    instance: INSTANCE_ID,
+    uptimeSeconds: Math.round(process.uptime()),
+    retentionSweepEnabled: process.env.RETENTION_SWEEP_ENABLED === 'true',
+    jobs,
+    webhooks,
+    model: { last24h: { calls: modelCalls, failures: modelFailures } },
+  });
+}));
 
 // Operator-approved signup queue. These rows intentionally sit outside any
 // tenant until approval; the deployment operator, not a tenant-scoped recruiter,

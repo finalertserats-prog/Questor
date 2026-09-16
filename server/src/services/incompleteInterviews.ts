@@ -1,5 +1,6 @@
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
+import { startJob } from './jobs.js';
 import { setState, fmt } from '../realtime/interviewEngine.js';
 
 /**
@@ -157,19 +158,13 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
  * the same rows.
  */
 export function startIncompleteSweep(intervalMs = 5 * 60_000): () => void {
-  let running = false;
-  const tick = async () => {
-    if (running) return;
-    running = true;
-    try {
-      await sweepIncompleteInterviews();
-    } catch (err) {
-      logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Incomplete sweep failed');
-    } finally {
-      running = false;
-    }
-  };
-  const timer = setInterval(() => { void tick(); }, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  // The lease replaces the in-process `running` flag: it also stops a second
+  // instance sweeping, and a run that throws is recorded and alerted.
+  return startJob({
+    name: 'incomplete-sweep',
+    intervalMs,
+    ttlMs: 10 * 60_000,
+    delayFirst: true,
+    fn: async () => { await sweepIncompleteInterviews(); },
+  });
 }

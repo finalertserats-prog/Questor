@@ -1,4 +1,26 @@
 import net from 'node:net';
+import dns from 'node:dns';
+
+/**
+ * Whether a hostname resolves to a private, loopback or link-local address.
+ * The literal-address rules in webhookUrlProblem cannot see a public name that
+ * resolves inward; this can, and is asked both when a webhook is created and
+ * again at each delivery, since DNS answers change. A name that does not
+ * resolve at all is reported as not private: the delivery will fail on its own
+ * and say why.
+ */
+export async function webhookHostResolvesPrivate(
+  host: string,
+  lookup: (host: string) => Promise<Array<{ address: string }>> = (h) => dns.promises.lookup(h, { all: true }),
+): Promise<boolean> {
+  if (net.isIP(host)) return isPrivateAddress(host);
+  try {
+    const answers = await lookup(host);
+    return answers.some((a) => isPrivateAddress(a.address));
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Whether a webhook destination is one this server should be willing to POST

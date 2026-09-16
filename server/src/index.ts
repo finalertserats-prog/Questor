@@ -8,7 +8,8 @@ import { preflight } from './preflight.js';
 
 import { startRetentionSweep } from './services/dataRights.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
-import { requeuePendingDeliveries } from './services/webhooks.js';
+import { startWebhookDelivery } from './services/webhooks.js';
+import { backfillInvitationSecrets } from './services/invitations.js';
 
 preflight();
 startRetentionSweep();
@@ -16,10 +17,12 @@ startRetentionSweep();
 // showing as "in progress" and never producing anything to read. Marks them
 // INCOMPLETE and saves the transcript; deliberately never scores them.
 startIncompleteSweep();
-// Webhook retries live in memory; whatever the last process left pending is
-// picked up here rather than lost.
-requeuePendingDeliveries().catch((err: unknown) => {
-  logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not re-queue pending webhook deliveries');
+// Deliveries are rows with a due time; this job sends whatever is due, on
+// whichever instance holds the lease, so nothing is lost to a restart.
+startWebhookDelivery();
+// One-time move of invitation tokens out of plaintext; a no-op once done.
+backfillInvitationSecrets().catch((err: unknown) => {
+  logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not backfill invitation token storage');
 });
 
 const app = createApp();
