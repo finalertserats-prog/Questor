@@ -32,15 +32,19 @@ feedbackRequestRouter.get('/:token', asyncHandler(async (req, res) => {
 }));
 
 feedbackRequestRouter.post('/:token/confirm', asyncHandler(async (req, res) => {
-  await recordHumanRequest(req.params.token);
+  const firstClick = await recordHumanRequest(req.params.token);
   const row = await resolveHumanRequest(req.params.token);
-  // Fire-and-forget: a webhook subscriber must not be able to fail a candidate's
-  // request by being down.
-  await emitEvent(row.tenantId, 'candidate.human_request', {
-    candidateId: row.candidateId,
-    sessionId: row.sessionId,
-    requestedAt: row.requestedAt,
-  }).catch(() => undefined);
+  // Only the first click notifies. A double-click, or a client that retries,
+  // must not put the same candidate in front of the hiring team twice.
+  if (firstClick) {
+    // Fire-and-forget: a webhook subscriber must not be able to fail a
+    // candidate's request by being down.
+    await emitEvent(row.tenantId, 'candidate.human_request', {
+      candidateId: row.candidateId,
+      sessionId: row.sessionId,
+      requestedAt: row.requestedAt,
+    }).catch(() => undefined);
+  }
   // Same body whether this was the first click or the fifth. The candidate gets
   // a consistent answer, and the response reveals nothing about prior activity.
   res.json({ recorded: true });

@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma, parseJson } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { eraseCandidate, runRetentionSweep } from '../src/services/dataRights.js';
+import { recordHumanRequest } from '../src/services/candidateFeedback.js';
 
 /**
  * The feedback email a candidate receives, and the one thing it asks them:
@@ -340,5 +341,43 @@ describe('erasure and retention reach everything this feature stores', () => {
     expect(await prisma.candidateFeedbackDelivery.count()).toBe(0);
     expect(await prisma.interviewSession.count({ where: { id: sessionId } })).toBe(0);
     expect(await prisma.candidate.count({ where: { id: candidateId } })).toBe(0);
+  });
+});
+
+/**
+ * The candidate clicks "yes, I would like to speak to someone" twice, or their
+ * mail client prefetches while they click. Recording twice is harmless; asking
+ * the hiring team twice is not — someone rings a candidate who made one
+ * request, and the second call has no context for either party.
+ */
+describe('two confirmations arriving at once', () => {
+  beforeEach(async () => { await wipe(); sent.length = 0; });
+
+  it('answers both clicks and records the request once', async () => {
+    const { humanToken, sessionId } = await sentFeedback();
+
+    const results = await Promise.all([
+      request(app).post(`/api/feedback-request/${humanToken}/confirm`).send({}),
+      request(app).post(`/api/feedback-request/${humanToken}/confirm`).send({}),
+    ]);
+
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    const row = await prisma.candidateHumanRequest.findUniqueOrThrow({ where: { sessionId } });
+    expect(row.status).toBe('REQUESTED');
+    expect(await prisma.candidateHumanRequest.count()).toBe(1);
+  });
+
+  // The webhook fires behind this boolean, so exactly one true is exactly one
+  // notification. Asserted here rather than through a registered endpoint,
+  // which would put a live fetch and its retry timers inside the test.
+  it('claims the request once, so the hiring team hears about it once', async () => {
+    const { humanToken } = await sentFeedback();
+
+    const claimed = await Promise.all([
+      recordHumanRequest(humanToken),
+      recordHumanRequest(humanToken),
+    ]);
+
+    expect(claimed.filter(Boolean)).toHaveLength(1);
   });
 });

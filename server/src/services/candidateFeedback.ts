@@ -119,17 +119,29 @@ export async function recordFeedbackOptIn(opts: {
   if (existing) return { optIn: existing, created: false };
 
   const choice = opts.wantsFeedback ? OPT_IN_YES : OPT_IN_NO;
-  const optIn = await prisma.candidateFeedbackOptIn.create({
-    data: {
-      sessionId: session.id,
-      candidateId: session.candidateId,
-      tenantId: session.tenantId,
-      choice,
-      // Recorded rather than assumed: this is consent evidence, and "who chose
-      // this" is the part a regulator would ask about.
-      decidedBy: 'candidate',
-    },
-  });
+  let optIn;
+  try {
+    optIn = await prisma.candidateFeedbackOptIn.create({
+      data: {
+        sessionId: session.id,
+        candidateId: session.candidateId,
+        tenantId: session.tenantId,
+        choice,
+        // Recorded rather than assumed: this is consent evidence, and "who chose
+        // this" is the part a regulator would ask about.
+        decidedBy: 'candidate',
+      },
+    });
+  } catch (err) {
+    // A double-click races itself: both requests find no row, one insert wins
+    // and the other breaks the unique constraint on sessionId. Their answer is
+    // already recorded, so hand it back rather than failing the request and
+    // leaving the candidate unsure whether their choice was heard.
+    if ((err as { code?: string }).code !== 'P2002') throw err;
+    const raced = await prisma.candidateFeedbackOptIn.findUnique({ where: { sessionId: session.id } });
+    if (!raced) throw err;
+    return { optIn: raced, created: false };
+  }
 
   await logAudit({
     tenantId: session.tenantId,
@@ -316,14 +328,19 @@ export async function resolveHumanRequest(token: string, now = new Date()): Prom
  * first request is the one kept, so a double-click or a mail client that
  * follows the link twice cannot rewrite when they asked.
  */
-export async function recordHumanRequest(token: string, now = new Date()): Promise<void> {
+export async function recordHumanRequest(token: string, now = new Date()): Promise<boolean> {
   const row = await resolveHumanRequest(token, now);
-  if (row.status === 'REQUESTED') return;
+  if (row.status === 'REQUESTED') return false;
 
-  await prisma.candidateHumanRequest.update({
-    where: { id: row.id },
+  // Conditional on the status just read. Two simultaneous clicks both see
+  // ISSUED, and an unconditional update would let the second one move the
+  // timestamp off the first click — and tell the hiring team twice that one
+  // person asked to talk.
+  const { count } = await prisma.candidateHumanRequest.updateMany({
+    where: { id: row.id, status: 'ISSUED' },
     data: { status: 'REQUESTED', requestedAt: now },
   });
+  if (count === 0) return false;
 
   await logAudit({
     tenantId: row.tenantId,
@@ -334,6 +351,7 @@ export async function recordHumanRequest(token: string, now = new Date()): Promi
     entityId: row.candidateId,
     after: { sessionId: row.sessionId, requestedAt: now },
   });
+  return true;
 }
 
 // ---------------------------------------------------------------------------

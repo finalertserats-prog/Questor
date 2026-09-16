@@ -467,3 +467,37 @@ describe('what the hiring team can see', () => {
     expect((await request(app).get(`/api/candidates/${ids.candidateId}`).set(auth(colleagueToken))).status).toBe(404);
   });
 });
+
+/**
+ * A candidate double-clicks, or their browser retries the request. Both copies
+ * find no answer recorded and both try to write one — and the loser of that race
+ * used to get a 500, leaving someone who had just answered a question about
+ * their own interview staring at an error.
+ */
+describe('two answers arriving at once', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('answers both requests rather than failing the slower one', async () => {
+    const ids = await finishedInterview();
+    await enableFeedback(ids.tenantId);
+
+    const results = await Promise.all([
+      request(app).post(`/api/portal/${ids.token}/feedback-opt-in`).send({ wantsFeedback: true }),
+      request(app).post(`/api/portal/${ids.token}/feedback-opt-in`).send({ wantsFeedback: true }),
+    ]);
+
+    expect(results.map((r) => r.status).filter((s) => s === 200 || s === 201)).toHaveLength(2);
+  });
+
+  it('keeps one record of what the candidate chose', async () => {
+    const ids = await finishedInterview();
+    await enableFeedback(ids.tenantId);
+
+    await Promise.all([
+      request(app).post(`/api/portal/${ids.token}/feedback-opt-in`).send({ wantsFeedback: true }),
+      request(app).post(`/api/portal/${ids.token}/feedback-opt-in`).send({ wantsFeedback: true }),
+    ]);
+
+    expect(await prisma.candidateFeedbackOptIn.count({ where: { sessionId: ids.sessionId } })).toBe(1);
+  });
+});
