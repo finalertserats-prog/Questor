@@ -256,41 +256,88 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
   }
   if ((await currentState(sessionId)) === 'CLOSING') await setState(sessionId, 'CLOSING', 'PROCESSING');
 
-  const count = await prisma.assessmentVersion.count({ where: { sessionId } });
-  const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
-  const result = await evaluate({
-    role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
-    // The plan knows which competencies it had no room for. Passing that on is
-    // what lets the assessment say "not asked" instead of "no evidence".
-    notAssessed: plan.notAssessed,
-  });
+  // Everything below runs with the session already moved to PROCESSING, and any
+  // one step of it can fail: the evaluator calls a paid provider, three writes
+  // follow it, and the invitation burn follows those. An unguarded throw left
+  // the session in PROCESSING with no AssessmentVersion — permanently, because
+  // PROCESSING is neither live (so no sweep touched it) nor finished (so no
+  // reviewer saw it). The candidate stayed "in progress" for ever.
+  try {
+    const count = await prisma.assessmentVersion.count({ where: { sessionId } });
+    const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
+    const result = await evaluate({
+      role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
+      // The plan knows which competencies it had no room for. Passing that on is
+      // what lets the assessment say "not asked" instead of "no evidence".
+      notAssessed: plan.notAssessed,
+    });
 
-  const assessment = await prisma.assessmentVersion.create({
-    data: {
-      sessionId, scorecardId: session.scorecardId, version: count + 1,
-      recommendation: result.recommendation, confidence: result.confidence,
-      evidenceCoverage: result.evidenceCoverage, resultJson: JSON.stringify(result),
-    },
-  });
+    const assessment = await prisma.assessmentVersion.create({
+      data: {
+        sessionId, scorecardId: session.scorecardId, version: count + 1,
+        recommendation: result.recommendation, confidence: result.confidence,
+        evidenceCoverage: result.evidenceCoverage, resultJson: JSON.stringify(result),
+      },
+    });
 
-  // Persist a transcript + report artifact.
-  const report = renderReportMarkdown({ candidateName: session.candidate.fullName, roleTitle: session.role.title, assessment: result });
-  await prisma.artifact.create({
-    data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'report', filename: `${assessmentVersion}.md`, contentType: 'text/markdown', storageKey: report, sizeBytes: report.length, retentionDays: 180 },
-  });
-  const transcript = turns.map((t) => `[${fmt(t.startMs)}] ${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
-  await prisma.artifact.create({
-    data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'transcript', filename: `${sessionId}-transcript.txt`, contentType: 'text/plain', storageKey: transcript, sizeBytes: transcript.length, retentionDays: 180 },
-  });
+    // Persist a transcript + report artifact.
+    const report = renderReportMarkdown({ candidateName: session.candidate.fullName, roleTitle: session.role.title, assessment: result });
+    await prisma.artifact.create({
+      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'report', filename: `${assessmentVersion}.md`, contentType: 'text/markdown', storageKey: report, sizeBytes: report.length, retentionDays: 180 },
+    });
+    const transcript = turns.map((t) => `[${fmt(t.startMs)}] ${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
+    await prisma.artifact.create({
+      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'transcript', filename: `${sessionId}-transcript.txt`, contentType: 'text/plain', storageKey: transcript, sizeBytes: transcript.length, retentionDays: 180 },
+    });
 
-  await prisma.interviewSession.update({ where: { id: sessionId }, data: { completedAt: new Date() } });
-  // Burn the invite link. updateMany (not update) because recruiter-driven
-  // sessions can finalise without an invitation ever being issued.
-  await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
-  await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
-  await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
-  await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
-  return { assessmentId: assessment.id };
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { completedAt: new Date() } });
+    // Burn the invite link. updateMany (not update) because recruiter-driven
+    // sessions can finalise without an invitation ever being issued.
+    await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
+    await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
+    await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
+    await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
+    return { assessmentId: assessment.id };
+  } catch (err) {
+    await releaseStalledFinalisation(sessionId, err);
+    // Rethrown, never swallowed: the caller decides what the candidate or the
+    // recruiter is told, and a silent success here would be a finalisation that
+    // produced nothing while reporting that it had.
+    throw err;
+  }
+}
+
+/**
+ * Move a finalisation that died mid-write out of PROCESSING.
+ *
+ * TECHNICAL_FAILURE is the state the machine allows from PROCESSING, and it is
+ * also the honest one: the interview happened, our processing of it did not.
+ * From there the existing recovery routes apply (RESCHEDULE_REQUIRED, CLOSED).
+ *
+ * Only PROCESSING is recovered. A throw from the audit or webhook calls that
+ * follow the REVIEW_READY transition leaves a perfectly good assessment behind,
+ * and dragging that session into TECHNICAL_FAILURE would destroy a completed
+ * result over a bookkeeping failure.
+ */
+async function releaseStalledFinalisation(sessionId: string, cause: unknown): Promise<void> {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const state = await currentState(sessionId);
+  if (state !== 'PROCESSING') {
+    logger.error({ sessionId, state, err: message }, 'Finalisation failed after the assessment was written');
+    return;
+  }
+  try {
+    await setState(sessionId, 'PROCESSING', 'TECHNICAL_FAILURE');
+    logger.error({ sessionId, err: message }, 'Finalisation failed; session released from PROCESSING to TECHNICAL_FAILURE');
+  } catch (recoveryErr) {
+    // The session is still stranded, so this line is the only trace that says
+    // which one and why. The sweep in services/incompleteInterviews.ts is the
+    // backstop that picks it up later.
+    logger.error(
+      { sessionId, err: message, recoveryErr: recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr) },
+      'Finalisation failed and the session could not be released from PROCESSING',
+    );
+  }
 }
 
 async function currentState(sessionId: string): Promise<string> {

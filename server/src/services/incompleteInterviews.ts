@@ -24,6 +24,10 @@ import { setState, fmt } from '../realtime/interviewEngine.js';
  * An interruption is not a performance. The transcript is preserved and made
  * readable; whether it is worth assessing is a human's call, made deliberately
  * via POST /interviews/:id/assess-partial, not a timer's.
+ *
+ * It also picks up the other way an interview goes quiet: a finalisation that
+ * died between the state transition and the assessment write. Those carry their
+ * own outcome so our outage is not filed as the candidate's interruption.
  */
 
 /** Quiet time after the last turn before an interview is treated as interrupted. */
@@ -31,11 +35,35 @@ export const INACTIVITY_MS = Number(process.env.INCOMPLETE_AFTER_MINUTES ?? 60) 
 
 const LIVE_STATES = ['DISCLOSURE', 'CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS'];
 
+/**
+ * States a session occupies only while its finalisation is running.
+ *
+ * A session sitting here past the cutoff is not an interrupted conversation —
+ * it is our own finalisation that died between the state transition and the
+ * assessment write. Neither state is live, so the sweep ignored them and
+ * nothing else looks at them either: such a session was stranded for ever.
+ */
+const FINALISING_STATES = ['CLOSING', 'PROCESSING'];
+
+const SWEEPABLE_STATES = [...LIVE_STATES, ...FINALISING_STATES];
+
+/**
+ * Why a session was closed out.
+ *
+ * Kept distinct because they blame different people. `interrupted` says the
+ * conversation stopped, cause unknown; `stalled_finalisation` says the
+ * interview finished and WE failed to process it. Collapsing the second into
+ * INCOMPLETE would hide our own outage inside a neutral-looking candidate
+ * record and leave nobody to chase.
+ */
+export type SweepReason = 'interrupted' | 'stalled_finalisation';
+
 export interface SweepOutcome {
   sessionId: string;
   candidate: string;
   candidateAnswers: number;
   transcriptSaved: boolean;
+  outcome: SweepReason;
 }
 
 /**
@@ -51,7 +79,7 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
   const outcomes: SweepOutcome[] = [];
 
   const sessions = await prisma.interviewSession.findMany({
-    where: { state: { in: LIVE_STATES } },
+    where: { state: { in: SWEEPABLE_STATES } },
     include: { candidate: { select: { fullName: true } }, role: { select: { title: true } } },
   });
 
@@ -91,7 +119,7 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
       const fresh = await prisma.interviewSession.findUnique({
         where: { id: session.id }, select: { state: true },
       });
-      if (!fresh || !LIVE_STATES.includes(fresh.state)) continue;
+      if (!fresh || !SWEEPABLE_STATES.includes(fresh.state)) continue;
 
       const newest = await prisma.turn.findFirst({
         where: { sessionId: session.id, speaker: 'candidate' },
@@ -119,7 +147,11 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
         });
       }
 
-      await setState(session.id, fresh.state, 'INCOMPLETE');
+      const stalled = FINALISING_STATES.includes(fresh.state);
+      // TECHNICAL_FAILURE, not INCOMPLETE: the conversation reached its end and
+      // our processing of it is what failed. It is also the only move the state
+      // machine allows out of CLOSING and PROCESSING.
+      await setState(session.id, fresh.state, stalled ? 'TECHNICAL_FAILURE' : 'INCOMPLETE');
 
       // NOT completedAt. Nothing was completed, and a downstream report that
       // counts completed interviews must not count this one.
@@ -132,10 +164,13 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
       outcomes.push({
         sessionId: session.id, candidate: session.candidate.fullName,
         candidateAnswers: answers, transcriptSaved: true,
+        outcome: stalled ? 'stalled_finalisation' : 'interrupted',
       });
       logger.info(
-        { sessionId: session.id, answers, role: session.role.title },
-        'Interview marked INCOMPLETE — transcript saved, deliberately not scored',
+        { sessionId: session.id, answers, role: session.role.title, from: fresh.state },
+        stalled
+          ? 'Finalisation stalled — session moved to TECHNICAL_FAILURE, transcript saved, not scored'
+          : 'Interview marked INCOMPLETE — transcript saved, deliberately not scored',
       );
     } catch (err) {
       // One bad session must not stop the rest being closed out.
