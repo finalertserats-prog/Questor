@@ -502,7 +502,15 @@ export async function nextUtterance(opts: {
   // than opening cold with a puzzle.
   if (shouldOfferWorkSample({ competency, turns, answersHere, action: signal.action })) {
     // The guard above returns false for an undefined competency.
-    const sample = await buildWorkSample({ competency: competency as Competency, block, role, sessionId: opts.sessionId });
+    //
+    // `plan.band` is the same signal the template bank, the follow-up ladder and
+    // the LLM screen below already run on. Passing it here is what stops a
+    // graduate and a principal being handed the same exercise: it picks the form
+    // (concrete artefact versus trade-off) and the scope (one query versus an
+    // organisation-wide call), and screens whatever the model writes back.
+    const sample = await buildWorkSample({
+      competency: competency as Competency, block, role, sessionId: opts.sessionId, band: plan.band,
+    });
     const screened = screenQuestion(sample.prompt);
     if (screened.allowed) {
       return { text: finish(sample.prompt, correction), competencyId: blockId, kind: 'work_sample' };
