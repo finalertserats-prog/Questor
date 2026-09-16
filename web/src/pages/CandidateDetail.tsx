@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
@@ -26,7 +26,8 @@ interface Fit {
 }
 interface Interview { id: string; state: string; scheduledAt: string | null; createdAt: string; }
 interface CandidateResp {
-  candidate: { id: string; fullName: string; email: string; phone: string; roleId: string };
+  // A candidate can exist before anyone has put them against a role.
+  candidate: { id: string; fullName: string; email: string; phone: string; roleId: string | null };
   profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
   // What the candidate asked for at the end of their interview. Structurally
   // the journey's JourneyCandidateFeedback; spelled out here so this response
@@ -134,9 +135,18 @@ export function CandidateDetail() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
+  // Only a change of candidate blanks the page. A refresh bump re-reads in
+  // place: swapping the whole page for a skeleton unmounted the pipeline panel,
+  // and with it the scheduling notice holding the meeting link someone had just
+  // created — gone before they could copy it.
+  const loadedId = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (loadedId.current !== id) {
+      loadedId.current = id;
+      setLoading(true);
+    }
 
     api.get<CandidateResp>(`/candidates/${id}`)
       .then((candidateResp) => {
@@ -309,7 +319,11 @@ export function CandidateDetail() {
         actions={
           <>
             <Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>
-            <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
+            {/* Without a role there is nothing to view; the link used to lead
+                to /roles/null. */}
+            {candidate.roleId && (
+              <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
+            )}
           </>
         }
       />
