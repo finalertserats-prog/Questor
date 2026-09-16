@@ -7,7 +7,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
 import { EmptyState } from '../components/EmptyState';
-import { chartTone, formatHours, groupSessionStates, trimSparseWeeks } from '../components/dashboardModel';
+import { chartTone, formatHours, groupSessionStates, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
 
 interface Metrics {
@@ -25,6 +25,8 @@ interface Metrics {
   interviewsPerWeek: WeekPoint[];
   pipelineStages: { key: string; label: string; count: number }[];
   stateCounts: Record<string, number>;
+  /** Set by the server when the series came from a capped row set, not from everything. */
+  truncated?: boolean;
   recentInterviews: {
     id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
     candidate: { id: string; name: string }; role: { id: string; title: string };
@@ -84,6 +86,7 @@ export function Dashboard() {
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
   const stopped = stateItems.find((g) => g.key === 'stopped')?.count ?? 0;
   const weeklyData = trimSparseWeeks(metrics?.interviewsPerWeek ?? []);
+  const truncation = truncationNote(metrics?.truncated);
 
   return (
     <div className="dashboard">
@@ -191,6 +194,9 @@ export function Dashboard() {
                 )}
               </div>
             </div>
+            {/* Said once, under everything it applies to: these charts and the
+                averages above them are not a picture of the whole tenant. */}
+            {truncation && <p className="muted small">{truncation}</p>}
           </section>
 
           <section className="card" aria-labelledby="dash-recent" data-tour="recent-interviews">
