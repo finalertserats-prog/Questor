@@ -136,7 +136,21 @@ export function createApp() {
 
   // Public organisation lookup for sign-in links. A person follows a link once
   // or twice; 30 per 15 minutes per IP stops anyone guessing slugs at speed.
-  app.use('/api/orgs', rateLimit({ name: 'orgs', windowMs: 15 * 60_000, max: 30 }), orgsRouter);
+  //
+  // The name search (GET /api/orgs?q=) is a different shape of traffic: the
+  // sign-in box calls it as someone types, so one honest attempt is a dozen
+  // requests even after debouncing, and sharing the slug window would lock a
+  // person out of signing in for typing their employer's name twice. It gets
+  // its own window. 120 still caps a harvesting run at a few hundred prefixes
+  // an hour from one address, against a search that needs three letters and
+  // answers eight names at most.
+  const isOrgSearch = (req: express.Request) => req.path === '/' || req.path === '';
+  app.use(
+    '/api/orgs',
+    rateLimit({ name: 'orgs', windowMs: 15 * 60_000, max: 30, skip: isOrgSearch }),
+    rateLimit({ name: 'orgs-search', windowMs: 15 * 60_000, max: 120, skip: (req) => !isOrgSearch(req) }),
+    orgsRouter,
+  );
   app.use('/api/auth', authRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
