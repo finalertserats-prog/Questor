@@ -3,6 +3,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { EmailMessage } from '../src/providers/email/index.js';
 
 const sent: EmailMessage[] = [];
+// Set by a test to make the provider fail for matching messages.
+const mailFailure = { when: null as ((msg: EmailMessage) => boolean) | null };
 
 vi.mock('../src/providers/email/index.js', async (orig) => {
   const actual = await orig<typeof import('../src/providers/email/index.js')>();
@@ -13,6 +15,7 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
       configured: true,
       delivers: true,
       send: vi.fn(async (msg: EmailMessage) => {
+        if (mailFailure.when?.(msg)) throw new Error('smtp down');
         sent.push(msg);
         return { status: 'sent', id: `test-${sent.length}` };
       }),
@@ -78,6 +81,7 @@ async function adminAuth() {
 
 beforeEach(async () => {
   sent.length = 0;
+  mailFailure.when = null;
   config.signupApproverEmail = 'operator@example.com';
   config.webOrigin = 'https://questor.example';
   await wipe();
@@ -404,5 +408,46 @@ describe('who may see the operator queue', () => {
     const res = await request(app).get('/api/admin/signups?status=pending').set('Authorization', auth);
 
     expect(res.status).toBe(503);
+  });
+});
+
+/**
+ * Mail that fails after the database has committed. The account or the request
+ * exists either way; what must not happen is the person being told otherwise.
+ */
+describe('when the mail server is down', () => {
+  it('still approves the request when only the welcome email fails', async () => {
+    await request(app).post('/api/signup').send(signupBody({ email: 'welcome-fail@example.com' }));
+    const token = decisionTokenFromOperatorMail();
+    mailFailure.when = (msg) => msg.to === 'welcome-fail@example.com';
+
+    const res = await request(app).post(`/api/signup/decision/${token}`).send({ decision: 'approve' });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('does not report "already decided" to an operator whose approval was the one that stuck', async () => {
+    await request(app).post('/api/signup').send(signupBody({ email: 'welcome-fail-2@example.com' }));
+    const token = decisionTokenFromOperatorMail();
+    mailFailure.when = (msg) => msg.to === 'welcome-fail-2@example.com';
+    await request(app).post(`/api/signup/decision/${token}`).send({ decision: 'approve' });
+
+    expect(await prisma.user.count({ where: { email: 'welcome-fail-2@example.com' } })).toBe(1);
+  });
+
+  it('withdraws the request when the operator could not be told about it, so a retry is clean', async () => {
+    mailFailure.when = (msg) => msg.to === config.signupApproverEmail;
+
+    const res = await request(app).post('/api/signup').send(signupBody({ email: 'operator-fail@example.com' }));
+
+    expect([res.status, await prisma.signupRequest.count()]).toEqual([503, 0]);
+  });
+
+  it('keeps the request when only the applicant acknowledgement fails', async () => {
+    mailFailure.when = (msg) => msg.to === 'ack-fail@example.com';
+
+    const res = await request(app).post('/api/signup').send(signupBody({ email: 'ack-fail@example.com' }));
+
+    expect([res.status, await prisma.signupRequest.count()]).toEqual([201, 1]);
   });
 });

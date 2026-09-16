@@ -18,26 +18,7 @@ import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { connectorsRouter } from './routes/connectors.js';
-import { execFileSync } from 'node:child_process';
 
-/**
- * The commit this process is running, for `/api/health`.
- *
- * Prefers an explicit build-time value so a container without git still reports
- * something truthful, and falls back to asking git. Never throws: a health
- * endpoint that fails because it could not identify itself is worse than one
- * that admits it does not know.
- */
-function resolveCommit(): string {
-  if (process.env.GIT_COMMIT) return process.env.GIT_COMMIT.slice(0, 40);
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: process.cwd(), encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return 'unknown';
-  }
-}
 
 export function createApp() {
   const app = express();
@@ -69,10 +50,11 @@ export function createApp() {
   // Read once at startup, never per request: this endpoint is what uptime checks
   // hit, and shelling out to git on every poll is a needless cost and a needless
   // failure mode.
+  // No build fingerprint here: this endpoint is unauthenticated, and a precise
+  // commit is a lookup key for known issues. Admins read it from /api/admin/providers.
   const health = {
     status: 'ok',
     service: 'questor',
-    commit: resolveCommit(),
   };
   app.get('/api/health', (_req, res) => res.json({ ...health, ts: new Date().toISOString() }));
 

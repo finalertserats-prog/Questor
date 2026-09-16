@@ -18,6 +18,8 @@ import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
 import { getPipelineSummary } from '../services/pipeline.js';
 import { ORG_SLUG } from './orgs.js';
 import { decideSignupRequest, signupApplicant } from '../services/signup.js';
+import { webhookUrlProblem } from '../services/webhookUrl.js';
+import { resolveCommit } from '../services/build.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -45,6 +47,7 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
     email: { provider: getEmail().name, configured: getEmail().configured },
     ats: { provider: getAts().name, configured: getAts().configured },
     meeting,
+    build: { commit: resolveCommit() },
   });
 }));
 
@@ -304,9 +307,22 @@ adminRouter.get('/webhooks', requireCapability('admin:manage'), asyncHandler(asy
   res.json({ webhooks: hooks });
 }));
 adminRouter.post('/webhooks', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
-  const body = z.object({ url: z.string().url(), events: z.string().default('*') }).parse(req.body);
+  const body = z.object({ url: z.string().trim().max(2000), events: z.string().trim().max(500).default('*') }).parse(req.body);
+  // `z.string().url()` accepted any host. The server POSTs a signed body to
+  // this address, so a loopback or metadata address here is a request the
+  // server makes against itself or its network on an admin's say-so.
+  const problem = webhookUrlProblem(body.url, config.nodeEnv);
+  if (problem) throw new HttpError(400, problem);
   const hook = await prisma.webhookEndpoint.create({ data: { tenantId: req.auth!.tenantId, url: body.url, events: body.events } });
+  // Host only: a delivery URL routinely carries a shared secret in its path.
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'webhook.created', entityType: 'WebhookEndpoint', entityId: hook.id, after: { host: new URL(hook.url).host, events: hook.events } });
   res.status(201).json({ webhook: hook });
+}));
+adminRouter.delete('/webhooks/:id', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const { count } = await prisma.webhookEndpoint.deleteMany({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });
+  if (count === 0) throw new HttpError(404, 'Webhook not found');
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'webhook.deleted', entityType: 'WebhookEndpoint', entityId: req.params.id });
+  res.json({ ok: true });
 }));
 
 // Retention dry-run (GDPR Art. 5(1)(e) / DPDP s.8(6) storage limitation).
@@ -427,9 +443,28 @@ adminRouter.get('/policy', requireCapability('admin:manage'), asyncHandler(async
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   res.json({ policy: parseJson(tenant?.policyJson ?? '{}', {}) });
 }));
+// The policy is the candidate-facing consent notice and the switches for
+// proctoring, candidate feedback and human review. This route used to take
+// whatever was posted, replace the whole blob with it, and record nothing: a
+// body with no `policy` reset every safeguard to off and answered 200, and
+// "who weakened the disclosure, and when" had no answer. Keys are bounded,
+// unknown ones refused, the disclosure may not be blank, changes merge, and
+// before/after go to the audit log.
+const policySchema = z.object({
+  disclosureText: z.string().trim().min(1).max(4000).optional(),
+  requireHumanReview: z.boolean().optional(),
+  candidateFeedbackEnabled: z.boolean().optional(),
+  proctoringEnabled: z.boolean().optional(),
+  recordingDefault: z.boolean().optional(),
+}).strict();
+
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
-  const policy = req.body?.policy ?? {};
+  const patch = z.object({ policy: policySchema }).strict().parse(req.body).policy;
+  const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true } });
+  const before = parseJson<Record<string, unknown>>(tenant.policyJson, {});
+  const policy = { ...before, ...patch };
   await prisma.tenant.update({ where: { id: req.auth!.tenantId }, data: { policyJson: JSON.stringify(policy) } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'tenant.policy.updated', entityType: 'Tenant', entityId: req.auth!.tenantId, before, after: policy });
   res.json({ policy });
 }));
 

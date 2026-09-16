@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
 import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
+import { logAudit } from '../services/audit.js';
 
 export const authRouter = Router();
 
@@ -17,7 +18,13 @@ const loginSchema = z.object({
 authRouter.post('/login', asyncHandler(async (req, res) => {
   const { email, password, orgSlug } = loginSchema.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email } });
-  if (!user || !verifyPassword(password, user.passwordHash)) throw new HttpError(401, 'Invalid credentials');
+  if (!user || !verifyPassword(password, user.passwordHash)) {
+    // Sign-ins were absent from the audit trail entirely. A failed attempt on
+    // a known account is recorded against that account; an unknown address is
+    // not, since recording it would store whatever a stranger typed.
+    if (user) await logAudit({ tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login_failed', entityType: 'User', entityId: user.id });
+    throw new HttpError(401, 'Invalid credentials');
+  }
   // Through an organisation link, sign-in is held to that organisation. The
   // error matches a wrong password so a link cannot be used to learn which
   // organisation an email address belongs to.
@@ -28,6 +35,7 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
   // Sets the httpOnly session cookie + CSRF cookie. The token is also returned
   // for non-browser clients; the web app ignores it and uses the cookie.
   const token = issueSession(res, { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email });
+  await logAudit({ tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login', entityType: 'User', entityId: user.id });
   res.json({ token, user: { ...publicUser(user), tenantId: user.tenantId } });
 }));
 

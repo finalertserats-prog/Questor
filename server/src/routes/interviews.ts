@@ -189,9 +189,11 @@ interviewsRouter.get('/supported-languages', requireCapability('interview:read')
 }));
 
 const bulkInviteRowSchema = z.object({ candidateId: z.string().min(1) });
+// Each row is a database round trip and an outbound email inside one request.
+const MAX_BULK_INVITE = 200;
 
 interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
-  const rows = z.array(z.unknown()).parse(req.body);
+  const rows = z.array(z.unknown()).max(MAX_BULK_INVITE).parse(req.body);
   const results = [];
 
   for (let index = 0; index < rows.length; index++) {
@@ -210,9 +212,12 @@ interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), asy
       const invitation = await inviteSession(req, session);
       results.push({ index, candidateId: candidate.id, sessionId: session.id, success: true, invitation });
     } catch (err) {
+      // Only messages written for a caller are returned; a driver or Prisma
+      // message here would bypass the sanitising in the error handler.
+      if (!(err instanceof HttpError)) logger.error({ err: err instanceof Error ? err.message : String(err), candidateId }, 'bulk invite row failed');
       results.push({
         index, candidateId, success: false,
-        error: err instanceof Error ? err.message : 'Invitation failed',
+        error: err instanceof HttpError ? err.message : 'Invitation failed',
       });
     }
   }
@@ -443,7 +448,8 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
 // should move to it rather than borrowing the invite grant.
 interviewsRouter.post('/:id/schedule', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  const at = z.object({ scheduledAt: z.string() }).parse(req.body).scheduledAt;
+  // A bare string became `new Date('x')`, an Invalid Date, a Prisma throw and a 500.
+  const at = z.object({ scheduledAt: z.string().datetime({ offset: true }) }).parse(req.body).scheduledAt;
   await prisma.interviewSession.update({ where: { id: session.id }, data: { scheduledAt: new Date(at) } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at } });
   res.json({ ok: true, scheduledAt: at });
@@ -602,6 +608,14 @@ async function inviteSession(req: Request, session: InvitableSession) {
   const role = await prisma.role.findUnique({ where: { id: session.roleId } });
   if (!candidate || !role) throw new HttpError(404, 'Candidate or role not found');
   if (session.state !== 'PROVISIONED' && session.state !== 'RESCHEDULE_REQUIRED') throw new HttpError(409, `Cannot invite from state ${session.state}`);
+  // Checked before anything is sent. This used to run after the email had
+  // gone, so an illegal transition surfaced as a 500 with the mail already out.
+  assertTransition(session.state, 'INVITED');
+  // A re-invite must add to the invitation's history, not start it over: the
+  // update below used to write a one-element list, erasing every earlier
+  // sent / resent / not-delivered event.
+  const previous = await prisma.invitation.findUnique({ where: { sessionId: session.id }, select: { eventsJson: true } });
+  const priorEvents = previous ? parseJson<unknown[]>(previous.eventsJson, []) : [];
 
   const token = nanoid(24);
   const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);
@@ -640,11 +654,10 @@ async function inviteSession(req: Request, session: InvitableSession) {
     data: {
       status: delivered ? 'sent' : 'created',
       sentAt: delivered ? new Date() : null,
-      eventsJson: JSON.stringify([{ type: delivered ? 'sent' : 'created_not_delivered', at: new Date().toISOString() }]),
+      eventsJson: JSON.stringify([...priorEvents, { type: delivered ? 'sent' : 'created_not_delivered', at: new Date().toISOString() }]),
     },
   });
 
-  assertTransition(session.state, 'INVITED');
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
   await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });

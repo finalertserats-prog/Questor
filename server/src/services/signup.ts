@@ -69,7 +69,7 @@ export async function createSignupRequest(input: CreateSignupInput): Promise<voi
   const now = input.now ?? new Date();
   const token = mintSignupDecisionToken();
   const organisation = input.mode === 'new-org' ? input.organisationName! : input.orgCode!;
-  await prisma.signupRequest.create({
+  const created = await prisma.signupRequest.create({
     data: {
       name: input.name,
       email: input.email.toLowerCase(),
@@ -83,16 +83,30 @@ export async function createSignupRequest(input: CreateSignupInput): Promise<voi
   });
 
   const decisionPath = `/signup/decision/${token}`;
-  await getEmail().send(renderSignupOperatorEmail({
-    to: config.signupApproverEmail,
-    name: input.name,
-    email: input.email.toLowerCase(),
-    organisation,
-    mode: input.mode,
-    approveUrl: webUrl(decisionPath),
-    declineUrl: webUrl(decisionPath),
-  }));
-  await getEmail().send(renderSignupAcknowledgementEmail({ to: input.email.toLowerCase(), name: input.name }));
+  try {
+    await getEmail().send(renderSignupOperatorEmail({
+      to: config.signupApproverEmail,
+      name: input.name,
+      email: input.email.toLowerCase(),
+      organisation,
+      mode: input.mode,
+      approveUrl: webUrl(decisionPath),
+      declineUrl: webUrl(decisionPath),
+    }));
+  } catch (err) {
+    // Nobody can decide a request the operator never heard about, and the
+    // applicant's retry would only add a second pending row beside this one.
+    // Undo the row so the retry is clean, and say so honestly.
+    await prisma.signupRequest.delete({ where: { id: created.id } }).catch(() => undefined);
+    logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Signup request withdrawn: the operator email could not be sent');
+    throw new HttpError(503, 'Signup is temporarily unavailable.');
+  }
+  try {
+    await getEmail().send(renderSignupAcknowledgementEmail({ to: input.email.toLowerCase(), name: input.name }));
+  } catch (err) {
+    // The request stands; only the courtesy note failed.
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Signup acknowledgement email could not be sent');
+  }
 }
 
 export async function resolveSignupDecision(token: string, now = new Date()): Promise<SignupRequest> {
@@ -147,7 +161,7 @@ export async function decideSignupRequest(opts: {
   decision: Decision;
   actorId: string;
   now?: Date;
-}): Promise<{ transitioned: boolean; approvedUserId?: string }> {
+}): Promise<{ transitioned: boolean; approvedUserId?: string; welcomeDelivered?: boolean }> {
   const now = opts.now ?? new Date();
   const row = opts.token
     ? await resolveSignupDecision(opts.token, now)
@@ -223,8 +237,17 @@ export async function decideSignupRequest(opts: {
     createdUserId,
     reason: declinedReason ?? undefined,
   });
+  // The account exists once the transaction above committed. A welcome mail
+  // that bounces must not turn that into a 500, which then reads as "already
+  // decided" on the operator's retry.
+  let welcomeDelivered = false;
   if (createdUserId) {
-    await getEmail().send(renderSignupWelcomeEmail({ to: row.email, name: row.name, signInUrl: webUrl('/login') }));
+    try {
+      await getEmail().send(renderSignupWelcomeEmail({ to: row.email, name: row.name, signInUrl: webUrl('/login') }));
+      welcomeDelivered = true;
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err), signupRequestId: row.id }, 'Account created but the welcome email could not be sent');
+    }
   }
-  return { transitioned: true, approvedUserId: createdUserId };
+  return { transitioned: true, approvedUserId: createdUserId, welcomeDelivered };
 }

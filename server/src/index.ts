@@ -8,6 +8,7 @@ import { preflight } from './preflight.js';
 
 import { startRetentionSweep } from './services/dataRights.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
+import { requeuePendingDeliveries } from './services/webhooks.js';
 
 preflight();
 startRetentionSweep();
@@ -15,6 +16,11 @@ startRetentionSweep();
 // showing as "in progress" and never producing anything to read. Marks them
 // INCOMPLETE and saves the transcript; deliberately never scores them.
 startIncompleteSweep();
+// Webhook retries live in memory; whatever the last process left pending is
+// picked up here rather than lost.
+requeuePendingDeliveries().catch((err: unknown) => {
+  logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not re-queue pending webhook deliveries');
+});
 
 const app = createApp();
 const httpServer = createServer(app);

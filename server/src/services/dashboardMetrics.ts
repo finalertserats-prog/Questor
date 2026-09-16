@@ -26,10 +26,14 @@ export interface DashboardMetricsOptions {
   readonly weeks: number;
   readonly recent: number;
   readonly now?: Date;
+  /** Test seam for the series ceiling; production uses SERIES_ROW_LIMIT. */
+  readonly seriesRowLimit?: number;
 }
 
 export interface DashboardMetrics {
   readonly generatedAt: string;
+  /** True when a series hit its row ceiling, so averages and bars are from the most recent rows only. */
+  readonly truncated: boolean;
   readonly kpis: {
     readonly openRoles: number;
     readonly candidates: number;
@@ -75,6 +79,7 @@ function titleCase(key: string): string {
 export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMetricsOptions): Promise<DashboardMetrics> {
   const now = options.now ?? new Date();
   const nowMs = now.getTime();
+  const seriesRowLimit = options.seriesRowLimit ?? SERIES_ROW_LIMIT;
   const { tenantId } = auth;
   const [candScope, rScope] = await Promise.all([candidateScope(auth), roleScope(auth)]);
   const candidate = candScope as Prisma.CandidateWhereInput;
@@ -119,17 +124,22 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
     prisma.interviewSession.findMany({
       where: { ...sessionWhere, completedAt: { gte: turnaroundSince }, state: { in: COMPLETED_STATES }, invitation: { isNot: null } },
       select: { completedAt: true, invitation: { select: { sentAt: true, createdAt: true } } },
-      take: SERIES_ROW_LIMIT,
+      // Newest first, so hitting the ceiling drops the oldest rows, not an
+      // arbitrary subset the database happened to return.
+      orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
+      take: seriesRowLimit,
     }),
     prisma.interviewSession.findMany({
       where: { ...sessionWhere, OR: [{ createdAt: { gte: windowStart } }, { completedAt: { gte: windowStart } }] },
       select: { createdAt: true, completedAt: true, state: true },
-      take: SERIES_ROW_LIMIT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: seriesRowLimit,
     }),
     prisma.interviewRound.findMany({
       where: { ...roundWhere, OR: [{ createdAt: { gte: windowStart } }, { completedAt: { gte: windowStart } }] },
       select: { createdAt: true, completedAt: true, status: true },
-      take: SERIES_ROW_LIMIT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: seriesRowLimit,
     }),
     prisma.interviewSession.findMany({
       where: sessionWhere,
@@ -189,6 +199,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
 
   return {
     generatedAt: now.toISOString(),
+    truncated: turnaroundRows.length >= seriesRowLimit || sessionSeries.length >= seriesRowLimit || roundSeries.length >= seriesRowLimit,
     kpis: {
       openRoles,
       candidates,
