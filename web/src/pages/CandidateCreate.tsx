@@ -25,6 +25,9 @@ export function CandidateCreate() {
   const [phone, setPhone] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [resumeText, setResumeText] = useState('');
+  // Set once the candidate record exists, so a failed resume upload can be
+  // retried against the same person rather than making a duplicate.
+  const [createdId, setCreatedId] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<{ roles: Role[] }>('/roles')
@@ -44,19 +47,29 @@ export function CandidateCreate() {
     setError('');
     setSubmitting(true);
     try {
-      const { candidate } = await api.post<{ candidate: { id: string } }>('/candidates', {
-        fullName, email, phone: phone || undefined, roleId,
-      });
+      // Two requests: the candidate, then their resume. When the second failed,
+      // pressing the button again used to create a SECOND candidate for the
+      // same person — so the id from the first success is kept and the retry
+      // only re-uploads the resume.
+      let id = createdId;
+      if (!id) {
+        const { candidate } = await api.post<{ candidate: { id: string } }>('/candidates', {
+          fullName, email, phone: phone || undefined, roleId,
+        });
+        id = candidate.id;
+        setCreatedId(id);
+      }
       const form = new FormData();
       if (file) form.append('file', file);
       else form.append('text', resumeText);
-      await api.postForm(`/candidates/${candidate.id}/resume`, form);
-      nav(`/candidates/${candidate.id}`);
-    } catch (err: any) {
+      await api.postForm(`/candidates/${id}/resume`, form);
+      nav(`/candidates/${id}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Could not add this candidate.';
       if (err instanceof ApiError && err.status === 422) {
-        setError(`We could not read that resume file. Please upload a text-based PDF/DOCX or paste the resume text instead. (${err.message})`);
+        setError(`We could not read that resume file. Please upload a text-based PDF/DOCX or paste the resume text instead. (${message})`);
       } else {
-        setError(err.message);
+        setError(message);
       }
       setSubmitting(false);
     }
@@ -67,6 +80,15 @@ export function CandidateCreate() {
       <PageHeader icon="add-candidate" title="Add Candidate" />
 
       {error && <Banner kind="error">{error}</Banner>}
+      {/* Said plainly, because the form still looks unsubmitted: the person
+          exists, only their resume did not arrive. */}
+      {createdId && error && (
+        <Banner kind="info">
+          {fullName || 'This candidate'} was added — only the resume did not go through. Submitting
+          again retries just the resume, or{' '}
+          <Link className="link-action" to={`/candidates/${createdId}`}>open the candidate</Link> as they are.
+        </Banner>
+      )}
       {roles.length === 0 && (
         <Banner kind="info">
           No roles with an approved scorecard yet. Approve a role scorecard before adding candidates.{' '}
