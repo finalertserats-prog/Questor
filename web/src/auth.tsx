@@ -14,7 +14,9 @@ interface AuthCtx { user: User | null; tenant: { id: string; name: string } | nu
   register: (b: { email: string; password: string; name: string; tenantName?: string }) => Promise<void>;
   logout: () => void;
   /** Records on the server that the guided tour is done, so it never auto-runs again on any browser. */
-  markTourComplete: () => Promise<void>; }
+  markTourComplete: () => Promise<void>;
+  /** Re-reads the tour flag from the server and returns it, for a tab that may hold a stale one. */
+  refreshTourStatus: () => Promise<string | null>; }
 
 const Ctx = createContext<AuthCtx>(null as any);
 export const useAuth = () => useContext(Ctx);
@@ -49,5 +51,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser((current) => (current ? { ...current, tourCompletedAt: d.tourCompletedAt } : current));
   }, []);
 
-  return <Ctx.Provider value={{ user, tenant, loading, login, register, logout, markTourComplete }}>{children}</Ctx.Provider>;
+  // A second tab loaded before the tour was finished still holds the old flag,
+  // and would run the tour again. The server is the only thing that knows, so
+  // it is asked before the tour auto-starts. A failed request is treated as
+  // "no new information" and leaves the local answer standing.
+  const refreshTourStatus = useCallback(async () => {
+    try {
+      const d = await api.get<{ user: User }>('/auth/me');
+      setUser((current) => (current ? { ...current, tourCompletedAt: d.user.tourCompletedAt } : current));
+      return d.user.tourCompletedAt;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  return <Ctx.Provider value={{ user, tenant, loading, login, register, logout, markTourComplete, refreshTourStatus }}>{children}</Ctx.Provider>;
 }

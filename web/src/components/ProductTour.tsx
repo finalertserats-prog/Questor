@@ -84,7 +84,7 @@ const samePlacement = (a: CardPlacement, b: CardPlacement) => a.top === b.top &&
  * browser — and again whenever "Take the tour" is chosen from the profile menu.
  */
 export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
-  const { user, markTourComplete } = useAuth();
+  const { user, markTourComplete, refreshTourStatus } = useAuth();
   const { startRequest } = useTour();
   const location = useLocation();
   const navigate = useNavigate();
@@ -120,10 +120,19 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
   useEffect(() => {
     if (autoStartedRef.current || state.status !== 'idle') return;
     if (!shouldAutoStartTour(user, location.pathname)) return;
+    // Claimed before the request, not after: otherwise a re-render while the
+    // server is answering would start a second one.
+    autoStartedRef.current = true;
     const active = document.activeElement;
     returnFocusRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
-    begin();
-  }, [user, location.pathname, state.status, begin]);
+    let cancelled = false;
+    // This tab's flag may be stale — another tab may have finished the tour
+    // since this page loaded.
+    void refreshTourStatus().then((completedAt) => {
+      if (!cancelled && completedAt === null) begin();
+    });
+    return () => { cancelled = true; };
+  }, [user, location.pathname, state.status, begin, refreshTourStatus]);
 
   // "Take the tour" from the profile menu: from anywhere, back to step one on
   // the dashboard, where the steps live. Focus goes back to the menu's trigger
