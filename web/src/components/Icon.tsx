@@ -17,7 +17,7 @@ export type IconName =
   | 'hourglass' | 'refresh' | 'mic' | 'speaker' | 'lock' | 'stop' | 'handoff' | 'user-x'
   | 'question' | 'draft' | 'plus' | 'copy' | 'save' | 'export' | 'eye' | 'eye-off'
   | 'arrow-left' | 'search' | 'inbox' | 'keyboard' | 'captions' | 'list' | 'sparkle' | 'flag'
-  | 'link' | 'build'
+  | 'link' | 'build' | 'tour'
   | 'sidebar-collapse' | 'sidebar-expand';
 
 const PATHS: Record<IconName, ReactNode> = {
@@ -79,6 +79,8 @@ const PATHS: Record<IconName, ReactNode> = {
   flag: <><path d="M5 21V4" /><path d="M5 4h11l-2 4 2 4H5" /></>,
   link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
   build: <><path d="M8 7l-5 5 5 5" /><path d="M16 7l5 5-5 5" /><path d="M13.5 4l-3 16" /></>,
+  // A signpost: the guided tour points the way around the product.
+  tour: <><path d="M12 3v18" /><path d="M9 21h6" /><path d="M12 5h7l2 2.5L19 10h-7" /><path d="M12 12H6l-2 2.5L6 17h6" /></>,
 };
 
 /**

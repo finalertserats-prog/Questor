@@ -25,23 +25,29 @@ describe('initialsFor', () => {
 });
 
 describe('profileMenuItems', () => {
-  it('lists Settings, Admin console, Audit log, About and Contact in that order for an admin', () => {
-    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'Audit log', 'About', 'Contact']);
+  it('lists Settings, Admin console, Audit log, About, Contact and Take the tour in that order for an admin', () => {
+    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'Audit log', 'About', 'Contact', 'Take the tour']);
   });
 
   it('omits Admin console and Audit log for a recruiter', () => {
-    expect(profileMenuItems('recruiter').map((item) => item.label)).toEqual(['Settings', 'About', 'Contact']);
+    expect(profileMenuItems('recruiter').map((item) => item.label)).toEqual(['Settings', 'About', 'Contact', 'Take the tour']);
   });
 
   it('offers an auditor the Audit log but not the Admin console', () => {
-    expect(profileMenuItems('auditor').map((item) => item.label)).toEqual(['Settings', 'Audit log', 'About', 'Contact']);
+    expect(profileMenuItems('auditor').map((item) => item.label)).toEqual(['Settings', 'Audit log', 'About', 'Contact', 'Take the tour']);
   });
 
   it('omits Audit log for a manager, who does not hold audit:read', () => {
     expect(profileMenuItems('manager').some((item) => item.key === 'audit')).toBe(false);
   });
 
-  it('points each item at its route', () => {
-    expect(profileMenuItems('admin').map((item) => item.to)).toEqual(['/settings', '/admin', '/audit', '/about', '/contact']);
+  it('points each page link at its route', () => {
+    const routes = profileMenuItems('admin').flatMap((item) => (item.kind === 'link' ? [item.to] : []));
+    expect(routes).toEqual(['/settings', '/admin', '/audit', '/about', '/contact']);
+  });
+
+  it('offers the tour to every role as an action rather than a page', () => {
+    const tour = profileMenuItems('recruiter').find((item) => item.key === 'tour');
+    expect(tour).toEqual({ key: 'tour', label: 'Take the tour', kind: 'action', action: 'start-tour' });
   });
 });

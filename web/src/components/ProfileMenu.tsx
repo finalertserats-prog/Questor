@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Icon, type IconName } from './Icon';
 import { ThemeToggle } from './theme';
+import { useTour } from './tourContext';
 import { initialsFor, profileMenuItems } from './profileMenuModel';
 
 const MENU_ICONS: Record<string, IconName> = {
@@ -11,6 +12,7 @@ const MENU_ICONS: Record<string, IconName> = {
   audit: 'audit',
   about: 'about',
   contact: 'contact',
+  tour: 'tour',
 };
 
 /**
@@ -20,6 +22,7 @@ const MENU_ICONS: Record<string, IconName> = {
  */
 export function ProfileMenu() {
   const { user, logout } = useAuth();
+  const { startTour } = useTour();
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -76,10 +79,23 @@ export function ProfileMenu() {
       {isOpen && (
         <div ref={menuRef} className="profile-menu-popover" role="menu" aria-label="Profile menu" onKeyDown={handleMenuKeyDown}>
           {profileMenuItems(user.role).map((item) => (
-            <Link key={item.key} to={item.to} role="menuitem" className="profile-menu-item" onClick={() => setIsOpen(false)}>
-              <Icon name={MENU_ICONS[item.key] ?? 'about'} size={16} />
-              <span>{item.label}</span>
-            </Link>
+            item.kind === 'link' ? (
+              <Link key={item.key} to={item.to} role="menuitem" className="profile-menu-item" onClick={() => setIsOpen(false)}>
+                <Icon name={MENU_ICONS[item.key] ?? 'about'} size={16} />
+                <span>{item.label}</span>
+              </Link>
+            ) : (
+              <button
+                key={item.key}
+                type="button"
+                role="menuitem"
+                className="profile-menu-item"
+                onClick={() => { setIsOpen(false); startTour(); }}
+              >
+                <Icon name={MENU_ICONS[item.key] ?? 'about'} size={16} />
+                <span>{item.label}</span>
+              </button>
+            )
           ))}
           <div className="profile-menu-divider" role="separator" />
           <div className="profile-menu-theme">
@@ -104,6 +120,7 @@ export function ProfileMenu() {
         ref={triggerRef}
         type="button"
         className="profile-trigger"
+        data-tour="profile-menu"
         aria-haspopup="menu"
         aria-expanded={isOpen}
         onClick={() => setIsOpen((prev) => !prev)}
