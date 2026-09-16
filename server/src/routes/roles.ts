@@ -32,8 +32,10 @@ rolesRouter.get('/', asyncHandler(async (req, res) => {
 
 const createSchema = z.object({
   sourceType: z.enum(['paste', 'file', 'ats', 'form']).default('paste'),
-  sourceText: z.string().default(''),
-  title: z.string().optional(),
+  // Sent straight to a paid model; a JD is a few thousand characters, and
+  // fifty thousand is already a book chapter.
+  sourceText: z.string().max(50_000).default(''),
+  title: z.string().max(200).optional(),
   atsRequisitionId: z.string().optional(),
   useLlm: z.boolean().default(true),
 });

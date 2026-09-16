@@ -5,6 +5,7 @@ import multer from 'multer';
 import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
+import { scorecardForFit } from '../services/scorecards.js';
 import { eraseCandidate } from '../services/dataRights.js';
 import {
   assertCanAccessCandidate,
@@ -63,7 +64,11 @@ function sanitizeFilename(original: string): string {
 }
 
 // List candidates (optionally by role)
-candidatesRouter.get('/', asyncHandler(async (req, res) => {
+//
+// candidate:read is asked for here as it is on /api/interviews and the
+// dashboard: names, addresses and resume text are candidate detail, and an
+// auditor holds no capability to see them.
+candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const roleId = req.query.roleId as string | undefined;
   // `roleId` is ANDed with the caller's scope, so it can only ever NARROW the
   // result set. Previously it was the whole filter beside tenantId, which turned
@@ -101,7 +106,10 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
 }));
 
 // Upload + parse resume, compute fit score, build evidence graph (FR-006..010)
-candidatesRouter.post('/:id/resume', uploadResume, asyncHandler(async (req, res) => {
+// A write, gated like the create it belongs to. Object scope alone let a
+// reviewer assigned to a candidate replace their profile, rewrite the evidence
+// graph and rescore the fit.
+candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), uploadResume, asyncHandler(async (req, res) => {
   const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
   let rawText = '';
   let filename = 'pasted.txt';
@@ -124,10 +132,7 @@ candidatesRouter.post('/:id/resume', uploadResume, asyncHandler(async (req, res)
 
   const profile = normalizeProfile(rawText);
 
-  // Role scorecard (approved preferred, else latest)
-  const scorecard = await prisma.roleScorecardVersion.findFirst({
-    where: { roleId: candidate.roleId ?? '' }, orderBy: [{ status: 'desc' }, { version: 'desc' }],
-  });
+  const scorecard = await scorecardForFit(candidate.roleId);
   const role = scorecard ? parseJson<RoleSuccessProfile>(scorecard.profileJson, emptyProfile()) : emptyProfile();
   const { fit, perCompetency } = computeFitScore(profile, rawText, role);
 
@@ -189,13 +194,17 @@ function fitTextFromProfile(profile: any): string {
   return parts.filter((part) => typeof part === 'string' && part.trim()).join('\n');
 }
 
-function explainAlternative(score: number, current: number, fit: any): string {
+function explainAlternative(score: number, current: number | null, fit: any): string {
   const strongest = [...(fit.components ?? [])]
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 2)
     .map((c: any) => c.label.toLowerCase());
-  const delta = Math.round(score - current);
   const basis = strongest.length ? `Strongest evidence: ${strongest.join(' and ')}.` : 'Limited scorecard evidence was available.';
+  // With no fit for the applied role there is nothing to be stronger than.
+  // This used to measure against a fabricated zero, so every alternative
+  // read as "N points stronger" and HR was nudged to move the candidate.
+  if (current === null) return `No fit for the applied role to compare against. ${basis}`;
+  const delta = Math.round(score - current);
   return delta > 0
     ? `${delta} points stronger than the applied role. ${basis}`
     : `Not stronger than the applied role. ${basis}`;
@@ -259,7 +268,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
   const currentFit = currentScorecard
     ? publicFit(computeFitScore(profile ?? {}, fitText, parseJson<RoleSuccessProfile>(currentScorecard.profileJson, emptyProfile())).fit)
     : currentStoredFit;
-  const currentOverall = currentFit?.overall ?? 0;
+  const currentOverall: number | null = typeof currentFit?.overall === 'number' ? currentFit.overall : null;
 
   const alternatives = scopedRoles
     .filter((r) => r.id !== candidate.roleId && r.scorecards[0])
@@ -278,9 +287,11 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_ALTERNATIVE_ROLES_RETURNED);
 
-  const better = alternatives.filter((a) => a.score > currentOverall);
+  const better = currentOverall === null ? [] : alternatives.filter((a) => a.score > currentOverall);
   const betterFitMessage = alternatives.length === 0
     ? 'There are no other approved roles in your visible scope to compare.'
+    : currentOverall === null
+      ? 'There is no fit score for the applied role yet, so the other roles are listed without a comparison.'
     : better.length === 0
       ? 'No visible approved role appears to be a better fit than the current applied role.'
       : `${better.length} visible approved role${better.length === 1 ? '' : 's'} scored higher than the current applied role.`;
@@ -299,7 +310,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
 }));
 
 // Get candidate detail (profile + fit + evidence)
-candidatesRouter.get('/:id', asyncHandler(async (req, res) => {
+candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
   const profileVersion = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' }, include: { evidenceNodes: true } });
   const interviews = await prisma.interviewSession.findMany({ where: { candidateId: candidate.id }, orderBy: { createdAt: 'desc' } });

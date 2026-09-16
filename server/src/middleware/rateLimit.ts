@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -94,7 +95,9 @@ export function rateLimit(opts: RateLimitOptions) {
     if (bucket.count > max) {
       const retryAfter = Math.ceil((bucket.resetAt - now) / 1000);
       res.setHeader('Retry-After', String(retryAfter));
-      logger.warn({ limiter: name, key: keyOf(req), count: bucket.count }, 'Rate limit exceeded');
+      // The key may be a live credential (the portal limiters key on the
+      // invitation token), and a log line is not where those belong.
+      logger.warn({ limiter: name, key: fingerprint(keyOf(req)), count: bucket.count }, 'Rate limit exceeded');
       // Deliberately generic: do not confirm whether an account or token exists.
       return res.status(429).json({
         error: 'Too many requests. Please wait a moment and try again.',
@@ -103,6 +106,14 @@ export function rateLimit(opts: RateLimitOptions) {
     }
     return next();
   };
+}
+
+/**
+ * A stable, short stand-in for a bucket key, so two log lines about the same
+ * caller can be matched without the log ever holding the caller's token.
+ */
+export function fingerprint(key: string): string {
+  return crypto.createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
 
 /** Test hook — clears all windows. */

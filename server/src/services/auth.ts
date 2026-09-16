@@ -39,7 +39,9 @@ export function signToken(claims: AuthClaims): string {
 
 export function verifyToken(token: string): AuthClaims | null {
   try {
-    return jwt.verify(token, config.authSecret) as AuthClaims;
+    // A string secret already confines jsonwebtoken to HMAC; pinning the
+    // algorithm keeps that true if the secret ever becomes a key object.
+    return jwt.verify(token, config.authSecret, { algorithms: ['HS256'] }) as AuthClaims;
   } catch {
     return null;
   }
