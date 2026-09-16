@@ -51,7 +51,6 @@
 }
 .workflow-link:hover {
   border-color: var(--accent);
-  background: var(--accent-wash);
   text-decoration: none;
 }
 .workflow-link:focus-visible {
@@ -66,9 +65,24 @@
   width: 38px;
   height: 38px;
   margin-bottom: 6px;
-  border-radius: 50%;
-  background: var(--accent-wash);
+  /* Bracketed like every other icon on the page. A filled disc here is the
+     same stock object as the KPI chip was, and it sat one row above it. */
+  position: relative;
+  border-radius: var(--radius-xs);
+  background: transparent;
   color: var(--accent);
+  box-shadow:
+    inset 2px 0 0 -1px var(--accent-edge),
+    inset -2px 0 0 -1px var(--accent-edge);
+}
+.workflow-icon::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  left: 4px;
+  height: 2px;
+  background: var(--accent);
 }
 
 .workflow-num {

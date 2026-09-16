@@ -441,13 +441,20 @@ code {
   border-left: var(--rail) solid transparent;
   transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
+/* Where you are is marked, not highlighted.
+   A filled pill behind the current item is the single most template-looking
+   object in an application shell, and it also inverts the hierarchy: hovering
+   painted a block, so hover competed with the page you were actually on. Both
+   now speak in rules. Hover firms up the rail and the text; the current page
+   takes the accent rail at full strength, the darkest ink and the weight. The
+   marker is position plus weight plus colour, never colour alone, and NavLink
+   still emits aria-current for anyone not looking at it. */
 .sidebar nav a:hover {
-  background: var(--sheet-sunk);
+  border-left-color: var(--rule-strong);
   color: var(--ink);
   text-decoration: none;
 }
 .sidebar nav a.active {
-  background: var(--accent-wash);
   border-left-color: var(--accent);
   color: var(--ink);
   font-weight: 600;
@@ -932,27 +939,29 @@ tr.in-flight td:first-child {
    Notices
    ========================================================================== */
 
+/* A note, not a highlighter. The rail on the left says which kind of note it
+   is; the sheet it sits on stays the sheet. Washing the whole block in tint is
+   what makes a page look like a template with the colours swapped, and it also
+   makes every banner shout equally loudly regardless of what it says. */
 .banner {
   padding: 10px 14px;
   border-radius: var(--radius);
-  border: var(--hair) solid;
+  border: var(--hair) solid var(--rule);
   border-left-width: var(--rail);
   margin-bottom: 14px;
   font-size: 13.5px;
+  background: var(--sheet);
   color: var(--ink);
 }
 .banner.error {
-  background: var(--stop-wash);
   border-color: var(--stop-edge);
   border-left-color: var(--stop);
 }
 .banner.info {
-  background: var(--accent-wash);
   border-color: var(--accent-edge);
   border-left-color: var(--accent);
 }
 .banner.ok {
-  background: var(--pass-wash);
   border-color: var(--pass-edge);
   border-left-color: var(--pass);
 }

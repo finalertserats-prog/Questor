@@ -84,7 +84,9 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
   const slot = data.length ? plotW / data.length : plotW;
   // Bars keep their own proportion of the slot but never grow into slabs on a
   // wide screen: twelve weeks across 1600px would otherwise be 45px wide each.
-  const barW = Math.max(3, Math.min(18, slot * 0.28));
+  // Floor of 6, not 3: the ruled fill repeats every 5px, so a 3px bar holds
+  // barely one stripe and reads as a solid tone rather than as ruled.
+  const barW = Math.max(6, Math.min(18, slot * 0.28));
   const labelEvery = slot < 60 ? 2 : 1;
   const totals = data.reduce((acc, d) => ({ created: acc.created + d.created, completed: acc.completed + d.completed }), { created: 0, completed: 0 });
   // Quarter steps rather than halves: with a tight ceiling the extra two lines
@@ -232,14 +234,10 @@ export function HorizontalBarChart({ items, title, summary }: { items: readonly 
           return (
             <g key={item.key}>
               <text x={BAR.labelW - 10} y={y + ROW_H / 2 + 4} textAnchor="end" className="chart-label">{item.label}</text>
-              {/* A ruled channel, not a grey capsule. The track is the measure
-                  the bar is read against, so it should look like a rule rather
-                  than a second bar sitting behind the first. */}
-              <line
-                x1={BAR.labelW} x2={BAR.labelW + plotW}
-                y1={y + ROW_H / 2} y2={y + ROW_H / 2}
-                className="chart-channel" shapeRendering="crispEdges"
-              />
+              {/* No channel behind the bar. A full-width track is what makes a
+                  bar chart read as a progress meter, and at 1px it was also
+                  bleeding into the card on dark. The end tick marks where the
+                  scale finishes; every row prints its own number. */}
               <line
                 x1={BAR.labelW + plotW} x2={BAR.labelW + plotW}
                 y1={y + 8} y2={y + ROW_H - 8}

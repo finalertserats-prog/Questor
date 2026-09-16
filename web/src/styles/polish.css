@@ -28,16 +28,33 @@
   gap: 12px;
   min-width: 0;
 }
+/* Bracketed, not filled. The topbar already draws a ruled measure beneath
+   itself; a tinted tile floating above that rule is the one piece of the header
+   that looks bought rather than drawn, so the icon takes the same caliper marks
+   the KPI chips use and lets the rule underneath do the dividing. */
 .page-icon {
+  position: relative;
   display: grid;
   place-items: center;
   flex: none;
   width: 40px;
   height: 40px;
-  border-radius: var(--radius-sheet);
-  background: var(--accent-wash);
-  border: var(--hair) solid var(--accent-edge);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 0;
   color: var(--accent);
+  box-shadow:
+    inset 2px 0 0 -1px var(--accent-edge),
+    inset -2px 0 0 -1px var(--accent-edge);
+}
+.page-icon::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  left: 4px;
+  height: 2px;
+  background: var(--accent);
 }
 .page-title-text {
   min-width: 0;

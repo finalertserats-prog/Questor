@@ -88,8 +88,10 @@ a.kpi-link {
     transform var(--dur-base) var(--ease-standard);
 }
 a.kpi-link:hover {
+  /* The border, the lift and the chip rule underneath already answer "is this a
+     link?". Washing the card as well was the fourth signal and the only one
+     that looked stock. */
   border-color: var(--accent);
-  background: var(--accent-wash);
   box-shadow: var(--shadow-raised);
   transform: translateY(-1px);
   text-decoration: none;
@@ -217,12 +219,6 @@ a.kpi-link:hover .kpi-icon::after {
   fill: var(--ink-2);
 }
 
-/* The empty part of a bar row stays drawn, so a zero still looks like a
-   measurement that was taken rather than a chart that failed to render. */
-.chart-track {
-  fill: var(--chart-track);
-}
-
 /* The ruled fill. The ground keeps the bar readable as a shape at any size;
    the lines carry the meaning. Spacing stays at 5px so the pattern never
    collapses into a solid tone on a narrow bar. */
@@ -243,14 +239,9 @@ a.kpi-link:hover .kpi-icon::after {
   stroke-width: 1;
 }
 .chart-tick {
-  stroke: var(--rule-strong);
-  stroke-width: 1;
-}
-.chart-channel {
-  /* chart-grid is 1.37:1 here and all but disappears. This is a hairline guide
-     rather than an indicator -- every row prints its own number beside the bar
-     -- but a scale you cannot see is not a scale, so it takes rule-strong. */
-  stroke: var(--rule-strong);
+  /* rule-strong is 1.87:1 light and 2.04:1 dark. The tick is now the only thing
+     marking where the scale ends, so it takes the tone that survives both. */
+  stroke: var(--chart-muted);
   stroke-width: 1;
 }
 /* A zero still leaves a mark, so an empty week reads as measured-and-empty
