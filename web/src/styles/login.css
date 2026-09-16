@@ -1,234 +1,124 @@
 /* ==========================================================================
-   Landing and sign-in pages.
+   The sign-in page.
    --------------------------------------------------------------------------
-   One composition, not two halves: the showcase and the sign-in card are a
-   single centred block with a measured gap between them. On a wide monitor the
-   pair stays together in the middle rather than drifting to opposite edges, and
-   the form is always above the fold. On a phone the form comes first and the
-   showcase reads underneath it.
+   One quiet composition: the mark, a sentence worth reading, three things worth
+   knowing, and the form. The backdrop is a soft wash with the product's own
+   shapes — a lens, a speech bubble, a few lines of process — kept pale enough
+   that the card never fights it.
+
+   Everything that explains the product in full now lives on About. A person at
+   this page is signing in; a person asking "what is this?" deserves a page, not
+   a margin.
    ========================================================================== */
 
 .landing {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(330px, 394px);
-  gap: 26px;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
+  gap: 48px;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 26px 24px;
-  background: var(--desk);
+  padding: 32px 30px;
+  /* The image sits under a wash in the product's own colours, so the page still
+     reads as Questor before it loads and if it never does. */
+  background:
+    radial-gradient(1100px 560px at 22% 18%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 62%),
+    linear-gradient(168deg, var(--sheet), var(--desk) 68%);
 }
 
-/* A sheet laid on the desk, like every other panel in the product. The wash is
-   the only colour: the page carries no artwork, so it costs nothing to load. */
-.landing-hero {
+.landing-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: url('/brand/login-backdrop.webp') center / cover no-repeat;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Above the backdrop, without giving either child a stacking context of its own. */
+.landing-hero,
+.landing-panel {
   position: relative;
+  z-index: 1;
+}
+
+.landing-hero {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 26px 28px;
-  border: var(--hair) solid var(--rule);
-  border-radius: var(--radius-sheet);
-  background: linear-gradient(158deg, var(--accent-wash), var(--sheet) 58%);
+  max-width: 560px;
+  margin-left: auto;
 }
 
-.landing-hero-copy {
-  max-width: 700px;
-}
-
-.landing-eyebrow {
-  margin: 0 0 6px;
-  color: var(--accent);
-  font-family: var(--font-data);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+.landing-logo {
+  display: block;
+  width: 216px;
+  max-width: 64%;
+  height: auto;
+  margin: 0 0 18px;
 }
 
 .landing-headline {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
+  max-width: 18ch;
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: 29px;
-  line-height: 1.15;
+  font-size: 34px;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
   text-wrap: balance;
 }
 
 .landing-lede {
-  margin: 0 0 18px;
-  max-width: 62ch;
+  margin: 0 0 26px;
+  max-width: 46ch;
   color: var(--ink-2);
-  font-size: 14px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.6;
 }
 
 /* --------------------------------------------------------------------------
-   The workflow, shown as a sequence rather than a list
-   --------------------------------------------------------------------------
-   Same component as the signed-in dashboard, drawn tighter and with one step
-   current at a time. The highlight is what carries the eye through the order of
-   the work; it advances on its own and follows a pointer or the keyboard.
+   Three things worth knowing before you sign in
    -------------------------------------------------------------------------- */
 
-.workflow-showcase {
-  margin: 0 0 18px;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: none;
-  box-shadow: none;
-}
-
-.workflow-showcase .workflow-steps {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-/* The landing steps are buttons, not links — there is nothing to navigate to
-   before signing in — so they need the type and alignment resets a link does not. */
-.workflow-showcase .workflow-link {
-  width: 100%;
-  gap: 2px;
-  padding: 11px 12px;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.workflow-showcase .workflow-icon {
-  width: 30px;
-  height: 30px;
-  margin-bottom: 4px;
-}
-.workflow-showcase .workflow-title {
-  font-size: 13px;
-}
-.workflow-showcase .workflow-detail {
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-
-/* The current step. The inset rail means the highlight is not carried by colour
-   alone, and aria-current says the same thing to a screen reader. */
-.workflow-showcase .workflow-link.is-active {
-  border-color: var(--accent);
-  background: var(--accent-wash);
-  box-shadow: inset var(--rail) 0 0 var(--accent);
-}
-.workflow-showcase .workflow-link.is-active .workflow-icon {
-  background: var(--accent);
-  color: var(--accent-on);
-}
-
-.workflow-showcase .workflow-arrow {
-  right: -14px;
-}
-/* No arrow off the end of a row. */
-.workflow-showcase .workflow-step:nth-child(3n) .workflow-arrow {
-  display: none;
-}
-
-/* --------------------------------------------------------------------------
-   What the product actually does
-   -------------------------------------------------------------------------- */
-
-.showcase-heading {
-  margin: 0 0 9px;
-  color: var(--ink-3);
-  font-family: var(--font-data);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.showcase-features {
+.landing-points {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 18px;
+  gap: 16px;
   margin: 0;
   padding: 0;
+  max-width: 48ch;
   list-style: none;
 }
 
-.showcase-feature {
+.landing-point {
   display: grid;
-  grid-template-columns: 17px minmax(0, 1fr);
-  column-gap: 8px;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 2px;
 }
 
-.showcase-feature-icon {
+.landing-point-icon {
   grid-row: 1 / span 2;
   display: inline-flex;
+  align-items: center;
   justify-content: center;
-  padding-top: 2px;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--accent-wash);
   color: var(--accent);
 }
-.showcase-feature-title {
+
+.landing-point-title {
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 600;
 }
-.showcase-feature-detail {
+
+.landing-point-detail {
   color: var(--ink-3);
-  font-size: 11.5px;
-  line-height: 1.4;
-}
-
-/* A short settle as the page opens, staggered so the sequence reads left to
-   right. `both` keeps the final state, so nothing depends on the animation
-   running for the content to be visible. */
-@keyframes showcase-rise {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.workflow-showcase .workflow-step,
-.showcase-feature {
-  animation: showcase-rise 0.42s ease-out both;
-}
-.workflow-showcase .workflow-step:nth-child(1) { animation-delay: 0.04s; }
-.workflow-showcase .workflow-step:nth-child(2) { animation-delay: 0.1s; }
-.workflow-showcase .workflow-step:nth-child(3) { animation-delay: 0.16s; }
-.workflow-showcase .workflow-step:nth-child(4) { animation-delay: 0.22s; }
-.workflow-showcase .workflow-step:nth-child(5) { animation-delay: 0.28s; }
-.workflow-showcase .workflow-step:nth-child(6) { animation-delay: 0.34s; }
-.showcase-feature:nth-child(1) { animation-delay: 0.36s; }
-.showcase-feature:nth-child(2) { animation-delay: 0.4s; }
-.showcase-feature:nth-child(3) { animation-delay: 0.44s; }
-.showcase-feature:nth-child(4) { animation-delay: 0.48s; }
-.showcase-feature:nth-child(5) { animation-delay: 0.52s; }
-.showcase-feature:nth-child(6) { animation-delay: 0.56s; }
-.showcase-feature:nth-child(7) { animation-delay: 0.6s; }
-.showcase-feature:nth-child(8) { animation-delay: 0.64s; }
-.showcase-feature:nth-child(9) { animation-delay: 0.68s; }
-.showcase-feature:nth-child(10) { animation-delay: 0.72s; }
-
-/* Reduced motion: no entrance, no highlight transition. The sequence still
-   shows every step, held on the first one, and every step is still reachable by
-   pointer or keyboard. `.is-still` is the same decision taken in JavaScript,
-   which is what also stops the timer. */
-@media (prefers-reduced-motion: reduce) {
-  .workflow-showcase .workflow-step,
-  .showcase-feature {
-    animation: none;
-  }
-  .workflow-showcase .workflow-link {
-    transition: none;
-  }
-}
-.landing-hero.is-still .workflow-step,
-.landing-hero.is-still .showcase-feature {
-  animation: none;
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
 /* --------------------------------------------------------------------------
@@ -238,7 +128,23 @@
 .landing-panel {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+}
+
+.landing-panel > .card {
+  width: 100%;
+  box-shadow: 0 18px 46px -28px rgb(20 26 45 / 38%);
+}
+
+/* "Signing in to" above an organisation's name, on its own link. */
+.landing-eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .landing-title {
@@ -276,57 +182,45 @@
 }
 
 /* --------------------------------------------------------------------------
-   Narrow screens: sign in first, read about the product after.
+   Dark theme: the artwork is light by design, so it recedes rather than glows.
+   -------------------------------------------------------------------------- */
+
+:root[data-theme='dark'] .landing-backdrop {
+  opacity: 0.16;
+  filter: saturate(0.7) brightness(0.8);
+}
+
+/* --------------------------------------------------------------------------
+   Narrow screens: sign in first, read the welcome after.
    -------------------------------------------------------------------------- */
 
 @media (max-width: 900px) {
   .landing {
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    gap: 18px;
-    padding: 18px 14px;
+    gap: 26px;
     min-height: 0;
+    padding: 22px 16px 32px;
   }
-  /* The form is the errand; the showcase is the answer to "what is this?". */
+  /* The form is the errand. */
   .landing-panel {
     order: -1;
   }
   .landing-hero {
-    padding: 20px 18px;
+    margin-left: 0;
+    max-width: none;
+  }
+  .landing-logo {
+    width: 176px;
   }
   .landing-headline {
-    font-size: 25px;
+    font-size: 27px;
+    max-width: none;
   }
-  .workflow-showcase .workflow-steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .landing-lede {
+    margin-bottom: 20px;
   }
-  /* The stacked layout wraps unpredictably, so the numbers carry the order. */
-  .workflow-showcase .workflow-arrow {
-    display: none;
-  }
-  .showcase-features {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-@media (max-width: 520px) {
-  .workflow-showcase .workflow-steps {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-/* The full lockup introduces the product to someone who has never seen it —
-   the tagline is part of the image, so no separate line repeats it. */
-.landing-logo {
-  display: block;
-  width: 210px;
-  max-width: 62%;
-  height: auto;
-  margin: 0 0 12px;
-}
-
-@media (max-width: 900px) {
-  .landing-logo {
-    width: 168px;
+  .landing-backdrop {
+    opacity: 0.38;
   }
 }

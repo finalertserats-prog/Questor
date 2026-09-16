@@ -1,46 +1,37 @@
-import { useEffect, useReducer, useState } from 'react';
-import { Icon } from './Icon';
-import { WorkflowDiagram } from './WorkflowDiagram';
-import {
-  SHOWCASE_FEATURES,
-  SHOWCASE_STEPS,
-  STEP_INTERVAL_MS,
-  initialShowcaseState,
-  prefersReducedMotion,
-  showcaseReducer,
-} from './landingShowcase';
+import { Icon, type IconName } from './Icon';
 
 /**
- * The showcase half of the sign-in page: what Questor does, the order it does it
- * in, and what is actually in the product. The workflow highlight advances on its
- * own and follows a pointer or the keyboard; anyone who asks for reduced motion
- * gets the same sequence held still on its first step.
+ * The welcome beside the sign-in card.
+ *
+ * Deliberately short. Someone arriving here is signing in, not evaluating a
+ * product, and the full account — the whole workflow, everything in the product,
+ * who it serves and what it will not do — lives on About, where it can be read
+ * properly instead of skimmed past a form.
  */
+const POINTS: ReadonlyArray<{ key: string; icon: IconName; title: string; detail: string }> = [
+  {
+    key: 'round',
+    icon: 'interviews',
+    title: 'A structured first round',
+    detail: 'Run by Schranders, our AI interviewer — the same ground with every candidate, against criteria a person approved first.',
+  },
+  {
+    key: 'evidence',
+    icon: 'evidence',
+    title: 'Evidence you can read',
+    detail: 'Each rating quotes the moment in the transcript behind it, and says so plainly where the transcript shows nothing.',
+  },
+  {
+    key: 'decision',
+    icon: 'scale',
+    title: 'A person decides',
+    detail: 'Questor gathers and recommends. Your team records the decision, and the reason stays with it.',
+  },
+];
+
 export function LandingHero() {
-  const [reducedMotion, setReducedMotion] = useState(prefersReducedMotion);
-  const [state, dispatch] = useReducer(showcaseReducer, reducedMotion, initialShowcaseState);
-
-  // The preference can change while the page is open, and asking for reduced
-  // motion has to stop the sequence there and then, not on the next reload.
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined;
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const onChange = () => {
-      setReducedMotion(query.matches);
-      dispatch({ type: query.matches ? 'pause' : 'resume' });
-    };
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  }, []);
-
-  useEffect(() => {
-    if (state.paused) return undefined;
-    const timer = window.setInterval(() => dispatch({ type: 'tick' }), STEP_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [state.paused]);
-
   return (
-    <section className={reducedMotion ? 'landing-hero is-still' : 'landing-hero'}>
+    <section className="landing-hero">
       <div className="landing-hero-copy">
         <img
           className="landing-logo"
@@ -51,30 +42,16 @@ export function LandingHero() {
         />
         <h2 className="landing-headline">Hire through evidence, not impressions.</h2>
         <p className="landing-lede">
-          Questor turns a job description into an agreed scorecard, runs the first interview round itself,
-          schedules the human rounds around it, and ties every rating back to what the candidate actually
-          said. A person still makes the decision.
+          A job description becomes an agreed scorecard. The first interview happens here. Every rating
+          points back at what the candidate actually said.
         </p>
 
-        <WorkflowDiagram
-          className="workflow-showcase"
-          label="How hiring runs in Questor"
-          steps={SHOWCASE_STEPS}
-          activeStep={state.step}
-          onActivate={(step) => dispatch({ type: 'select', step })}
-          onPause={() => dispatch({ type: 'pause' })}
-          // Leaving the diagram must not restart a sequence that reduced motion
-          // stopped: the pause is the preference, not a hover state.
-          onResume={() => { if (!reducedMotion) dispatch({ type: 'resume' }); }}
-        />
-
-        <h3 className="showcase-heading">What is in the product</h3>
-        <ul className="showcase-features">
-          {SHOWCASE_FEATURES.map((feature) => (
-            <li key={feature.key} className="showcase-feature">
-              <span className="showcase-feature-icon"><Icon name={feature.icon} size={15} /></span>
-              <span className="showcase-feature-title">{feature.title}</span>
-              <span className="showcase-feature-detail">{feature.detail}</span>
+        <ul className="landing-points">
+          {POINTS.map((point) => (
+            <li key={point.key} className="landing-point">
+              <span className="landing-point-icon"><Icon name={point.icon} size={15} /></span>
+              <span className="landing-point-title">{point.title}</span>
+              <span className="landing-point-detail">{point.detail}</span>
             </li>
           ))}
         </ul>

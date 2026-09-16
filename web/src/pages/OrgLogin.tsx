@@ -59,6 +59,8 @@ export function OrgLogin() {
 
   return (
     <div className="landing">
+      {/* Decorative wash behind both columns; announced to nobody. */}
+      <div className="landing-backdrop" aria-hidden="true" />
       <LandingHero />
 
       <section className="landing-panel">
