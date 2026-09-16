@@ -40,6 +40,9 @@ model User {
   // recruiter | manager | admin | auditor | program_owner
   role         String   @default("recruiter")
   createdAt    DateTime @default(now())
+  // When the guided product tour was finished or skipped. Null until then, so
+  // it runs once on the user's first sign-in — on every browser, not just one.
+  tourCompletedAt DateTime?
   reviews      HumanReview[]
   approvedFeedbackDeliveries CandidateFeedbackDelivery[]
   roleAssignments      RoleAssignment[]
