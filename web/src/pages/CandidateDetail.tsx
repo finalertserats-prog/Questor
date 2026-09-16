@@ -14,6 +14,7 @@ import { formatPercent, formatScoreOutOf100, roundScore } from '../components/sc
 import {
   MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
 } from '../components/interviewSetupModel';
+import { formatDateTime } from '../components/dateFormat';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -491,8 +492,8 @@ export function CandidateDetail() {
                       </span>
                     </td>
                     <td>{recBadge(s?.recommendation)}</td>
-                    <td>{iv.scheduledAt ? new Date(iv.scheduledAt).toLocaleString() : <span className="muted">—</span>}</td>
-                    <td>{new Date(iv.createdAt).toLocaleString()}</td>
+                    <td>{iv.scheduledAt ? formatDateTime(iv.scheduledAt) : <span className="muted">—</span>}</td>
+                    <td>{formatDateTime(iv.createdAt)}</td>
                     <td>
                       {/* Both routes are always offered. The assessment is what the
                           recruiter came for when it exists; the interview page is

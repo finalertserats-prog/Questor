@@ -7,6 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { isInFlight } from './CandidatesList';
+import { formatDateTime } from '../components/dateFormat';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null; }
@@ -152,7 +153,7 @@ export function InterviewDetail() {
         </div>
         {session.scheduledAt && (
           <div className="muted small" style={{ marginTop: 10 }}>
-            Scheduled for {new Date(session.scheduledAt).toLocaleString()}
+            Scheduled for {formatDateTime(session.scheduledAt)}
           </div>
         )}
       </div>
@@ -196,8 +197,8 @@ export function InterviewDetail() {
               {invitation.sentAt && (
                 <span className="muted small">
                   {invitation.openedAt
-                    ? `opened ${new Date(invitation.openedAt).toLocaleString()}`
-                    : `sent ${new Date(invitation.sentAt).toLocaleString()} — not opened yet`}
+                    ? `opened ${formatDateTime(invitation.openedAt)}`
+                    : `sent ${formatDateTime(invitation.sentAt)} — not opened yet`}
                 </span>
               )}
             </div>

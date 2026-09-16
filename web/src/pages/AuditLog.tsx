@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
 import { buildAuditQuery, pageCount, type AuditFilters } from '../components/auditLogModel';
+import { formatDateTime } from '../components/dateFormat';
 
 interface AuditEvent {
   id: string; actorId: string; actorType: string; actorName: string | null;
@@ -98,7 +99,7 @@ export function AuditLog() {
                 <tbody>
                   {data.events.map((e) => (
                     <tr key={e.id}>
-                      <td className="muted small">{new Date(e.createdAt).toLocaleString()}</td>
+                      <td className="muted small">{formatDateTime(e.createdAt)}</td>
                       <td>{e.actorName ?? e.actorType}</td>
                       <td><code>{e.action}</code></td>
                       <td className="muted">{e.entityType}{e.entityId ? <span className="small"> · {e.entityId.slice(0, 10)}</span> : null}</td>

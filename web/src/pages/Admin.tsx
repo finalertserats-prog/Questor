@@ -4,6 +4,7 @@ import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
+import { formatDateTime } from '../components/dateFormat';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
 interface Providers {
@@ -259,7 +260,7 @@ export function Admin() {
             <tbody>
               {executions.map((x) => (
                 <tr key={x.id}>
-                  <td className="muted small">{new Date(x.createdAt).toLocaleString()}</td>
+                  <td className="muted small">{formatDateTime(x.createdAt)}</td>
                   <td>{x.function}</td>
                   <td>{x.provider}</td>
                   <td className="muted">{x.model}</td>

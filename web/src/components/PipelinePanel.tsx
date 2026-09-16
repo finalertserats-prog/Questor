@@ -9,6 +9,7 @@ import { Skeleton } from './Skeleton';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
 import { decisionStatus } from './statusModel';
 import { interviewerName } from './candidateJourney';
+import { formatDate, formatDateTime } from './dateFormat';
 
 interface Round {
   id: string;
@@ -319,7 +320,7 @@ export function PipelinePanel(
                     <select id="round-session" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
                       <option value="">Link one later</option>
                       {interviews.map((iv) => (
-                        <option key={iv.id} value={iv.id}>{new Date(iv.createdAt).toLocaleDateString()} · {iv.state}</option>
+                        <option key={iv.id} value={iv.id}>{formatDate(iv.createdAt)} · {iv.state}</option>
                       ))}
                     </select>
                   </>
@@ -389,7 +390,7 @@ export function PipelinePanel(
                       : round.interviewers.join(', ') || 'Human interviewer'}
                   </td>
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
-                  <td>{new Date(round.scheduledAt).toLocaleString()}</td>
+                  <td>{formatDateTime(round.scheduledAt)}</td>
                   <td>
                     <span className="row" style={{ gap: 8 }}>
                       <StatusBadge kind="round" value={round.status} />
@@ -415,7 +416,7 @@ export function PipelinePanel(
               <label htmlFor="complete-round">Round</label>
               <select id="complete-round" value={roundToComplete || openHumanRounds[0].id} onChange={(e) => setRoundToComplete(e.target.value)}>
                 {openHumanRounds.map((round) => (
-                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {new Date(round.scheduledAt).toLocaleString()}</option>
+                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {formatDateTime(round.scheduledAt)}</option>
                 ))}
               </select>
             </>
