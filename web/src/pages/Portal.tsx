@@ -5,6 +5,7 @@ import { Banner } from '../components/ui';
 import { sttSupported, ttsSupported, speak } from '../speech';
 import { Icon } from '../components/Icon';
 import { Skeleton } from '../components/Skeleton';
+import { accommodationHint, canSubmitConsent, consentAction } from '../components/portalConsentModel';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -14,6 +15,8 @@ interface PortalInfo {
   aiDisclosure: string; recordingRequested: boolean; privacy: string; accommodationsEnabled: boolean; proctoringEnabled: boolean;
   /** True when the disclosure says a member of the hiring team may observe. */
   observerNotice?: boolean;
+  /** Whether this candidate consented to voice capture; absent on an older server. */
+  recordingConsented?: boolean;
   speech: { stt: SttCapability; tts: { provider: string } };
 }
 
@@ -75,7 +78,9 @@ export function Portal() {
   const [info, setInfo] = useState<PortalInfo | null>(null);
   const [err, setErr] = useState('');
   const [step, setStep] = useState<'review' | 'consent' | 'techcheck'>('review');
-  const [recordingConsent, setRecordingConsent] = useState(true);
+  // Unticked until the candidate ticks it. A pre-ticked consent box is not a
+  // consent box, and the server records exactly what this holds.
+  const [recordingConsent, setRecordingConsent] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [accommodation, setAccommodation] = useState('');
   const [handoff, setHandoff] = useState('');
@@ -87,7 +92,10 @@ export function Portal() {
     api.get<PortalInfo>(`/portal/${token}`).then(setInfo).catch((e) => setErr(e.message));
   }, [token]);
 
+  const action = consentAction({ accepted, accommodation });
+
   const submitConsent = async () => {
+    if (!canSubmitConsent({ accepted, accommodation, busy })) return;
     setErr(''); setBusy(true);
     try {
       const res = await api.post<{ handoff?: boolean; message?: string }>(`/portal/${token}/consent`, {
@@ -97,7 +105,9 @@ export function Portal() {
       });
       if (res.handoff) { setHandoff(res.message || 'Your request has been recorded.'); return; }
       setStep('techcheck');
-    } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'We could not record your answer. Please try again.');
+    } finally { setBusy(false); }
   };
 
   const requestMic = async () => {
@@ -110,9 +120,19 @@ export function Portal() {
 
   const testSpeaker = () => { speak('Audio check. If you can hear this clearly, your speaker is working.', () => setSpeaker(true)); };
 
+  // A failed tech check used to reject silently: the button did nothing, twice,
+  // and the candidate had no idea why they were still on this screen.
   const finishTechCheck = async () => {
-    await api.post(`/portal/${token}/techcheck`, { mic, speaker });
-    nav(`/room/${token}`);
+    if (busy) return;
+    setErr(''); setBusy(true);
+    try {
+      await api.post(`/portal/${token}/techcheck`, { mic, speaker });
+      nav(`/room/${token}`);
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : 'We could not start your interview. Please try again.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (err && !info) return <div className="center-screen"><div className="card auth-card"><Banner kind="error">{err}</Banner></div></div>;
@@ -171,6 +191,12 @@ export function Portal() {
                 to be transcribed, and to the resulting written transcript being kept and reviewed.
               </span>
             </label>
+            {/* Declining is a real option with a real consequence, stated
+                plainly: it changes how the interview is answered, it does not
+                take the interview away. */}
+            <p className="small muted" style={{ margin: '4px 0 0 26px' }}>
+              If you leave this unticked you will type your answers instead of speaking them.
+            </p>
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
               <VoiceHandling stt={info.speech.stt} />
             </div>
@@ -180,13 +206,22 @@ export function Portal() {
             </label>
             {info.accommodationsEnabled && (
               <>
-                <label>Need an accommodation or a human alternative? Describe it here (optional) and we'll route you to our team instead.</label>
-                <textarea value={accommodation} onChange={(e) => setAccommodation(e.target.value)} placeholder="e.g. I need extra time, or I'd prefer a human interviewer" style={{ minHeight: 70 }} />
+                <label htmlFor="accommodation">Need an accommodation or a human alternative? Describe it here (optional) and we'll route you to our team instead.</label>
+                <textarea id="accommodation" value={accommodation} onChange={(e) => setAccommodation(e.target.value)} placeholder="e.g. I need extra time, or I'd prefer a human interviewer" style={{ minHeight: 70 }} />
+                {/* Said before the press, not after a rejection: a request under
+                    the server's minimum used to be posted, dropped, and the
+                    candidate moved on as though they had never asked. */}
+                <p className="small muted" style={{ marginTop: 4 }}>{accommodationHint(accommodation)}</p>
               </>
             )}
-            <button className="btn" style={{ width: '100%', marginTop: 12 }} disabled={busy || (!accepted && !accommodation)} onClick={submitConsent}>
-              <Icon name={accommodation ? 'send' : 'check-circle'} size={16} />
-              {accommodation ? 'Submit accommodation request' : 'I consent — continue'}
+            <button
+              className="btn"
+              style={{ width: '100%', marginTop: 12 }}
+              disabled={!canSubmitConsent({ accepted, accommodation, busy })}
+              onClick={submitConsent}
+            >
+              <Icon name={action === 'accommodation' ? 'send' : 'check-circle'} size={16} />
+              {action === 'accommodation' ? 'Submit accommodation request' : 'I consent — continue'}
             </button>
           </>
         )}
@@ -208,8 +243,8 @@ export function Portal() {
               </span>
               <button className="btn secondary sm" onClick={testSpeaker}><Icon name="speaker" size={14} />Play test sound</button>
             </div>
-            <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={finishTechCheck}>
-              {mic && speaker ? 'Start interview' : 'Continue anyway'}<Icon name="arrow-right" size={16} />
+            <button className="btn" style={{ width: '100%', marginTop: 12 }} disabled={busy} onClick={finishTechCheck}>
+              {busy ? 'Starting…' : mic && speaker ? 'Start interview' : 'Continue anyway'}<Icon name="arrow-right" size={16} />
             </button>
             <p className="small muted" style={{ marginTop: 8 }}>You can ask the interviewer to repeat a question, request a pause, or type your answers at any time.</p>
           </>
