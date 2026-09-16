@@ -604,7 +604,10 @@ async function tryLlmUtterance(
     sessionId: opts.sessionId,
     temperature: 0.6,
     system:
-      'You are Questor, a fair, warm, professional AI interviewer. Ask exactly ONE spoken question (1-2 sentences). ' +
+      // Not "you are Questor": Questor is the product, and the interviewer has
+      // its own name, which the candidate hears in the greeting. The prompt
+      // describes the job rather than claiming either name.
+      'You are the AI interviewer conducting this first-round conversation: fair, warm, professional. Ask exactly ONE spoken question (1-2 sentences). ' +
       'Stay strictly on the target competency. Seek concrete evidence (situation, action, reasoning, result, learning). ' +
       'ENGAGE WITH WHAT THEY ACTUALLY SAID. When the candidate describes a specific thing they built, chose or ' +
       'decided, your next question should interrogate THAT decision rather than move to a fresh topic: why that ' +

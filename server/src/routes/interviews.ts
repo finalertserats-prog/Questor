@@ -25,15 +25,20 @@ import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
 
+/** The AI interviewer's name. Questor is the product; Schranders conducts the
+ *  interview. The candidate should meet the same name in the invitation that
+ *  greets them in the room. */
+const DEFAULT_PERSONA_NAME = 'Schranders';
+
 /** The invitation a candidate receives. Kept in one place so the plain-text and
  *  HTML bodies cannot drift apart — a candidate whose client strips HTML must
  *  still get a working link. */
-function buildInvite(candidateName: string, roleTitle: string, portalUrl: string) {
+function buildInvite(candidateName: string, roleTitle: string, portalUrl: string, personaName: string = DEFAULT_PERSONA_NAME) {
   return brandedEmail({
     to: '',
     subject: `Your first-round interview for ${roleTitle}`,
-    text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. This interview is conducted by Questor, an AI voice interviewer, and will be transcribed.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
-    html: `<p>Hi ${candidateName},</p><p>You're invited to a first-round interview for <b>${roleTitle}</b>, conducted by <b>Questor</b>, an AI voice interviewer. It will be transcribed.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
+    text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. It is conducted by ${personaName}, an AI voice interviewer, and your answers are transcribed as you speak — no audio recording is kept.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
+    html: `<p>Hi ${candidateName},</p><p>You're invited to a first-round interview for <b>${roleTitle}</b>, conducted by <b>${personaName}</b>, an AI voice interviewer. Your answers are transcribed as you speak — no audio recording is kept.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
   });
 }
 

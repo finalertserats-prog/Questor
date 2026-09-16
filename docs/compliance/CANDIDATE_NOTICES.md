@@ -15,11 +15,11 @@ This document contains four candidate-facing legal texts for the AI-driven first
 *To be displayed to candidates on a dedicated landing page before starting the interview.*
 
 > [!NOTE]
-> ### About Your Interview with Questor
+> ### About Your Interview with Schranders
 > 
-> You are about to take a first-round interview for the **[Job Title]** role. This interview is conducted by **Questor**, an artificial intelligence (AI) assistant, rather than a live person.
+> You are about to take a first-round interview for the **[Job Title]** role. This interview is conducted by **Schranders**, the AI interviewer in Questor, rather than a live person.
 > 
-> * **How it works:** You can answer questions using either voice or text. Questor will record and transcribe your answers.
+> * **How it works:** You can answer questions using either voice or text. Your answers are transcribed as you speak. No audio recording of the interview is kept — the written transcript is what the hiring team reads.
 > * **What it assesses:** The AI will evaluate your responses against a standard rubric for job-specific skills and competencies (such as **[Competency A]**, **[Competency B]**, and **[Competency C]**). It does **not** evaluate your body language, facial expressions, or voice tone.
 > * **Humans make the decision:** Questor only provides an advisory score and recommendation. A human recruiter from **[Company Name]** will review this recommendation alongside your resume and make the final hiring decision.
 > * **Your choices:** You do not have to use this AI tool. If you prefer to be interviewed by a human recruiter, or if you need an accommodation due to a disability, you can request an alternative at any time by contacting us at **[Contact Email/Link]** without any negative impact on your application.
@@ -30,7 +30,7 @@ This document contains four candidate-facing legal texts for the AI-driven first
 *To be displayed at the bottom of the pre-interview page next to the start button. Candidates must check this box to proceed.*
 
 [ ] **I consent to the AI-assisted interview process.** Specifically, I agree that:
-1. My voice and/or text responses will be recorded, transcribed, and evaluated by Questor's AI system to assess my job-related competencies as explained in the Disclosure Notice.
+1. My voice and/or text responses will be transcribed and evaluated by Questor's AI system to assess my job-related competencies as explained in the Disclosure Notice. No audio recording of the interview is kept; the written transcript is.
 2. My interview data (including transcripts and scores) will be processed by **[Company Name]** and shared with third-party service providers (specifically OpenAI) for the sole purpose of scoring and analysis.
 3. A human recruiter will make the final hiring decision. 
 4. My consent is voluntary, and I can withdraw it at any time by emailing **[Contact Email/Link]**. I have read and agree to the **[Privacy Policy Link]**.
