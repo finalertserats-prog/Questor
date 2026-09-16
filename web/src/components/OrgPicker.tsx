@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { api, ApiError } from '../api/client';
 import {
+  ORG_SEARCH_MIN_CHARS,
+  forgetFailedOrgSearch,
   initialOrgSearchState,
   keepOrgSearchResultsAfterRateLimit,
   planOrgSearch,
@@ -14,11 +16,21 @@ interface OrgPickerProps {
   readonly onChoose: (org: Org) => void;
 }
 
+const DEBOUNCE_MS = 250;
+
 async function fetchOrgs(query: string): Promise<readonly Org[]> {
   const data = await api.get<{ orgs: Org[] }>(`/orgs?q=${encodeURIComponent(query)}`);
   return data.orgs;
 }
 
+/**
+ * Finds an organisation from the first letters of its name.
+ *
+ * The rules (three characters before asking, never the same question twice,
+ * ignore an answer that arrives after a newer question) live in
+ * orgSearchModel.ts. This component only owns the timer, the request and the
+ * keyboard.
+ */
 export function OrgPicker({ onChoose }: OrgPickerProps) {
   const inputId = useId();
   const listboxId = useId();
@@ -26,6 +38,8 @@ export function OrgPicker({ onChoose }: OrgPickerProps) {
   const [search, setSearch] = useState<OrgSearchState>(() => initialOrgSearchState());
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
+  // The latest state, readable from inside a timer or a promise callback
+  // without closing over a render that has since gone stale.
   const searchRef = useRef(search);
 
   useEffect(() => {
@@ -42,25 +56,29 @@ export function OrgPicker({ onChoose }: OrgPickerProps) {
       })
       .catch((error: unknown) => {
         if (request.requestId !== searchRef.current.latestRequestId) return;
-        setSearch((current) => {
-          if (error instanceof ApiError && error.status === 429) {
-            return keepOrgSearchResultsAfterRateLimit(current, request.requestId);
-          }
-          return { ...current, results: [], status: 'ready' };
-        });
-        setOpen(error instanceof ApiError && error.status === 429 ? searchRef.current.results.length > 0 : true);
+        if (error instanceof ApiError && error.status === 429) {
+          // Told to slow down: keep whatever is on screen and say nothing.
+          setSearch((current) => keepOrgSearchResultsAfterRateLimit(current, request.requestId));
+          return;
+        }
+        setSearch((current) => forgetFailedOrgSearch(current, request.requestId));
+        setOpen(false);
         setActiveIndex(-1);
       });
   };
 
+  // Planned in the timer callback, not inside a state updater. React runs
+  // updaters twice in development to catch impurity, and a fetch started from
+  // one would go out twice for every keystroke, against a rate-limited route.
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const update = planOrgSearch(searchRef.current, typed);
+      searchRef.current = update.state;
       setSearch(update.state);
-      if (update.request) startRequest(update.request);
       if (update.state.results.length === 0) setActiveIndex(-1);
-      setOpen(update.state.query.length >= 3);
-    }, 250);
+      setOpen(update.state.query.length >= ORG_SEARCH_MIN_CHARS);
+      if (update.request) startRequest(update.request);
+    }, DEBOUNCE_MS);
 
     return () => window.clearTimeout(timer);
   }, [typed]);
@@ -68,7 +86,7 @@ export function OrgPicker({ onChoose }: OrgPickerProps) {
   const results = search.results;
   const activeId = activeIndex >= 0 && activeIndex < results.length ? `${listboxId}-${activeIndex}` : undefined;
   const showList = open && results.length > 0;
-  const showEmpty = open && search.status === 'ready' && search.query.length >= 3 && results.length === 0;
+  const showEmpty = open && search.status === 'ready' && search.query.length >= ORG_SEARCH_MIN_CHARS && results.length === 0;
 
   const choose = (org: Org) => {
     setTyped(org.name);
@@ -112,8 +130,11 @@ export function OrgPicker({ onChoose }: OrgPickerProps) {
           setOpen(true);
         }}
         onFocus={() => {
-          if (search.query.length >= 3) setOpen(true);
+          if (search.query.length >= ORG_SEARCH_MIN_CHARS) setOpen(true);
         }}
+        // Options stop the mousedown from stealing focus (below), so a click on
+        // one still lands before this closes the list.
+        onBlur={() => setOpen(false)}
         onKeyDown={onKeyDown}
         placeholder="Acme Corp"
         autoComplete="organization"

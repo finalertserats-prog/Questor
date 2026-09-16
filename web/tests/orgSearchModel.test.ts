@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  forgetFailedOrgSearch,
   initialOrgSearchState,
   keepOrgSearchResultsAfterRateLimit,
   orgSearchPath,
@@ -55,6 +56,31 @@ describe('receiveOrgSearchResults', () => {
 
     // Assert
     expect(state.results).toEqual([{ name: 'Acme Corp', slug: 'acme' }]);
+  });
+});
+
+describe('forgetFailedOrgSearch', () => {
+  it('lets the same query be asked again after a failure instead of skipping it as a repeat', () => {
+    // Arrange
+    const searched = planOrgSearch(initialOrgSearchState(), 'acm').state;
+    const failed = forgetFailedOrgSearch(searched, 1);
+
+    // Act
+    const retry = planOrgSearch(failed, 'acm');
+
+    // Assert
+    expect(retry.request).not.toBeNull();
+  });
+
+  it('does not show the not-found message for a query that merely failed to send', () => {
+    // Arrange
+    const searched = planOrgSearch(initialOrgSearchState(), 'acm').state;
+
+    // Act
+    const state = forgetFailedOrgSearch(searched, 1);
+
+    // Assert
+    expect(state.status).toBe('idle');
   });
 });
 

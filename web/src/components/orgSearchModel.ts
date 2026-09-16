@@ -100,3 +100,19 @@ export function keepOrgSearchResultsAfterRateLimit(state: OrgSearchState, reques
     status: 'rate-limited',
   };
 }
+
+/**
+ * A request that failed for any reason other than being told to slow down: a
+ * dropped connection, a server error. That is not "no such organisation", so
+ * nothing is shown, and the query is forgotten so that the next keystroke, or
+ * the same text typed again, asks again instead of being skipped as a repeat.
+ */
+export function forgetFailedOrgSearch(state: OrgSearchState, requestId: number): OrgSearchState {
+  if (requestId !== state.latestRequestId) return state;
+  return {
+    ...state,
+    lastRequestedQuery: null,
+    results: [],
+    status: 'idle',
+  };
+}
