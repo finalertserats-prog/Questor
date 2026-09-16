@@ -140,6 +140,24 @@ export async function setState(sessionId: string, from: string, to: string) {
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: to } });
 }
 
+/**
+ * Move the session only if it is still in `from`, reporting whether it applied.
+ *
+ * `setState` validates a state that was read earlier and then updates by id, so
+ * two callers racing the same transition both pass the check and both write.
+ * Matching on the state in the WHERE clause makes the update itself the
+ * decision: at most one caller can move a session out of a given state, and the
+ * loser is told so rather than quietly proceeding on a stale assumption.
+ */
+async function transitionIfInState(sessionId: string, from: string, to: string): Promise<boolean> {
+  assertTransition(from, to);
+  const { count } = await prisma.interviewSession.updateMany({
+    where: { id: sessionId, state: from },
+    data: { state: to },
+  });
+  return count > 0;
+}
+
 /** Produce and persist the next agent turn given the current transcript. */
 async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
   const { session, plan, profile, persona, turns } = await loadContext(sessionId);
@@ -339,12 +357,34 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
     if (existing) return { assessmentId: existing.id };
     throw new HttpError(409, `This interview cannot be finalised from its current state (${session.state}).`);
   }
-  // Transition CLOSING -> PROCESSING.
-  if (session.state === 'ASSESSING' || session.state === 'CANDIDATE_QUESTIONS') {
-    if (session.state === 'ASSESSING') { await setState(sessionId, 'ASSESSING', 'CANDIDATE_QUESTIONS'); }
-    await setState(sessionId, 'CANDIDATE_QUESTIONS', 'CLOSING');
+  // Walk to PROCESSING one conditional step at a time. Every step applies only
+  // if the session is still in the state it is being moved out of, so a second
+  // finalisation arriving mid-flight cannot re-walk the same path — and, worse,
+  // cannot drag a session that already reached REVIEW_READY back to
+  // CANDIDATE_QUESTIONS, which an update-by-id did.
+  await transitionIfInState(sessionId, 'ASSESSING', 'CANDIDATE_QUESTIONS');
+  await transitionIfInState(sessionId, 'CANDIDATE_QUESTIONS', 'CLOSING');
+
+  // The CLOSING -> PROCESSING claim is the mutex. Exactly one caller wins it,
+  // and only the winner writes an assessment; the previous code let both
+  // callers past, both read a count of zero, and both mint a version — leaving
+  // the candidate with two scored records of one interview and a reviewer with
+  // no way to tell which one a decision was made against.
+  //
+  // Deliberately NOT a database transaction around the whole body: evaluate()
+  // is a network call to a paid provider, and holding a write lock open across
+  // it would serialise every interview in the tenant behind the slowest vendor
+  // response.
+  if (!await transitionIfInState(sessionId, 'CLOSING', 'PROCESSING')) {
+    const existing = await prisma.assessmentVersion.findFirst({
+      where: { sessionId }, orderBy: { version: 'desc' }, select: { id: true },
+    });
+    if (existing) return { assessmentId: existing.id };
+    // Another finalisation holds PROCESSING and has not written yet. Waiting
+    // here would hold an HTTP request open on a paid call we are not making;
+    // if that other run dies, the sweep recovers the session.
+    throw new HttpError(409, 'This interview is already being finalised. Give it a moment and refresh.');
   }
-  if ((await currentState(sessionId)) === 'CLOSING') await setState(sessionId, 'CLOSING', 'PROCESSING');
 
   // Everything below runs with the session already moved to PROCESSING, and any
   // one step of it can fail: the evaluator calls a paid provider, three writes
@@ -362,12 +402,17 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
       notAssessed: plan.notAssessed,
     });
 
-    const assessment = await prisma.assessmentVersion.create({
-      data: {
-        sessionId, scorecardId: session.scorecardId, version: count + 1,
-        recommendation: result.recommendation, confidence: result.confidence,
-        evidenceCoverage: result.evidenceCoverage, resultJson: JSON.stringify(result),
-      },
+    // Version numbering is read and written together: the count taken before
+    // evaluate() is minutes old by the time the result comes back.
+    const assessment = await prisma.$transaction(async (tx) => {
+      const current = await tx.assessmentVersion.count({ where: { sessionId } });
+      return tx.assessmentVersion.create({
+        data: {
+          sessionId, scorecardId: session.scorecardId, version: current + 1,
+          recommendation: result.recommendation, confidence: result.confidence,
+          evidenceCoverage: result.evidenceCoverage, resultJson: JSON.stringify(result),
+        },
+      });
     });
 
     // Persist a transcript + report artifact.
