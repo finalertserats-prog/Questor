@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Icon } from './Icon';
@@ -28,6 +28,10 @@ import {
 
 const SPOTLIGHT_PADDING = 6;
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
+// Long enough for the drawer to have opened or closed and the page behind it
+// to have stopped being inert, short enough not to be noticed.
+const FOCUS_SETTLE_MS = 50;
+const DRAWER_SETTLE_MS = 250;
 
 interface ProductTourProps {
   /** Below the sidebar breakpoint, where the sidebar is a drawer. */
@@ -138,38 +142,65 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
     if (element) element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: motion.scrollBehavior });
   }, [step, isNarrow, setDrawerOpen, motion.scrollBehavior]);
 
-  // Focus the card for every step, after the drawer effect above has had its
-  // say (it focuses the drawer's close button when it opens).
+  // Focus the card for every step. Synchronously, so it holds even where
+  // animation frames are throttled (a background tab); and once more a moment
+  // later, since the drawer focuses its own close button as it opens and the
+  // focus trap below only guards against focus leaving afterwards.
   useEffect(() => {
     if (!step) return undefined;
-    const frame = requestAnimationFrame(() => cardRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
+    cardRef.current?.focus();
+    const timer = window.setTimeout(() => cardRef.current?.focus(), FOCUS_SETTLE_MS);
+    return () => window.clearTimeout(timer);
   }, [step]);
 
-  // Track the element every frame while the tour runs. Cheaper to reason about
-  // than listening for scroll, resize, transitions and late-loading content
-  // separately, and state only changes when a number actually moves.
-  useEffect(() => {
+  // Where the element and the card are. State only changes when a number
+  // actually moves, so calling this often is cheap.
+  const measure = useCallback(() => {
+    if (!step) return;
+    const element = anchorElement(step.anchor);
+    const box = element?.getBoundingClientRect();
+    const next: Rect | null = box ? { top: box.top, left: box.left, width: box.width, height: box.height } : null;
+    setTargetRect((current) => (sameRect(current, next) ? current : next));
+    const cardBox = cardRef.current?.getBoundingClientRect();
+    if (cardBox) {
+      const placed = placeTourCard(next, { width: cardBox.width, height: cardBox.height }, { width: window.innerWidth, height: window.innerHeight });
+      setCard((current) => (samePlacement(current, placed) ? current : placed));
+    }
+  }, [step]);
+
+  // Measured before paint on every step, so the card never shows at its
+  // previous position first...
+  useLayoutEffect(() => {
     if (!step) {
       setTargetRect(null);
-      return undefined;
+      return;
     }
+    measure();
+  }, [step, measure]);
+
+  // ...then kept in step with scrolling and resizing, and with anything else
+  // that moves — a drawer sliding in, a chart arriving with its data — by an
+  // animation-frame loop while the tour runs.
+  useEffect(() => {
+    if (!step) return undefined;
     let frame = 0;
-    const measure = () => {
-      const element = anchorElement(step.anchor);
-      const box = element?.getBoundingClientRect();
-      const next: Rect | null = box ? { top: box.top, left: box.left, width: box.width, height: box.height } : null;
-      setTargetRect((current) => (sameRect(current, next) ? current : next));
-      const cardBox = cardRef.current?.getBoundingClientRect();
-      if (cardBox) {
-        const placed = placeTourCard(next, { width: cardBox.width, height: cardBox.height }, { width: window.innerWidth, height: window.innerHeight });
-        setCard((current) => (samePlacement(current, placed) ? current : placed));
-      }
-      frame = requestAnimationFrame(measure);
+    const tick = () => {
+      measure();
+      frame = requestAnimationFrame(tick);
     };
-    frame = requestAnimationFrame(measure);
-    return () => cancelAnimationFrame(frame);
-  }, [step]);
+    frame = requestAnimationFrame(tick);
+    // The drawer's slide takes 0.2s; this catches its resting place even where
+    // frames are throttled.
+    const settled = window.setTimeout(measure, DRAWER_SETTLE_MS);
+    window.addEventListener('scroll', measure, true);
+    window.addEventListener('resize', measure);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(settled);
+      window.removeEventListener('scroll', measure, true);
+      window.removeEventListener('resize', measure);
+    };
+  }, [step, measure]);
 
   // Keyboard: Escape skips, the arrow keys step, and focus cannot leave the
   // card. Capture phase, so the sidebar's own Escape (which closes the drawer)
@@ -212,7 +243,7 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
     const previous = returnFocusRef.current;
     const target = !isNarrow && previous?.isConnected ? previous : anchorElement(isNarrow ? 'nav-toggle' : 'profile-menu');
     returnFocusRef.current = null;
-    requestAnimationFrame(() => target?.focus());
+    window.setTimeout(() => target?.focus(), FOCUS_SETTLE_MS);
     setState(IDLE_TOUR);
   }, [state, user, markTourComplete, setDrawerOpen, isNarrow]);
 
