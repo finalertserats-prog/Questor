@@ -301,6 +301,29 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
             </Block>
           )}
 
+          {/* What the candidate themselves asked for. It sits in this column
+              because it is part of what the team owes this person, not a
+              separate admin errand — and because a request to speak to someone
+              is most likely to be acted on while the decision is being made. */}
+          <Block title="What the candidate asked for">
+            <p className="journey-body-text">{decision.candidateFeedback.answerLabel}</p>
+            {decision.candidateFeedback.decidedAt && (
+              <p className="journey-note journey-when">{when(decision.candidateFeedback.decidedAt)}</p>
+            )}
+            <p className="journey-body-text">{decision.candidateFeedback.draftLabel}</p>
+            {decision.candidateFeedback.draftWaiting && decision.candidateFeedback.draftHref && (
+              <div className="journey-links">
+                <Link to={decision.candidateFeedback.draftHref}><Icon name="evidence" size={15} />Review the draft</Link>
+              </div>
+            )}
+            {decision.candidateFeedback.humanRequested && (
+              <>
+                <p className="journey-body-text"><b>{decision.candidateFeedback.humanRequestLabel}</b></p>
+                <p className="journey-note journey-when">{when(decision.candidateFeedback.humanRequestedAt)}</p>
+              </>
+            )}
+          </Block>
+
           <Block title="Interview notes">
             {decision.humanNotes.length === 0 ? (
               <p className="journey-note">No human round has been completed yet.</p>

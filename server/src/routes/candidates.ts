@@ -17,6 +17,7 @@ import { computeFitScore } from '../engines/fitScoring.js';
 import type { RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
+import { candidateFeedbackState } from '../services/candidateFeedback.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -155,12 +156,17 @@ candidatesRouter.get('/:id', asyncHandler(async (req, res) => {
   const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
   const profileVersion = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' }, include: { evidenceNodes: true } });
   const interviews = await prisma.interviewSession.findMany({ where: { candidateId: candidate.id }, orderBy: { createdAt: 'desc' } });
+  // Three facts the owner of this candidate needs and would otherwise have to
+  // go looking for: did they ask for feedback, is a draft waiting, and have they
+  // asked to speak to someone. Scoped by the assertCanAccessCandidate above.
+  const candidateFeedback = await candidateFeedbackState(interviews.map((i) => i.id));
   res.json({
     candidate: shape(candidate),
     profile: profileVersion ? parseJson(profileVersion.profileJson, {}) : null,
     fit: profileVersion ? parseJson(profileVersion.fitScoreJson, null) : null,
     rawText: profileVersion?.rawText ?? '',
     interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, createdAt: i.createdAt })),
+    candidateFeedback,
   });
 }));
 

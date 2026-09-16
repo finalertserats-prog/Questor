@@ -80,6 +80,10 @@ export async function wipe(): Promise<void> {
   assertNotProduction('wipe');
   await prisma.webhookDelivery.deleteMany();
   await prisma.webhookEndpoint.deleteMany();
+  // Both hold foreign keys onto InterviewSession and Candidate, so they go
+  // before either of those is deleted below.
+  await prisma.candidateFeedbackOptIn.deleteMany();
+  await prisma.candidateHumanRequest.deleteMany();
   await prisma.candidateFeedbackDelivery.deleteMany();
   await prisma.humanReview.deleteMany();
   await prisma.assessmentVersion.deleteMany();

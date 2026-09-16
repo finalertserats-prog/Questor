@@ -69,6 +69,12 @@ const CSRF_EXEMPT_PATHS = [
   // is locked out of their own login page with a 403 they cannot clear.
   // SameSite=Strict already blocks the forged-login variant in any current browser.
   /^\/api\/auth\/(?:login|register)\/?$/,
+  // "Would you like to speak to a person?" — followed from a candidate's email,
+  // with no account and no cookies of ours. Exempt for the same reason as the
+  // portal, and explicitly rather than by falling through the no-session-cookie
+  // branch below: a recruiter signed in on the same browser would otherwise be
+  // the one person unable to test their own candidate's link.
+  /^\/api\/feedback-request(?:\/|$)/,
 ];
 
 /** Constant-time compare; lengths are compared first because timingSafeEqual throws on a mismatch. */

@@ -27,6 +27,14 @@ interface Interview { id: string; state: string; scheduledAt: string | null; cre
 interface CandidateResp {
   candidate: { id: string; fullName: string; email: string; phone: string; roleId: string };
   profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
+  // What the candidate asked for at the end of their interview. Structurally
+  // the journey's JourneyCandidateFeedback; spelled out here so this response
+  // type stays a description of the endpoint rather than of the board.
+  candidateFeedback?: {
+    optIn: { choice: string; decidedAt: string | null } | null;
+    draft: { status: string | null; candidateRequested: boolean; assessmentId: string | null } | null;
+    humanRequest: { requested: boolean; requestedAt: string | null } | null;
+  } | null;
 }
 
 /**
@@ -199,6 +207,7 @@ export function CandidateDetail() {
       assessment,
       assessmentBlockedReason,
       missingEvidence,
+      candidateFeedback: data.candidateFeedback ?? null,
     });
   }, [data, role, sessions, pipeline, assessment, assessmentBlockedReason, missingEvidence]);
 
