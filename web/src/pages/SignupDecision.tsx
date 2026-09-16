@@ -37,6 +37,7 @@ export function SignupDecision() {
   const [phase, setPhase] = useState<DecisionPhase>('loading');
   const [applicant, setApplicant] = useState<Applicant | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDecline, setConfirmDecline] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,10 +110,22 @@ export function SignupDecision() {
                 <Icon name="check" size={15} />
                 {busy ? 'Recording…' : 'Approve'}
               </button>
-              <button type="button" className="btn secondary" onClick={() => void decide('decline')} disabled={busy}>
-                <Icon name="x-circle" size={15} />
-                Decline
-              </button>
+              {confirmDecline ? (
+                <>
+                  <button type="button" className="btn secondary" onClick={() => void decide('decline')} disabled={busy}>
+                    <Icon name="x-circle" size={15} />
+                    {busy ? 'Declining…' : 'Confirm decline'}
+                  </button>
+                  <button type="button" className="btn ghost" onClick={() => setConfirmDecline(false)} disabled={busy}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn secondary" onClick={() => setConfirmDecline(true)} disabled={busy}>
+                  <Icon name="x-circle" size={15} />
+                  Decline
+                </button>
+              )}
             </div>
           </>
         )}
