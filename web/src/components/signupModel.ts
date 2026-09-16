@@ -203,6 +203,9 @@ export type DecisionPhase =
 export function decisionPhaseForStatus(status: number): DecisionPhase {
   if (status === 404) return 'invalid';
   if (status === 410) return 'expired';
+  // 409 means the decision was already made -- by the other link, by another
+  // admin, or by this operator in a tab they forgot. Saying so beats reporting
+  // a success that did not happen.
   if (status === 409) return 'decided';
   return 'failed';
 }

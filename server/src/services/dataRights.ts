@@ -585,12 +585,43 @@ export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> 
 
 /**
  * One full retention pass: expired sessions and their candidate data first, then
- * the notes of human interview rounds past the window.
+ * the notes of human interview rounds past the window, then signup requests
+ * that have already been decided or have expired.
  */
+/**
+ * Signup requests past their window.
+ *
+ * A pending request holds a person's name, address and a password hash for an
+ * account that does not exist yet, so it is personal data belonging to someone
+ * who is not a candidate and has no other record in the system. Once a request
+ * has been decided or has expired, nothing needs the row: an approved one has
+ * already become a User, and a declined or expired one is a decision nobody can
+ * act on again.
+ *
+ * A request still PENDING is never swept, however old. Deleting one would make
+ * an operator's queue quietly lose entries they had not answered yet.
+ */
+export async function purgeExpiredSignupRequests(now = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - retentionDays() * DAY_MS);
+  const { count } = await prisma.signupRequest.deleteMany({
+    where: {
+      status: { in: ['APPROVED', 'DECLINED', 'EXPIRED'] },
+      // Decided rows age from the decision; a row that expired without anyone
+      // touching it has no decidedAt, so it ages from when it was created.
+      OR: [
+        { decidedAt: { lte: cutoff } },
+        { decidedAt: null, createdAt: { lte: cutoff } },
+      ],
+    },
+  });
+  return count;
+}
+
 export async function runRetentionSweep(now = new Date()): Promise<PurgeResult> {
   const sessions = await purgeExpiredSessions(now);
   const roundNotes = await purgeExpiredRoundNotes(now);
-  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes } };
+  const signupRequests = await purgeExpiredSignupRequests(now);
+  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes, signupRequests } };
   // Logged unconditionally and on every outcome. Logging only when something was
   // deleted makes a sweep that has failed on 100% of rows for months look
   // identical to a sweep with nothing to do — and under GDPR Art. 5(2) you must

@@ -25,6 +25,7 @@ import { config } from '../src/config.js';
 import { prisma } from '../src/db.js';
 import { hashPassword, signToken } from '../src/services/auth.js';
 import { hashSignupDecisionToken, mintSignupDecisionToken } from '../src/services/signup.js';
+import { runRetentionSweep } from '../src/services/dataRights.js';
 
 const app = createApp();
 const PASSWORD = 'correct-horse-battery-staple';
@@ -146,7 +147,9 @@ describe('operator-approved signup', () => {
       request(app).post(`/api/signup/decision/${token}`).send({ decision: 'approve' }),
     ]);
 
-    expect(results.map((r) => r.status).sort()).toEqual([200, 200]);
+    // One click wins; the other learns the decision was already made. Before
+    // the 409 fix both reported success, and nobody could tell which had acted.
+    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
     expect(await prisma.user.count({ where: { email: 'race@example.com' } })).toBe(1);
     expect(await prisma.tenant.count()).toBe(1);
     expect(sent.filter((m) => m.to === 'race@example.com' && m.subject.includes('ready'))).toHaveLength(1);
@@ -211,5 +214,75 @@ describe('operator-approved signup', () => {
     const approved = await request(app).post(`/api/admin/signups/${requestRow.id}/approve`).set('Authorization', auth);
     expect(approved.status).toBe(200);
     expect(await prisma.user.count({ where: { email: 'admin-approve@example.com' } })).toBe(1);
+  });
+});
+/**
+ * The seams found by reviewing the two independently-built lanes against each
+ * other. Each of these either failed, or reported success while doing nothing,
+ * before the fix.
+ */
+describe('a decision that did not happen', () => {
+  it('answers 409 rather than reporting success when the request was already decided', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    const token = decisionTokenFromOperatorMail();
+    expect((await request(app).post(`/api/signup/decision/${token}`).send({ decision: 'approve' })).status).toBe(200);
+
+    const second = await request(app).post(`/api/signup/decision/${token}`).send({ decision: 'decline' });
+
+    expect(second.status).toBe(409);
+  });
+
+  it('refuses to decline a request whose link has expired, because approving one is refused too', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    const token = decisionTokenFromOperatorMail();
+    const row = await prisma.signupRequest.findFirstOrThrow();
+    await prisma.signupRequest.update({ where: { id: row.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+
+    const res = await request(app).post(`/api/signup/decision/${token}`).send({ decision: 'decline' });
+
+    expect(res.status).toBe(410);
+  });
+});
+
+describe('what reaches the operator mailbox', () => {
+  it('keeps a newline typed into a name out of the mail subject', async () => {
+    // Built rather than typed: a literal CR/LF in source survives no round trip
+    // through the tools that write these files, and a test whose payload has
+    // been quietly flattened proves nothing.
+    const CR = String.fromCharCode(13);
+    const LF = String.fromCharCode(10);
+    await request(app).post('/api/signup').send(signupBody({
+      name: `Real Name${CR}${LF}Bcc: someone-else@example.com`,
+    }));
+
+    const operator = sent.find((m) => m.to === config.signupApproverEmail);
+
+    expect(operator?.subject).toBeTruthy();
+    expect(operator?.subject.includes(CR)).toBe(false);
+    expect(operator?.subject.includes(LF)).toBe(false);
+  });
+});
+
+describe('retention of signup requests', () => {
+  const LONG_AGO = () => new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+
+  it('deletes a decided request once its window has passed, so no password hash outlives it', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    const row = await prisma.signupRequest.findFirstOrThrow();
+    await prisma.signupRequest.update({ where: { id: row.id }, data: { status: 'DECLINED', decidedAt: LONG_AGO() } });
+
+    await runRetentionSweep();
+
+    expect(await prisma.signupRequest.findUnique({ where: { id: row.id } })).toBeNull();
+  });
+
+  it('never sweeps a request nobody has answered, however old it is', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    const row = await prisma.signupRequest.findFirstOrThrow();
+    await prisma.signupRequest.update({ where: { id: row.id }, data: { createdAt: LONG_AGO() } });
+
+    await runRetentionSweep();
+
+    expect(await prisma.signupRequest.findUnique({ where: { id: row.id } })).not.toBeNull();
   });
 });

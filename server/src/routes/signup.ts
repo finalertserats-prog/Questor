@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler } from '../middleware/index.js';
+import { asyncHandler, HttpError } from '../middleware/index.js';
 import { createSignupRequest, decideSignupRequest, resolveSignupDecision, signupApplicant } from '../services/signup.js';
 
 export const signupRouter = Router();
@@ -40,6 +40,9 @@ signupDecisionRouter.get('/:token', asyncHandler(async (req, res) => {
 
 signupDecisionRouter.post('/:token', asyncHandler(async (req, res) => {
   const { decision } = decisionSchema.parse(req.body);
-  await decideSignupRequest({ token: req.params.token, decision, actorId: 'signup-link' });
+  const { transitioned } = await decideSignupRequest({ token: req.params.token, decision, actorId: 'signup-link' });
+  // Reporting success for a decision nobody made is how a stale tab, a second
+  // click, or a race with another admin all look like they worked.
+  if (!transitioned) throw new HttpError(409, 'This request has already been decided.');
   res.json({ recorded: true });
 }));

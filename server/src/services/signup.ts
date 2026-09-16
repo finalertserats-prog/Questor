@@ -146,8 +146,12 @@ export async function decideSignupRequest(opts: {
   if (row.status !== 'PENDING') return { transitioned: false, approvedUserId: row.createdUserId ?? undefined };
 
   if (opts.decision === 'decline') {
+    // expiresAt is claimed here as well as on approve. Without it the two
+    // halves of one state machine disagree: an expired link could still be
+    // declined, so whether expiry froze a request depended on which button the
+    // operator happened to press.
     const { count } = await prisma.signupRequest.updateMany({
-      where: { id: row.id, status: 'PENDING' },
+      where: { id: row.id, status: 'PENDING', expiresAt: { gt: now } },
       data: { status: 'DECLINED', decidedAt: now, decidedBy: opts.actorId },
     });
     if (count === 0) return { transitioned: false };

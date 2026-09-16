@@ -145,8 +145,10 @@ export function SignupDecision() {
           <>
             <h2>This link has expired</h2>
             <p className="muted">
-              Approval links stop working after a while, so an old message cannot open an account. The
-              request is still waiting under Account requests when you sign in.
+              Approval links stop working after a while, so an old message cannot open an account.
+              Opening an expired link also closes the request, so it is no longer waiting for a
+              decision and the person has not been told anything. If they still want an account, ask
+              them to request one again.
             </p>
           </>
         )}

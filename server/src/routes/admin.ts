@@ -70,12 +70,14 @@ adminRouter.get('/signups', requireCapability('admin:manage'), asyncHandler(asyn
 }));
 
 adminRouter.post('/signups/:id/approve', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
-  await decideSignupRequest({ id: req.params.id, decision: 'approve', actorId: req.auth!.userId });
+  const { transitioned } = await decideSignupRequest({ id: req.params.id, decision: 'approve', actorId: req.auth!.userId });
+  if (!transitioned) throw new HttpError(409, 'This request has already been decided.');
   res.json({ recorded: true });
 }));
 
 adminRouter.post('/signups/:id/decline', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
-  await decideSignupRequest({ id: req.params.id, decision: 'decline', actorId: req.auth!.userId });
+  const { transitioned } = await decideSignupRequest({ id: req.params.id, decision: 'decline', actorId: req.auth!.userId });
+  if (!transitioned) throw new HttpError(409, 'This request has already been decided.');
   res.json({ recorded: true });
 }));
 
