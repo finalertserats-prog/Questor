@@ -8,6 +8,7 @@ import {
 } from '../speech';
 import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } from './Portal';
 import { Icon } from '../components/Icon';
+import { interviewerName } from '../components/candidateJourney';
 
 // The interview room is the only screen a candidate ever sees, and it is the
 // screen they judge the company by. It is deliberately built as a call surface
@@ -19,6 +20,9 @@ interface AgentTurn { turnId: string; text: string; competencyId: string; kind: 
 interface Msg { speaker: 'agent' | 'candidate'; text: string }
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
+  /** Who conducts this interview, and whether they may listen. Both absent on an older server. */
+  persona?: { name: string | null } | null;
+  recordingConsented?: boolean;
   speech: { stt: SttCapability };
   proctoringEnabled: boolean;
   // Whether to put the written-feedback question at the end, and the answer if
@@ -456,6 +460,9 @@ export function InterviewRoom() {
     );
   }
 
+  // The persona is configurable per interview, so the name on screen is the one
+  // this candidate was actually introduced to.
+  const interviewer = interviewerName(info.persona?.name);
   const live = phase !== 'ready' && phase !== 'done';
   const speaking = phase === 'speaking';
   const listening = phase === 'listening' && !textMode;
@@ -479,7 +486,7 @@ export function InterviewRoom() {
         <div className={`tile ${speaking ? 'is-active' : ''}`}>
           <SpeakingRings active={speaking} level={0.35} />
           <div className="tile-avatar agent-avatar">A</div>
-          <div className="tile-name">Schranders <span className="tile-tag">AI interviewer</span></div>
+          <div className="tile-name">{interviewer} <span className="tile-tag">AI interviewer</span></div>
           <div className="tile-status">
             {speaking ? 'Speaking' : phase === 'thinking' ? 'Thinking…' : phase === 'done' ? 'Signed off' : 'Ready'}
           </div>
@@ -506,7 +513,7 @@ export function InterviewRoom() {
         <div className="captions">
           {listening && interim
             ? <p><span className="cap-who">You</span>{interim}</p>
-            : <p><span className="cap-who">Schranders</span>{currentAgent}</p>}
+            : <p><span className="cap-who">{interviewer}</span>{currentAgent}</p>}
         </div>
       )}
 
@@ -516,7 +523,7 @@ export function InterviewRoom() {
         {phase === 'ready' && (
           <div className="join-panel">
             <p className="muted">
-              {info.durationMinutes} minutes · voice or typed · you can ask Schranders to repeat anything.
+              {info.durationMinutes} minutes · voice or typed · you can ask {interviewer} to repeat anything.
             </p>
             {/* Repeated here, not just on the consent screen. The consent screen may
                 have been read minutes ago on another device, and this is the last
@@ -626,7 +633,7 @@ export function InterviewRoom() {
           {msgs.length === 0 && <p className="muted small">The conversation will appear here as you go.</p>}
           {msgs.map((m, i) => (
             <div key={i} className={`turn ${m.speaker}`}>
-              <div className="who">{m.speaker === 'agent' ? 'Schranders' : 'You'}</div>
+              <div className="who">{m.speaker === 'agent' ? interviewer : 'You'}</div>
               <div className="bubble">{m.text}</div>
             </div>
           ))}

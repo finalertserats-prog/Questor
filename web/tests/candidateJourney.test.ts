@@ -1,8 +1,24 @@
 import { describe, it, expect } from 'vitest';
 import {
-  buildJourney, initialsOf, journeyTitle, quoteTiming,
+  buildJourney, initialsOf, interviewerName, journeyTitle, quoteTiming, DEFAULT_INTERVIEWER,
   type JourneyInput, type JourneyPipeline, type JourneyRound,
 } from '../src/components/candidateJourney';
+
+describe('interviewerName', () => {
+  it('uses the name the session was conducted under', () => {
+    expect(interviewerName('Rasmus')).toBe('Rasmus');
+  });
+
+  it('trims a name that arrived padded', () => {
+    expect(interviewerName('  Rasmus  ')).toBe('Rasmus');
+  });
+
+  // Naming an interviewer the candidate never met is worse than not naming one.
+  it('falls back to a plain description when the session does not say', () => {
+    expect([interviewerName(null), interviewerName(undefined), interviewerName('   ')])
+      .toEqual([DEFAULT_INTERVIEWER, DEFAULT_INTERVIEWER, DEFAULT_INTERVIEWER]);
+  });
+});
 
 /**
  * The mapping from what the server returns to the four journey columns.

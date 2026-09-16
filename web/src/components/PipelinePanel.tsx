@@ -8,6 +8,7 @@ import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
 import { decisionStatus } from './statusModel';
+import { interviewerName } from './candidateJourney';
 
 interface Round {
   id: string;
@@ -48,6 +49,8 @@ interface InterviewOption {
   id: string;
   state: string;
   createdAt: string;
+  /** The AI interviewer's name for that session; absent on an older server. */
+  personaName?: string | null;
 }
 
 type Decision = 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
@@ -339,7 +342,13 @@ export function PipelinePanel(
               {pipeline.rounds.map((round) => (
                 <tr key={round.id}>
                   <td>{labelFor(round.stageKey)}</td>
-                  <td>{round.conductedBy === 'AI' ? 'AI (Schranders)' : round.interviewers.join(', ') || 'Human interviewer'}</td>
+                  {/* The persona is configurable per interview, so the name
+                      comes from the session rather than from this file. */}
+                  <td>
+                    {round.conductedBy === 'AI'
+                      ? `AI (${interviewerName(interviews.find((iv) => iv.id === round.sessionId)?.personaName)})`
+                      : round.interviewers.join(', ') || 'Human interviewer'}
+                  </td>
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
                   <td>{new Date(round.scheduledAt).toLocaleString()}</td>
                   <td>

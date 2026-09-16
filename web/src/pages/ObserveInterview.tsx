@@ -7,6 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { Skeleton } from '../components/Skeleton';
 import { POLL_DELAY_MS, nextPollDelay } from '../components/pollBackoff';
+import { interviewerName } from '../components/candidateJourney';
 
 interface ObservedTurn {
   index: number;
@@ -17,6 +18,8 @@ interface ObservedTurn {
 
 interface ObserveResp {
   session: { id: string; state: string };
+  /** Who conducted this interview; absent on an older server. */
+  persona?: { name: string | null } | null;
   turns: ObservedTurn[];
 }
 
@@ -26,11 +29,13 @@ const FINISHED = new Set([
   'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE',
 ]);
 
-const SPEAKER: Record<ObservedTurn['speaker'], string> = {
-  agent: 'Schranders',
-  candidate: 'Candidate',
-  system: 'System',
-};
+// The agent's name is the one this session was conducted under, not a constant:
+// a tenant that names its interviewer differently was being shown a name the
+// candidate never heard.
+function speakerName(speaker: ObservedTurn['speaker'], interviewer: string): string {
+  if (speaker === 'agent') return interviewer;
+  return speaker === 'candidate' ? 'Candidate' : 'System';
+}
 
 /**
  * HR watching the AI interview live. Read-only by design: there is no way to
@@ -74,6 +79,7 @@ export function ObserveInterview() {
   }, [id]);
 
   const finished = data ? FINISHED.has(data.session.state) : false;
+  const interviewer = interviewerName(data?.persona?.name);
 
   return (
     <div>
@@ -109,7 +115,7 @@ export function ObserveInterview() {
               <ol className="observe-transcript" aria-live="polite">
                 {data.turns.map((turn) => (
                   <li key={turn.index} className={`observe-turn observe-${turn.speaker}`}>
-                    <span className="observe-speaker">{SPEAKER[turn.speaker]}</span>
+                    <span className="observe-speaker">{speakerName(turn.speaker, interviewer)}</span>
                     <span>{turn.text}</span>
                   </li>
                 ))}

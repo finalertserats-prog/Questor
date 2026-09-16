@@ -173,7 +173,9 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
 
         {/* ---- 2. AI interview --------------------------------------------- */}
         <Column column={aiInterview}>
-          <Block title={aiInterview.stageLabel ? `${aiInterview.stageLabel} · conducted by Schranders` : 'Conducted by Schranders'}>
+          <Block title={aiInterview.stageLabel
+            ? `${aiInterview.stageLabel} · conducted by ${aiInterview.personaName}`
+            : `Conducted by ${aiInterview.personaName}`}>
             {aiInterview.session ? (
               <>
                 <div className="journey-links" style={{ marginBottom: 6 }}>

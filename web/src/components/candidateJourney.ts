@@ -69,6 +69,22 @@ export interface JourneySessionMeta {
   readonly recommendation: string | null;
   readonly assessmentId: string | null;
   readonly invited: boolean;
+  /** The AI interviewer's name for this session; absent on an older server. */
+  readonly personaName?: string | null;
+}
+
+/** What to call the AI interviewer when the session does not say. */
+export const DEFAULT_INTERVIEWER = 'the interviewer';
+
+/**
+ * The interviewer's name for a session.
+ *
+ * WHY this is not a constant: the persona is configurable per interview, so a
+ * hardcoded "Schranders" describes someone the candidate never spoke to as soon
+ * as a tenant names theirs differently.
+ */
+export function interviewerName(name: string | null | undefined): string {
+  return typeof name === 'string' && name.trim() ? name.trim() : DEFAULT_INTERVIEWER;
 }
 
 export interface JourneyRound {
@@ -219,6 +235,8 @@ export interface AiInterviewColumn extends ColumnBase {
   readonly stageLabel: string | null;
   readonly session: JourneySession | null;
   readonly phase: AiInterviewPhase;
+  /** Who conducts it, already resolved to a name the page can print. */
+  readonly personaName: string;
   readonly statusNote: string;
   readonly scheduledAt: string | null;
   readonly completedAt: string | null;
@@ -490,7 +508,8 @@ const PHASE_NOTE: Readonly<Record<AiInterviewPhase, string>> = {
   none: 'No AI interview has been created for this candidate yet.',
   'not-invited': 'Created, but the invitation has not been sent yet.',
   invited: 'Invited. The candidate has not started yet.',
-  'in-progress': 'Underway with Schranders now.',
+  // Rewritten with the session's own interviewer name; see buildAiInterview.
+  'in-progress': 'Underway now.',
   processing: 'Finished. The assessment is being written.',
   'awaiting-review': 'Awaiting human review — the assessment is ready and no person has signed it off yet.',
   reviewed: 'Reviewed by a person.',
@@ -545,6 +564,7 @@ function selectAiInterview(input: JourneyInput): SelectedInterview {
 function buildAiInterview(input: JourneyInput, state: ColumnState, selected: SelectedInterview): AiInterviewColumn {
   const { session, meta, stage: aiStage, round: aiRound } = selected;
   const phase = phaseOf(session, meta);
+  const interviewer = interviewerName(meta?.personaName);
 
   const live = phase === 'in-progress';
   const ended = phase === 'processing' || phase === 'awaiting-review' || phase === 'reviewed' || phase === 'ended';
@@ -558,7 +578,8 @@ function buildAiInterview(input: JourneyInput, state: ColumnState, selected: Sel
     stageLabel: aiStage?.label ?? null,
     session,
     phase,
-    statusNote: PHASE_NOTE[phase],
+    personaName: interviewer,
+    statusNote: phase === 'in-progress' ? `Underway with ${interviewer} now.` : PHASE_NOTE[phase],
     scheduledAt: aiRound?.scheduledAt ?? session?.scheduledAt ?? null,
     completedAt: aiRound?.completedAt ?? null,
     awaitingHumanReview: phase === 'awaiting-review',
@@ -571,7 +592,7 @@ function buildAiInterview(input: JourneyInput, state: ColumnState, selected: Sel
     transcriptHref: ended && session ? `/interviews/${session.id}` : null,
     assessmentHref: meta?.assessmentId ? `/assessments/${meta.assessmentId}` : null,
     interviewHref: session ? `/interviews/${session.id}` : null,
-    conductedByNote: 'Conducted by Schranders. A written transcript is kept; no audio is recorded.',
+    conductedByNote: `Conducted by ${interviewer}. A written transcript is kept; no audio is recorded.`,
   };
 }
 

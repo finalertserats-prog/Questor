@@ -48,6 +48,8 @@ interface CandidateResp {
  */
 interface SessionSummary {
   id: string; recommendation: string | null; assessmentId: string | null; invited: boolean;
+  /** The AI interviewer's name for that session; absent on an older server. */
+  personaName?: string | null;
 }
 
 /** The role and its latest scorecard: between them, the job description. */
@@ -372,7 +374,14 @@ export function CandidateDetail() {
       >
         {journey && <CandidateJourneyBoard journey={journey} />}
 
-        <PipelinePanel candidateId={candidate.id} candidateName={candidate.fullName} interviews={interviews ?? []} onChanged={refresh} />
+        <PipelinePanel
+          candidateId={candidate.id}
+          candidateName={candidate.fullName}
+          // The interviewer's name lives on the /interviews summary, not on the
+          // candidate's own record, so it is joined on here.
+          interviews={(interviews ?? []).map((iv) => ({ ...iv, personaName: sessions[iv.id]?.personaName ?? null }))}
+          onChanged={refresh}
+        />
 
       <div className="card">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
