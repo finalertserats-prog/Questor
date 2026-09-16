@@ -30,8 +30,37 @@ import { setState, fmt } from '../realtime/interviewEngine.js';
  * own outcome so our outage is not filed as the candidate's interruption.
  */
 
+export const DEFAULT_INCOMPLETE_AFTER_MINUTES = 60;
+
+/**
+ * Read INCOMPLETE_AFTER_MINUTES, refusing anything that is not a plain count.
+ *
+ * This was `Number(process.env.INCOMPLETE_AFTER_MINUTES ?? 60)`, where "" gives
+ * 0 and "1h" gives NaN. NaN loses every comparison, so both cutoff guards below
+ * fell through and the sweep marked EVERY live interview INCOMPLETE on its
+ * first pass — a typo in a deploy variable would have ended every interview in
+ * progress, silently.
+ *
+ * The exact round-trip check is what rejects "1h": parseInt reads it as 1, and
+ * a sweep that closes out anything quiet for sixty seconds is worse than one
+ * that ignores the setting and says so.
+ */
+export function resolveInactivityMinutes(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_INCOMPLETE_AFTER_MINUTES;
+  const trimmed = raw.trim();
+  const parsed = parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== trimmed) {
+    logger.warn(
+      { value: raw, usingMinutes: DEFAULT_INCOMPLETE_AFTER_MINUTES },
+      'INCOMPLETE_AFTER_MINUTES is not a positive whole number of minutes; ignoring it and using the default',
+    );
+    return DEFAULT_INCOMPLETE_AFTER_MINUTES;
+  }
+  return parsed;
+}
+
 /** Quiet time after the last turn before an interview is treated as interrupted. */
-export const INACTIVITY_MS = Number(process.env.INCOMPLETE_AFTER_MINUTES ?? 60) * 60_000;
+export const INACTIVITY_MS = resolveInactivityMinutes(process.env.INCOMPLETE_AFTER_MINUTES) * 60_000;
 
 const LIVE_STATES = ['DISCLOSURE', 'CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS'];
 
