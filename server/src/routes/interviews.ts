@@ -12,6 +12,7 @@ import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/
 import { assertTransition } from '../domain/stateMachine.js';
 import { getEmail } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
+import { brandedEmail } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
@@ -28,12 +29,12 @@ interviewsRouter.use(authenticate);
  *  HTML bodies cannot drift apart — a candidate whose client strips HTML must
  *  still get a working link. */
 function buildInvite(candidateName: string, roleTitle: string, portalUrl: string) {
-  return {
+  return brandedEmail({
     to: '',
     subject: `Your first-round interview for ${roleTitle}`,
     text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. This interview is conducted by Questor, an AI voice interviewer, and will be transcribed.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
     html: `<p>Hi ${candidateName},</p><p>You're invited to a first-round interview for <b>${roleTitle}</b>, conducted by <b>Questor</b>, an AI voice interviewer. It will be transcribed.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
-  };
+  });
 }
 
 const createSchema = z.object({

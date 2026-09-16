@@ -7,6 +7,7 @@ import { assertCanAccessCandidate, assertCanAccessRole } from '../services/acces
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
 import { getEmail } from '../providers/email/index.js';
+import { brandedEmail } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
@@ -177,12 +178,12 @@ async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt:
     ? `The ${label} AI interview is scheduled for ${when}. You can observe it live here:`
     : `The ${label} interview is scheduled for ${when}. The candidate and their pipeline are here:`;
   try {
-    await email.send({
+    await email.send(brandedEmail({
       to: o.to,
       subject: `${label} interview scheduled`,
       text: `${intro}\n${o.link}`,
       html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(o.link)}">${escapeHtml(o.link)}</a></p>`,
-    });
+    }));
     return { delivered: true, link: o.link, deliveryNote: `Sent to ${o.to}.` };
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Round scheduling email failed');
