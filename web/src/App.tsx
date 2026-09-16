@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
 import { ProfileMenu } from './components/ProfileMenu';
@@ -249,6 +249,32 @@ function Protected({ children }: { children: React.ReactNode }) {
   return <Layout>{children}</Layout>;
 }
 
+/**
+ * Readable without an account.
+ *
+ * Someone deciding whether to use Questor should be able to read what it is,
+ * what it will not do and who it serves without signing in first — and the
+ * sign-in page stays light because this page exists. Signed in, it sits inside
+ * the console like every other page rather than becoming a second front door.
+ */
+function PublicOrApp({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="center-screen muted">Loading…</div>;
+  if (user) return <Layout>{children}</Layout>;
+  return (
+    <div className="public-shell">
+      <header className="public-bar">
+        <Link to="/login" className="public-brand">
+          <img src="/brand/questor-mark.webp" alt="" width={26} height={27} />
+          <span>Questor</span>
+        </Link>
+        <Link to="/login" className="btn sm">Sign in</Link>
+      </header>
+      <main className="public-body">{children}</main>
+    </div>
+  );
+}
+
 export function App() {
   return (
     <TourProvider>
@@ -274,7 +300,7 @@ export function App() {
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
-      <Route path="/about" element={<Protected><About /></Protected>} />
+      <Route path="/about" element={<PublicOrApp><About /></PublicOrApp>} />
       <Route path="/contact" element={<Protected><Contact /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

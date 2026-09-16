@@ -208,3 +208,56 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --------------------------------------------------------------------------
+   About, read without an account
+   --------------------------------------------------------------------------
+   No sidebar, no profile menu — there is no session to serve. Just the mark,
+   a way in, and the page itself on the same desk surface as the console.
+   -------------------------------------------------------------------------- */
+
+.public-shell {
+  min-height: 100vh;
+  background: var(--desk);
+}
+
+.public-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 22px;
+  border-bottom: var(--hair) solid var(--rule);
+  background: var(--sheet);
+}
+
+.public-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 17px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+.public-brand img {
+  width: 26px;
+  height: auto;
+}
+
+.public-body {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+@media (max-width: 640px) {
+  .public-bar {
+    padding: 11px 14px;
+  }
+  .public-body {
+    padding: 16px 14px 36px;
+  }
+}
