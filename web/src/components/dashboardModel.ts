@@ -108,3 +108,31 @@ export function barRadius(width: number, height: number): number {
   if (width <= 0 || height <= 0) return 0;
   return Math.min(BAR_RADIUS, width / 2, height / 2);
 }
+
+/** The raw session states folded into a display group, e.g. 'stopped'. */
+export function statesInGroup(key: string): readonly string[] {
+  return STATE_GROUPS.find((g) => g.key === key)?.states ?? [];
+}
+
+/**
+ * Drop the quiet weeks at either end of a series, keeping the quiet ones in
+ * between.
+ *
+ * A rolling twelve-week window is mostly empty for anyone not hiring
+ * continuously, and an honest chart of it is nine blank columns and three bars
+ * squeezed against one edge. Trimming the ends lets the activity fill the panel
+ * at any volume. A gap *between* two active weeks is left alone, because a
+ * fortnight when hiring stopped is information; a gap before anyone started is
+ * not.
+ *
+ * An entirely empty series is returned whole, so the chart still has an axis to
+ * draw rather than collapsing to nothing.
+ */
+export function trimSparseWeeks<T extends { created: number; completed: number }>(series: readonly T[]): T[] {
+  const active = (d: T) => d.created > 0 || d.completed > 0;
+  const first = series.findIndex(active);
+  if (first === -1) return [...series];
+  let last = series.length - 1;
+  while (last > first && !active(series[last])) last -= 1;
+  return series.slice(first, last + 1);
+}

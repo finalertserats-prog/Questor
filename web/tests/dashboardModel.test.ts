@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { barRadius, chartTone, formatHours, groupSessionStates, niceCeiling, scaleLength } from '../src/components/dashboardModel';
+import { barRadius, chartTone, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks } from '../src/components/dashboardModel';
 
 describe('groupSessionStates', () => {
   it('folds raw session states into the groups an HR reader thinks in', () => {
@@ -101,5 +101,39 @@ describe('formatHours', () => {
 
   it('shows days with one decimal from two days up', () => {
     expect(formatHours(60)).toBe('2.5d');
+  });
+});
+
+describe('trimSparseWeeks', () => {
+  const w = (weekStart: string, created: number, completed = 0) => ({ weekStart, created, completed });
+
+  it('drops the empty weeks on either side of the activity', () => {
+    const series = [w('2026-06-01', 0), w('2026-06-08', 4), w('2026-06-15', 2), w('2026-06-22', 0)];
+    expect(trimSparseWeeks(series).map((d) => d.weekStart)).toEqual(['2026-06-08', '2026-06-15']);
+  });
+
+  it('keeps quiet weeks that sit between two active ones, because a gap is the point', () => {
+    const series = [w('2026-06-01', 3), w('2026-06-08', 0), w('2026-06-15', 5)];
+    expect(trimSparseWeeks(series)).toHaveLength(3);
+  });
+
+  it('returns the whole series when nothing happened, so the chart still has an axis', () => {
+    const series = [w('2026-06-01', 0), w('2026-06-08', 0)];
+    expect(trimSparseWeeks(series)).toEqual(series);
+  });
+
+  it('counts a week active when only completions land in it', () => {
+    const series = [w('2026-06-01', 0, 0), w('2026-06-08', 0, 2)];
+    expect(trimSparseWeeks(series).map((d) => d.weekStart)).toEqual(['2026-06-08']);
+  });
+});
+
+describe('statesInGroup', () => {
+  it('names the states behind the stopped group, so a filter cannot drift from the chart', () => {
+    expect(statesInGroup('stopped')).toContain('CANDIDATE_WITHDREW');
+  });
+
+  it('returns nothing for a group that does not exist', () => {
+    expect(statesInGroup('not-a-group')).toEqual([]);
   });
 });

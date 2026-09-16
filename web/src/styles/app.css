@@ -102,6 +102,9 @@
      a and b are the two halves of one comparison, c is the single emphasis
      series the colour budget allows, muted is "everything else / zero". */
   --chart-track: #eeedf3;
+  /* The ground under the ruled fill: tinted enough to hold the bar's shape,
+     light enough that the rules on top stay the loudest thing in it. */
+  --chart-ruled-ground: #f3f2fc;
   --chart-grid: #dcdbe5;
   --chart-a: #8a82d6;
   --chart-b: #453fa0;
@@ -233,6 +236,7 @@
   --scrim: rgba(0, 0, 0, 0.6);
 
   --chart-track: #101016;
+  --chart-ruled-ground: #232140;
   --chart-grid: #343442;
   --chart-a: #7d76d4;
   --chart-b: #a5a0f5;

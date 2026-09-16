@@ -40,10 +40,13 @@
 
 .kpi-grid {
   display: grid;
-  /* minmax(0, max) rather than minmax(min, max): a hard minimum would overflow
-     the main column between the 820px and 980px breakpoints, and a KPI row
-     that scrolls sideways is worse than one that is a little narrow. */
-  grid-template-columns: repeat(4, minmax(0, var(--kpi-card-max)));
+  /* auto-fit, not a fixed 4: with nine cards a four-column grid leaves a single
+     stray card on a third row. The earlier note here rejected a hard minimum,
+     and was right to -- but only because the count was fixed: 4 x 240px cannot
+     fit the 672px column between the 820px and 980px breakpoints. auto-fit
+     chooses a count that fits, so the minimum never overflows, and on a wide
+     screen the row fills the width instead of stopping short of it. */
+  grid-template-columns: repeat(auto-fit, minmax(200px, var(--kpi-card-max)));
   justify-content: start;
   gap: var(--kpi-grid-gap);
   margin: 0 0 var(--space-4);
@@ -96,16 +99,40 @@ a.kpi-link:focus-visible {
   outline-offset: 2px;
 }
 
+/* Not a filled lozenge. A measurement on this page is a reading taken against
+   a scale, so the icon sits in a square bracket with a rule under it -- the
+   corner marks of a caliper rather than a pastel pill. The flat wash that used
+   to fill this shape is what made the page look bought rather than designed. */
 .kpi-icon {
   grid-area: icon;
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 50%;
-  background: var(--accent-wash);
+  border-radius: var(--radius-xs);
+  background: transparent;
   color: var(--accent);
+  box-shadow:
+    inset 2px 0 0 -1px var(--accent-edge),
+    inset -2px 0 0 -1px var(--accent-edge);
+}
+.kpi-icon::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 0;
+  left: 3px;
+  height: 2px;
+  background: var(--accent);
+}
+a.kpi-link:hover .kpi-icon::after {
+  left: 0;
+  right: 0;
+}
+.kpi-icon::after {
+  transition: left var(--dur-base) var(--ease-out), right var(--dur-base) var(--ease-out);
 }
 
 /* The one spark on the page. It marks the measure that is asking a person to
@@ -113,8 +140,14 @@ a.kpi-link:focus-visible {
    One card, by the colour budget; making a second one warm would spend the
    emphasis and mark nothing. */
 .kpi-link--spark .kpi-icon {
-  background: var(--spark-wash);
+  background: transparent;
   color: var(--spark);
+  box-shadow:
+    inset 2px 0 0 -1px var(--spark-edge),
+    inset -2px 0 0 -1px var(--spark-edge);
+}
+.kpi-link--spark .kpi-icon::after {
+  background: var(--spark);
 }
 
 .kpi-value {
@@ -188,6 +221,49 @@ a.kpi-link:focus-visible {
    measurement that was taken rather than a chart that failed to render. */
 .chart-track {
   fill: var(--chart-track);
+}
+
+/* The ruled fill. The ground keeps the bar readable as a shape at any size;
+   the lines carry the meaning. Spacing stays at 5px so the pattern never
+   collapses into a solid tone on a narrow bar. */
+.chart-ruled-ground {
+  fill: var(--chart-ruled-ground);
+}
+.chart-ruled-line {
+  stroke: var(--chart-a);
+  stroke-width: 2;
+}
+
+/* The baseline is the one rule that must always be visible: it is what every
+   bar is measured from. The interior grid is deliberately lighter than it. */
+.chart-baseline {
+  /* rule-strong sits at 1.87:1 on the sheet, which is too faint for the one
+     line every bar is measured from. The muted tone carries it at 3.63:1. */
+  stroke: var(--chart-muted);
+  stroke-width: 1;
+}
+.chart-tick {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+}
+.chart-channel {
+  /* chart-grid is 1.37:1 here and all but disappears. This is a hairline guide
+     rather than an indicator -- every row prints its own number beside the bar
+     -- but a scale you cannot see is not a scale, so it takes rule-strong. */
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+}
+/* A zero still leaves a mark, so an empty week reads as measured-and-empty
+   rather than as missing data. */
+.chart-witness {
+  stroke: var(--chart-muted);
+  stroke-width: 2;
+}
+/* The ruled body needs its own edge or it dissolves at one or two units. */
+.chart-series-a-edge {
+  fill: none;
+  stroke: var(--chart-a);
+  stroke-width: 1;
 }
 
 .chart-series-a,
@@ -277,6 +353,12 @@ a.kpi-link:focus-visible {
   width: 10px;
   height: 10px;
   border-radius: var(--radius-xs);
+}
+/* At 10px a 5px hatch would read as noise, so the swatch states the same
+   distinction with a single rule: ruled body, solid body. */
+.chart-legend .chart-series-a {
+  background: var(--chart-ruled-ground);
+  box-shadow: inset 0 0 0 1px var(--chart-a);
 }
 
 .chart-data {

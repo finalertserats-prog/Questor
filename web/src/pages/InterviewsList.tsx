@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { recBadge, stateBadge, Banner } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { statesInGroup } from '../components/dashboardModel';
 
 interface Session {
   id: string; state: string; provider: string; scheduledAt: string | null;
@@ -13,10 +14,31 @@ interface Session {
   recommendation: string | null; assessmentId: string | null; invited: boolean; createdAt: string;
 }
 
+/** Group keys this page will narrow to, and what to call the result. */
+const FILTER_LABELS: Readonly<Record<string, string>> = {
+  scheduled: 'Invited / scheduled',
+  live: 'In progress',
+  review: 'Awaiting review',
+  reviewed: 'Reviewed / closed',
+  stopped: 'Stopped',
+};
+
 export function InterviewsList() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [params] = useSearchParams();
+
+  // The dashboard links here with ?state=stopped. The states behind a group
+  // come from the same table the dashboard chart uses, so the count on the KPI
+  // and the rows on this page cannot drift apart.
+  const group = params.get('state');
+  const groupLabel = group ? FILTER_LABELS[group] : undefined;
+  const visible = useMemo(() => {
+    const wanted = group ? statesInGroup(group) : [];
+    if (!wanted.length) return sessions;
+    return sessions.filter((s) => wanted.includes(s.state));
+  }, [sessions, group]);
 
   useEffect(() => {
     api.get<{ sessions: Session[] }>('/interviews')
@@ -31,23 +53,42 @@ export function InterviewsList() {
     <div>
       <PageHeader
         icon="interviews"
-        title="Interviews"
+        title={groupLabel ? `Interviews — ${groupLabel}` : 'Interviews'}
         actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add Candidate</Link>}
       />
 
       {error && <Banner kind="error">{error}</Banner>}
 
+      {/* An unlabelled filter is how someone concludes their interviews have
+          vanished. Say what is being shown, and how to stop showing it. */}
+      {groupLabel && (
+        <Banner kind="info">
+          Showing {visible.length} of {sessions.length} interviews: {groupLabel.toLowerCase()}.{' '}
+          <Link to="/interviews">Show all</Link>
+        </Banner>
+      )}
+
       <div className="card">
-        {sessions.length === 0 ? (
-          <EmptyState
-            icon="interviews"
-            illustration="/brand/empty-interviews.webp"
-            illustrationWidth={360}
-            illustrationHeight={331}
-            title="No interviews yet"
-            message="Interviews are set up from a candidate’s page. Add a candidate to create the first one."
-            action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
-          />
+        {visible.length === 0 ? (
+          groupLabel ? (
+            <EmptyState
+              compact
+              icon="interviews"
+              title={`No ${groupLabel.toLowerCase()} interviews`}
+              message="Nothing is in this state right now."
+              action={<Link className="btn" to="/interviews">Show all interviews</Link>}
+            />
+          ) : (
+            <EmptyState
+              icon="interviews"
+              illustration="/brand/empty-interviews.webp"
+              illustrationWidth={360}
+              illustrationHeight={331}
+              title="No interviews yet"
+              message="Interviews are set up from a candidate’s page. Add a candidate to create the first one."
+              action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+            />
+          )
         ) : (
           <div className="table-scroll" tabIndex={0} role="region" aria-label="Interviews">
             <table>
@@ -58,7 +99,7 @@ export function InterviewsList() {
                 </tr>
               </thead>
               <tbody>
-                {(sessions ?? []).map((s) => (
+                {visible.map((s) => (
                   <tr key={s.id}>
                     <td>{s.candidate?.name}</td>
                     <td>{s.role?.title}</td>

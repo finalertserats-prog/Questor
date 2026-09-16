@@ -38,6 +38,31 @@ function useMeasuredWidth(fallback: number) {
   return { ref, width };
 }
 
+/**
+ * Pattern definitions, rendered once per chart.
+ *
+ * The fills below are deliberately not flat washes. A hiring decision is made
+ * of evidence that is either there or not, and the chart says so in its own
+ * texture: a solid body for what completed, a ruled body for what was only set
+ * up. That distinction survives greyscale and a colour-blind reader, because it
+ * is carried by line rather than by hue.
+ *
+ * Defined once per chart and referenced by every bar. A <pattern> instantiated
+ * inside the bar loop forces a rasterisation pass per element.
+ */
+function ChartDefs({ patternId }: { patternId: string }) {
+  return (
+    <defs>
+      <pattern id={patternId} patternUnits="userSpaceOnUse" width="5" height="5" patternTransform="rotate(45)">
+        <rect width="5" height="5" className="chart-ruled-ground" />
+        {/* crispEdges: at this spacing an anti-aliased diagonal moires against
+            the pixel grid on a standard-DPI screen. */}
+        <line x1="0" y1="0" x2="0" y2="5" className="chart-ruled-line" shapeRendering="crispEdges" />
+      </pattern>
+    </defs>
+  );
+}
+
 export interface WeekPoint {
   readonly weekStart: string;
   readonly created: number;
@@ -52,6 +77,7 @@ const COL_FALLBACK_WIDTH = 900;
 export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
   const id = useId();
   const { ref, width } = useMeasuredWidth(COL_FALLBACK_WIDTH);
+  const patternId = `ruled-${id.replace(/:/g, '')}`;
   const max = niceCeiling(Math.max(0, ...data.flatMap((d) => [d.created, d.completed])));
   const plotW = Math.max(120, width - COL.left - COL.right);
   const plotH = COL.height - COL.top - COL.bottom;
@@ -75,16 +101,28 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
         aria-labelledby={`${id}-t ${id}-d`}
         className="chart-svg"
       >
+        <ChartDefs patternId={patternId} />
         <title id={`${id}-t`}>Interviews per week, last {data.length} weeks</title>
         <desc id={`${id}-d`}>
           {`${totals.created} interviews set up and ${totals.completed} completed in total. `}
           {data.map((d) => `Week of ${shortDate(d.weekStart)}: ${d.created} set up, ${d.completed} completed.`).join(' ')}
         </desc>
-        {ticks.map((t) => {
+        {/* A ruled baseline with measured ticks rather than a stack of equal
+            full-width rules: the axis should read as a scale someone calibrated,
+            and the grid should never compete with the data drawn over it. */}
+        <line
+          x1={COL.left} x2={width - COL.right}
+          y1={COL.top + plotH} y2={COL.top + plotH}
+          className="chart-baseline" shapeRendering="crispEdges"
+        />
+        {ticks.map((t, tick) => {
           const y = COL.top + plotH - scaleLength(t, max, plotH);
           return (
             <g key={t}>
-              <line x1={COL.left} x2={width - COL.right} y1={y} y2={y} className="chart-grid" />
+              {tick > 0 && (
+                <line x1={COL.left} x2={width - COL.right} y1={y} y2={y} className="chart-grid" shapeRendering="crispEdges" />
+              )}
+              <line x1={COL.left - 4} x2={COL.left} y1={y} y2={y} className="chart-tick" shapeRendering="crispEdges" />
               <text x={COL.left - 8} y={y + 4} textAnchor="end" className="chart-axis">
                 {Number.isInteger(t) ? t : t.toFixed(1)}
               </text>
@@ -97,16 +135,35 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
           const hCompleted = scaleLength(d.completed, max, plotH);
           return (
             <g key={d.weekStart}>
+              {/* Set up but not yet finished: a ruled body. Finished: solid.
+                  The pair reads as work in hand against work banked, even with
+                  the colour taken out. The ruled body carries its own edge or it
+                  dissolves at one or two units. */}
               <rect
                 x={x} y={COL.top + plotH - hCreated} width={barW} height={hCreated}
                 rx={barRadius(barW, hCreated)} ry={barRadius(barW, hCreated)}
-                className="chart-series-a chart-rise"
+                fill={`url(#${patternId})`}
+                className="chart-rise"
+              />
+              <rect
+                x={x} y={COL.top + plotH - hCreated} width={barW} height={hCreated}
+                rx={barRadius(barW, hCreated)} ry={barRadius(barW, hCreated)}
+                className="chart-series-a-edge chart-rise"
               />
               <rect
                 x={x + barW} y={COL.top + plotH - hCompleted} width={barW} height={hCompleted}
                 rx={barRadius(barW, hCompleted)} ry={barRadius(barW, hCompleted)}
                 className="chart-series-b chart-rise"
               />
+              {/* A week nobody worked is not the same as a week off the end of
+                  the chart. Say so with a witness mark rather than nothing. */}
+              {d.created === 0 && d.completed === 0 && (
+                <line
+                  x1={x} x2={x + barW * 2}
+                  y1={COL.top + plotH} y2={COL.top + plotH}
+                  className="chart-witness" shapeRendering="crispEdges"
+                />
+              )}
               {i % labelEvery === (data.length - 1) % labelEvery && (
                 <text x={COL.left + i * slot + slot / 2} y={COL.height - 10} textAnchor="middle" className="chart-axis">
                   {shortDate(d.weekStart)}
@@ -151,6 +208,7 @@ const BAR_FALLBACK_WIDTH = 480;
 export function HorizontalBarChart({ items, title, summary }: { items: readonly BarItem[]; title: string; summary: string }) {
   const id = useId();
   const { ref, width } = useMeasuredWidth(BAR_FALLBACK_WIDTH);
+  const patternId = `ruled-${id.replace(/:/g, '')}`;
   const max = niceCeiling(Math.max(0, ...items.map((i) => i.count)));
   const plotW = Math.max(60, width - BAR.labelW - BAR.valueW);
   const height = Math.max(ROW_H, items.length * ROW_H);
@@ -165,6 +223,7 @@ export function HorizontalBarChart({ items, title, summary }: { items: readonly 
         aria-labelledby={`${id}-t ${id}-d`}
         className="chart-svg"
       >
+        <ChartDefs patternId={patternId} />
         <title id={`${id}-t`}>{title}</title>
         <desc id={`${id}-d`}>{`${summary} ${items.map((i) => `${i.label}: ${i.count}.`).join(' ')}`}</desc>
         {items.map((item, index) => {
@@ -173,16 +232,31 @@ export function HorizontalBarChart({ items, title, summary }: { items: readonly 
           return (
             <g key={item.key}>
               <text x={BAR.labelW - 10} y={y + ROW_H / 2 + 4} textAnchor="end" className="chart-label">{item.label}</text>
-              <rect
-                x={BAR.labelW} y={y + 7} width={plotW} height={ROW_H - 14}
-                rx={barRadius(plotW, ROW_H - 14)} ry={barRadius(plotW, ROW_H - 14)}
-                className="chart-track"
+              {/* A ruled channel, not a grey capsule. The track is the measure
+                  the bar is read against, so it should look like a rule rather
+                  than a second bar sitting behind the first. */}
+              <line
+                x1={BAR.labelW} x2={BAR.labelW + plotW}
+                y1={y + ROW_H / 2} y2={y + ROW_H / 2}
+                className="chart-channel" shapeRendering="crispEdges"
+              />
+              <line
+                x1={BAR.labelW + plotW} x2={BAR.labelW + plotW}
+                y1={y + 8} y2={y + ROW_H - 8}
+                className="chart-tick" shapeRendering="crispEdges"
               />
               <rect
                 x={BAR.labelW} y={y + 7} width={w} height={ROW_H - 14}
                 rx={barRadius(w, ROW_H - 14)} ry={barRadius(w, ROW_H - 14)}
                 className={`chart-bar chart-grow ${item.tone ?? 'tone-accent'}`}
               />
+              {item.count === 0 && (
+                <line
+                  x1={BAR.labelW} x2={BAR.labelW}
+                  y1={y + 8} y2={y + ROW_H - 8}
+                  className="chart-witness" shapeRendering="crispEdges"
+                />
+              )}
               <text x={BAR.labelW + w + 6} y={y + ROW_H / 2 + 4} className="chart-value">{item.count}</text>
             </g>
           );

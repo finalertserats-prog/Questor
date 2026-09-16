@@ -7,7 +7,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
 import { EmptyState } from '../components/EmptyState';
-import { chartTone, formatHours, groupSessionStates } from '../components/dashboardModel';
+import { chartTone, formatHours, groupSessionStates, trimSparseWeeks } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
 
 interface Metrics {
@@ -82,6 +82,8 @@ export function Dashboard() {
   const stateItems: BarItem[] = groupSessionStates(metrics?.stateCounts ?? {}).map((g) => ({ ...g, tone: chartTone(g.key) }));
   const inPipeline = stageItems.reduce((sum, s) => sum + s.count, 0);
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
+  const stopped = stateItems.find((g) => g.key === 'stopped')?.count ?? 0;
+  const weeklyData = trimSparseWeeks(metrics?.interviewsPerWeek ?? []);
 
   return (
     <div className="dashboard">
@@ -126,6 +128,13 @@ export function Dashboard() {
               <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="Next 7 days" />
               <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="Last 30 days" />
               <Kpi icon="eye" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
+              <Kpi
+                icon="user-x"
+                label="Stopped"
+                value={stopped}
+                to="/interviews?state=stopped"
+                hint="No-show, withdrew or cut short"
+              />
               <Kpi icon="clock" label="Invite to interview" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
               <Kpi
                 icon="scale"
@@ -141,7 +150,7 @@ export function Dashboard() {
             <div className="card dash-chart-wide">
               <h3>Interviews per week</h3>
               <p className="muted small">AI interviews and human rounds set up and completed, by rolling week.</p>
-              <WeeklyColumnChart data={metrics.interviewsPerWeek} />
+              <WeeklyColumnChart data={weeklyData} />
             </div>
             <div className="grid cols-2">
               <div className="card" data-tour="pipeline-stages">
