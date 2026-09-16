@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
+import { OrgPicker } from '../components/OrgPicker';
+import { orgSearchPath, type Org } from '../components/orgSearchModel';
 
 /** Organisation codes are lowercase letters, digits and hyphens. */
 const ORG_CODE = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
@@ -11,6 +13,7 @@ export function Login() {
   const { login, register, user } = useAuth();
   const nav = useNavigate();
   const [orgCode, setOrgCode] = useState('');
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [showEmail, setShowEmail] = useState(false);
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [email, setEmail] = useState('');
@@ -32,6 +35,11 @@ export function Login() {
       return;
     }
     nav(`/o/${code}`);
+  };
+
+  const chooseOrg = (org: Org) => {
+    setErr('');
+    nav(orgSearchPath(org));
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -60,23 +68,32 @@ export function Login() {
           <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div>
           <div className="brand-line" aria-hidden="true" />
           <h1 className="landing-title">Sign in</h1>
-          <p className="muted small">Use the sign-in link your organisation shared, or enter its code.</p>
+          <p className="muted small">Use the sign-in link your organisation shared, or find it by name.</p>
 
           {err && <Banner kind="error">{err}</Banner>}
 
-          <form onSubmit={goToOrg}>
-            <label htmlFor="org-code">Organisation code</label>
-            <input
-              id="org-code"
-              value={orgCode}
-              onChange={(e) => setOrgCode(e.target.value)}
-              placeholder="acme-hiring"
-              autoCapitalize="none"
-              autoComplete="organization"
-              required
-            />
-            <button className="btn" style={{ width: '100%', marginTop: 14 }}>Continue</button>
-          </form>
+          <OrgPicker onChoose={chooseOrg} />
+          <div className="small muted" style={{ marginTop: 10, textAlign: 'center' }}>
+            <button type="button" className="link-button" onClick={() => setShowCodeEntry(true)}>
+              Enter an organisation code instead
+            </button>
+          </div>
+
+          {showCodeEntry && (
+            <form onSubmit={goToOrg} style={{ marginTop: 14 }}>
+              <label htmlFor="org-code">Organisation code</label>
+              <input
+                id="org-code"
+                value={orgCode}
+                onChange={(e) => setOrgCode(e.target.value)}
+                placeholder="acme-hiring"
+                autoCapitalize="none"
+                autoComplete="organization"
+                required
+              />
+              <button className="btn" style={{ width: '100%', marginTop: 14 }}>Continue</button>
+            </form>
+          )}
 
           <div className="landing-divider"><span>or</span></div>
 
