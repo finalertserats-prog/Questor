@@ -13,6 +13,7 @@ import { candidatesRouter } from './routes/candidates.js';
 import { interviewsRouter } from './routes/interviews.js';
 import { portalRouter } from './routes/portal.js';
 import { feedbackRequestRouter } from './routes/feedbackRequest.js';
+import { signupRouter, signupDecisionRouter } from './routes/signup.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { dashboardRouter } from './routes/dashboard.js';
@@ -126,6 +127,12 @@ export function createApp() {
   // own fresh allowance — which is no limit at all. The token is 256 bits, so
   // this is a bound on scanning rather than the thing standing in the way.
   app.use('/api/feedback-request', rateLimit({ name: 'feedback-request', windowMs: 15 * 60_000, max: 60 }), feedbackRequestRouter);
+
+  // Signup is public, but approval links carry their own high-entropy token.
+  // Mount decisions first so they get the 60-request token-scanning budget, not
+  // the stricter submission budget.
+  app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60 }), signupDecisionRouter);
+  app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10 }), signupRouter);
 
   // Public organisation lookup for sign-in links. A person follows a link once
   // or twice; 30 per 15 minutes per IP stops anyone guessing slugs at speed.

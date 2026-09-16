@@ -18,6 +18,7 @@ export const config = {
   webOrigin: env('WEB_ORIGIN', 'http://localhost:5173'),
   authSecret: env('AUTH_SECRET', 'dev-questor-secret-change-me-please-32chars'),
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
+  signupApproverEmail: env('SIGNUP_APPROVER_EMAIL'),
 
   llm: {
     provider: env('LLM_PROVIDER', 'heuristic'),

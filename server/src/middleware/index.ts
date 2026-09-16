@@ -75,6 +75,9 @@ const CSRF_EXEMPT_PATHS = [
   // branch below: a recruiter signed in on the same browser would otherwise be
   // the one person unable to test their own candidate's link.
   /^\/api\/feedback-request(?:\/|$)/,
+  // Account requests and operator email decisions are public links, not
+  // cookie-authenticated recruiter actions.
+  /^\/api\/signup(?:\/|$)/,
 ];
 
 /** Constant-time compare; lengths are compared first because timingSafeEqual throws on a mismatch. */

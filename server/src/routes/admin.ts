@@ -17,6 +17,7 @@ import { logAudit } from '../services/audit.js';
 import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
 import { getPipelineSummary } from '../services/pipeline.js';
 import { ORG_SLUG } from './orgs.js';
+import { decideSignupRequest, signupApplicant } from '../services/signup.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -45,6 +46,37 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
     ats: { provider: getAts().name, configured: getAts().configured },
     meeting,
   });
+}));
+
+
+// Operator-approved signup queue. These rows intentionally sit outside any
+// tenant until approval; the deployment operator, not a tenant-scoped recruiter,
+// is deciding whether an account should exist at all.
+const signupStatusSchema = z.object({
+  status: z.enum(['pending', 'approved', 'declined', 'expired']).optional().default('pending'),
+}).strict();
+
+adminRouter.get('/signups', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const query = signupStatusSchema.parse(req.query);
+  const rows = await prisma.signupRequest.findMany({
+    where: { status: query.status.toUpperCase() },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true, name: true, email: true, mode: true, organisationName: true, orgSlug: true,
+      status: true, expiresAt: true, decidedAt: true, decidedBy: true, createdTenantId: true, createdUserId: true, createdAt: true,
+    },
+  });
+  res.json({ signups: rows.map((row) => ({ ...row, applicant: signupApplicant(row as never) })) });
+}));
+
+adminRouter.post('/signups/:id/approve', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  await decideSignupRequest({ id: req.params.id, decision: 'approve', actorId: req.auth!.userId });
+  res.json({ recorded: true });
+}));
+
+adminRouter.post('/signups/:id/decline', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  await decideSignupRequest({ id: req.params.id, decision: 'decline', actorId: req.auth!.userId });
+  res.json({ recorded: true });
 }));
 
 // Audit log (FR-038)
