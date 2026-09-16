@@ -6,6 +6,7 @@ import { Banner, stateBadge } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
+import { EmptyState } from '../components/EmptyState';
 import { chartTone, formatHours, groupSessionStates } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
 
@@ -145,13 +146,40 @@ export function Dashboard() {
             <div className="grid cols-2">
               <div className="card" data-tour="pipeline-stages">
                 <h3>Pipeline by stage</h3>
-                <p className="muted small">{inPipeline} active candidates, by current medallion stage.</p>
-                <HorizontalBarChart items={stageItems} title="Active pipelines by stage" summary={`${inPipeline} active candidates.`} />
+                {/* A stacked run of zero-length bars is a chart drawing nothing.
+                    When every stage is empty the reason is worth more than the
+                    shape of it. */}
+                {inPipeline === 0 ? (
+                  <EmptyState
+                    compact
+                    icon="funnel"
+                    title="No active pipelines"
+                    message="A candidate joins the pipeline when you move them into a medallion stage. Nobody is in one yet."
+                    action={<Link className="btn sm" to="/candidates">Go to candidates</Link>}
+                  />
+                ) : (
+                  <>
+                    <p className="muted small">{inPipeline} active candidates, by current medallion stage.</p>
+                    <HorizontalBarChart items={stageItems} title="Active pipelines by stage" summary={`${inPipeline} active candidates.`} />
+                  </>
+                )}
               </div>
               <div className="card">
                 <h3>Interview status</h3>
-                <p className="muted small">{totalInterviews} AI interviews, by where they are now.</p>
-                <HorizontalBarChart items={stateItems} title="AI interviews by status" summary={`${totalInterviews} interviews.`} />
+                {totalInterviews === 0 ? (
+                  <EmptyState
+                    compact
+                    icon="interviews"
+                    title="No interviews yet"
+                    message="Set up an interview from a candidate’s page and its progress will show here."
+                    action={<Link className="btn sm" to="/candidates/new">Add candidate</Link>}
+                  />
+                ) : (
+                  <>
+                    <p className="muted small">{totalInterviews} AI interviews, by where they are now.</p>
+                    <HorizontalBarChart items={stateItems} title="AI interviews by status" summary={`${totalInterviews} interviews.`} />
+                  </>
+                )}
               </div>
             </div>
           </section>
