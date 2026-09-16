@@ -154,6 +154,78 @@ describe('interviews that stopped part-way', () => {
   });
 });
 
+describe('a finalisation that stalled', () => {
+  /**
+   * CLOSING and PROCESSING are not live states, so the sweep used to ignore
+   * them entirely — which is exactly where a finalisation that died mid-write
+   * leaves a session. Nothing else looks at PROCESSING either, so such an
+   * interview was invisible for ever.
+   */
+  async function stallIn(state: 'CLOSING' | 'PROCESSING') {
+    const ids = await beginInterview();
+    await request(app).post(`/api/portal/${ids.token}/turn`).send({ text: STRONG_ANSWERS[0] });
+    await goQuiet(ids.sessionId);
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state } });
+    return ids;
+  }
+
+  it('recovers a session stranded in PROCESSING', async () => {
+    const ids = await stallIn('PROCESSING');
+
+    await sweepIncompleteInterviews();
+
+    const session = await prisma.interviewSession.findUnique({ where: { id: ids.sessionId } });
+    expect(session?.state).toBe('TECHNICAL_FAILURE');
+  });
+
+  it('recovers a session stranded in CLOSING', async () => {
+    const ids = await stallIn('CLOSING');
+
+    await sweepIncompleteInterviews();
+
+    const session = await prisma.interviewSession.findUnique({ where: { id: ids.sessionId } });
+    expect(session?.state).toBe('TECHNICAL_FAILURE');
+  });
+
+  it('reports it as a stalled finalisation, not as an interrupted interview', async () => {
+    // The distinction is the whole point: INCOMPLETE says the candidate stopped,
+    // and this one is our failure, not theirs.
+    const ids = await stallIn('PROCESSING');
+
+    const outcomes = await sweepIncompleteInterviews();
+
+    expect(outcomes.find((o) => o.sessionId === ids.sessionId)?.outcome).toBe('stalled_finalisation');
+  });
+
+  it('still calls an interrupted live interview interrupted', async () => {
+    const ids = await beginInterview();
+    await request(app).post(`/api/portal/${ids.token}/turn`).send({ text: STRONG_ANSWERS[0] });
+    await goQuiet(ids.sessionId);
+
+    const outcomes = await sweepIncompleteInterviews();
+
+    expect(outcomes.find((o) => o.sessionId === ids.sessionId)?.outcome).toBe('interrupted');
+  });
+
+  it('does not score the stalled interview either', async () => {
+    const ids = await stallIn('PROCESSING');
+
+    await sweepIncompleteInterviews();
+
+    expect(await prisma.assessmentVersion.count({ where: { sessionId: ids.sessionId } })).toBe(0);
+  });
+
+  it('leaves a finalisation that is still in flight alone', async () => {
+    const ids = await beginInterview();
+    await request(app).post(`/api/portal/${ids.token}/turn`).send({ text: STRONG_ANSWERS[0] });
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state: 'PROCESSING' } });
+
+    const outcomes = await sweepIncompleteInterviews();
+
+    expect(outcomes).toHaveLength(0);
+  });
+});
+
 describe('a candidate who never got a word in', () => {
   it('is closed out too, rather than stranded for ever', async () => {
     // A real candidate reached the disclosure and stopped, because the "Done

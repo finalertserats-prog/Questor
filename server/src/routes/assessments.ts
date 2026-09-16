@@ -31,6 +31,30 @@ assessmentsRouter.use(authenticate);
  */
 const getAssessment = assertCanAccessAssessment;
 
+/**
+ * Read a stored assessment result, or refuse to serve the assessment at all.
+ *
+ * `parseJson(a.resultJson, {})` turned a truncated, half-written or
+ * older-shaped row into an empty object and served it with a 200. The web
+ * rendered "NaN/100" from it, and a reviewer could file a disposition against a
+ * screen showing no evidence whatsoever — a signed-off hiring decision based on
+ * nothing. A damaged row is an incident for us to fix, not a page to render.
+ *
+ * `overallScore` is the probe because it is the one field every result shape
+ * has carried, and null is a legitimate value for it (see SCORING_UNAVAILABLE).
+ */
+function readAssessmentResult(assessment: { id: string; resultJson: string }): AssessmentResult {
+  const parsed = parseJson<unknown>(assessment.resultJson, null);
+  const score = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as { overallScore?: unknown }).overallScore
+    : undefined;
+  if (!(score === null || typeof score === 'number' && Number.isFinite(score))) {
+    logger.error({ assessmentId: assessment.id }, 'Stored assessment result is unreadable; refusing to serve it');
+    throw new HttpError(500, 'This assessment could not be read.');
+  }
+  return parsed as AssessmentResult;
+}
+
 // ---------------------------------------------------------------------------
 // Shadow mode (see services/shadowMode.ts and docs/VALIDATION.md)
 //
@@ -57,16 +81,31 @@ assessmentsRouter.get('/:id/blind', requireCapability('assessment:review'), asyn
   res.json(view);
 }));
 
+/**
+ * Ceilings on the free text and the arrays these routes accept.
+ *
+ * Everything posted here is stored, re-read on every later request, and
+ * rendered into the compliance record a regulator reads. A type check alone let
+ * an authenticated caller file a hundred-thousand-character reason or ten
+ * thousand competency overrides. 20k characters is far above any real reviewer
+ * note, and no scorecard carries 40 competencies.
+ */
+const MAX_TEXT_CHARS = 20_000;
+const MAX_COMPETENCY_ENTRIES = 40;
+
+// .strict() throughout: these body shapes are closed, and a typo'd field name
+// must fail loudly rather than be dropped. A reviewer whose "commments" went
+// nowhere still believes they filed them.
 const blindVerdictSchema = z.object({
   disposition: z.enum(DISPOSITIONS),
-  reason: z.string().min(3),
-  comments: z.string().optional(),
+  reason: z.string().min(3).max(MAX_TEXT_CHARS),
+  comments: z.string().max(MAX_TEXT_CHARS).optional(),
   competencyLevels: z.array(z.object({
-    competencyId: z.string().min(1),
+    competencyId: z.string().min(1).max(200),
     level: z.number().int().min(1).max(5),
-    reason: z.string().optional(),
-  })).default([]),
-});
+    reason: z.string().max(MAX_TEXT_CHARS).optional(),
+  }).strict()).max(MAX_COMPETENCY_ENTRIES).default([]),
+}).strict();
 
 assessmentsRouter.post('/:id/blind-verdict', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const body = blindVerdictSchema.parse(req.body);
@@ -95,15 +134,19 @@ assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asy
   });
   res.json({
     id: a.id,
-    result: parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult),
+    result: readAssessmentResult(a),
     note: 'Advisory only. Agreement between this output and blind human review has not been established — '
       + 'see GET /api/assessments/shadow-metrics and docs/VALIDATION.md.',
   });
 }));
 
 
-const feedbackTextSchema = z.object({ draftText: z.string().min(10) });
-const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10) });
+// Capped as well as floored. `approvedText` is emailed verbatim to the
+// candidate, so an unbounded field is an unbounded message going out over our
+// domain with our branding on it — and 20k characters is already far more than
+// any real piece of interview feedback.
+const feedbackTextSchema = z.object({ draftText: z.string().min(10).max(MAX_TEXT_CHARS) }).strict();
+const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10).max(MAX_TEXT_CHARS) }).strict();
 
 function presentFeedback(feedback: {
   id: string;
@@ -305,7 +348,7 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     sessionId: a.sessionId,
     candidate: { id: a.session.candidateId, name: a.session.candidate.fullName },
     role: { id: a.session.roleId, title: a.session.role.title },
-    result: parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult),
+    result: readAssessmentResult(a),
     reviews: reviews.map((r) => ({ id: r.id, status: r.status, disposition: r.disposition, reason: r.reason, overrides: parseJson(r.overridesJson, []), completedAt: r.completedAt })),
   });
 }));
@@ -317,7 +360,7 @@ assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), async
   await assertUnblindedReadAllowed({
     assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
   });
-  const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
+  const result = readAssessmentResult(a);
   const md = renderReportMarkdown({ candidateName: a.session.candidate.fullName, roleTitle: a.session.role.title, assessment: result });
   if (req.query.format === 'json') return res.json({ report: md, result });
   res.type('text/markdown').send(md);
@@ -336,7 +379,9 @@ assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), async
  * a team that bypasses habitually is visible rather than assumed compliant.
  */
 assessmentsRouter.post('/:id/skip-blind-review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
-  const { reason } = z.object({ reason: z.string().min(10, 'Give a real reason (at least 10 characters).') }).parse(req.body);
+  const { reason } = z.object({
+    reason: z.string().min(10, 'Give a real reason (at least 10 characters).').max(MAX_TEXT_CHARS),
+  }).strict().parse(req.body);
   const a = await getAssessment(req.auth!, req.params.id);
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
@@ -349,10 +394,18 @@ assessmentsRouter.post('/:id/skip-blind-review', requireCapability('assessment:r
 // Human review / override (FR-033)
 const reviewSchema = z.object({
   disposition: z.enum(['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS']),
-  reason: z.string().min(3),
-  comments: z.string().optional(),
-  overrides: z.array(z.object({ competencyId: z.string(), from: z.any(), to: z.any(), reason: z.string() })).default([]),
-});
+  reason: z.string().min(3).max(MAX_TEXT_CHARS),
+  comments: z.string().max(MAX_TEXT_CHARS).optional(),
+  // `from`/`to` stay open because an override may restate a level, a null, or a
+  // future scale — but `unknown` rather than `any`, so nothing downstream can
+  // treat them as a known shape without narrowing first.
+  overrides: z.array(z.object({
+    competencyId: z.string().min(1).max(200),
+    from: z.unknown(),
+    to: z.unknown(),
+    reason: z.string().max(MAX_TEXT_CHARS),
+  }).strict()).max(MAX_COMPETENCY_ENTRIES).default([]),
+}).strict();
 assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const body = reviewSchema.parse(req.body);
@@ -392,10 +445,28 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
 }));
 
 // Export to ATS (FR-040)
+//
+// The id is spliced into the ATS URL (providers/ats/index.ts), so it is
+// validated here rather than cast. A bare cast let a caller aim the push at a
+// different endpoint of the customer's own ATS by shaping the id like a path.
+// Opaque vendor identifiers are alphanumeric with dashes or underscores; there
+// is no legitimate one containing a slash, a dot or a query string.
+const exportSchema = z.object({
+  externalCandidateId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+}).strict();
+
 assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
+  const body = exportSchema.parse(req.body ?? {});
   const a = await getAssessment(req.auth!, req.params.id);
-  const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
-  const externalId = (req.body?.externalCandidateId as string) || a.session.candidateId;
+  const result = readAssessmentResult(a);
+  // An assessment with no score must not reach the system of record. The ATS
+  // has no way to render "unavailable": it stores whatever number arrives, and
+  // a 0 born of a grading outage becomes a permanent hiring signal that nobody
+  // can trace back to our vendor being down.
+  if (result.overallScore === null) {
+    throw new HttpError(409, 'This assessment could not be scored, so there is nothing to export. It needs a human assessment first.');
+  }
+  const externalId = body.externalCandidateId ?? a.session.candidateId;
   const out = await getAts().pushAssessment(externalId, {
     candidate: a.session.candidate.fullName, role: a.session.role.title,
     recommendation: result.recommendation, confidence: result.confidence, overallScore: result.overallScore,

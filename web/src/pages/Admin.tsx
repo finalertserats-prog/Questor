@@ -5,6 +5,7 @@ import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
+import type { Tenant } from '../auth';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
 interface Providers {
@@ -58,27 +59,35 @@ export function Admin() {
   // — blanked the connector table, the executions and the webhooks with it, and
   // the page never said which of them had actually failed.
   useEffect(() => {
-    const note = (panel: string) => (err: unknown) =>
+    let cancelled = false;
+    const note = (panel: string) => (err: unknown) => {
+      if (cancelled) return;
       setPanelErrors((prev) => ({ ...prev, [panel]: err instanceof Error ? err.message : 'Could not load.' }));
+    };
+    const set = <T,>(apply: (value: T) => void) => (value: T) => { if (!cancelled) apply(value); };
 
     void Promise.allSettled([
-      api.get<Providers>('/admin/providers').then(setProviders, note('connectors')),
-      api.get<Analytics>('/admin/analytics').then(setAnalytics, note('analytics')),
+      api.get<Providers>('/admin/providers').then(set(setProviders), note('connectors')),
+      api.get<Analytics>('/admin/analytics').then(set(setAnalytics), note('analytics')),
       api.get<{ executions: ModelExecution[] }>('/admin/model-executions')
-        .then((ex) => setExecutions(ex.executions ?? []), note('executions')),
+        .then(set((ex: { executions: ModelExecution[] }) => setExecutions(ex.executions ?? [])), note('executions')),
       api.get<{ webhooks: Webhook[] }>('/admin/webhooks')
-        .then((wh) => setWebhooks(wh.webhooks ?? []), note('webhooks')),
-    ]).finally(() => setLoading(false));
+        .then(set((wh: { webhooks: Webhook[] }) => setWebhooks(wh.webhooks ?? [])), note('webhooks')),
+    ]).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    api.get<{ tenant: { name?: string; slug?: string | null } }>('/auth/me')
+    let cancelled = false;
+    api.get<{ tenant: Tenant | null }>('/auth/me')
       .then((d) => {
+        if (cancelled) return;
         setOrgName(d.tenant?.name ?? '');
         setSlug(d.tenant?.slug ?? '');
         setSavedSlug(d.tenant?.slug ?? null);
       })
       .catch(() => undefined);
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) return <div className="muted">Loading…</div>;

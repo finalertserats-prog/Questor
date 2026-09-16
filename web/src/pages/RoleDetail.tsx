@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, Banner } from '../components/ui';
@@ -49,19 +49,32 @@ export function RoleDetail() {
   // profile so that "" never reaches the scorecard as 0%.
   const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
 
+  // `cancelled` so a response for a role the person has already left cannot
+  // overwrite what they are looking at now.
+  const cancelledRef = useRef(false);
+
   const load = () => {
     setLoading(true);
     api.get<RoleResp>(`/roles/${id}`)
       .then((d) => {
+        if (cancelledRef.current) return;
         const next = d.scorecards?.[0]?.profile ?? null;
         setData(d);
         setProfile(next);
         setSaved(JSON.stringify(next));
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not load this role.'))
-      .finally(() => setLoading(false));
+      .catch((err: unknown) => {
+        if (!cancelledRef.current) setError(err instanceof Error ? err.message : 'Could not load this role.');
+      })
+      .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
-  useEffect(load, [id]);
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    load();
+    return () => { cancelledRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const dirty = profile !== null && JSON.stringify(profile) !== saved;
 

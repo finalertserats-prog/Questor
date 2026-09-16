@@ -223,13 +223,20 @@ export default function BlindReview() {
   const [error, setError] = useState('');
   const [showTranscript, setShowTranscript] = useState(true);
 
+  // `cancelled` so evidence for an assessment the reviewer has already left
+  // cannot appear over the one they are reading now.
   useEffect(() => {
+    let cancelled = false;
     api.get<BlindView>(`/assessments/${id}/blind`)
       .then((v) => {
+        if (cancelled) return;
         setView(v);
         setLevels(Object.fromEntries(v.competencies.map((c) => [c.id, null])));
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load the evidence.');
+      });
+    return () => { cancelled = true; };
   }, [id]);
 
   const scoredCount = useMemo(

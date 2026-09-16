@@ -72,9 +72,17 @@ export async function evaluate(opts: {
   // Overall score: weighted mean over competencies WITH evidence (NEE excluded).
   const withEvidence = competencyScores.filter((s) => !s.notEnoughEvidence && s.level !== null);
   const totalWeight = withEvidence.reduce((a, s) => a + weightOf(role, s.id), 0) || 1;
-  const overallScore = Math.round(
+  const weightedScore = Math.round(
     withEvidence.reduce((a, s) => a + (s.level! / 5) * 100 * weightOf(role, s.id), 0) / totalWeight,
   );
+
+  const gradingFailures = competencyScores.filter((s) => s.gradingUnavailable);
+  // Nothing was graded AND grading is why. The mean above is 0/1 = 0 in that
+  // case, which is not a low score — it is the absence of one, and it was
+  // reaching reports and the ATS as a real result. Reported as null instead so
+  // every reader has to notice there is no number.
+  const scoringUnavailable = withEvidence.length === 0 && gradingFailures.length > 0;
+  const overallScore: number | null = scoringUnavailable ? null : weightedScore;
   // Measured over what the interview set out to cover, so an unasked competency
   // cannot depress the candidate's coverage. The cost of a short interview is
   // carried by `confidence` and stated in `limitations` instead.
@@ -92,10 +100,12 @@ export async function evaluate(opts: {
     (s) => mustPass.includes(s.id) && s.notEnoughEvidence && !notAsked.has(s.name),
   );
 
-  const recommendation = decideRecommendation({
-    overallScore, evidenceCoverage, passThreshold: role.scoringRules.passThreshold,
-    failedMustPass: failedMustPass.length, mustPassNEE: mustPassNEE.length,
-  });
+  const recommendation: Recommendation = scoringUnavailable
+    ? 'SCORING_UNAVAILABLE'
+    : decideRecommendation({
+        overallScore: weightedScore, evidenceCoverage, passThreshold: role.scoringRules.passThreshold,
+        failedMustPass: failedMustPass.length, mustPassNEE: mustPassNEE.length,
+      });
 
   const strengths = competencyScores.filter((s) => (s.level ?? 0) >= 4).map((s) => `${s.name}: demonstrated at level ${s.level}/5 with supporting evidence.`);
   const concerns = [
@@ -111,8 +121,13 @@ export async function evaluate(opts: {
   // NOTE: coverage counts competencies with *sufficient, relevant* evidence.
   // A competency the candidate answered can still fall outside it if the answer
   // did not actually demonstrate that competency.
-  const gradingFailures = competencyScores.filter((s) => s.gradingUnavailable);
   const limitations = [
+    // First, because it invalidates everything under it.
+    ...(scoringUnavailable
+      ? ['Automated scoring was unavailable for this interview: no competency could be graded, so there is no '
+        + 'overall score and no recommendation. This is a system failure, not a finding about the candidate — '
+        + 'the transcript needs a human assessment.']
+      : []),
     ...(evidenceCoverage < 0.6 ? [`Sufficient-evidence coverage was ${Math.round(evidenceCoverage * 100)}% — some competencies lack evidence that demonstrates them.`] : []),
     ...mustPassNEE.map((s) => `Must-pass competency ${s.name} lacks sufficient evidence; recommendation is capped pending human review.`),
     ...(gradingFailures.length ? [`${gradingFailures.length} competenc${gradingFailures.length === 1 ? 'y' : 'ies'} could not be graded automatically and were excluded from the score; this is a system limitation, not a finding about the candidate.`] : []),
@@ -332,9 +347,23 @@ function detectContradictions(turns: TurnRecord[]): string[] {
   return out.slice(0, 5);
 }
 
+/** Human-readable recommendation label. Exhaustive, so a new value cannot be silently dropped. */
+export function recommendationLabel(recommendation: Recommendation): string {
+  switch (recommendation) {
+    case 'PROCEED': return 'Proceed';
+    case 'CONSIDER': return 'Consider';
+    case 'DO_NOT_PROGRESS': return 'Do Not Progress';
+    case 'SCORING_UNAVAILABLE': return 'Scoring Unavailable';
+    default: {
+      const unhandled: never = recommendation;
+      return unhandled;
+    }
+  }
+}
+
 async function buildSummary(o: {
   role: RoleSuccessProfile; recommendation: Recommendation; confidence: number; evidenceCoverage: number;
-  overallScore: number; competencyScores: CompetencyScore[]; strengths: string[]; concerns: string[]; sessionId?: string;
+  overallScore: number | null; competencyScores: CompetencyScore[]; strengths: string[]; concerns: string[]; sessionId?: string;
 }): Promise<string> {
   const llm = await generateJson<{ summary: string }>({
     fn: 'report_writer',
@@ -357,12 +386,14 @@ async function buildSummary(o: {
   if (llm) return llm.summary;
 
   // Deterministic summary.
-  const rec = o.recommendation === 'PROCEED' ? 'Proceed' : o.recommendation === 'CONSIDER' ? 'Consider' : 'Do Not Progress';
+  const rec = recommendationLabel(o.recommendation);
   const topStrength = o.strengths[0]?.split(':')[0];
   const topConcern = o.concerns[0];
   return (
     `Recommendation: ${rec} (confidence ${Math.round(o.confidence * 100)}%; evidence coverage ${Math.round(o.evidenceCoverage * 100)}%). ` +
-    `Overall competency score ${o.overallScore}/100. ` +
+    (o.overallScore === null
+      ? 'No overall competency score was produced: automated grading was unavailable for every competency. '
+      : `Overall competency score ${o.overallScore}/100. `) +
     (topStrength ? `The candidate showed particular strength in ${topStrength.toLowerCase()}. ` : '') +
     (topConcern ? `Area for human-panel focus: ${topConcern} ` : '') +
     `This assessment reflects evidence gathered in a first-round screen and is intended to support, not replace, human judgment.`

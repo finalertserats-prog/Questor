@@ -69,14 +69,21 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
 
+  // `cancelled` so a slow metrics response cannot set state on a page the
+  // person has already left.
   useEffect(() => {
+    let cancelled = false;
     api.get<Metrics>('/dashboard/metrics?weeks=12&recent=8')
-      .then(setMetrics)
-      .catch((err: unknown) => setError({
-        status: err instanceof ApiError ? err.status : 0,
-        message: err instanceof Error ? err.message : 'Could not load dashboard metrics.',
-      }))
-      .finally(() => setLoading(false));
+      .then((d) => { if (!cancelled) setMetrics(d); })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError({
+          status: err instanceof ApiError ? err.status : 0,
+          message: err instanceof Error ? err.message : 'Could not load dashboard metrics.',
+        });
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const k = metrics?.kpis;

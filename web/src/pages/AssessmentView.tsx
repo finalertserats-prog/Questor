@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
@@ -160,12 +160,17 @@ export function AssessmentView() {
   const [blocked, setBlocked] = useState(false);
   const [skipReason, setSkipReason] = useState('');
 
+  // `cancelled` so a response for an assessment the reviewer has already left
+  // cannot overwrite the one in front of them.
+  const cancelledRef = useRef(false);
+
   // Returns its promise so callers can wait for fresh data before re-enabling
   // the button that asked for it.
   const load = () =>
     api.get<AssessmentResp>(`/assessments/${id}`)
-      .then((d) => { setData(d); setBlocked(false); })
+      .then((d) => { if (cancelledRef.current) return; setData(d); setBlocked(false); })
       .catch((err: unknown) => {
+        if (cancelledRef.current) return;
         // The server withholds this page from a reviewer who has not yet
         // recorded their own verdict. That is a workflow state, not a failure,
         // so it gets a route forward rather than a red error box. Read from the
@@ -174,8 +179,15 @@ export function AssessmentView() {
         if (err instanceof ApiError && err.status === 409) setBlocked(true);
         else setError(err instanceof Error ? err.message : 'Could not load this assessment.');
       })
-      .finally(() => setLoading(false));
-  useEffect(() => { setLoading(true); load(); }, [id]);
+      .finally(() => { if (!cancelledRef.current) setLoading(false); });
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    setLoading(true);
+    void load();
+    return () => { cancelledRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const skipBlind = async () => {
     if (skipReason.trim().length < 10) return;

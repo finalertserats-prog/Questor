@@ -40,11 +40,15 @@ export function InterviewsList() {
     return sessions.filter((s) => wanted.includes(s.state));
   }, [sessions, group]);
 
+  // `cancelled` so a response that lands after someone has navigated away does
+  // not set state on a page that is gone.
   useEffect(() => {
+    let cancelled = false;
     api.get<{ sessions: Session[] }>('/interviews')
-      .then((d) => setSessions(d.sessions ?? []))
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((d) => { if (!cancelled) setSessions(d.sessions ?? []); })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load interviews.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) return <PageSkeleton label="Loading interviews…" />;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { recBadge, stateBadge, Banner } from '../components/ui';
@@ -40,12 +40,25 @@ export function InterviewDetail() {
 
   // Returns its promise: an action that re-enables its button before the fresh
   // data lands invites a second press against the state it just changed.
+  // `cancelled` so a response for an interview the person has already left
+  // cannot overwrite the one they are looking at.
+  const cancelledRef = useRef(false);
+
   const load = () =>
     api.get<InterviewResp>(`/interviews/${id}`)
-      .then(setData)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not load this interview.'))
-      .finally(() => setLoading(false));
-  useEffect(() => { setLoading(true); load(); }, [id]);
+      .then((d) => { if (!cancelledRef.current) setData(d); })
+      .catch((err: unknown) => {
+        if (!cancelledRef.current) setError(err instanceof Error ? err.message : 'Could not load this interview.');
+      })
+      .finally(() => { if (!cancelledRef.current) setLoading(false); });
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    setLoading(true);
+    void load();
+    return () => { cancelledRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (loading) return <PageSkeleton label="Loading interview…" cards={3} />;
   if (error && !data) return <Banner kind="error">{error}</Banner>;

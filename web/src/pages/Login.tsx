@@ -97,7 +97,17 @@ export function Login() {
               <label htmlFor="email">Email</label>
               <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
               <label htmlFor="password">Password</label>
-              <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
+              {/* Creating an account is not signing in to one: "current-password"
+                  had password managers offering an existing password instead of
+                  generating a new one. */}
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+                required
+              />
               <button className="btn" style={{ width: '100%', marginTop: 18 }} disabled={busy}>
                 {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create organisation'}
               </button>

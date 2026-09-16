@@ -86,11 +86,15 @@ export function CandidatesList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // `cancelled` so a response that arrives after someone has navigated away
+  // does not set state on a page that is gone.
   useEffect(() => {
+    let cancelled = false;
     api.get<{ candidates: CandidateRow[] }>('/candidates')
-      .then((d) => setCandidates(d.candidates ?? []))
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((d) => { if (!cancelled) setCandidates(d.candidates ?? []); })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load candidates.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   // Client-side because the endpoint returns the caller's whole scoped pipeline

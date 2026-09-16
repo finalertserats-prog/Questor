@@ -140,7 +140,16 @@ export interface CompetencyScore {
   gradingUnavailable?: boolean;
 }
 
-export type Recommendation = 'PROCEED' | 'CONSIDER' | 'DO_NOT_PROGRESS';
+/**
+ * SCORING_UNAVAILABLE is not a verdict on the candidate.
+ *
+ * It says the instrument failed: every competency that was put to the grader
+ * came back ungraded, so there is no score and no recommendation to give. It
+ * exists as its own value because the alternative — falling through to the
+ * ordinary thresholds with a weighted mean over an empty set — produced
+ * "DO_NOT_PROGRESS, 0/100" out of a vendor outage.
+ */
+export type Recommendation = 'PROCEED' | 'CONSIDER' | 'DO_NOT_PROGRESS' | 'SCORING_UNAVAILABLE';
 
 export interface AssessmentResult {
   assessmentVersion: string;
@@ -148,7 +157,8 @@ export interface AssessmentResult {
   recommendation: Recommendation;
   confidence: number;
   evidenceCoverage: number;
-  overallScore: number;         // 0..100
+  /** 0..100, or null when nothing could be graded — never 0 as a stand-in. */
+  overallScore: number | null;
   competencies: CompetencyScore[];
   strengths: string[];
   concerns: string[];
