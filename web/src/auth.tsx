@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, setToken, getToken } from './api/client';
 
 export interface User {
@@ -43,10 +43,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const me = await api.get<{ tenant: any }>('/auth/me'); setTenant(me.tenant);
   };
   const logout = () => { setToken(null); setUser(null); setTenant(null); };
-  const markTourComplete = async () => {
+  // Stable, since the tour keeps it in an effect's dependencies.
+  const markTourComplete = useCallback(async () => {
     const d = await api.post<{ tourCompletedAt: string | null }>('/auth/tour/complete');
     setUser((current) => (current ? { ...current, tourCompletedAt: d.tourCompletedAt } : current));
-  };
+  }, []);
 
   return <Ctx.Provider value={{ user, tenant, loading, login, register, logout, markTourComplete }}>{children}</Ctx.Provider>;
 }

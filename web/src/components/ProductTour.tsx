@@ -101,12 +101,17 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
   // The automatic first run happens once per session even if recording it fails.
   const autoStartedRef = useRef(false);
   const handledRequestRef = useRef(0);
+  const returnFocusTimerRef = useRef<number | undefined>(undefined);
 
   const running = state.status === 'running';
   const step = running ? TOUR_STEPS[state.index] : null;
   const motion = tourMotion(reducedMotion);
 
+  // Any run counts as the session's first run: a tour taken from the menu
+  // must not be followed by the automatic one the moment it ends, while the
+  // server is still being told about it.
   const begin = useCallback(() => {
+    autoStartedRef.current = true;
     setState(restartTour(TOUR_STEPS, anchorPresent));
   }, []);
 
@@ -115,7 +120,6 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
   useEffect(() => {
     if (autoStartedRef.current || state.status !== 'idle') return;
     if (!shouldAutoStartTour(user, location.pathname)) return;
-    autoStartedRef.current = true;
     const active = document.activeElement;
     returnFocusRef.current = active instanceof HTMLElement && active !== document.body ? active : null;
     begin();
@@ -148,8 +152,11 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
   // focus trap below only guards against focus leaving afterwards.
   useEffect(() => {
     if (!step) return undefined;
-    cardRef.current?.focus();
-    const timer = window.setTimeout(() => cardRef.current?.focus(), FOCUS_SETTLE_MS);
+    // The card is fixed to the viewport; focusing it must not cut short the
+    // page's own scroll towards the element.
+    const focusCard = () => cardRef.current?.focus({ preventScroll: true });
+    focusCard();
+    const timer = window.setTimeout(focusCard, FOCUS_SETTLE_MS);
     return () => window.clearTimeout(timer);
   }, [step]);
 
@@ -243,9 +250,12 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
     const previous = returnFocusRef.current;
     const target = !isNarrow && previous?.isConnected ? previous : anchorElement(isNarrow ? 'nav-toggle' : 'profile-menu');
     returnFocusRef.current = null;
-    window.setTimeout(() => target?.focus(), FOCUS_SETTLE_MS);
+    window.clearTimeout(returnFocusTimerRef.current);
+    returnFocusTimerRef.current = window.setTimeout(() => target?.focus(), FOCUS_SETTLE_MS);
     setState(IDLE_TOUR);
   }, [state, user, markTourComplete, setDrawerOpen, isNarrow]);
+
+  useEffect(() => () => window.clearTimeout(returnFocusTimerRef.current), []);
 
   // Tab wraps within the card's controls, so it cannot reach the page behind.
   const onCardKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {

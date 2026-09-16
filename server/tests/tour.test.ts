@@ -13,10 +13,10 @@ const app = createApp();
 const PASS_ADMIN = 'tour-admin-correct-horse-battery';
 const PASS_MEMBER = 'tour-member-correct-horse-battery';
 const PASS_OTHER = 'tour-other-correct-horse-battery';
+const PASS_FRESH = 'tour-fresh-correct-horse-battery';
 
 let admin = '';
 let member = '';
-let memberId = '';
 let other = '';
 
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -30,7 +30,6 @@ beforeAll(async () => {
   const created = await request(app).post('/api/admin/users').set(bearer(admin))
     .send({ email: 'member@tour.local', password: PASS_MEMBER, name: 'Tour Member', role: 'recruiter' });
   expect(created.status).toBe(201);
-  memberId = created.body.user.id;
   const login = await request(app).post('/api/auth/login').send({ email: 'member@tour.local', password: PASS_MEMBER });
   member = login.body.token;
 
@@ -79,8 +78,19 @@ describe('first-run tour flag', () => {
   });
 
   it('only ever marks the caller, whatever user id the body names', async () => {
-    const res = await request(app).post('/api/auth/tour/complete').set(bearer(admin)).send({ userId: memberId, id: memberId });
+    // A colleague whose tour has not run: if the body were honoured, this is
+    // the flag that would be set.
+    const created = await request(app).post('/api/admin/users').set(bearer(admin))
+      .send({ email: 'fresh@tour.local', password: PASS_FRESH, name: 'Fresh Member', role: 'recruiter' });
+    expect(created.status).toBe(201);
+    const freshId: string = created.body.user.id;
+    const res = await request(app).post('/api/auth/tour/complete').set(bearer(admin)).send({ userId: freshId, id: freshId });
     expect(res.status).toBe(200);
+    const fresh = await request(app).post('/api/auth/login').send({ email: 'fresh@tour.local', password: PASS_FRESH });
+    expect(fresh.body.user.tourCompletedAt).toBeNull();
+  });
+
+  it('marks the caller when the body names someone else', async () => {
     const me = await request(app).get('/api/auth/me').set(bearer(admin));
     expect(typeof me.body.user.tourCompletedAt).toBe('string');
   });

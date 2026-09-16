@@ -87,9 +87,10 @@ authRouter.get('/me', authenticate, asyncHandler(async (req, res) => {
 // silence another person's first-run tour. Idempotent: the first completion is
 // the one that is kept.
 authRouter.post('/tour/complete', authenticate, asyncHandler(async (req, res) => {
+  // Conditional update rather than read-then-write, so two simultaneous
+  // completions still leave exactly one timestamp.
+  await prisma.user.updateMany({ where: { id: req.auth!.userId, tourCompletedAt: null }, data: { tourCompletedAt: new Date() } });
   const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: { tourCompletedAt: true } });
   if (!user) throw new HttpError(404, 'User not found');
-  const completedAt = user.tourCompletedAt
-    ?? (await prisma.user.update({ where: { id: req.auth!.userId }, data: { tourCompletedAt: new Date() }, select: { tourCompletedAt: true } })).tourCompletedAt;
-  res.json({ tourCompletedAt: completedAt?.toISOString() ?? null });
+  res.json({ tourCompletedAt: user.tourCompletedAt?.toISOString() ?? null });
 }));
