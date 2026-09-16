@@ -90,15 +90,6 @@
   margin: 0 0 5px;
 }
 
-.about-build {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: var(--hair) solid var(--rule);
-}
-
 /* --------------------------------------------------------------------------
    The workflow, shown as a sequence rather than a list
    -------------------------------------------------------------------------- */

@@ -13,11 +13,16 @@
 
 .landing {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 390px);
-  gap: 48px;
+  /* Both columns bounded, and the pair bounded again by max-width: without it
+     the flexible column swallows a wide monitor and pushes the whole
+     composition into the right-hand third, which is exactly how it looked. */
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 390px);
+  gap: 56px;
   align-items: center;
   justify-content: center;
   min-height: 100vh;
+  max-width: 1140px;
+  margin: 0 auto;
   padding: 32px 30px;
   /* The image sits under a wash in the product's own colours, so the page still
      reads as Questor before it loads and if it never does. */
@@ -46,8 +51,7 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  max-width: 560px;
-  margin-left: auto;
+  max-width: 580px;
 }
 
 .landing-logo {

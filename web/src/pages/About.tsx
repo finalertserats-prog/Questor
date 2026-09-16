@@ -1,12 +1,7 @@
-import { useEffect, useState } from 'react';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { SHOWCASE_FEATURES, SHOWCASE_STEPS } from '../components/landingShowcase';
-
-interface HealthPayload {
-  commit?: unknown;
-}
 
 /** Who each person is and what Questor actually gives them. */
 const AUDIENCE: ReadonlyArray<{ key: string; icon: IconName; name: string; detail: string }> = [
@@ -58,27 +53,6 @@ const LIMITS: readonly string[] = [
 ];
 
 export function About() {
-  const [version, setVersion] = useState('Loading…');
-
-  useEffect(() => {
-    let active = true;
-    fetch('/api/health')
-      .then((res) => {
-        if (!res.ok) throw new Error('Health check failed');
-        return res.json() as Promise<HealthPayload>;
-      })
-      .then((data) => {
-        if (!active) return;
-        setVersion(typeof data.commit === 'string' && data.commit.length > 0 ? data.commit.slice(0, 7) : 'Version unavailable');
-      })
-      .catch(() => {
-        if (active) setVersion('Version unavailable');
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
   return (
     <div>
       <PageHeader icon="about" title="About Questor" />
@@ -147,11 +121,6 @@ export function About() {
             {LIMITS.map((limit) => <li key={limit}>{limit}</li>)}
           </ul>
         </section>
-
-        <div className="about-build">
-          <div className="small muted card-title"><Icon name="build" size={14} />Running build</div>
-          <code>{version}</code>
-        </div>
       </div>
     </div>
   );
