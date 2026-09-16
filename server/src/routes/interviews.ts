@@ -20,6 +20,7 @@ import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
+import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 
 export const interviewsRouter = Router();
@@ -28,7 +29,6 @@ interviewsRouter.use(authenticate);
 /** The AI interviewer's name. Questor is the product; Schranders conducts the
  *  interview. The candidate should meet the same name in the invitation that
  *  greets them in the room. */
-const DEFAULT_PERSONA_NAME = 'Schranders';
 
 /** The invitation a candidate receives. Kept in one place so the plain-text and
  *  HTML bodies cannot drift apart — a candidate whose client strips HTML must
@@ -559,7 +559,11 @@ interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncH
     });
   }
 
-  res.json({ session: { id: session.id, state: session.state }, turns });
+  res.json({
+    session: { id: session.id, state: session.state },
+    persona: { name: parseJson<{ name?: unknown }>(session.personaJson, {}).name ?? DEFAULT_PERSONA_NAME },
+    turns,
+  });
 }));
 
 // The live-state set and the observer-consent gate live in

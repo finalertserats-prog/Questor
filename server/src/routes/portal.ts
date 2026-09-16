@@ -21,6 +21,7 @@ import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
 import { hasObserverNotice } from '../services/observerPolicy.js';
+import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
 
@@ -46,6 +47,8 @@ const MAX_TRANSCRIBE_BYTES = 10 * 1024 * 1024;
 // interview has nothing to transcribe, and paying to transcribe audio for one
 // would be spending on a session no reviewer will ever read.
 const TRANSCRIBABLE_STATES = ['ASSESSING', 'CANDIDATE_QUESTIONS'];
+/** Shorter than this and a person cannot act on it; the candidate is told so. */
+export const ACCOMMODATION_MIN_LENGTH = 10;
 const INTEGRITY_EVENT_TYPES = ['TAB_BLUR', 'FOCUS_LOST', 'PASTE_DETECTED', 'MULTI_TAB', 'DEVTOOLS_OPENED'] as const;
 const INTEGRITY_EVENT_STATES = ['CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED'];
 
@@ -81,7 +84,13 @@ function receiveAudio(req: Request, res: Response, next: NextFunction): void {
  * must always be able to see that their interview is complete, and locking them
  * out of that view reads as the link being broken.
  */
+/** The shape nanoid(24) produces. Anything else never reaches the database. */
+const INVITATION_TOKEN_SHAPE = /^[A-Za-z0-9_-]{16,128}$/;
+
 async function loadByToken(token: string, opts?: { requireUnconsumed?: boolean }) {
+  // Checked before the lookup, as the feedback and signup tokens are: an
+  // arbitrary string should be refused for its shape, not by a table scan.
+  if (!INVITATION_TOKEN_SHAPE.test(token)) throw new HttpError(404, 'Invitation not found or expired');
   const inv = await prisma.invitation.findUnique({ where: { token }, include: { session: { include: { candidate: true, role: true } } } });
   if (!inv) throw new HttpError(404, 'Invitation not found or expired');
   if (inv.expiresAt && inv.expiresAt < new Date()) throw new HttpError(410, 'This invitation has expired');
@@ -184,6 +193,12 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     languageSupport: describeLanguageSupport(s.language),
     aiDisclosure: disclosure.text,
     recordingRequested: !!consent.recordingRequested,
+    // Whether the candidate agreed to have their voice captured. When false the
+    // room must not open the microphone; answers are typed instead.
+    recordingConsented: s.recordingConsent === true,
+    // The interviewer's name, as HR set it for this session. The pages used
+    // to hardcode a default that stopped matching what the AI said aloud.
+    persona: { name: parseJson<{ name?: unknown }>(s.personaJson, {}).name ?? DEFAULT_PERSONA_NAME },
     privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
     accommodationsEnabled: true,
     proctoringEnabled,
@@ -258,7 +273,15 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   // A real request, not a stray keystroke. A candidate who typed one character
   // was previously converted to a handoff with no way back — a one-way door
   // triggered by an accident.
-  if (accommodation && accommodation.length >= 10) {
+  //
+  // But a short request must not be dropped on the floor either: for a while
+  // "more time" (nine characters) recorded ordinary consent and moved the
+  // candidate into the audio check, and the accommodation they asked for
+  // existed nowhere. Too short to act on is an answer, not a silence.
+  if (accommodation && accommodation.length < ACCOMMODATION_MIN_LENGTH) {
+    throw new HttpError(400, `Tell us a little more about what you need (at least ${ACCOMMODATION_MIN_LENGTH} characters), or clear the box to continue without a request.`);
+  }
+  if (accommodation && accommodation.length >= ACCOMMODATION_MIN_LENGTH) {
     // PERSIST WHAT THEY ASKED FOR. The previous version set the state and logged
     // that "an accommodation was requested" while discarding the request itself,
     // so the human meant to follow up had nothing to follow up on — the one
@@ -528,6 +551,13 @@ portalRouter.post('/:token/transcribe', receiveAudio, asyncHandler(async (req, r
   // control untested in any environment without a key.
   if (!TRANSCRIBABLE_STATES.includes(inv.session.state)) {
     throw new HttpError(409, 'This interview is not currently accepting answers.');
+  }
+  // The consent box was recorded but never enforced: a candidate who left it
+  // unticked had their voice sent to the transcription vendor regardless.
+  // Declining voice capture means typing the answers, and this is the seam
+  // where that has to hold whatever the page did.
+  if (inv.session.recordingConsent !== true) {
+    throw new HttpError(409, 'Voice capture was not agreed to for this interview. Please type your answer instead.');
   }
 
   const file = req.file;

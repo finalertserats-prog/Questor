@@ -185,3 +185,18 @@ describe('POST /api/portal/:token/transcribe — with a server provider configur
     expect(res.status).toBe(400);
   });
 });
+
+describe('voice capture the candidate did not agree to', () => {
+  it('refuses to transcribe when recording consent was not given', async () => {
+    sttStub.ready = true;
+    sttStub.text = 'should never be used';
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: 'ASSESSING', recordingConsent: false } });
+    try {
+      const res = await postAudio(token);
+
+      expect(res.status).toBe(409);
+    } finally {
+      await prisma.interviewSession.update({ where: { id: sessionId }, data: { recordingConsent: true } });
+    }
+  });
+});
