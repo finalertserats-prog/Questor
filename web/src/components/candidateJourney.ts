@@ -21,6 +21,7 @@
 
 import type { IconName } from './Icon';
 import { stageStates, type PipelineStageView, type StageKind, type StageState } from './pipelineView';
+import { roundScore } from './scoreFormat';
 
 // ---------------------------------------------------------------------------
 // What the server gives us (narrowed to the fields the journey reads)
@@ -456,7 +457,9 @@ function buildOnboard(input: JourneyInput, state: ColumnState): OnboardColumn {
     },
     fit: {
       scored: fit !== null,
-      overall: fit ? Math.round(fit.overall) : null,
+      // Null, not NaN: a fit result stored before `overall` existed still has
+      // scored = true, and the board must not print a rounded undefined.
+      overall: roundScore(fit?.overall),
       confidence: fit ? fit.confidence : null,
       missing: fit?.missing ?? [],
       probes: fit?.probes ?? [],

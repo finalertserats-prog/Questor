@@ -6,6 +6,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { hasScore } from '../components/scoreFormat';
 
 type Category = 'technical' | 'domain' | 'behavioral' | 'situational' | 'communication';
 type Classification = 'essential' | 'preferred' | 'trainable' | 'non_scoring';
@@ -139,7 +140,10 @@ export function RoleDetail() {
 
       <div className="card">
         <div className="muted small">
-          {role.level} · {role.location} · {role.employmentType} · scorecard v{scorecard?.version}
+          {/* No scorecard yet means no version to name; "scorecard v" on its
+              own reads as a truncated one. */}
+          {role.level} · {role.location} · {role.employmentType}
+          {scorecard && hasScore(scorecard.version) ? ` · scorecard v${scorecard.version}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>
       </div>

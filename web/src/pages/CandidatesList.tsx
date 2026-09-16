@@ -6,6 +6,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { formatScoreOutOf100, hasScore } from '../components/scoreFormat';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
@@ -189,7 +190,10 @@ export function CandidatesList() {
                       ? <Link to={`/roles/${c.roleId}`}>{c.roleTitle}</Link>
                       : <span className="muted">—</span>}
                   </td>
-                  <td>{c.fit ? `${Math.round(c.fit.overall)}/100` : <span className="muted">—</span>}</td>
+                  {/* A fit row stored before `overall` existed still has a fit
+                      object, so "c.fit ?" is not the question — "is there a
+                      number?" is. */}
+                  <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>{formatScoreOutOf100(c.fit?.overall)}</td>
                   <td>{interviewCell(c.latestInterview)}</td>
                   <td className="muted small">{new Date(c.createdAt).toLocaleDateString()}</td>
                   <td>

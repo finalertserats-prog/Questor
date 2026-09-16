@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
+import { formatPercent } from '../components/scoreFormat';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
 interface Providers {
@@ -13,7 +14,8 @@ interface Analytics {
   stateCounts: Record<string, number>;
   recommendations: Record<string, number>;
   reviews: number;
-  quality: { avgEvidenceCoverage: number };
+  // Null for a tenant with nothing to average yet, which is not the same as 0.
+  quality: { avgEvidenceCoverage: number | null };
 }
 interface ModelExecution { id: string; provider: string; model: string; function: string; latencyMs: number; inputTokens: number; outputTokens: number; createdAt: string; }
 interface Webhook { id: string; url: string; events: string[]; active: boolean; }
@@ -208,7 +210,10 @@ export function Admin() {
           </div>
           <div>
             <h3>Quality</h3>
-            <Stat label="Avg evidence coverage" value={`${Math.round((analytics?.quality.avgEvidenceCoverage ?? 0) * 100)}%`} />
+            {/* "0%" is a finding — no answer had evidence behind it. While the
+                figure is still loading, or when the server has none to give for
+                an empty tenant, saying it states something the data does not. */}
+            <Stat label="Avg evidence coverage" value={formatPercent(analytics?.quality.avgEvidenceCoverage)} />
             <div className="muted small" style={{ marginTop: 8 }}>Human reviews: {analytics?.reviews ?? 0}</div>
           </div>
         </div>

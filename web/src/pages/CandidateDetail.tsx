@@ -10,6 +10,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -589,9 +590,9 @@ function CandidateProfileTab({
                         <h3 style={{ margin: 0 }}>{alt.title}</h3>
                         {alt.level && <div className="muted small">{alt.level}</div>}
                       </div>
-                      <b>{Math.round(alt.score)}/100</b>
+                      <b>{formatScoreOutOf100(alt.score)}</b>
                     </div>
-                    <Meter value={alt.score} />
+                    <Meter value={roundScore(alt.score) ?? 0} />
                     <p className="small">{alt.why}</p>
                   </div>
                 ))}
@@ -613,11 +614,11 @@ function FitScoreBlock({ fit }: { fit: Fit }) {
         <div>
           <div className="row spread">
             <span className="muted small">Overall fit</span>
-            <b>{Math.round(fit.overall)}/100</b>
+            <b>{formatScoreOutOf100(fit.overall)}</b>
           </div>
-          <Meter value={fit.overall} />
+          <Meter value={roundScore(fit.overall) ?? 0} />
         </div>
-        <Stat label="Confidence" value={`${Math.round(fit.confidence * 100)}%`} />
+        <Stat label="Confidence" value={formatPercent(fit.confidence)} />
       </div>
 
       <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Fit score components and reasons">
