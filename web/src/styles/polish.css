@@ -91,10 +91,22 @@
 }
 
 .card {
-  transition: border-color 0.12s ease;
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-base) var(--ease-standard);
 }
 .card:focus-within {
   border-color: var(--rule-strong);
+  box-shadow: var(--shadow-raised);
+}
+
+/* The micro-label inside an empty state and an observe turn follows the same
+   softened tracking as every other one, so the signature stays consistent. */
+.observe-speaker {
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  line-height: var(--type-micro-line);
 }
 
 td a:not(.btn) {

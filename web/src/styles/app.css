@@ -21,14 +21,20 @@
 
 :root {
   /* --- surfaces: a desk, and sheets laid on it ------------------------- */
-  --desk: #f4f4f7;
+  --desk: #f5f4f8;
   --sheet: #ffffff;
-  --sheet-sunk: #edecf1;
+  --sheet-sunk: #eeedf3;
   --sheet-raised: #ffffff;
 
   /* --- rules: the drawing is made of hairlines ------------------------- */
-  --rule: #dedde5;
-  --rule-strong: #c2c1ce;
+  --rule: #dcdbe5;
+  --rule-strong: #bebcca;
+  /* A hairline that is the ONLY thing marking where a control begins has to be
+     seen, not merely felt — WCAG 1.4.11 wants 3:1 for that boundary, and
+     --rule-strong (1.87:1 on the sheet) has never carried it. Fields and
+     secondary buttons draw their edge from this instead; --rule-strong stays
+     light and stays decorative. */
+  --field-edge: #86849a;
 
   /* --- ink: neutrals biased toward the accent, never a dead grey ------- */
   --ink: #1a1a24;
@@ -37,41 +43,123 @@
      neutral badges), not only on white. */
   --ink-3: #656577;
 
-  /* --- accent: one deep iris, spent sparingly -------------------------- */
+  /* --- accent: one deep iris, spent sparingly --------------------------
+     The ramp is the iris itself, not a themed value: it is the source the
+     aliases below are drawn from, and it does NOT flip in dark mode. Compose
+     components out of the aliases, never out of a numbered step, or the dark
+     theme will not follow. */
+  --accent-50: #f4f3ff;
+  --accent-100: #ebe9ff;
+  --accent-200: #d7d4fb;
+  --accent-300: #bdb8f3;
+  --accent-400: #9b94e3;
+  --accent-500: #7169c7;
+  --accent-600: #453fa0;
+  --accent-700: #39338a;
+  --accent-800: #2f2a70;
+  --accent-900: #211e4d;
+
   --accent: #453fa0;
-  --accent-hover: #322d80;
-  --accent-wash: #ecebf8;
-  --accent-edge: #b9b5e6;
+  --accent-hover: #39338a;
+  --accent-wash: #ebe9ff;
+  --accent-edge: #bdb8f3;
   --accent-on: #ffffff;
 
+  /* --- spark: the one warm callout -------------------------------------
+     A colour budget, not a palette: a page may carry one iris action, one
+     semantic state and one spark callout. Burnt orange because it is the one
+     warm hue that cannot be mistaken for a second brand blue, and it is dark
+     enough (5.70:1 on the sheet) to be used as text, not only as a tint. */
+  --spark: #a34f15;
+  --spark-wash: #fff0e3;
+  --spark-edge: #e4b184;
+
   /* --- semantics: judgement, kept clear of the accent hue -------------- */
-  --pass: #1f7a4d;
-  --pass-wash: #e2f1e9;
-  --pass-edge: #a8d5bd;
-  --hold: #8a5a00;
-  --hold-wash: #faefd9;
-  --hold-edge: #e0c188;
-  --stop: #b02318;
-  --stop-wash: #fbe6e4;
-  --stop-edge: #edb0aa;
+  --pass: #176b43;
+  --pass-wash: #e4f3eb;
+  --pass-edge: #9fcfb7;
+  --hold: #7a4b00;
+  --hold-wash: #fbefd8;
+  --hold-edge: #d9bd7f;
+  --stop: #a51d14;
+  --stop-wash: #fbe8e6;
+  --stop-edge: #e7aaa4;
 
   /* --- focus: identical treatment everywhere --------------------------- */
   --focus: #453fa0;
   --focus-halo: rgba(69, 63, 160, 0.22);
 
-  /* --- depth: paper does not float in daylight ------------------------- */
-  --shadow-sheet: none;
-  --shadow-pop: 0 12px 28px -18px rgba(26, 26, 36, 0.5);
+  /* --- depth: paper resting on a desk, not floating above it -----------
+     Three steps only. A sheet sits; a sheet you can click lifts while the
+     pointer is on it; a popover leaves the page altogether. In daylight the
+     shadow is the contact shadow of paper — short, tight and almost grey. */
+  --shadow-sheet: 0 1px 1px -1px rgba(26, 26, 36, 0.1), 0 3px 8px -5px rgba(26, 26, 36, 0.14);
+  --shadow-raised: 0 2px 3px -2px rgba(26, 26, 36, 0.12), 0 10px 22px -14px rgba(26, 26, 36, 0.28);
+  --shadow-pop: 0 14px 34px -20px rgba(26, 26, 36, 0.48);
   --scrim: rgba(26, 26, 36, 0.45);
+
+  /* --- charts: series colour is named once, here -----------------------
+     a and b are the two halves of one comparison, c is the single emphasis
+     series the colour budget allows, muted is "everything else / zero". */
+  --chart-track: #eeedf3;
+  --chart-grid: #dcdbe5;
+  --chart-a: #8a82d6;
+  --chart-b: #453fa0;
+  --chart-c: var(--spark);
+  --chart-muted: #86849a;
 
   /* --- type: three roles, each earned by real content ------------------ */
   --font-display: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
   --font-ui: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-data: 'Cascadia Mono', 'SF Mono', 'Roboto Mono', ui-monospace, Menlo, Consolas, monospace;
 
-  /* --- form: drafting-table edges, not rounded cards -------------------- */
-  --radius: 2px;
-  --radius-sheet: 3px;
+  --type-page-title-size: 30px;
+  --type-page-title-line: 1.16;
+  --type-page-title-weight: 600;
+  --type-page-title-track: -0.012em;
+
+  --type-section-size: 17px;
+  --type-section-line: 1.35;
+  --type-section-weight: 650;
+  --type-section-track: 0.002em;
+
+  --type-card-title-size: 14px;
+  --type-card-title-line: 1.35;
+  --type-card-title-weight: 650;
+
+  /* The mono micro-label is Questor's instrument signature and it stays. What
+     changes is its voice: 0.075em instead of 0.1em, weight 650 instead of a
+     shouted 600-on-uppercase-at-full-tracking. Same words, same places — it
+     reads as an engraved label rather than a spreadsheet column header. */
+  --type-micro-size: 10.5px;
+  --type-micro-line: 1.45;
+  --type-micro-weight: 650;
+  --type-micro-track: 0.075em;
+
+  /* --- rhythm ---------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --section-gap: 32px;
+  --section-gap-tight: 20px;
+
+  /* --- motion ----------------------------------------------------------
+     Three durations, and nothing that moves a thing a reader is aiming at. */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- form: still drawn edges, but edges a hand would round ----------- */
+  --radius-xs: 3px;
+  --radius: 8px;
+  --radius-sheet: 14px;
   --radius-pill: 999px;
   --hair: 1px;
   --rail: 2px;
@@ -97,14 +185,20 @@
   --room-stop-edge: rgba(255, 138, 128, 0.35);
 }
 
+/* A shadow cast on a dark surface is invisible — there is no light for it to
+   take away. So depth inverts here: the sheet shadow is dropped entirely, and
+   the hierarchy is carried instead by a lifted tint (--sheet-raised) and a
+   stronger rule. Everything below is a token redefinition; no rule in this
+   file names a colour. */
 :root[data-theme='dark'] {
-  --desk: #131318;
-  --sheet: #1b1b22;
-  --sheet-sunk: #101015;
-  --sheet-raised: #24242e;
+  --desk: #121218;
+  --sheet: #1b1b24;
+  --sheet-sunk: #101016;
+  --sheet-raised: #242431;
 
-  --rule: #2e2e3a;
-  --rule-strong: #45454f;
+  --rule: #343442;
+  --rule-strong: #4c4c5f;
+  --field-edge: #68687f;
 
   --ink: #ececf2;
   --ink-2: #b6b6c6;
@@ -115,6 +209,10 @@
   --accent-wash: #23223a;
   --accent-edge: #4a4685;
   --accent-on: #14121f;
+
+  --spark: #f0a875;
+  --spark-wash: #2e1d10;
+  --spark-edge: #6b4526;
 
   --pass: #5dd39e;
   --pass-wash: #14261e;
@@ -130,8 +228,15 @@
   --focus-halo: rgba(165, 160, 245, 0.3);
 
   --shadow-sheet: none;
-  --shadow-pop: 0 16px 40px -20px rgba(0, 0, 0, 0.85);
+  --shadow-raised: none;
+  --shadow-pop: 0 18px 44px -24px rgba(0, 0, 0, 0.88);
   --scrim: rgba(0, 0, 0, 0.6);
+
+  --chart-track: #101016;
+  --chart-grid: #343442;
+  --chart-a: #7d76d4;
+  --chart-b: #a5a0f5;
+  --chart-muted: #6f6f86;
 }
 
 /* ==========================================================================
@@ -193,19 +298,21 @@ h3 {
 }
 h1 {
   font-family: var(--font-display);
-  font-size: 27px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 1.2;
+  font-size: var(--type-page-title-size);
+  font-weight: var(--type-page-title-weight);
+  letter-spacing: var(--type-page-title-track);
+  line-height: var(--type-page-title-line);
 }
 h2 {
-  font-size: 16px;
-  font-weight: 620;
-  letter-spacing: 0.005em;
+  font-size: var(--type-section-size);
+  font-weight: var(--type-section-weight);
+  letter-spacing: var(--type-section-track);
+  line-height: var(--type-section-line);
 }
 h3 {
-  font-size: 14px;
-  font-weight: 620;
+  font-size: var(--type-card-title-size);
+  font-weight: var(--type-card-title-weight);
+  line-height: var(--type-card-title-line);
 }
 
 p {
@@ -307,9 +414,10 @@ code {
    an administrator configures once. It is not decorative sequencing. */
 .nav-group {
   font-family: var(--font-data);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  line-height: var(--type-micro-line);
   text-transform: uppercase;
   color: var(--ink-3);
   margin: 18px 0 6px 12px;
@@ -502,7 +610,10 @@ code {
   line-height: 1.35;
   cursor: pointer;
   text-decoration: none;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  transition:
+    background-color var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard);
 }
 .btn:hover {
   background: var(--accent-hover);
@@ -519,7 +630,7 @@ code {
 .btn.secondary {
   background: var(--sheet);
   color: var(--ink);
-  border-color: var(--rule-strong);
+  border-color: var(--field-edge);
 }
 .btn.secondary:hover {
   background: var(--sheet-sunk);
@@ -560,9 +671,10 @@ code {
 label {
   display: block;
   font-family: var(--font-data);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  line-height: var(--type-micro-line);
   text-transform: uppercase;
   color: var(--ink-3);
   margin: 14px 0 5px;
@@ -573,13 +685,13 @@ textarea,
 select {
   width: 100%;
   background: var(--sheet);
-  border: var(--hair) solid var(--rule-strong);
+  border: var(--hair) solid var(--field-edge);
   color: var(--ink);
   border-radius: var(--radius);
   padding: 8px 11px;
   font-size: 14px;
   font-family: inherit;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  transition: border-color var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard);
 }
 input::placeholder,
 textarea::placeholder {
@@ -640,10 +752,11 @@ td {
 th {
   font-family: var(--font-data);
   color: var(--ink-3);
-  font-weight: 600;
-  font-size: 10.5px;
+  font-weight: var(--type-micro-weight);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: var(--type-micro-track);
   border-bottom-color: var(--rule-strong);
   white-space: nowrap;
 }
@@ -790,9 +903,10 @@ tr.in-flight td:first-child {
 .stat .label {
   font-family: var(--font-data);
   color: var(--ink-3);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
   text-transform: uppercase;
   margin-top: 6px;
 }
@@ -871,10 +985,11 @@ tr.in-flight td:first-child {
 }
 .turn .who {
   font-family: var(--font-data);
-  font-size: 10.5px;
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-weight: 600;
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
   color: var(--ink-3);
   margin-bottom: 4px;
 }
