@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
 import { isInFlight } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
+import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
+import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
@@ -38,6 +40,27 @@ interface SessionSummary {
   id: string; recommendation: string | null; assessmentId: string | null; invited: boolean;
 }
 
+/** The role and its latest scorecard: between them, the job description. */
+interface RoleResp {
+  role: { id: string; title: string; level: string | null };
+  scorecards: Array<{
+    version: number;
+    status: string;
+    profile: { roleContext?: string; outcomes?: string[]; responsibilities?: string[] } | null;
+  }>;
+}
+
+type PipelineResp = JourneyPipeline & { candidateId: string };
+
+interface AssessmentResp {
+  id: string;
+  result: {
+    recommendation?: string;
+    summary?: string;
+    competencies?: JourneyAssessment['competencies'];
+  } | null;
+}
+
 const MODULES = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
 export function CandidateDetail() {
@@ -45,8 +68,17 @@ export function CandidateDetail() {
   const nav = useNavigate();
   const [data, setData] = useState<CandidateResp | null>(null);
   const [sessions, setSessions] = useState<Record<string, SessionSummary>>({});
+  const [role, setRole] = useState<JourneyRole | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineResp | null>(null);
+  const [missingEvidence, setMissingEvidence] = useState<string[]>([]);
+  const [assessment, setAssessment] = useState<JourneyAssessment | null>(null);
+  const [assessmentBlockedReason, setAssessmentBlockedReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Bumped by the pipeline panel after any action it completes, so the journey
+  // board beside it re-reads rather than showing the state before the click.
+  const [version, setVersion] = useState(0);
+  const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
   // interview setup form
   const [durationMinutes, setDurationMinutes] = useState(45);
@@ -57,18 +89,118 @@ export function CandidateDetail() {
   const [createError, setCreateError] = useState('');
 
   useEffect(() => {
-    api.get<CandidateResp>(`/candidates/${id}`)
-      .then(setData)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    setLoading(true);
 
-    // Deliberately not awaited with the call above and its failure is swallowed:
-    // this only enriches the interviews table with assessment links. Losing it
-    // must not cost the operator the profile itself.
+    api.get<CandidateResp>(`/candidates/${id}`)
+      .then((candidateResp) => {
+        if (cancelled) return;
+        setData(candidateResp);
+
+        // Everything below only enriches the journey. Each failure is swallowed
+        // on its own: losing the role, the pipeline or the assessment must not
+        // cost the operator the candidate's profile, and a column that says
+        // "not available" is better than a page that says nothing.
+        if (candidateResp.candidate.roleId) {
+          api.get<RoleResp>(`/roles/${candidateResp.candidate.roleId}`)
+            .then((r) => {
+              if (cancelled) return;
+              const scorecard = r.scorecards?.[0];
+              setRole({
+                title: r.role.title,
+                level: r.role.level,
+                context: scorecard?.profile?.roleContext ?? '',
+                outcomes: scorecard?.profile?.outcomes ?? [],
+                responsibilities: scorecard?.profile?.responsibilities ?? [],
+                scorecardVersion: scorecard?.version ?? null,
+                scorecardStatus: scorecard?.status ?? null,
+              });
+            })
+            .catch(() => undefined);
+        }
+      })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load this candidate.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
     api.get<{ sessions: SessionSummary[] }>('/interviews')
-      .then((d) => setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s]))))
+      .then((d) => { if (!cancelled) setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s]))); })
       .catch(() => undefined);
-  }, [id]);
+
+    // The pipeline panel below loads this too. Two reads of the same scoped
+    // endpoint is the cost of leaving that panel — which owns every action —
+    // exactly as it was rather than rewiring it around this page's state.
+    api.get<{ pipelines: PipelineResp[] }>(`/pipelines?candidateId=${encodeURIComponent(id ?? '')}`)
+      .then(async (d) => {
+        const current = d.pipelines?.[0] ?? null;
+        if (cancelled) return;
+        setPipeline(current);
+        if (!current) { setMissingEvidence([]); return; }
+        const { summary } = await api.get<{ summary: { missingEvidence: string[] } }>(`/pipelines/${current.id}/summary`);
+        if (!cancelled) setMissingEvidence(summary?.missingEvidence ?? []);
+      })
+      .catch(() => undefined);
+
+    return () => { cancelled = true; };
+  }, [id, version]);
+
+  // The assessment the decision column reads: the newest interview that produced
+  // one. Its id only becomes known once /interviews has landed, so it is fetched
+  // separately rather than folded into the load above.
+  const assessmentId = useMemo(() => {
+    for (const interview of data?.interviews ?? []) {
+      const meta = sessions[interview.id];
+      if (meta?.assessmentId) return meta.assessmentId;
+    }
+    return null;
+  }, [data, sessions]);
+
+  useEffect(() => {
+    if (!assessmentId) {
+      setAssessment(null);
+      setAssessmentBlockedReason(null);
+      return;
+    }
+    let cancelled = false;
+    api.get<AssessmentResp>(`/assessments/${assessmentId}`)
+      .then((resp) => {
+        if (cancelled) return;
+        setAssessment({
+          id: resp.id,
+          recommendation: resp.result?.recommendation ?? null,
+          summary: resp.result?.summary ?? '',
+          competencies: resp.result?.competencies ?? [],
+        });
+        setAssessmentBlockedReason(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAssessment(null);
+        // 409 is the blind-review gate: this reviewer has not recorded their own
+        // verdict yet. The server's sentence is carried through verbatim, so the
+        // board cannot describe that gate more softly than the gate does.
+        setAssessmentBlockedReason(err instanceof ApiError && err.status === 409 ? err.message : null);
+      });
+    return () => { cancelled = true; };
+  }, [assessmentId, version]);
+
+  const journey = useMemo(() => {
+    if (!data) return null;
+    return buildJourney({
+      candidate: data.candidate,
+      role,
+      profile: data.profile,
+      fit: data.fit,
+      resumeText: data.rawText ?? '',
+      sessions: data.interviews ?? [],
+      sessionMeta: sessions,
+      // A pipeline for a different candidate can only be a stale response; it
+      // must never be drawn against this person.
+      pipeline: pipeline && pipeline.candidateId === data.candidate.id ? pipeline : null,
+      assessment,
+      assessmentBlockedReason,
+      missingEvidence,
+    });
+  }, [data, role, sessions, pipeline, assessment, assessmentBlockedReason, missingEvidence]);
 
   if (loading) return <PageSkeleton label="Loading candidate…" cards={3} />;
   if (error) return <Banner kind="error">{error}</Banner>;
@@ -123,7 +255,11 @@ export function CandidateDetail() {
         }
       />
 
-      <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} />
+      {/* The journey is the page. Everything below it is the detail behind a
+          column, or the controls that change what a column says. */}
+      {journey && <CandidateJourneyBoard journey={journey} />}
+
+      <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} onChanged={refresh} />
 
       {fit && (
         <div className="card">

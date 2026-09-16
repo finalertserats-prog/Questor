@@ -75,8 +75,17 @@ function StageBadge({ stageKey }: { stageKey: string }) {
   return <img className="pipeline-badge" src={`/brand/medal-${stageKey}.png`} alt="" onError={() => setFailed(true)} />;
 }
 
-/** The candidate's medallion pipeline: where they are, what happened, and what HR can do next. */
-export function PipelinePanel({ candidateId, interviews }: { candidateId: string; interviews: InterviewOption[] }) {
+/**
+ * The candidate's medallion pipeline: where they are, what happened, and what HR can do next.
+ *
+ * `onChanged` fires after any action that altered the pipeline, so a page
+ * showing the same data elsewhere — the candidate journey board — refreshes
+ * with it rather than sitting on a stale copy until someone reloads.
+ */
+export function PipelinePanel(
+  { candidateId, interviews, onChanged }:
+  { candidateId: string; interviews: InterviewOption[]; onChanged?: () => void },
+) {
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -125,6 +134,7 @@ export function PipelinePanel({ candidateId, interviews }: { candidateId: string
     try {
       await action();
       await load();
+      onChanged?.();
     } catch (e: unknown) {
       setError(errorMessage(e));
     } finally {

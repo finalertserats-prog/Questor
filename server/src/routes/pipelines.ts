@@ -35,6 +35,15 @@ function presentRound(round: InterviewRound) {
     interviewers: parseJson<string[]>(round.interviewersJson, []),
     scheduledAt: round.scheduledAt,
     status: round.status,
+    // What the interviewers wrote IS the evidence for a human stage — nothing
+    // else records those rounds, because Questor does not host them. Withholding
+    // it here meant the only way to read a completed round was the database, so
+    // the candidate's own page could say a round happened but never what it
+    // showed. It travels under the same candidate scope as the round itself, and
+    // retention clears it from the row (services/dataRights.ts), so a round past
+    // its window honestly returns ''.
+    notes: round.notes,
+    completedAt: round.completedAt,
     createdAt: round.createdAt,
   };
 }
