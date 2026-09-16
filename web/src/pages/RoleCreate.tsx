@@ -28,6 +28,9 @@ export function RoleCreate() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<{ term: string; suggestion: string }[]>([]);
+  // Set once the role exists: the warnings are shown against it, and the way on
+  // is a button rather than a timer.
+  const [createdRoleId, setCreatedRoleId] = useState<string | null>(null);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,14 +44,18 @@ export function RoleCreate() {
         useLlm,
       });
       if (resp.jdWarnings && resp.jdWarnings.length) {
+        // The warnings are about fairness in the wording someone is about to
+        // interview against. 1200ms was never enough to read them, and the page
+        // left of its own accord while they were still reading — so the role is
+        // there when they are ready for it.
         setWarnings(resp.jdWarnings);
-        // brief pause so the user sees the warnings, then navigate
-        setTimeout(() => nav(`/roles/${resp.role.id}`), 1200);
-      } else {
-        nav(`/roles/${resp.role.id}`);
+        setCreatedRoleId(resp.role.id);
+        setSubmitting(false);
+        return;
       }
-    } catch (err: any) {
-      setError(err.message);
+      nav(`/roles/${resp.role.id}`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not create this role.');
       setSubmitting(false);
     }
   };
@@ -66,6 +73,13 @@ export function RoleCreate() {
               <li key={i} className="small"><b>{w.term}</b> — {w.suggestion}</li>
             ))}
           </ul>
+          {createdRoleId && (
+            <div className="row" style={{ marginTop: 10 }}>
+              <button type="button" className="btn" onClick={() => nav(`/roles/${createdRoleId}`)}>
+                Continue to the role<Icon name="arrow-right" size={16} />
+              </button>
+            </div>
+          )}
         </Banner>
       )}
 
@@ -97,14 +111,18 @@ export function RoleCreate() {
             <Icon name={submitting ? 'hourglass' : 'sparkle'} size={16} />
             {submitting ? 'Creating…' : 'Create role'}
           </button>
-          <button
-            className="btn secondary"
-            type="button"
-            onClick={() => setSourceText(SAMPLE_JD)}
-          >
-            <Icon name="job" size={16} />
-            Load sample JD
-          </button>
+          {/* Development only. A button that fills a real hiring form with a
+              made-up job has no business in a console someone hires from. */}
+          {import.meta.env.DEV && (
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={() => setSourceText(SAMPLE_JD)}
+            >
+              <Icon name="job" size={16} />
+              Load sample JD
+            </button>
+          )}
         </div>
       </form>
     </div>
