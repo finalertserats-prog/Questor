@@ -3,14 +3,28 @@
    Colours come only from tokens in app.css, so both themes follow.
    ========================================================================== */
 
+:root {
+  /* A KPI is a measure, not a banner. On a 1680px shell four stretched cards
+     put the number and its label a hand's width apart and the row stops being
+     scannable, so a card is capped and the grid packs from the left. */
+  --kpi-card-max: 320px;
+  --kpi-grid-gap: var(--space-4);
+}
+
+/* A section heading, not a column header. The mono micro-label is Questor's
+   signature and it stays on labels — on measurements — but a heading that
+   says "Key metrics" is prose, and setting it in shouted uppercase mono was
+   what made the whole page read like a spreadsheet. Same words, same place,
+   same hierarchy; a speaking voice instead of a stencil. */
 .dash-heading {
-  margin: 20px 0 10px;
-  font-size: 13px;
-  font-family: var(--font-data);
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ink-3);
+  margin: var(--section-gap-tight) 0 var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--type-section-size);
+  font-weight: var(--type-section-weight);
+  letter-spacing: var(--type-section-track);
+  line-height: var(--type-section-line);
+  text-transform: none;
+  color: var(--ink);
 }
 
 .dash-sr-only {
@@ -26,9 +40,13 @@
 
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin: 0 0 16px;
+  /* minmax(0, max) rather than minmax(min, max): a hard minimum would overflow
+     the main column between the 820px and 980px breakpoints, and a KPI row
+     that scrolls sideways is worse than one that is a little narrow. */
+  grid-template-columns: repeat(4, minmax(0, var(--kpi-card-max)));
+  justify-content: start;
+  gap: var(--kpi-grid-gap);
+  margin: 0 0 var(--space-4);
   padding: 0;
   list-style: none;
 }
@@ -47,16 +65,30 @@
   align-items: center;
   column-gap: 10px;
   flex: 1;
-  padding: 14px 16px;
+  padding: var(--space-4);
   background: var(--sheet);
   border: var(--hair) solid var(--rule);
   border-radius: var(--radius-sheet);
+  box-shadow: var(--shadow-sheet);
   color: var(--ink);
   text-decoration: none;
+}
+
+/* Only the cards that go somewhere lift, and they lift by a single pixel —
+   enough to answer "is this a link?", too little to disturb a row being read.
+   The wash stays as the hover fill so the affordance is not motion alone. */
+a.kpi-link {
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-base) var(--ease-standard),
+    transform var(--dur-base) var(--ease-standard);
 }
 a.kpi-link:hover {
   border-color: var(--accent);
   background: var(--accent-wash);
+  box-shadow: var(--shadow-raised);
+  transform: translateY(-1px);
   text-decoration: none;
 }
 a.kpi-link:focus-visible {
@@ -75,22 +107,34 @@ a.kpi-link:focus-visible {
   background: var(--accent-wash);
   color: var(--accent);
 }
+
+/* The one spark on the page. It marks the measure that is asking a person to
+   do something — interviews the machine has finished with and a human has not.
+   One card, by the colour budget; making a second one warm would spend the
+   emphasis and mark nothing. */
+.kpi-link--spark .kpi-icon {
+  background: var(--spark-wash);
+  color: var(--spark);
+}
+
 .kpi-value {
   grid-area: value;
   font-family: var(--font-display);
   font-size: 28px;
   font-weight: 600;
   line-height: 1.1;
+  letter-spacing: -0.015em;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
 .kpi-label {
   grid-area: label;
-  margin-top: 8px;
+  margin-top: var(--space-2);
   font-family: var(--font-data);
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  line-height: var(--type-micro-line);
   text-transform: uppercase;
   color: var(--ink-2);
 }
@@ -117,15 +161,18 @@ a.kpi-link:focus-visible {
   overflow: visible;
 }
 
+/* Grid lines are a ruler held behind the data, not part of it. */
 .chart-grid {
-  stroke: var(--rule);
+  stroke: var(--chart-grid);
   stroke-width: 1;
+  opacity: 0.72;
 }
 .chart-axis,
 .chart-value {
   font-family: var(--font-data);
   font-size: 11px;
   fill: var(--ink-3);
+  font-variant-numeric: tabular-nums;
 }
 .chart-value {
   fill: var(--ink);
@@ -136,19 +183,26 @@ a.kpi-link:focus-visible {
   font-size: 12.5px;
   fill: var(--ink-2);
 }
+
+/* The empty part of a bar row stays drawn, so a zero still looks like a
+   measurement that was taken rather than a chart that failed to render. */
 .chart-track {
-  fill: var(--sheet-sunk);
+  fill: var(--chart-track);
 }
 
 .chart-series-a,
 .tone-accent-soft {
-  fill: var(--accent-edge);
-  background: var(--accent-edge);
+  fill: var(--chart-a);
+  background: var(--chart-a);
 }
 .chart-series-b,
 .tone-accent {
-  fill: var(--accent);
-  background: var(--accent);
+  fill: var(--chart-b);
+  background: var(--chart-b);
+}
+.tone-spark {
+  fill: var(--chart-c);
+  background: var(--chart-c);
 }
 .tone-pass {
   fill: var(--pass);
@@ -160,14 +214,54 @@ a.kpi-link:focus-visible {
   fill: var(--stop);
 }
 .tone-muted {
-  fill: var(--rule-strong);
+  fill: var(--chart-muted);
+}
+
+/* One entrance, no loop, no bounce: the bars grow out of their own baseline
+   once, as the numbers arrive. Nothing re-runs on hover or on scroll, because
+   a chart that keeps moving is a chart nobody can read a value off. */
+@keyframes chart-rise {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+@keyframes chart-grow {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+.chart-rise,
+.chart-grow {
+  transform-box: fill-box;
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-out);
+  animation-fill-mode: both;
+  animation-iteration-count: 1;
+}
+.chart-rise {
+  transform-origin: bottom;
+  animation-name: chart-rise;
+}
+.chart-grow {
+  transform-origin: left;
+  animation-name: chart-grow;
 }
 
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
-  margin-top: 8px;
+  margin-top: var(--space-2);
   font-size: 12.5px;
   color: var(--ink-2);
 }
@@ -176,15 +270,17 @@ a.kpi-link:focus-visible {
   align-items: center;
   gap: 6px;
 }
+/* A 10px swatch takes the card radius literally and turns into a dot, which
+   then reads as a bullet rather than as a sample of the bar it names. */
 .chart-legend .swatch {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border-radius: var(--radius);
+  border-radius: var(--radius-xs);
 }
 
 .chart-data {
-  margin-top: 8px;
+  margin-top: var(--space-2);
   font-size: 12.5px;
 }
 .chart-data table {
@@ -211,7 +307,7 @@ a.kpi-link:focus-visible {
 
 @media (max-width: 980px) {
   .kpi-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, var(--kpi-card-max)));
   }
   .audit-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -222,5 +318,16 @@ a.kpi-link:focus-visible {
   .kpi-grid,
   .audit-filters {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  a.kpi-link:hover {
+    transform: none;
+  }
+  .chart-rise,
+  .chart-grow {
+    animation: none;
+    transform: none;
   }
 }

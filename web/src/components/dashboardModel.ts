@@ -70,3 +70,38 @@ export function formatHours(hours: number | null): string {
 export function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
+
+/**
+ * Which fill an interview-status bar takes. Kept here rather than inline in
+ * Dashboard.tsx so that a state group the grouping function invents but the
+ * table forgets cannot render an unstyled (invisible) bar — an unknown key
+ * falls back to the muted tone instead of to no class at all.
+ */
+const STATE_TONES: Readonly<Record<string, string>> = {
+  scheduled: 'tone-accent-soft',
+  live: 'tone-hold',
+  review: 'tone-spark',
+  reviewed: 'tone-pass',
+  stopped: 'tone-stop',
+  other: 'tone-muted',
+};
+
+export function chartTone(stateKey: string): string {
+  return STATE_TONES[stateKey] ?? 'tone-muted';
+}
+
+/**
+ * Corner radius for a bar of the given size.
+ *
+ * A flat `rx` is what makes an in-house SVG chart look unfinished: at the
+ * design radius a one-unit bar is rounded away into a lozenge, and a zero-width
+ * bar with a radius still paints a visible stub where the data says nothing is
+ * there. Clamping to half the shorter side keeps the corner proportional, and
+ * an empty bar gets no radius because it gets no bar.
+ */
+const BAR_RADIUS = 5;
+
+export function barRadius(width: number, height: number): number {
+  if (width <= 0 || height <= 0) return 0;
+  return Math.min(BAR_RADIUS, width / 2, height / 2);
+}

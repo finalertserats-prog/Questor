@@ -6,7 +6,7 @@ import { Banner, stateBadge } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
-import { formatHours, groupSessionStates } from '../components/dashboardModel';
+import { chartTone, formatHours, groupSessionStates } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
 
 interface Metrics {
@@ -30,16 +30,18 @@ interface Metrics {
   }[];
 }
 
-const STATE_TONES: Record<string, string> = {
-  scheduled: 'tone-accent-soft',
-  live: 'tone-hold',
-  review: 'tone-accent',
-  reviewed: 'tone-pass',
-  stopped: 'tone-stop',
-  other: 'tone-muted',
-};
+interface KpiProps {
+  icon: IconName;
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  to?: string;
+  /** Marks the one measure on the page that is asking a person to act. */
+  spark?: boolean;
+}
 
-function Kpi({ icon, label, value, hint, to }: { icon: IconName; label: string; value: ReactNode; hint?: ReactNode; to?: string }) {
+function Kpi({ icon, label, value, hint, to, spark }: KpiProps) {
+  const cls = spark ? 'kpi-link kpi-link--spark' : 'kpi-link';
   const body = (
     <>
       <span className="kpi-icon"><Icon name={icon} size={18} /></span>
@@ -48,7 +50,7 @@ function Kpi({ icon, label, value, hint, to }: { icon: IconName; label: string; 
       {hint && <span className="kpi-hint">{hint}</span>}
     </>
   );
-  return <li className="kpi">{to ? <Link to={to} className="kpi-link">{body}</Link> : <div className="kpi-link">{body}</div>}</li>;
+  return <li className="kpi">{to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>}</li>;
 }
 
 /** The date that matters most for where an interview is in its life. */
@@ -76,7 +78,7 @@ export function Dashboard() {
 
   const k = metrics?.kpis;
   const stageItems: BarItem[] = (metrics?.pipelineStages ?? []).map((s) => ({ ...s, tone: 'tone-accent' }));
-  const stateItems: BarItem[] = groupSessionStates(metrics?.stateCounts ?? {}).map((g) => ({ ...g, tone: STATE_TONES[g.key] }));
+  const stateItems: BarItem[] = groupSessionStates(metrics?.stateCounts ?? {}).map((g) => ({ ...g, tone: chartTone(g.key) }));
   const inPipeline = stageItems.reduce((sum, s) => sum + s.count, 0);
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
 
@@ -122,7 +124,7 @@ export function Dashboard() {
               <Kpi icon="funnel" label="In pipeline" value={k.activePipelines} hint="Active, not yet decided" />
               <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="Next 7 days" />
               <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="Last 30 days" />
-              <Kpi icon="eye" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" />
+              <Kpi icon="eye" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
               <Kpi icon="clock" label="Invite to interview" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
               <Kpi
                 icon="scale"

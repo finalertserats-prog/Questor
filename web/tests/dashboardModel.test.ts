@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatHours, groupSessionStates, niceCeiling, scaleLength } from '../src/components/dashboardModel';
+import { barRadius, chartTone, formatHours, groupSessionStates, niceCeiling, scaleLength } from '../src/components/dashboardModel';
 
 describe('groupSessionStates', () => {
   it('folds raw session states into the groups an HR reader thinks in', () => {
@@ -40,6 +40,43 @@ describe('scaleLength', () => {
 
   it('draws nothing for a zero or negative value', () => {
     expect([scaleLength(0, 10, 120), scaleLength(-3, 10, 120)]).toEqual([0, 0]);
+  });
+});
+
+describe('chartTone', () => {
+  it('gives every group the state grouping can produce a fill', () => {
+    const keys = groupSessionStates({ SOMETHING_NEW: 1 }).map((g) => g.key);
+    expect(keys.filter((k) => chartTone(k) === 'tone-muted')).toEqual(['other']);
+  });
+
+  it('marks awaiting-review with the one warm emphasis tone', () => {
+    expect(chartTone('review')).toBe('tone-spark');
+  });
+
+  it('falls back to a muted fill rather than no fill for an unknown group', () => {
+    expect(chartTone('a-group-nobody-styled')).toBe('tone-muted');
+  });
+});
+
+describe('barRadius', () => {
+  it('uses the full design radius on a bar that can carry it', () => {
+    expect(barRadius(40, 60)).toBe(5);
+  });
+
+  it('clamps to half the height so a short bar is not rounded away', () => {
+    expect(barRadius(40, 6)).toBe(3);
+  });
+
+  it('clamps to half the width so a thin bar keeps its shape', () => {
+    expect(barRadius(4, 60)).toBe(2);
+  });
+
+  it('draws no corner on a bar with no length, so zero paints nothing', () => {
+    expect(barRadius(0, 16)).toBe(0);
+  });
+
+  it('draws no corner on a bar with no height either', () => {
+    expect(barRadius(16, 0)).toBe(0);
   });
 });
 

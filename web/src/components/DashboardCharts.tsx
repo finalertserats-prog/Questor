@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { niceCeiling, scaleLength, shortDate } from './dashboardModel';
+import { barRadius, niceCeiling, scaleLength, shortDate } from './dashboardModel';
 
 /**
  * Small in-house SVG charts for the dashboard. No chart dependency: three
@@ -56,8 +56,16 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
           const hCompleted = scaleLength(d.completed, max, plotH);
           return (
             <g key={d.weekStart}>
-              <rect x={x} y={COL.top + plotH - hCreated} width={barW} height={hCreated} className="chart-series-a" />
-              <rect x={x + barW} y={COL.top + plotH - hCompleted} width={barW} height={hCompleted} className="chart-series-b" />
+              <rect
+                x={x} y={COL.top + plotH - hCreated} width={barW} height={hCreated}
+                rx={barRadius(barW, hCreated)} ry={barRadius(barW, hCreated)}
+                className="chart-series-a chart-rise"
+              />
+              <rect
+                x={x + barW} y={COL.top + plotH - hCompleted} width={barW} height={hCompleted}
+                rx={barRadius(barW, hCompleted)} ry={barRadius(barW, hCompleted)}
+                className="chart-series-b chart-rise"
+              />
               {i % labelEvery === (data.length - 1) % labelEvery && (
                 <text x={COL.left + i * slot + slot / 2} y={COL.height - 8} textAnchor="middle" className="chart-axis">
                   {shortDate(d.weekStart)}
@@ -115,8 +123,16 @@ export function HorizontalBarChart({ items, title, summary }: { items: readonly 
           return (
             <g key={item.key}>
               <text x={BAR.labelW - 10} y={y + ROW_H / 2 + 4} textAnchor="end" className="chart-label">{item.label}</text>
-              <rect x={BAR.labelW} y={y + 7} width={plotW} height={ROW_H - 14} className="chart-track" />
-              <rect x={BAR.labelW} y={y + 7} width={w} height={ROW_H - 14} className={`chart-bar ${item.tone ?? 'tone-accent'}`} />
+              <rect
+                x={BAR.labelW} y={y + 7} width={plotW} height={ROW_H - 14}
+                rx={barRadius(plotW, ROW_H - 14)} ry={barRadius(plotW, ROW_H - 14)}
+                className="chart-track"
+              />
+              <rect
+                x={BAR.labelW} y={y + 7} width={w} height={ROW_H - 14}
+                rx={barRadius(w, ROW_H - 14)} ry={barRadius(w, ROW_H - 14)}
+                className={`chart-bar chart-grow ${item.tone ?? 'tone-accent'}`}
+              />
               <text x={BAR.labelW + w + 6} y={y + ROW_H / 2 + 4} className="chart-value">{item.count}</text>
             </g>
           );
