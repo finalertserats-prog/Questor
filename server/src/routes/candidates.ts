@@ -11,6 +11,7 @@ import {
   assertCanAccessRole,
   assignCandidate,
   candidateScope,
+  roleScope,
 } from '../services/access.js';
 import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
@@ -148,6 +149,152 @@ candidatesRouter.post('/:id/resume', uploadResume, asyncHandler(async (req, res)
   await emitEvent(req.auth!.tenantId, 'candidate.parsed', { candidateId: candidate.id, fit: fit.overall });
 
   res.status(201).json({ profile, fit, profileVersionId: profileVersion.id, filename });
+}));
+
+
+const candidateIdParams = z.object({ id: z.string().min(1) });
+const MAX_ALTERNATIVE_ROLES_CONSIDERED = 50;
+const MAX_ALTERNATIVE_ROLES_RETURNED = 5;
+
+function publicFit(fit: any) {
+  if (!fit) return null;
+  const { excludedSignals: _excludedSignals, ...rest } = fit;
+  return {
+    ...rest,
+    components: (rest.components ?? []).map((c: any) => ({
+      key: c.key,
+      label: c.label,
+      weight: c.weight,
+      score: c.score,
+      evidence: (c.evidence ?? []).slice(0, 3),
+      rule: c.rule,
+    })),
+  };
+}
+
+function fitTextFromProfile(profile: any): string {
+  const parts: string[] = [];
+  if (Array.isArray(profile?.skills)) parts.push(...profile.skills);
+  if (Array.isArray(profile?.employment)) {
+    for (const job of profile.employment) {
+      parts.push(job?.title, job?.company);
+      if (Array.isArray(job?.bullets)) parts.push(...job.bullets);
+    }
+  }
+  if (Array.isArray(profile?.projects)) {
+    for (const project of profile.projects) parts.push(project?.name, project?.summary);
+  }
+  if (Array.isArray(profile?.certifications)) parts.push(...profile.certifications);
+  return parts.filter((part) => typeof part === 'string' && part.trim()).join('\n');
+}
+
+function explainAlternative(score: number, current: number, fit: any): string {
+  const strongest = [...(fit.components ?? [])]
+    .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 2)
+    .map((c: any) => c.label.toLowerCase());
+  const delta = Math.round(score - current);
+  const basis = strongest.length ? `Strongest evidence: ${strongest.join(' and ')}.` : 'Limited scorecard evidence was available.';
+  return delta > 0
+    ? `${delta} points stronger than the applied role. ${basis}`
+    : `Not stronger than the applied role. ${basis}`;
+}
+
+// Candidate profile tab: scoped candidate data, current fit, and ranked alternatives.
+candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const { id } = candidateIdParams.parse(req.params);
+  const candidate = await assertCanAccessCandidate(req.auth!, id);
+  const profileVersion = await prisma.candidateProfileVersion.findFirst({
+    where: { candidateId: candidate.id },
+    orderBy: { version: 'desc' },
+  });
+  const currentRole = candidate.roleId
+    ? await prisma.role.findFirst({ where: { id: candidate.roleId, tenantId: req.auth!.tenantId } })
+    : null;
+
+  await logAudit({
+    tenantId: req.auth!.tenantId,
+    actorId: req.auth!.userId,
+    actorType: 'user',
+    action: 'candidate.profile_analysis.read',
+    entityType: 'Candidate',
+    entityId: candidate.id,
+  });
+
+  if (!profileVersion) {
+    res.json({
+      candidate: shape(candidate),
+      currentRole: currentRole ? { id: currentRole.id, title: currentRole.title, level: currentRole.level } : null,
+      profileVersion: null,
+      profile: null,
+      currentFit: null,
+      alternativeRoles: [],
+      consideredRoleCount: 0,
+      betterFitMessage: 'No resume profile has been parsed yet, so Questor cannot compare this candidate to other roles.',
+      caveat: 'Fit scores are heuristic and have not been validated against human judgement. Use them as prompts for review, not as hiring verdicts.',
+    });
+    return;
+  }
+
+  const profile = parseJson<any>(profileVersion.profileJson, null);
+  const currentStoredFit = publicFit(parseJson<any>(profileVersion.fitScoreJson, null));
+  const fitText = fitTextFromProfile(profile);
+
+  const scopedRoles = await prisma.role.findMany({
+    where: { AND: [await roleScope(req.auth!), { status: 'approved' }] },
+    orderBy: { updatedAt: 'desc' },
+    take: MAX_ALTERNATIVE_ROLES_CONSIDERED,
+    include: {
+      scorecards: {
+        where: { status: 'approved' },
+        orderBy: { version: 'desc' },
+        take: 1,
+      },
+    },
+  });
+
+  const currentRoleWithScorecard = scopedRoles.find((r) => r.id === candidate.roleId) ?? null;
+  const currentScorecard = currentRoleWithScorecard?.scorecards[0] ?? null;
+  const currentFit = currentScorecard
+    ? publicFit(computeFitScore(profile ?? {}, fitText, parseJson<RoleSuccessProfile>(currentScorecard.profileJson, emptyProfile())).fit)
+    : currentStoredFit;
+  const currentOverall = currentFit?.overall ?? 0;
+
+  const alternatives = scopedRoles
+    .filter((r) => r.id !== candidate.roleId && r.scorecards[0])
+    .map((r) => {
+      const fit = publicFit(computeFitScore(profile ?? {}, fitText, parseJson<RoleSuccessProfile>(r.scorecards[0].profileJson, emptyProfile())).fit)!;
+      return {
+        roleId: r.id,
+        title: r.title,
+        level: r.level,
+        score: fit.overall,
+        confidence: fit.confidence,
+        components: fit.components,
+        why: explainAlternative(fit.overall, currentOverall, fit),
+      };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_ALTERNATIVE_ROLES_RETURNED);
+
+  const better = alternatives.filter((a) => a.score > currentOverall);
+  const betterFitMessage = alternatives.length === 0
+    ? 'There are no other approved roles in your visible scope to compare.'
+    : better.length === 0
+      ? 'No visible approved role appears to be a better fit than the current applied role.'
+      : `${better.length} visible approved role${better.length === 1 ? '' : 's'} scored higher than the current applied role.`;
+
+  res.json({
+    candidate: shape(candidate),
+    currentRole: currentRole ? { id: currentRole.id, title: currentRole.title, level: currentRole.level } : null,
+    profileVersion: { id: profileVersion.id, version: profileVersion.version, createdAt: profileVersion.createdAt },
+    profile,
+    currentFit,
+    alternativeRoles: alternatives,
+    consideredRoleCount: scopedRoles.length,
+    betterFitMessage,
+    caveat: 'Fit scores are heuristic and have not been validated against human judgement. Use them as prompts for review, not as hiring verdicts.',
+  });
 }));
 
 // Get candidate detail (profile + fit + evidence)

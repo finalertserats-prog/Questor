@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
@@ -63,10 +63,47 @@ interface AssessmentResp {
 
 const MODULES = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
+export type CandidateDetailTabKey = 'profile' | 'journey';
+export const candidateDetailTabs: ReadonlyArray<{ key: CandidateDetailTabKey; label: string }> = [
+  { key: 'profile', label: 'Candidate Profile' },
+  { key: 'journey', label: 'Candidate Journey' },
+];
+
+export function candidateDetailTabId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-tab`; }
+export function candidateDetailPanelId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-panel`; }
+
+export function nextCandidateDetailTab(current: CandidateDetailTabKey, key: string): CandidateDetailTabKey {
+  const index = candidateDetailTabs.findIndex((t) => t.key === current);
+  if (key === 'Home') return candidateDetailTabs[0].key;
+  if (key === 'End') return candidateDetailTabs[candidateDetailTabs.length - 1].key;
+  if (key !== 'ArrowRight' && key !== 'ArrowLeft') return current;
+  const delta = key === 'ArrowRight' ? 1 : -1;
+  return candidateDetailTabs[(index + delta + candidateDetailTabs.length) % candidateDetailTabs.length].key;
+}
+
+interface ProfileAnalysisResp {
+  candidate: CandidateResp['candidate'] & { createdAt?: string };
+  currentRole: { id: string; title: string; level: string | null } | null;
+  profileVersion: { id: string; version: number; createdAt: string } | null;
+  profile: Profile | null;
+  currentFit: Fit | null;
+  alternativeRoles: Array<{
+    roleId: string; title: string; level: string | null; score: number; confidence: number;
+    components: FitComponent[]; why: string;
+  }>;
+  consideredRoleCount: number;
+  betterFitMessage: string;
+  caveat: string;
+}
+
+
 export function CandidateDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const [data, setData] = useState<CandidateResp | null>(null);
+  const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysisResp | null>(null);
+  const [profileAnalysisError, setProfileAnalysisError] = useState('');
+  const [activeTab, setActiveTab] = useState<CandidateDetailTabKey>('profile');
   const [sessions, setSessions] = useState<Record<string, SessionSummary>>({});
   const [role, setRole] = useState<JourneyRole | null>(null);
   const [pipeline, setPipeline] = useState<PipelineResp | null>(null);
@@ -121,6 +158,10 @@ export function CandidateDetail() {
       })
       .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load this candidate.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
+
+    api.get<ProfileAnalysisResp>(`/candidates/${id}/profile-analysis`)
+      .then((resp) => { if (!cancelled) { setProfileAnalysis(resp); setProfileAnalysisError(''); } })
+      .catch((err: unknown) => { if (!cancelled) setProfileAnalysisError(err instanceof Error ? err.message : 'Could not load candidate profile analysis.'); });
 
     api.get<{ sessions: SessionSummary[] }>('/interviews')
       .then((d) => { if (!cancelled) setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s]))); })
@@ -217,6 +258,14 @@ export function CandidateDetail() {
 
   const { candidate, profile, fit, interviews } = data;
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: CandidateDetailTabKey) => {
+    const next = nextCandidateDetailTab(current, event.key);
+    if (next === current) return;
+    event.preventDefault();
+    setActiveTab(next);
+    window.requestAnimationFrame(() => document.getElementById(candidateDetailTabId(next))?.focus());
+  };
+
   const createInterview = async () => {
     setCreating(true);
     setCreateError('');
@@ -255,103 +304,51 @@ export function CandidateDetail() {
         }
       />
 
-      {/* The journey is the page. Everything below it is the detail behind a
-          column, or the controls that change what a column says. */}
-      {journey && <CandidateJourneyBoard journey={journey} />}
+      <div className="candidate-detail-tabs" role="tablist" aria-label="Candidate detail sections">
+        {candidateDetailTabs.map((tab) => (
+          <button
+            key={tab.key}
+            id={candidateDetailTabId(tab.key)}
+            type="button"
+            role="tab"
+            className={activeTab === tab.key ? 'candidate-detail-tab active' : 'candidate-detail-tab'}
+            aria-selected={activeTab === tab.key}
+            aria-controls={candidateDetailPanelId(tab.key)}
+            tabIndex={activeTab === tab.key ? 0 : -1}
+            onClick={() => setActiveTab(tab.key)}
+            onKeyDown={(event) => handleTabKeyDown(event, tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} onChanged={refresh} />
+      <section
+        id={candidateDetailPanelId('profile')}
+        role="tabpanel"
+        aria-labelledby={candidateDetailTabId('profile')}
+        hidden={activeTab !== 'profile'}
+        tabIndex={0}
+      >
+        <CandidateProfileTab
+          fallbackCandidate={candidate}
+          analysis={profileAnalysis}
+          error={profileAnalysisError}
+          fallbackProfile={profile}
+          fallbackFit={fit}
+        />
+      </section>
 
-      {fit && (
-        <div className="card">
-          <h2 className="card-title"><Icon name="sparkle" />Resume fit</h2>
-          <div className="grid cols-2">
-            <div>
-              <div className="row spread">
-                <span className="muted small">Overall fit</span>
-                <b>{Math.round(fit.overall)}/100</b>
-              </div>
-              <Meter value={fit.overall} />
-            </div>
-            <Stat label="Confidence" value={`${Math.round(fit.confidence * 100)}%`} />
-          </div>
+      <section
+        id={candidateDetailPanelId('journey')}
+        role="tabpanel"
+        aria-labelledby={candidateDetailTabId('journey')}
+        hidden={activeTab !== 'journey'}
+        tabIndex={0}
+      >
+        {journey && <CandidateJourneyBoard journey={journey} />}
 
-          <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Resume fit components">
-          <table>
-            <thead>
-              <tr><th>Component</th><th>Weight</th><th>Score</th><th>Rule</th></tr>
-            </thead>
-            <tbody>
-              {(fit.components ?? []).map((c) => (
-                <tr key={c.key}>
-                  <td>{c.label}</td>
-                  <td>{Math.round(c.weight * 100)}%</td>
-                  <td style={{ minWidth: 140 }}>
-                    <div className="row" style={{ gap: 8 }}>
-                      <span style={{ width: 34 }}>{Math.round(c.score)}</span>
-                      <div style={{ flex: 1 }}><Meter value={c.score} /></div>
-                    </div>
-                  </td>
-                  <td className="muted small">{c.rule}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-
-          <div className="grid cols-2" style={{ marginTop: 14 }}>
-            <div>
-              <h3>Missing signals</h3>
-              {(fit.missing ?? []).length === 0
-                ? <div className="muted small">None flagged.</div>
-                : <ul>{fit.missing.map((m, i) => <li key={i}>{m}</li>)}</ul>}
-            </div>
-            <div>
-              <h3>Suggested probes</h3>
-              {(fit.probes ?? []).length === 0
-                ? <div className="muted small">None.</div>
-                : <ul>{fit.probes.map((p, i) => <li key={i}>{p}</li>)}</ul>}
-            </div>
-          </div>
-
-          {(fit.excludedSignals ?? []).length > 0 && (
-            <div style={{ marginTop: 8 }}>
-              <div className="muted small" style={{ marginBottom: 4 }}>
-                Deliberately ignored (fairness):
-              </div>
-              <div>{fit.excludedSignals.map((s, i) => <span key={i} className="chip muted">{s}</span>)}</div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {profile && (
-        <div className="card">
-          <h2 className="card-title"><Icon name="job" />Parsed profile{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>
-          {(profile.skills ?? []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <h3>Skills</h3>
-              <div>{profile.skills.map((s, i) => <span key={i} className="chip">{s}</span>)}</div>
-            </div>
-          )}
-          {(profile.employment ?? []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <h3>Employment</h3>
-              {profile.employment.map((e, i) => (
-                <div key={i} style={{ marginBottom: 10 }}>
-                  <div><b>{e.title}</b> — {e.company} <span className="muted small">{e.start ?? ''}{e.end ? ` – ${e.end}` : ''}</span></div>
-                  <ul style={{ margin: '4px 0 0' }}>{(e.bullets ?? []).map((b, j) => <li key={j} className="small">{b}</li>)}</ul>
-                </div>
-              ))}
-            </div>
-          )}
-          {(profile.education ?? []).length > 0 && (
-            <div>
-              <h3>Education</h3>
-              <ul>{profile.education.map((e, i) => <li key={i}>{e.degree} — {e.institution}{e.year ? ` (${e.year})` : ''}</li>)}</ul>
-            </div>
-          )}
-        </div>
-      )}
+        <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} onChanged={refresh} />
 
       <div className="card">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
@@ -466,6 +463,190 @@ export function CandidateDetail() {
           </div>
         )}
       </div>
+      </section>
     </div>
+  );
+}
+
+
+const STATIC_IGNORED_SIGNALS = [
+  'name', 'age', 'address', 'marital status', 'caste', 'religion', 'nationality',
+  'school prestige', 'employment gaps', 'accent/grammar artefacts',
+];
+
+function CandidateProfileTab({
+  fallbackCandidate, analysis, error, fallbackProfile, fallbackFit,
+}: {
+  fallbackCandidate: CandidateResp['candidate'];
+  analysis: ProfileAnalysisResp | null;
+  error: string;
+  fallbackProfile: Profile | null;
+  fallbackFit: Fit | null;
+}) {
+  const candidate = analysis?.candidate ?? fallbackCandidate;
+  const profile = analysis?.profile ?? fallbackProfile;
+  const fit = analysis?.currentFit ?? fallbackFit;
+  const role = analysis?.currentRole;
+  const caveat = analysis?.caveat ?? 'Fit scores are heuristic and have not been validated against human judgement. Use them as prompts for review, not as hiring verdicts.';
+
+  return (
+    <div className="candidate-profile-tab">
+      {error && <Banner kind="error">{error}</Banner>}
+
+      <div className="card">
+        <h2 className="card-title"><Icon name="candidates" />Candidate Profile</h2>
+        <div className="grid cols-3">
+          <Stat label="Email" value={candidate.email} />
+          <Stat label="Phone" value={candidate.phone || '?'} />
+          <Stat label="Applied role" value={role ? `${role.title}${role.level ? ` · ${role.level}` : ''}` : 'Role not available'} />
+        </div>
+        {analysis?.profileVersion && (
+          <p className="muted small" style={{ marginTop: 12 }}>Parsed profile version {analysis.profileVersion.version}.</p>
+        )}
+      </div>
+
+      {!profile ? (
+        <EmptyState
+          compact
+          icon="evidence"
+          title="No parsed resume profile yet"
+          message="Upload or paste a resume before Questor can show experience, skills, employment history, role fit, or alternatives."
+        />
+      ) : (
+        <div className="card">
+          <h2 className="card-title"><Icon name="job" />Parsed resume{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>
+          {(profile.skills ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Skills</h3>
+              <div>{profile.skills.map((s, i) => <span key={i} className="chip">{s}</span>)}</div>
+            </div>
+          )}
+          {(profile.employment ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Employment history</h3>
+              {profile.employment.map((e, i) => (
+                <div key={i} className="profile-entry">
+                  <div><b>{e.title}</b>{e.company ? <> · {e.company}</> : null} <span className="muted small">{e.start ?? ''}{e.end ? ` — ${e.end}` : ''}</span></div>
+                  {(e.bullets ?? []).length > 0 && <ul style={{ margin: '4px 0 0' }}>{e.bullets.map((b, j) => <li key={j} className="small">{b}</li>)}</ul>}
+                </div>
+              ))}
+            </div>
+          )}
+          {(profile.education ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Education</h3>
+              <ul>{profile.education.map((e, i) => <li key={i}>{e.degree}{e.institution ? ` · ${e.institution}` : ''}{e.year ? ` (${e.year})` : ''}</li>)}</ul>
+            </div>
+          )}
+          {(profile.projects ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Projects</h3>
+              <ul>{profile.projects.map((p, i) => <li key={i}><b>{p.name}</b>{p.summary ? ` — ${p.summary}` : ''}</li>)}</ul>
+            </div>
+          )}
+          {(profile.certifications ?? []).length > 0 && (
+            <div>
+              <h3>Certifications</h3>
+              <div>{profile.certifications.map((c, i) => <span key={i} className="chip">{c}</span>)}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="card">
+        <h2 className="card-title"><Icon name="sparkle" />Fit for applied role</h2>
+        <Banner kind="info">{caveat}</Banner>
+        {fit ? <FitScoreBlock fit={fit} /> : <p className="muted">No fit score is available until a resume profile has been parsed against an approved scorecard.</p>}
+        <div style={{ marginTop: 12 }}>
+          <div className="muted small" style={{ marginBottom: 4 }}>Deliberately ignored by the fit engine:</div>
+          <div>{STATIC_IGNORED_SIGNALS.map((s) => <span key={s} className="chip muted">{s}</span>)}</div>
+        </div>
+      </div>
+
+      <div className="card">
+        <h2 className="card-title"><Icon name="role" />Other visible roles that may fit</h2>
+        <p className="muted small">Compared server-side against approved scorecards for roles in your permitted scope only.</p>
+        {analysis ? (
+          <>
+            <p>{analysis.betterFitMessage}</p>
+            {(analysis.alternativeRoles ?? []).length === 0 ? (
+              <EmptyState compact icon="role" title="No alternatives to show" message="No other visible approved role scored above or near this comparison set." />
+            ) : (
+              <div className="alternative-role-list">
+                {analysis.alternativeRoles.map((alt) => (
+                  <div className="alternative-role-card" key={alt.roleId}>
+                    <div className="row spread">
+                      <div>
+                        <h3 style={{ margin: 0 }}>{alt.title}</h3>
+                        {alt.level && <div className="muted small">{alt.level}</div>}
+                      </div>
+                      <b>{Math.round(alt.score)}/100</b>
+                    </div>
+                    <Meter value={alt.score} />
+                    <p className="small">{alt.why}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="muted">Loading role comparisons…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FitScoreBlock({ fit }: { fit: Fit }) {
+  return (
+    <>
+      <div className="grid cols-2" style={{ marginTop: 14 }}>
+        <div>
+          <div className="row spread">
+            <span className="muted small">Overall fit</span>
+            <b>{Math.round(fit.overall)}/100</b>
+          </div>
+          <Meter value={fit.overall} />
+        </div>
+        <Stat label="Confidence" value={`${Math.round(fit.confidence * 100)}%`} />
+      </div>
+
+      <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Fit score components and reasons">
+        <table>
+          <thead>
+            <tr><th>Component</th><th>Weight</th><th>Score</th><th>Reason and evidence</th></tr>
+          </thead>
+          <tbody>
+            {(fit.components ?? []).map((c) => (
+              <tr key={c.key}>
+                <td>{c.label}</td>
+                <td>{Math.round(c.weight * 100)}%</td>
+                <td style={{ minWidth: 140 }}>
+                  <div className="row" style={{ gap: 8 }}>
+                    <span style={{ width: 34 }}>{Math.round(c.score)}</span>
+                    <div style={{ flex: 1 }}><Meter value={c.score} /></div>
+                  </div>
+                </td>
+                <td className="muted small">
+                  <div>{c.rule}</div>
+                  {(c.evidence ?? []).length > 0 && <ul>{c.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid cols-2" style={{ marginTop: 14 }}>
+        <div>
+          <h3>Missing signals</h3>
+          {(fit.missing ?? []).length === 0 ? <div className="muted small">None flagged.</div> : <ul>{fit.missing.map((m, i) => <li key={i}>{m}</li>)}</ul>}
+        </div>
+        <div>
+          <h3>Suggested probes</h3>
+          {(fit.probes ?? []).length === 0 ? <div className="muted small">None.</div> : <ul>{fit.probes.map((pr, i) => <li key={i}>{pr}</li>)}</ul>}
+        </div>
+      </div>
+    </>
   );
 }

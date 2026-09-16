@@ -229,6 +229,66 @@ td a:not(.btn) {
   outline-offset: 2px;
 }
 
+.candidate-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--rule);
+  margin: 4px 0 16px;
+  max-width: 100%;
+}
+
+.candidate-detail-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+.candidate-detail-tab:hover {
+  color: var(--ink);
+  background: var(--sheet-sunk);
+}
+
+.candidate-detail-tab.active,
+.candidate-detail-tab[aria-selected='true'] {
+  background: var(--sheet);
+  border-color: var(--rule);
+  color: var(--ink);
+  margin-bottom: -1px;
+}
+
+.candidate-detail-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.candidate-profile-tab,
+.alternative-role-list {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.profile-entry,
+.alternative-role-card {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alternative-role-card {
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--sheet-sunk);
+  padding: 14px;
+}
+
 /* --- pipeline additions --------------------------------------------------- */
 
 .evidence-mark .icon {
