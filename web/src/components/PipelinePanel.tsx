@@ -55,6 +55,9 @@ interface InterviewOption {
 
 type Decision = 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
 
+/** The server's own floor for a decision reason, checked here too. */
+const MIN_DECISION_REASON = 10;
+
 interface SchedulingNotice {
   delivered: boolean;
   link: string;
@@ -109,6 +112,8 @@ export function PipelinePanel(
   const [schedulingNotice, setSchedulingNotice] = useState<SchedulingNotice | null>(null);
   // Set while a candidacy-ending outcome waits to be confirmed.
   const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
+  // The stage a move is waiting to be confirmed for.
+  const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -188,6 +193,12 @@ export function PipelinePanel(
   const scheduleRound = (e: React.FormEvent) => {
     e.preventDefault();
     if (!current || !scheduledAt) return;
+    // A round in the past is almost always a mistyped date, and it reaches the
+    // candidate as an invitation to a time that has already gone.
+    if (new Date(scheduledAt).getTime() < Date.now()) {
+      setError('That time has already passed. Pick a date and time in the future.');
+      return;
+    }
     const names = interviewers.split(',').map((n) => n.trim()).filter(Boolean);
     void run(() => api.post<{ notification?: SchedulingNotice }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
@@ -211,7 +222,13 @@ export function PipelinePanel(
   };
 
   const submitDecision = () => {
-    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason })
+    // Trimmed and checked here, not only by the browser: this reason is the
+    // record of why someone's candidacy ended.
+    if (reason.trim().length < MIN_DECISION_REASON) {
+      setError(`Say why in at least ${MIN_DECISION_REASON} characters — this is the record of the decision.`);
+      return;
+    }
+    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason: reason.trim() })
       .then(() => { setReason(''); setPendingDecision(null); }));
   };
 
@@ -220,8 +237,21 @@ export function PipelinePanel(
   // named back — outcome and person — before they are recorded.
   const recordDecision = (e: React.FormEvent) => {
     e.preventDefault();
+    if (reason.trim().length < MIN_DECISION_REASON) {
+      setError(`Say why in at least ${MIN_DECISION_REASON} characters — this is the record of the decision.`);
+      return;
+    }
     if (decision === 'APPROVED') { submitDecision(); return; }
     setPendingDecision(decision);
+  };
+
+  // Moving someone on is visible to them and to the next interviewer, and the
+  // button sits beside the stage track where a stray click lands easily.
+  const advance = () => {
+    if (!next) return;
+    if (pendingAdvance !== next.key) { setPendingAdvance(next.key); return; }
+    setPendingAdvance(null);
+    void run(() => api.post(`/pipelines/${pipeline.id}/advance`, { toStageKey: next.key }));
   };
 
   return (
@@ -260,9 +290,18 @@ export function PipelinePanel(
           <div className="pipeline-action">
             <h3 className="card-title"><Icon name="arrow-right" size={16} />Next stage</h3>
             {next ? (
-              <button className="btn secondary" disabled={busy} onClick={() => run(() => api.post(`/pipelines/${pipeline.id}/advance`, { toStageKey: next.key }))}>
-                <Icon name="arrow-right" size={16} />Move to {next.label}
-              </button>
+              <>
+                <button type="button" className="btn secondary" disabled={busy} onClick={advance}>
+                  <Icon name="arrow-right" size={16} />
+                  {pendingAdvance === next.key ? `Confirm move to ${next.label}` : `Move to ${next.label}`}
+                </button>
+                {pendingAdvance === next.key && (
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    {candidateName} moves to {next.label}.{' '}
+                    <button type="button" className="btn ghost sm" onClick={() => setPendingAdvance(null)}>Not yet</button>
+                  </p>
+                )}
+              </>
             ) : (
               <p className="muted small">This is the final stage. Record a decision when ready.</p>
             )}

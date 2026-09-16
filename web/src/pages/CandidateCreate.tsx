@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
@@ -28,6 +28,7 @@ export function CandidateCreate() {
   // Set once the candidate record exists, so a failed resume upload can be
   // retried against the same person rather than making a duplicate.
   const [createdId, setCreatedId] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.get<{ roles: Role[] }>('/roles')
@@ -39,6 +40,13 @@ export function CandidateCreate() {
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, []);
+
+  // The input keeps its own value, so clearing state alone would leave the
+  // filename on screen with nothing behind it.
+  const removeFile = () => {
+    setFile(null);
+    if (fileInput.current) fileInput.current.value = '';
+  };
 
   if (loading) return <PageSkeleton label="Loading roles…" cards={1} />;
 
@@ -116,14 +124,24 @@ export function CandidateCreate() {
         <label>Phone (optional)</label>
         <input value={phone} onChange={(e) => setPhone(e.target.value)} />
 
-        <label>Resume file (PDF, DOCX, or TXT)</label>
+        <label htmlFor="resume-file">Resume file (PDF, DOCX, or TXT)</label>
         <input
+          id="resume-file"
+          ref={fileInput}
           type="file"
           accept=".pdf,.docx,.txt"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
-        <div className="muted small" style={{ marginTop: 6 }}>
-          If a file is selected it takes precedence over the pasted text below.
+        <div className="row muted small" style={{ marginTop: 6, gap: 8 }}>
+          <span>If a file is selected it takes precedence over the pasted text below.</span>
+          {/* Choosing a file disabled the text box, and a file picker offers no
+              way to choose nothing — so the only way back to pasting was to
+              reload the page and retype everything. */}
+          {file && (
+            <button type="button" className="btn ghost sm" onClick={removeFile}>
+              <Icon name="close" size={14} />Remove {file.name}
+            </button>
+          )}
         </div>
 
         <label>Or paste resume text</label>

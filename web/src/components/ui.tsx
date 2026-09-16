@@ -37,8 +37,14 @@ export function stateBadge(state: string) {
   return <StatusBadge kind="interview" value={state} />;
 }
 
+/**
+ * Banners appear after something happened — a failed save, a submitted review —
+ * so a screen reader has to be told they arrived. Errors interrupt (role
+ * "alert"); the rest wait for a pause (role "status"), which is the difference
+ * between "this needs you now" and "for your information".
+ */
 export function Banner({ kind, children }: { kind: 'error' | 'info' | 'ok'; children: ReactNode }) {
-  return <div className={`banner ${kind}`}>{children}</div>;
+  return <div className={`banner ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{children}</div>;
 }
 
 export function Meter({ value }: { value: number }) {
