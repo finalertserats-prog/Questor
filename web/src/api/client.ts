@@ -7,7 +7,13 @@
 // a header on state-changing calls — the double-submit pattern the server
 // enforces on cookie-authenticated writes.
 
+import { interpretResponse, TIMEOUT_MESSAGE } from './responseModel';
+
 const CSRF_COOKIE = 'questor_csrf';
+// Long enough for the slowest thing the API does honestly (an LLM-backed
+// scorecard draft), short enough that a hung request ends in an error rather
+// than a spinner nobody ever returns from.
+const REQUEST_TIMEOUT_MS = 30_000;
 const CSRF_HEADER = 'X-CSRF-Token';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -70,15 +76,31 @@ async function req<T>(method: string, path: string, body?: unknown, isForm = fal
   }
   // `credentials: 'include'` so the session cookie rides along even when the
   // API is served from a different origin than the SPA.
-  const res = await fetch(`/api${path}`, { method, headers, body: payload, credentials: 'include' });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      method,
+      headers,
+      body: payload,
+      credentials: 'include',
+      // Without a deadline a request that never answers — a hung proxy, a
+      // dropped connection the OS has not noticed — leaves the page on its
+      // loading state forever, with no error and no way forward.
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err: unknown) {
+    if (isAbort(err)) throw new ApiError(0, TIMEOUT_MESSAGE);
+    throw err;
+  }
   const text = await res.text();
-  const data = text ? safeParse(text) : null;
-  if (!res.ok) throw new ApiError(res.status, (data && data.error) || res.statusText);
-  return data as T;
+  const outcome = interpretResponse({ ok: res.ok, status: res.status, statusText: res.statusText, text });
+  if (outcome.kind === 'error') throw new ApiError(outcome.status, outcome.message);
+  return outcome.data as T;
 }
 
-function safeParse(t: string) {
-  try { return JSON.parse(t); } catch { return { raw: t }; }
+/** Both names appear across browsers for a signal that ran out of time. */
+function isAbort(err: unknown): boolean {
+  return err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError');
 }
 
 export const api = {
