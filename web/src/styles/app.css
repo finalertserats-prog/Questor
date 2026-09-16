@@ -391,7 +391,19 @@ code {
   flex: 1;
   min-width: 0;
   padding: 30px 38px 60px;
-  max-width: 1120px;
+  /* 1120px left a third of a wide monitor empty. The console is a working
+     surface — tables, a four-column journey, charts — and it should use the
+     screen it is given. Still bounded: beyond this, a line of prose becomes
+     hard to track back to the start, and the centre of the page drifts away
+     from where the eye already is. */
+  max-width: 1680px;
+}
+
+/* Prose stays readable whatever the page is doing around it: the measure is a
+   property of reading, not of the window. */
+.main p,
+.main li {
+  max-width: 96ch;
 }
 
 /* The page header closes with the same measuring edge as the wordmark: minor
