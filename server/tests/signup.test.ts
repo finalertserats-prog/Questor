@@ -286,3 +286,62 @@ describe('retention of signup requests', () => {
     expect(await prisma.signupRequest.findUnique({ where: { id: row.id } })).not.toBeNull();
   });
 });
+
+/**
+ * Found by Codex reviewing a0db550: the link path marks an expired request
+ * EXPIRED and answers 410, but the admin path fetched by id and skipped that
+ * step, so an operator acting on an expired row from the queue was told it had
+ * "already been decided", which it had not. And a request nobody ever opened
+ * stayed PENDING forever, password hash included, because retention only swept
+ * rows that had reached a final status.
+ */
+describe('an expired request reached from the operator queue', () => {
+  const expire = async (email: string) => {
+    const row = await prisma.signupRequest.findFirstOrThrow({ where: { email } });
+    await prisma.signupRequest.update({ where: { id: row.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    return row;
+  };
+
+  it('answers 410 to an admin approving it, not 409', async () => {
+    const auth = await adminAuth();
+    await request(app).post('/api/signup').send(signupBody({ email: 'stale-approve@example.com' }));
+    const row = await expire('stale-approve@example.com');
+
+    const res = await request(app).post(`/api/admin/signups/${row.id}/approve`).set('Authorization', auth);
+
+    expect(res.status).toBe(410);
+  });
+
+  it('answers 410 to an admin declining it, not 409', async () => {
+    const auth = await adminAuth();
+    await request(app).post('/api/signup').send(signupBody({ email: 'stale-decline@example.com' }));
+    const row = await expire('stale-decline@example.com');
+
+    const res = await request(app).post(`/api/admin/signups/${row.id}/decline`).set('Authorization', auth);
+
+    expect(res.status).toBe(410);
+  });
+
+  it('marks the row EXPIRED so it leaves the pending queue', async () => {
+    const auth = await adminAuth();
+    await request(app).post('/api/signup').send(signupBody({ email: 'stale-mark@example.com' }));
+    const row = await expire('stale-mark@example.com');
+
+    await request(app).post(`/api/admin/signups/${row.id}/approve`).set('Authorization', auth);
+
+    expect(await prisma.signupRequest.findUniqueOrThrow({ where: { id: row.id } })).toHaveProperty('status', 'EXPIRED');
+  });
+});
+
+describe('retention of a request nobody ever opened', () => {
+  it('deletes a still-PENDING request once its link expired longer ago than the retention window', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    const row = await prisma.signupRequest.findFirstOrThrow();
+    const longAgo = new Date(Date.now() - 400 * 24 * 60 * 60 * 1000);
+    await prisma.signupRequest.update({ where: { id: row.id }, data: { createdAt: longAgo, expiresAt: longAgo } });
+
+    await runRetentionSweep();
+
+    expect(await prisma.signupRequest.findUnique({ where: { id: row.id } })).toBeNull();
+  });
+});

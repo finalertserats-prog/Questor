@@ -100,11 +100,21 @@ export async function resolveSignupDecision(token: string, now = new Date()): Pr
   const tokenHash = hashSignupDecisionToken(token);
   const row = await prisma.signupRequest.findUnique({ where: { decisionTokenHash: tokenHash } });
   if (!row || !hashesMatch(row.decisionTokenHash, tokenHash)) throw new HttpError(404, 'This signup link is not valid.');
-  if (row.expiresAt <= now && row.status === 'PENDING') {
-    await prisma.signupRequest.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'EXPIRED' } });
-    throw new HttpError(410, 'This signup link has expired.');
-  }
+  await expireIfPast(row, now);
   return row;
+}
+
+/**
+ * A PENDING request whose window has closed is settled here, whichever door it
+ * came in by. This used to live only on the link path, so an operator acting on
+ * the same row from the queue was told it had "already been decided" (409) when
+ * in truth nobody had decided anything and the link had merely aged out. Both
+ * paths now mark it EXPIRED and say so.
+ */
+async function expireIfPast(row: SignupRequest, now: Date): Promise<void> {
+  if (row.status !== 'PENDING' || row.expiresAt > now) return;
+  await prisma.signupRequest.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'EXPIRED' } });
+  throw new HttpError(410, 'This signup request has expired.');
 }
 
 export function signupApplicant(row: SignupRequest) {
@@ -143,6 +153,7 @@ export async function decideSignupRequest(opts: {
     ? await resolveSignupDecision(opts.token, now)
     : await prisma.signupRequest.findUnique({ where: { id: opts.id! } });
   if (!row) throw new HttpError(404, 'Signup request not found.');
+  await expireIfPast(row, now);
   if (row.status !== 'PENDING') return { transitioned: false, approvedUserId: row.createdUserId ?? undefined };
 
   if (opts.decision === 'decline') {

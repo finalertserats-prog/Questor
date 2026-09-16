@@ -598,19 +598,31 @@ export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> 
  * already become a User, and a declined or expired one is a decision nobody can
  * act on again.
  *
- * A request still PENDING is never swept, however old. Deleting one would make
- * an operator's queue quietly lose entries they had not answered yet.
+ * A request that is still PENDING and still inside its window is never swept,
+ * however old. Deleting one would make an operator's queue quietly lose entries
+ * they had not answered yet.
+ *
+ * A PENDING row whose window closed long ago is different: nobody can approve
+ * or decline it any more, and if nobody ever opened its link nothing will ever
+ * move it out of PENDING. Left alone it would keep a stranger's name, address
+ * and password hash indefinitely, which is the one outcome this sweep exists
+ * to prevent. It ages from the moment its link expired.
  */
 export async function purgeExpiredSignupRequests(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - retentionDays() * DAY_MS);
   const { count } = await prisma.signupRequest.deleteMany({
     where: {
-      status: { in: ['APPROVED', 'DECLINED', 'EXPIRED'] },
-      // Decided rows age from the decision; a row that expired without anyone
-      // touching it has no decidedAt, so it ages from when it was created.
       OR: [
-        { decidedAt: { lte: cutoff } },
-        { decidedAt: null, createdAt: { lte: cutoff } },
+        {
+          status: { in: ['APPROVED', 'DECLINED', 'EXPIRED'] },
+          // Decided rows age from the decision; a row that expired without
+          // anyone touching it has no decidedAt, so it ages from creation.
+          OR: [
+            { decidedAt: { lte: cutoff } },
+            { decidedAt: null, createdAt: { lte: cutoff } },
+          ],
+        },
+        { status: 'PENDING', expiresAt: { lte: cutoff } },
       ],
     },
   });
