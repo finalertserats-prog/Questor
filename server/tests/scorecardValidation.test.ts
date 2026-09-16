@@ -120,3 +120,34 @@ describe('refusing a scorecard that would poison the engines', () => {
     expect(JSON.stringify(res.body)).not.toMatch(/at .*\.ts:\d+/);
   });
 });
+
+describe('the weights as shares of one score', () => {
+  it('refuses scored weights that do not total 100%', async () => {
+    const competencies = (drafted.competencies as Array<Record<string, unknown>>).map((c) => ({ ...c, weight: 1 }));
+
+    const res = await put({ ...drafted, competencies });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('names the total in the refusal so the editor can fix it', async () => {
+    const competencies = (drafted.competencies as Array<Record<string, unknown>>).map((c) => ({ ...c, weight: 1 }));
+
+    const res = await put({ ...drafted, competencies });
+
+    expect(JSON.stringify(res.body)).toMatch(/must total 100%/);
+  });
+
+  it('ignores non-scoring competencies when totalling', async () => {
+    const competencies = (drafted.competencies as Array<Record<string, unknown>>).map((c, i) => (
+      i === 0 ? { ...c, classification: 'non_scoring', weight: 0.4 } : c
+    ));
+    const scored = competencies.filter((c) => c.classification !== 'non_scoring');
+    const total = scored.reduce((sum, c) => sum + (c.weight as number), 0);
+    const rebalanced = competencies.map((c) => (c.classification === 'non_scoring' ? c : { ...c, weight: (c.weight as number) / total }));
+
+    const res = await put({ ...drafted, competencies: rebalanced });
+
+    expect(res.status).toBe(200);
+  });
+});

@@ -73,6 +73,24 @@ export const roleSuccessProfileSchema = z.object({
         });
       }
     }
+    // The engines treat weights as shares of one whole. The extractor
+    // normalises them to sum to 1 (rounded to three places), and an editor that
+    // saved 340% would have every later fit and assessment score wrong with no
+    // visible symptom. Non-scoring competencies carry no weight and sit outside
+    // the total.
+    const scoredTotal = profile.competencies
+      .filter((c) => c.classification !== 'non_scoring')
+      .reduce((sum, c) => sum + c.weight, 0);
+    if (Math.abs(scoredTotal - 1) > WEIGHT_SUM_TOLERANCE) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['competencies'],
+        message: `Weights of the scored competencies total ${Math.round(scoredTotal * 100)}%; they must total 100%.`,
+      });
+    }
   });
+
+/** Room for three-decimal rounding across up to forty competencies. */
+const WEIGHT_SUM_TOLERANCE = 0.02;
 
 export type ValidatedRoleSuccessProfile = z.infer<typeof roleSuccessProfileSchema>;

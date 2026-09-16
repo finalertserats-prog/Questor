@@ -24,3 +24,31 @@ ${message.html}
 
   return { ...message, html };
 }
+
+/**
+ * A mail header is a single line. Names and role titles typed by people reach
+ * subject lines; a newline inside one would let a stranger append headers to
+ * mail sent on Questor's behalf. Every control character becomes a space and
+ * the length is bounded. Written as a code-point test rather than a regex
+ * character class, so no control character has to survive a source literal.
+ */
+export function headerSafe(value: string): string {
+  const SPACE = 32;
+  const DEL = 127;
+  let out = '';
+  for (const ch of value) {
+    const code = ch.codePointAt(0) ?? 0;
+    out += code < SPACE || code === DEL ? ' ' : ch;
+  }
+  return out.trim().slice(0, 120);
+}
+
+/** For text a person typed that is placed inside an HTML body. */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

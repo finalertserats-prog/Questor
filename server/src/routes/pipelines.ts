@@ -7,7 +7,7 @@ import { assertCanAccessCandidate, assertCanAccessRole } from '../services/acces
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
 import { getEmail } from '../providers/email/index.js';
-import { brandedEmail } from '../providers/email/branding.js';
+import { brandedEmail, headerSafe } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
@@ -189,7 +189,7 @@ async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt:
   try {
     await email.send(brandedEmail({
       to: o.to,
-      subject: `${label} interview scheduled`,
+      subject: `${headerSafe(label)} interview scheduled`,
       text: `${intro}\n${o.link}`,
       html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(o.link)}">${escapeHtml(o.link)}</a></p>`,
     }));

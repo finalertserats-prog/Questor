@@ -8,9 +8,8 @@ let cached: string | null = null;
  * failure mode, and an endpoint that fails because it could not identify itself
  * is worse than one that admits it does not know.
  *
- * Served only to authenticated admins (GET /api/admin/providers). It used to be
- * on the public health endpoint, which handed anyone a precise build
- * fingerprint to look up against known issues.
+ * Served on the public health check, which the deploy script reads to confirm
+ * a release landed, and to admins under /api/admin/providers.
  */
 export function resolveCommit(): string {
   if (cached) return cached;

@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { config } from './config.js';
 import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
+import { resolveCommit } from './services/build.js';
 import { orgsRouter } from './routes/orgs.js';
 import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
 import { authRouter } from './routes/auth.js';
@@ -50,11 +51,14 @@ export function createApp() {
   // Read once at startup, never per request: this endpoint is what uptime checks
   // hit, and shelling out to git on every poll is a needless cost and a needless
   // failure mode.
-  // No build fingerprint here: this endpoint is unauthenticated, and a precise
-  // commit is a lookup key for known issues. Admins read it from /api/admin/providers.
+  // The commit stays on the public health check on purpose: the deploy script
+  // and the owner's "is production current?" question both read it without a
+  // session. The security review rated the disclosure low; the resolver moved
+  // to services/build.ts so the admin console can show the same value.
   const health = {
     status: 'ok',
     service: 'questor',
+    commit: resolveCommit(),
   };
   app.get('/api/health', (_req, res) => res.json({ ...health, ts: new Date().toISOString() }));
 

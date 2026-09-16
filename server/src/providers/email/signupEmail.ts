@@ -1,4 +1,4 @@
-import { brandedEmail } from './branding.js';
+import { brandedEmail, headerSafe } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 function escapeHtml(s: string): string {
@@ -13,25 +13,6 @@ function link(href: string, label: string): string {
   return `<p style="margin:0 0 10px"><a href="${escapeHtml(href)}" style="display:inline-block;background:#2f2f7a;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">${escapeHtml(label)}</a></p>`;
 }
 
-/**
- * A mail header is a single line. The applicant types their own name and it is
- * only length-checked on the way in, so a newline inside it would let a stranger
- * append headers to mail addressed to the operator. Collapse anything that is
- * not printable text, and bound the length.
- */
-function header(value: string): string {
-  // Written as an explicit code-point test rather than a regex character class:
-  // every control character here would otherwise have to survive a source
-  // literal, and one that does not is a sanitiser with a hole in it.
-  const SPACE = 32;
-  const DEL = 127;
-  let out = '';
-  for (const ch of value) {
-    const code = ch.codePointAt(0) ?? 0;
-    out += code < SPACE || code === DEL ? ' ' : ch;
-  }
-  return out.trim().slice(0, 120);
-}
 
 export function renderSignupOperatorEmail(opts: {
   to: string;
@@ -64,7 +45,7 @@ export function renderSignupOperatorEmail(opts: {
 
   return brandedEmail({
     to: opts.to,
-    subject: `Questor signup request — ${header(opts.name)}`,
+    subject: `Questor signup request — ${headerSafe(opts.name)}`,
     text,
     html: [
       p('A person has requested access to Questor.'),

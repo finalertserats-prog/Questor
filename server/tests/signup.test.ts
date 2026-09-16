@@ -451,3 +451,16 @@ describe('when the mail server is down', () => {
     expect([res.status, await prisma.signupRequest.count()]).toEqual([201, 1]);
   });
 });
+
+describe('the audit trail of a declined new-organisation request', () => {
+  it('records the decision against the operator organisation rather than nowhere', async () => {
+    await adminAuth();
+    await request(app).post('/api/signup').send(signupBody({ email: 'declined-org@example.com', mode: 'new-org', organisationName: 'Nowhere Ltd' }));
+    const token = decisionTokenFromOperatorMail();
+
+    await request(app).post(`/api/signup/decision/${token}`).send({ decision: 'decline' });
+
+    const event = await prisma.auditEvent.findFirst({ where: { action: 'signup.declined' } });
+    expect(event).not.toBeNull();
+  });
+});

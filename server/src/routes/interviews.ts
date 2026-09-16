@@ -12,7 +12,8 @@ import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/
 import { assertTransition } from '../domain/stateMachine.js';
 import { getEmail } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
-import { brandedEmail } from '../providers/email/branding.js';
+import { brandedEmail, headerSafe, escapeHtml } from '../providers/email/branding.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
@@ -36,9 +37,9 @@ interviewsRouter.use(authenticate);
 function buildInvite(candidateName: string, roleTitle: string, portalUrl: string, personaName: string = DEFAULT_PERSONA_NAME) {
   return brandedEmail({
     to: '',
-    subject: `Your first-round interview for ${roleTitle}`,
+    subject: `Your first-round interview for ${headerSafe(roleTitle)}`,
     text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. It is conducted by ${personaName}, an AI voice interviewer, and your answers are transcribed as you speak — no audio recording is kept.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
-    html: `<p>Hi ${candidateName},</p><p>You're invited to a first-round interview for <b>${roleTitle}</b>, conducted by <b>${personaName}</b>, an AI voice interviewer. Your answers are transcribed as you speak — no audio recording is kept.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
+    html: `<p>Hi ${escapeHtml(candidateName)},</p><p>You're invited to a first-round interview for <b>${escapeHtml(roleTitle)}</b>, conducted by <b>${escapeHtml(personaName)}</b>, an AI voice interviewer. Your answers are transcribed as you speak — no audio recording is kept.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
   });
 }
 
@@ -192,7 +193,10 @@ const bulkInviteRowSchema = z.object({ candidateId: z.string().min(1) });
 // Each row is a database round trip and an outbound email inside one request.
 const MAX_BULK_INVITE = 200;
 
-interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+// Each row sends mail. Per user, not per address: everyone in an office shares one.
+const bulkInviteLimit = rateLimit({ name: 'bulk-invite', windowMs: 15 * 60_000, max: 10, keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown' });
+
+interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), bulkInviteLimit, asyncHandler(async (req, res) => {
   const rows = z.array(z.unknown()).max(MAX_BULK_INVITE).parse(req.body);
   const results = [];
 

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { prisma, parseJson } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { scorecardForFit } from '../services/scorecards.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 import { eraseCandidate } from '../services/dataRights.js';
 import {
   assertCanAccessCandidate,
@@ -109,7 +110,9 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
 // A write, gated like the create it belongs to. Object scope alone let a
 // reviewer assigned to a candidate replace their profile, rewrite the evidence
 // graph and rescore the fit.
-candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), uploadResume, asyncHandler(async (req, res) => {
+const resumeLimit = rateLimit({ name: 'resume-upload', windowMs: 15 * 60_000, max: 60, keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown' });
+
+candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resumeLimit, uploadResume, asyncHandler(async (req, res) => {
   const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
   let rawText = '';
   let filename = 'pasted.txt';

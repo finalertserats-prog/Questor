@@ -1,4 +1,4 @@
-import { brandedEmail } from './branding.js';
+import { brandedEmail, headerSafe } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 /**
@@ -121,7 +121,7 @@ you can ask for that here. It is one click, and nobody will call you unless you 
 
   return brandedEmail({
     to: opts.to,
-    subject: `Your interview feedback — ${opts.roleTitle}`,
+    subject: `Your interview feedback — ${headerSafe(opts.roleTitle)}`,
     text: `${opts.approvedText}${offerText}\n`,
     html: `${renderBody(opts.approvedText)}\n${offerHtml}`,
   });

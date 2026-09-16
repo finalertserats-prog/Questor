@@ -142,8 +142,16 @@ export function signupApplicant(row: SignupRequest) {
 
 async function auditSignupDecision(row: SignupRequest, action: string, actorId: string, after: unknown) {
   const tenantId = row.createdTenantId
-    ?? (row.orgSlug ? (await prisma.tenant.findUnique({ where: { slug: row.orgSlug }, select: { id: true } }))?.id : null);
-  if (!tenantId) return;
+    ?? (row.orgSlug ? (await prisma.tenant.findUnique({ where: { slug: row.orgSlug }, select: { id: true } }))?.id : null)
+    // A declined new-organisation request created nothing and joins nothing,
+    // yet a person decided it. It is recorded against the operator's own
+    // organisation rather than nowhere.
+    ?? (await prisma.user.findUnique({ where: { email: config.signupApproverEmail.toLowerCase() }, select: { tenantId: true } }))?.tenantId
+    ?? null;
+  if (!tenantId) {
+    logger.warn({ action, signupRequestId: row.id }, 'Signup decision could not be audited: no organisation to record it against');
+    return;
+  }
   await logAudit({
     tenantId,
     actorType: actorId === 'signup-link' ? 'system' : 'user',

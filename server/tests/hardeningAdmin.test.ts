@@ -110,14 +110,8 @@ describe('where a webhook may point', () => {
   });
 });
 
-describe('what the public health check reveals', () => {
-  it('does not include the build commit', async () => {
-    const res = await request(app).get('/api/health');
-
-    expect(res.body.commit).toBeUndefined();
-  });
-
-  it('gives the commit to an authenticated admin instead', async () => {
+describe('the build an admin is looking at', () => {
+  it('is reported on the admin console alongside the health check', async () => {
     const res = await request(app).get('/api/admin/providers').set(auth());
 
     expect(typeof res.body.build?.commit).toBe('string');

@@ -8,6 +8,7 @@ import { roleSuccessProfileSchema } from '../domain/profileSchema.js';
 import { logAudit } from '../services/audit.js';
 import { assertCanAccessRole, assignRole, roleScope } from '../services/access.js';
 import { getAts } from '../providers/ats/index.js';
+import { rateLimit } from '../middleware/rateLimit.js';
 
 export const rolesRouter = Router();
 rolesRouter.use(authenticate);
@@ -35,13 +36,18 @@ const createSchema = z.object({
   // Sent straight to a paid model; a JD is a few thousand characters, and
   // fifty thousand is already a book chapter.
   sourceText: z.string().max(50_000).default(''),
-  title: z.string().max(200).optional(),
+  title: z.string().max(200)
+    .refine((t) => [...t].every((ch) => (ch.codePointAt(0) ?? 0) >= 32 && ch.codePointAt(0) !== 127), 'A title is a single line.')
+    .optional(),
   atsRequisitionId: z.string().optional(),
   useLlm: z.boolean().default(true),
 });
 
 // Create a role from JD / ATS + auto-extract a draft scorecard (FR-001..004)
-rolesRouter.post('/', requireCapability('role:create'), asyncHandler(async (req, res) => {
+// Every call may spend on the model. Per user: an office shares one address.
+const roleCreateLimit = rateLimit({ name: 'role-create', windowMs: 15 * 60_000, max: 30, keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown' });
+
+rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
   let sourceText = body.sourceText;
   let titleHint = body.title ?? '';
