@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
 import { formatPercent } from '../components/scoreFormat';
+import { recommendationStatus } from '../components/statusModel';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
 interface Providers {
@@ -199,8 +200,11 @@ export function Admin() {
             <h3>Recommendations</h3>
             <table>
               <tbody>
+                {/* Through the same table the badges use, so a recommendation
+                    the server adds — SCORING_UNAVAILABLE, say — is named here
+                    the way it is named everywhere else. */}
                 {Object.entries(analytics?.recommendations ?? {}).map(([k, v]) => (
-                  <tr key={k}><td>{k.replace(/_/g, ' ')}</td><td>{v}</td></tr>
+                  <tr key={k}><td>{recommendationStatus(k).label}</td><td>{v}</td></tr>
                 ))}
                 {Object.keys(analytics?.recommendations ?? {}).length === 0 && (
                   <tr><td className="muted small">No data yet.</td></tr>

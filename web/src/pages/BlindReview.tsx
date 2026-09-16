@@ -6,6 +6,9 @@ import { ValidationStatus } from './AssessmentView';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { PageSkeleton } from '../components/Skeleton';
+// One list of verdicts for both review surfaces, so the pair cannot drift.
+import { DISPOSITIONS, isDisposition, type Disposition } from '../components/assessmentModel';
+import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
 
 // Blind-first review.
 //
@@ -44,13 +47,12 @@ interface AiCompetency {
   notEnoughEvidence: boolean; rationale: string;
 }
 interface AiResult {
-  recommendation: string; confidence: number; evidenceCoverage: number; overallScore: number;
+  // Null when grading never produced a score (recommendation SCORING_UNAVAILABLE).
+  recommendation: string; confidence: number; evidenceCoverage: number; overallScore: number | null;
   summary: string; competencies: AiCompetency[];
 }
 interface RevealResp { id: string; result: AiResult; note: string }
 
-type Disposition = 'PROCEED' | 'CONSIDER' | 'DO_NOT_PROGRESS';
-const DISPOSITIONS: Disposition[] = ['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS'];
 
 const fmt = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -113,10 +115,11 @@ function Comparison({ view, levels, disposition, ai }: {
         <div className="row" style={{ gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>
           <Stat label="You said" value={<Badge kind="blue">{disposition.replace(/_/g, ' ')}</Badge>} />
           <Stat label="AI said" value={recBadge(ai.recommendation)} />
-          <Stat label="AI overall" value={`${ai.overallScore}/100`} />
-          <Stat label="AI confidence" value={`${Math.round(ai.confidence * 100)}%`} />
+          <Stat label="AI overall" value={formatScoreOutOf100(ai.overallScore)} />
+          <Stat label="AI confidence" value={formatPercent(ai.confidence)} />
         </div>
-        {disposition !== ai.recommendation && (
+        {/* An AI that produced no verdict has not disagreed with yours. */}
+        {isDisposition(ai.recommendation) && disposition !== ai.recommendation && (
           <Banner kind="info">
             You and the AI reached different conclusions. Yours is the one that counts — the AI's
             output is advisory. Worth noting what it saw that you did not, or vice versa.

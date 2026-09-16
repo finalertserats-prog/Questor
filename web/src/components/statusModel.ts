@@ -66,6 +66,10 @@ const RECOMMENDATION: StatusTable = {
   PROCEED: ['pass', 'check-circle'],
   CONSIDER: ['hold', 'question'],
   DO_NOT_PROGRESS: ['stop', 'x-circle'],
+  // Grading never produced a score — the provider was down. Neutral on
+  // purpose: it says something about the instrument, not about the candidate,
+  // and must never read as a pass or a fail.
+  SCORING_UNAVAILABLE: ['neutral', 'alert', 'Scoring unavailable'],
 };
 
 /** "CANDIDATE_QUESTIONS" -> "Candidate questions". */
