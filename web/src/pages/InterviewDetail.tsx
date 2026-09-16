@@ -6,6 +6,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { isInFlight } from './CandidatesList';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null; }
@@ -22,6 +23,9 @@ interface InterviewResp {
   invitation: Invitation | null;
 }
 
+/** The things this page can do, one at a time. */
+type Action = 'invite' | 'resend' | 'schedule' | 'cancel';
+
 export function InterviewDetail() {
   const { id } = useParams();
   const [data, setData] = useState<InterviewResp | null>(null);
@@ -30,14 +34,16 @@ export function InterviewDetail() {
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
   const [scheduleAt, setScheduleAt] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<Action | null>(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
-  const load = () => {
+  // Returns its promise: an action that re-enables its button before the fresh
+  // data lands invites a second press against the state it just changed.
+  const load = () =>
     api.get<InterviewResp>(`/interviews/${id}`)
       .then(setData)
-      .catch((err) => setError(err.message))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not load this interview.'))
       .finally(() => setLoading(false));
-  };
   useEffect(() => { setLoading(true); load(); }, [id]);
 
   if (loading) return <PageSkeleton label="Loading interview…" cards={3} />;
@@ -55,34 +61,49 @@ export function InterviewDetail() {
 
   const { session, plan, turns, assessment, invitation } = data;
 
-  const doAction = async (fn: () => Promise<unknown>, ok?: string) => {
+  // Which action is running, not merely that one is: a single flag put
+  // "Sending…" on the resend button while the person had pressed Schedule.
+  const doAction = async (action: Action, fn: () => Promise<unknown>, ok?: string) => {
+    if (busyAction) return;
     setError('');
     setNotice('');
-    setBusy(true);
+    setBusyAction(action);
     try {
       await fn();
       if (ok) setNotice(ok);
-      load();
-    } catch (err: any) {
-      setError(err.message);
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'That did not go through.');
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   };
 
-  const invite = () => doAction(() => api.post(`/interviews/${id}/invite`, {}), 'Invitation created.');
-  const resend = () => doAction(() => api.post(`/interviews/${id}/resend`, {}), 'Invitation email sent again.');
+  const invite = () => doAction('invite', () => api.post(`/interviews/${id}/invite`, {}), 'Invitation created.');
+  const resend = () => doAction('resend', () => api.post(`/interviews/${id}/resend`, {}), 'Invitation email sent again.');
   const schedule = () => {
     if (!scheduleAt) return;
-    doAction(() => api.post(`/interviews/${id}/schedule`, { scheduledAt: new Date(scheduleAt).toISOString() }), 'Interview scheduled.');
+    void doAction('schedule', () => api.post(`/interviews/${id}/schedule`, { scheduledAt: new Date(scheduleAt).toISOString() }), 'Interview scheduled.');
   };
-  const cancel = () => doAction(() => api.post(`/interviews/${id}/cancel`, {}), 'Interview cancelled.');
+  const cancel = () => {
+    // Cancelling ends the interview for the candidate, and nothing here undoes
+    // it — so it is asked for rather than taken from one press of a red button.
+    if (!confirmCancel) { setConfirmCancel(true); return; }
+    setConfirmCancel(false);
+    void doAction('cancel', () => api.post(`/interviews/${id}/cancel`, {}), 'Interview cancelled.');
+  };
 
-  const copyUrl = () => {
+  const copyUrl = async () => {
     if (!invitation?.portalUrl) return;
-    navigator.clipboard?.writeText(invitation.portalUrl);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    try {
+      // Awaited: "Copied!" over a clipboard that refused sends someone away with
+      // an empty clipboard and a link they think they have.
+      await navigator.clipboard.writeText(invitation.portalUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError('We could not reach your clipboard — select the link above and copy it yourself.');
+    }
   };
 
   return (
@@ -91,8 +112,25 @@ export function InterviewDetail() {
         icon="interviews"
         title="Interview"
         badge={stateBadge(session.state)}
-        actions={<button className="btn danger" onClick={cancel} disabled={busy}><Icon name="x-circle" size={16} />Cancel interview</button>}
+        actions={
+          // Nothing to cancel once the interview has reached a state it will
+          // not leave on its own — the same set the candidates list reads.
+          isInFlight(session.state) ? (
+            <button type="button" className="btn danger" onClick={cancel} disabled={busyAction !== null}>
+              <Icon name="x-circle" size={16} />
+              {busyAction === 'cancel' ? 'Cancelling…' : confirmCancel ? 'Confirm cancel' : 'Cancel interview'}
+            </button>
+          ) : undefined
+        }
       />
+
+      {confirmCancel && (
+        <Banner kind="info">
+          Cancelling ends this interview for the candidate and cannot be undone. Press
+          "Confirm cancel" to go ahead, or{' '}
+          <button type="button" className="btn ghost sm" onClick={() => setConfirmCancel(false)}>keep it</button>.
+        </Banner>
+      )}
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
@@ -172,21 +210,25 @@ export function InterviewDetail() {
             <label>Candidate portal link</label>
             <div className="row">
               <input readOnly value={invitation.portalUrl} style={{ flex: 1 }} />
-              <button className="btn secondary" type="button" onClick={copyUrl}>
+              <button className="btn secondary" type="button" onClick={() => void copyUrl()}>
                 <Icon name={copied ? 'check' : 'copy'} size={16} />{copied ? 'Copied!' : 'Copy'}
               </button>
             </div>
             <div className="muted small" style={{ marginTop: 6 }}>Share this link with the candidate.</div>
             <div className="row" style={{ marginTop: 14, gap: 8 }}>
               <Link className="btn" to={`/room/${invitation.token}`}><Icon name="play" size={16} />Open interview room (recruiter preview)</Link>
-              <button className="btn secondary" type="button" onClick={resend} disabled={busy}>
-                <Icon name={busy ? 'hourglass' : 'send'} size={16} />{busy ? 'Sending…' : 'Resend email'}
+              <button className="btn secondary" type="button" onClick={resend} disabled={busyAction !== null}>
+                <Icon name={busyAction === 'resend' ? 'hourglass' : 'send'} size={16} />
+                {busyAction === 'resend' ? 'Sending…' : 'Resend email'}
               </button>
             </div>
           </div>
         ) : (
           <div>
-            <button className="btn" onClick={invite} disabled={busy}><Icon name="send" size={16} />Send invitation</button>
+            <button type="button" className="btn" onClick={invite} disabled={busyAction !== null}>
+              <Icon name={busyAction === 'invite' ? 'hourglass' : 'send'} size={16} />
+              {busyAction === 'invite' ? 'Sending…' : 'Send invitation'}
+            </button>
             <div className="muted small" style={{ marginTop: 8 }}>
               Send an invitation to generate the candidate portal link and enable the interview room.
             </div>
@@ -197,7 +239,10 @@ export function InterviewDetail() {
           <label>Schedule</label>
           <div className="row">
             <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ flex: 1 }} />
-            <button className="btn secondary" onClick={schedule} disabled={busy || !scheduleAt}><Icon name="schedule" size={16} />Save</button>
+            <button type="button" className="btn secondary" onClick={schedule} disabled={busyAction !== null || !scheduleAt}>
+              <Icon name={busyAction === 'schedule' ? 'hourglass' : 'schedule'} size={16} />
+              {busyAction === 'schedule' ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
       </div>
