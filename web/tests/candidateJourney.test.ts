@@ -302,6 +302,62 @@ describe('an assessment held behind blind review', () => {
     expect(journey.decision.assessment.note).toBe('Record your independent verdict first.');
     expect(journey.decision.assessment.quotes).toEqual([]);
   });
+
+  it('still points at the assessment, since recording a verdict is the way past the gate', () => {
+    expect(journey.decision.assessment.href).toBe('/assessments/assess-2');
+  });
+});
+
+describe('a candidate with more than one interview session', () => {
+  const journey = buildJourney(input({
+    pipeline: pipeline({
+      currentStageKey: 'silver',
+      rounds: [round({ id: 'r-ai', stageKey: 'silver', conductedBy: 'AI', sessionId: 'sess-assessed', interviewers: [] })],
+    }),
+    // Newest first, as the server returns them. The newest is a retake that
+    // nobody has sat yet; the round points at the one that was actually assessed.
+    sessions: [
+      { id: 'sess-retake', state: 'INVITED', scheduledAt: null, createdAt: '2026-10-02T09:00:00.000Z' },
+      { id: 'sess-assessed', state: 'REVIEW_READY', scheduledAt: null, createdAt: '2026-09-30T09:00:00.000Z' },
+    ],
+    sessionMeta: {
+      'sess-retake': { recommendation: null, assessmentId: null, invited: true },
+      'sess-assessed': { recommendation: 'PROCEED', assessmentId: 'assess-9', invited: true },
+    },
+  }));
+
+  it('shows the session the AI round points at, not merely the newest', () => {
+    expect(journey.aiInterview.session?.id).toBe('sess-assessed');
+  });
+
+  it('takes the recommendation from that same session', () => {
+    expect(journey.decision.recommendation).toBe('PROCEED');
+    expect(journey.decision.assessment.href).toBe('/assessments/assess-9');
+  });
+});
+
+describe('a role plan with no AI interview stage', () => {
+  // The stage schema permits this: at most one AI stage, not at least one.
+  const NO_AI = [
+    { key: 'applied', label: 'Applied', kind: 'intake' },
+    { key: 'screen', label: 'Paper screen', kind: 'profile_review' },
+    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+  ] as const;
+
+  it('never marks the AI interview step done for an interview that cannot happen', () => {
+    const journey = buildJourney(input({ pipeline: pipeline({ stages: NO_AI, currentStageKey: 'panel' }) }));
+
+    expect(journey.columns.map((c) => c.state)).toEqual(['done', 'upcoming', 'current', 'upcoming']);
+  });
+
+  it('does not claim an AI interview happened once a decision is recorded', () => {
+    const journey = buildJourney(input({
+      pipeline: pipeline({ stages: NO_AI, currentStageKey: 'panel', status: 'DECIDED', decision: 'APPROVED', decidedAtStageKey: 'panel' }),
+    }));
+
+    expect(journey.aiInterview.state).toBe('upcoming');
+    expect(journey.aiInterview.phase).toBe('none');
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -342,10 +342,23 @@ const COLUMN_OF_KIND: Readonly<Record<StageKind, number>> = {
 function columnStates(pipeline: JourneyPipeline | null): [ColumnState, ColumnState, ColumnState, ColumnState] {
   // No pipeline: onboarding is genuinely all that has happened to this person.
   if (!pipeline) return ['current', 'upcoming', 'upcoming', 'upcoming'];
-  if (pipeline.status === 'DECIDED') return ['done', 'done', 'done', 'current'];
+
+  // A step the role's plan does not contain cannot be "done" — nothing ever
+  // happened there. The stage schema allows a plan with no AI interview at all,
+  // and reading position by ordinal alone marked that step complete for a
+  // candidate who had never spoken to Schranders.
+  const planned = [0, 1, 2].map((column) => pipeline.stages.some((s) => COLUMN_OF_KIND[s.kind] === column));
+  const settled = (column: number): ColumnState => (planned[column] ? 'done' : 'upcoming');
+
+  if (pipeline.status === 'DECIDED') return [settled(0), settled(1), settled(2), 'current'];
+
   const stage = pipeline.stages.find((s) => s.key === pipeline.currentStageKey);
   const active = stage ? COLUMN_OF_KIND[stage.kind] : 0;
-  const state = (index: number): ColumnState => (index < active ? 'done' : index === active ? 'current' : 'upcoming');
+  const state = (index: number): ColumnState => {
+    if (index === active) return 'current';
+    if (index < active) return settled(index);
+    return 'upcoming';
+  };
   return [state(0), state(1), state(2), state(3)];
 }
 
@@ -455,16 +468,37 @@ function phaseOf(session: JourneySession | null, meta: JourneySessionMeta | unde
   return 'in-progress';
 }
 
-function buildAiInterview(input: JourneyInput, state: ColumnState): AiInterviewColumn {
-  const { pipeline } = input;
-  const aiStage = pipeline?.stages.find((s) => s.kind === 'ai_interview') ?? null;
-  const aiRound = pipeline?.rounds.find((r) => r.conductedBy === 'AI' && r.stageKey === (aiStage?.key ?? '')) ?? null;
+interface SelectedInterview {
+  readonly session: JourneySession | null;
+  readonly meta: JourneySessionMeta | undefined;
+  readonly stage: PipelineStageView | null;
+  readonly round: JourneyRound | null;
+}
 
-  const linked = aiRound?.sessionId ? input.sessions.find((s) => s.id === aiRound.sessionId) : undefined;
+/**
+ * The one interview this board is about.
+ *
+ * Chosen once and shared by the AI column and the decision column, so the
+ * recommendation beside the evidence always belongs to the same session as the
+ * transcript above it. A candidate can have several sessions — a retake, a
+ * rescheduled no-show — and picking one per column let a retake's verdict sit
+ * beside a different interview's state.
+ */
+function selectAiInterview(input: JourneyInput): SelectedInterview {
+  const { pipeline } = input;
+  const stage = pipeline?.stages.find((s) => s.kind === 'ai_interview') ?? null;
+  const round = stage
+    ? pipeline?.rounds.find((r) => r.conductedBy === 'AI' && r.stageKey === stage.key) ?? null
+    : null;
+  const linked = round?.sessionId ? input.sessions.find((s) => s.id === round.sessionId) : undefined;
   // Sessions arrive newest first, so the newest is the one a recruiter means by
   // "the interview" when no round has been linked to one yet.
   const session = linked ?? input.sessions[0] ?? null;
-  const meta = session ? input.sessionMeta[session.id] : undefined;
+  return { session, meta: session ? input.sessionMeta[session.id] : undefined, stage, round };
+}
+
+function buildAiInterview(input: JourneyInput, state: ColumnState, selected: SelectedInterview): AiInterviewColumn {
+  const { session, meta, stage: aiStage, round: aiRound } = selected;
   const phase = phaseOf(session, meta);
 
   const live = phase === 'in-progress';
@@ -573,8 +607,15 @@ const EVIDENCE_NOTE = 'Every quote is taken from the written transcript, with th
 
 const PURGED_NOTES = 'These notes have passed their retention window and were cleared.';
 
-function buildAssessmentView(input: JourneyInput): JourneyAssessmentView {
-  const href = input.assessment ? `/assessments/${input.assessment.id}` : null;
+/**
+ * `assessmentId` is passed in rather than read off `input.assessment`, because
+ * the case that most needs a link is the one where there IS no assessment
+ * object: blind review refused it. Deriving the link from the object left the
+ * "record your verdict" route unreachable exactly when it was the only way
+ * forward.
+ */
+function buildAssessmentView(input: JourneyInput, assessmentId: string | null): JourneyAssessmentView {
+  const href = assessmentId ? `/assessments/${assessmentId}` : null;
 
   if (input.assessmentBlockedReason) {
     return {
@@ -598,7 +639,7 @@ function buildAssessmentView(input: JourneyInput): JourneyAssessmentView {
       summary: '',
       quotes: [],
       notEnoughEvidence: [],
-      href: null,
+      href,
       note: 'No assessment yet. One is written after the AI interview finishes.',
       evidenceNote: EVIDENCE_NOTE,
     };
@@ -624,9 +665,9 @@ function buildAssessmentView(input: JourneyInput): JourneyAssessmentView {
   };
 }
 
-function buildDecision(input: JourneyInput, state: ColumnState): DecisionColumn {
+function buildDecision(input: JourneyInput, state: ColumnState, selected: SelectedInterview): DecisionColumn {
   const { pipeline } = input;
-  const meta = input.sessions.map((s) => input.sessionMeta[s.id]).find((m) => m?.recommendation);
+  const meta = selected.meta;
 
   const humanNotes: JourneyHumanNote[] = (pipeline?.rounds ?? [])
     .filter((r) => r.conductedBy === 'HUMAN' && r.status === 'COMPLETED')
@@ -648,7 +689,7 @@ function buildDecision(input: JourneyInput, state: ColumnState): DecisionColumn 
     title: 'Decision & evidence',
     icon: 'evidence',
     state,
-    assessment: buildAssessmentView(input),
+    assessment: buildAssessmentView(input, input.assessment?.id ?? meta?.assessmentId ?? null),
     recommendation: input.assessment?.recommendation ?? meta?.recommendation ?? null,
     humanNotes,
     humanNotesNote: 'Written by the interviewers after each human round. Questor does not transcribe those rounds.',
@@ -668,10 +709,11 @@ function buildDecision(input: JourneyInput, state: ColumnState): DecisionColumn 
 /** Arrange one candidate's server data as the four journey columns, in order. */
 export function buildJourney(input: JourneyInput): CandidateJourney {
   const states = columnStates(input.pipeline);
+  const selected = selectAiInterview(input);
   const onboard = buildOnboard(input, states[0]);
-  const aiInterview = buildAiInterview(input, states[1]);
+  const aiInterview = buildAiInterview(input, states[1], selected);
   const schedule = buildSchedule(input, states[2]);
-  const decision = buildDecision(input, states[3]);
+  const decision = buildDecision(input, states[3], selected);
 
   return {
     title: journeyTitle(input.role?.title ?? null),
