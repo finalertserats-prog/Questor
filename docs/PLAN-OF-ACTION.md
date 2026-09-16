@@ -45,12 +45,12 @@ NUL characters in string values are stripped during import (with per-table count
 ### 2. UI releases — all deployed as of 2120942 (2026-09-16)
 Deployed: the dashboard overhaul and audit-log page, meeting-connector setup and testing, icons/status badges/empty states/skeletons with keyboard-reachable tables, the sidebar docked open with a collapsible rail, and the sign-in page showcase. Every branch was reviewed before merge and its findings fixed: the drawer reopening itself after a resize, a reduced-motion sequence restarting on hover, three sign-in claims the code did not support, audit actor names vanishing after page 1, connector configuration readable by any signed-in user, and missing tenant/date indexes.
 
-### 2a. In flight
-| Branch | Worktree | What |
-|---|---|---|
-| `feature/guided-tour` | `wt-tour` | First-sign-in product tour: anchored steps over the real UI, skippable, restartable from the profile menu, completion stored per user on the server |
+### 2a. Also delivered (2026-09-16, `110de6f`)
+- **Guided tour** on first sign-in: 13 anchored steps over the real UI, skippable, restartable from the profile menu, completion recorded per user on the server (`User.tourCompletedAt`, `POST /api/auth/tour/complete`). Codex reviewed it clean on authz, idempotency, focus handling and schema safety; its one finding — a second tab re-running a finished tour — is fixed by asking the server before auto-starting.
+- **Candidate journey**: the candidate page is now Onboard → AI interview → Schedule → Decision & evidence, built from existing endpoints plus round notes, which the pipeline API previously withheld. A Codex review caught three real defects (an unreachable escape link on the blind-review gate, a retake's recommendation shown beside another session's transcript, and a stage plan with no AI stage marked done), all fixed with tests.
+- **The official logo**, everywhere it belongs: tab icon, sidebar, sign-in page, candidate and interviewer emails, and the ScaleHealthTech guide cover. `scripts/build-brand-assets.py` regenerates the whole set from one source file — the colour revision took a single command.
 
-Review it, merge into `feature/postgres`, deploy with `scripts/deploy.sh`.
+Not verified by eye: the candidate journey and the tour were checked by tests, types and build. The tour was additionally driven in a browser by its builder; the journey was not.
 
 ### 2b. ScaleHealthTech pilot
 Organisation and administrator exist in production (`/o/scalehealthtech`). The password is on the server at `/root/Questor/secrets/questor-…` — root-only, never copied into the repo. The user guide is built in `D:/Projects/ClaudeCode/Questor/deliverables/` (Word + PDF from one Markdown source via `build-guide.py`), drafted by Gemini and checked against the code by Codex.
