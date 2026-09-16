@@ -7,6 +7,7 @@ import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
+import { decisionStatus } from './statusModel';
 
 interface Round {
   id: string;
@@ -83,8 +84,8 @@ function StageBadge({ stageKey }: { stageKey: string }) {
  * with it rather than sitting on a stale copy until someone reloads.
  */
 export function PipelinePanel(
-  { candidateId, interviews, onChanged }:
-  { candidateId: string; interviews: InterviewOption[]; onChanged?: () => void },
+  { candidateId, candidateName, interviews, onChanged }:
+  { candidateId: string; candidateName: string; interviews: InterviewOption[]; onChanged?: () => void },
 ) {
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -103,6 +104,8 @@ export function PipelinePanel(
   const [roundToComplete, setRoundToComplete] = useState('');
   const [roundNotes, setRoundNotes] = useState('');
   const [schedulingNotice, setSchedulingNotice] = useState<SchedulingNotice | null>(null);
+  // Set while a candidacy-ending outcome waits to be confirmed.
+  const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -204,9 +207,18 @@ export function PipelinePanel(
       .then(() => { setRoundNotes(''); setRoundToComplete(''); }));
   };
 
+  const submitDecision = () => {
+    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason })
+      .then(() => { setReason(''); setPendingDecision(null); }));
+  };
+
+  // Approving moves someone forward; the other two end their candidacy and
+  // close the pipeline, and nothing in this panel undoes that. Those two get
+  // named back — outcome and person — before they are recorded.
   const recordDecision = (e: React.FormEvent) => {
     e.preventDefault();
-    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason }).then(() => setReason('')));
+    if (decision === 'APPROVED') { submitDecision(); return; }
+    setPendingDecision(decision);
   };
 
   return (
@@ -285,7 +297,11 @@ export function PipelinePanel(
           <form className="pipeline-action" onSubmit={recordDecision}>
             <h3 className="card-title"><Icon name="check-circle" size={16} />Record decision</h3>
             <label htmlFor="decision">Outcome</label>
-            <select id="decision" value={decision} onChange={(e) => setDecision(e.target.value as Decision)}>
+            <select
+              id="decision"
+              value={decision}
+              onChange={(e) => { setDecision(e.target.value as Decision); setPendingDecision(null); }}
+            >
               <option value="APPROVED">Approve</option>
               <option value="REJECTED">Do not progress</option>
               <option value="WITHDRAWN">Candidate withdrew</option>
@@ -293,6 +309,20 @@ export function PipelinePanel(
             <label htmlFor="decision-reason">Reason</label>
             <textarea id="decision-reason" value={reason} onChange={(e) => setReason(e.target.value)} minLength={10} required placeholder="What in the evidence led to this decision?" />
             <button className="btn" style={{ marginTop: 10 }} disabled={busy}><Icon name="check-circle" size={16} />Record decision</button>
+            {pendingDecision && (
+              <Banner kind="info">
+                Record <b>{decisionStatus(pendingDecision).label.toLowerCase()}</b> for {candidateName}?
+                This closes their pipeline and is recorded against your name.
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button type="button" className="btn" disabled={busy} onClick={submitDecision}>
+                    <Icon name="check-circle" size={16} />Yes, record it
+                  </button>
+                  <button type="button" className="btn ghost" disabled={busy} onClick={() => setPendingDecision(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </Banner>
+            )}
           </form>
         </div>
       )}

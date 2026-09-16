@@ -372,7 +372,7 @@ export function CandidateDetail() {
       >
         {journey && <CandidateJourneyBoard journey={journey} />}
 
-        <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} onChanged={refresh} />
+        <PipelinePanel candidateId={candidate.id} candidateName={candidate.fullName} interviews={interviews ?? []} onChanged={refresh} />
 
       <div className="card">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
