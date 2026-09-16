@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
+import { OrgPicker } from '../components/OrgPicker';
+import { type Org } from '../components/orgSearchModel';
 import {
   PASSWORD_MIN_LENGTH,
   signupFormProblem,
@@ -29,6 +31,8 @@ export function Signup() {
   const [mode, setMode] = useState<SignupMode>('new-org');
   const [organisationName, setOrganisationName] = useState('');
   const [orgCode, setOrgCode] = useState('');
+  const [chosenOrg, setChosenOrg] = useState<Org | null>(null);
+  const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
@@ -64,6 +68,19 @@ export function Signup() {
     setMode(next);
     // The error on screen was about the mode being left behind.
     setError('');
+  };
+
+  const chooseOrg = (org: Org) => {
+    setChosenOrg(org);
+    setOrgCode(org.slug);
+    setShowCodeEntry(false);
+    setError('');
+  };
+
+  const changeOrg = () => {
+    setChosenOrg(null);
+    setOrgCode('');
+    setShowCodeEntry(false);
   };
 
   const modeClass = (value: SignupMode) => (mode === value ? 'signup-mode is-chosen' : 'signup-mode');
@@ -176,19 +193,45 @@ export function Signup() {
                   </>
                 ) : (
                   <>
-                    <label htmlFor="signup-org-code">Organisation code</label>
-                    <p className="field-hint" id="signup-org-code-hint">
-                      The code your colleagues sign in with. Ask whoever pointed you here.
-                    </p>
-                    <input
-                      id="signup-org-code"
-                      value={orgCode}
-                      onChange={(e) => setOrgCode(e.target.value)}
-                      placeholder="acme-hiring"
-                      autoCapitalize="none"
-                      autoComplete="organization"
-                      aria-describedby="signup-org-code-hint"
-                    />
+                    {chosenOrg ? (
+                      <div className="chosen-org">
+                        <div>
+                          <span className="field-hint">Your organisation</span>
+                          <strong>{chosenOrg.name}</strong>
+                        </div>
+                        <button type="button" className="link-button" onClick={changeOrg}>Change</button>
+                      </div>
+                    ) : (
+                      <>
+                        <OrgPicker onChoose={chooseOrg} />
+                        <div className="small muted" style={{ marginTop: 10, textAlign: 'center' }}>
+                          <button type="button" className="link-button" onClick={() => setShowCodeEntry(true)}>
+                            Enter an organisation code instead
+                          </button>
+                        </div>
+                      </>
+                    )}
+
+                    {showCodeEntry && (
+                      <>
+                        <label htmlFor="signup-org-code">Organisation code</label>
+                        <p className="field-hint" id="signup-org-code-hint">
+                          The code your colleagues sign in with. Ask whoever pointed you here.
+                        </p>
+                        <input
+                          id="signup-org-code"
+                          value={orgCode}
+                          onChange={(e) => {
+                            setChosenOrg(null);
+                            setOrgCode(e.target.value);
+                          }}
+                          placeholder="acme-hiring"
+                          autoCapitalize="none"
+                          autoComplete="organization"
+                          aria-describedby="signup-org-code-hint"
+                        />
+                      </>
+                    )}
                   </>
                 )}
 
