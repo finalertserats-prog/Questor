@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { Badge, recBadge, Meter } from './ui';
+import { formatScoreOutOf100 } from './scoreFormat';
 import type {
   CandidateJourney, ColumnState, JourneyColumn, JourneyRoundCard,
 } from './candidateJourney';
@@ -152,7 +153,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
               <>
                 <div className="journey-measure">
                   <span className="muted">Overall fit</span>
-                  <b>{onboard.fit.overall}/100</b>
+                  <b>{formatScoreOutOf100(onboard.fit.overall)}</b>
                 </div>
                 <Meter value={onboard.fit.overall ?? 0} />
                 <div className="journey-measure" style={{ marginTop: 6 }}>
@@ -172,7 +173,9 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
 
         {/* ---- 2. AI interview --------------------------------------------- */}
         <Column column={aiInterview}>
-          <Block title={aiInterview.stageLabel ? `${aiInterview.stageLabel} · conducted by Schranders` : 'Conducted by Schranders'}>
+          <Block title={aiInterview.stageLabel
+            ? `${aiInterview.stageLabel} · conducted by ${aiInterview.personaName}`
+            : `Conducted by ${aiInterview.personaName}`}>
             {aiInterview.session ? (
               <>
                 <div className="journey-links" style={{ marginBottom: 6 }}>

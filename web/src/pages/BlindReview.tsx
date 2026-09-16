@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, recBadge, Banner, Stat } from '../components/ui';
@@ -6,6 +6,10 @@ import { ValidationStatus } from './AssessmentView';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { PageSkeleton } from '../components/Skeleton';
+// One list of verdicts for both review surfaces, so the pair cannot drift.
+import { DISPOSITIONS, isDisposition, type Disposition } from '../components/assessmentModel';
+import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
+import { recommendationStatus } from '../components/statusModel';
 
 // Blind-first review.
 //
@@ -44,40 +48,71 @@ interface AiCompetency {
   notEnoughEvidence: boolean; rationale: string;
 }
 interface AiResult {
-  recommendation: string; confidence: number; evidenceCoverage: number; overallScore: number;
+  // Null when grading never produced a score (recommendation SCORING_UNAVAILABLE).
+  recommendation: string; confidence: number; evidenceCoverage: number; overallScore: number | null;
   summary: string; competencies: AiCompetency[];
 }
 interface RevealResp { id: string; result: AiResult; note: string }
 
-type Disposition = 'PROCEED' | 'CONSIDER' | 'DO_NOT_PROGRESS';
-const DISPOSITIONS: Disposition[] = ['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS'];
 
 const fmt = (ms: number) => {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
+const ARROW_STEP: Readonly<Record<string, number>> = {
+  ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1,
+};
+
+/**
+ * Arrow-key movement inside a group of buttons that behaves as a radio group.
+ *
+ * These groups look like radios and are read out as radios, so they have to
+ * move like radios: a keyboard user reaching one lands on the chosen option and
+ * steps through the rest with the arrows, rather than tabbing past every button
+ * in the set.
+ */
+function moveChoice<T>(
+  event: KeyboardEvent<HTMLDivElement>,
+  options: readonly T[],
+  value: T,
+  onChange: (next: T) => void,
+) {
+  const step = ARROW_STEP[event.key];
+  if (step === undefined) return;
+  event.preventDefault();
+  const at = options.indexOf(value);
+  const next = at === -1 ? 0 : (at + step + options.length) % options.length;
+  onChange(options[next]);
+  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+}
+
+const LEVEL_OPTIONS: readonly (number | null)[] = [null, 1, 2, 3, 4, 5];
+
 /** Level picker. "Not enough evidence" is deliberately the default. */
-function LevelPicker({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+function LevelPicker({ value, onChange, label }: {
+  value: number | null; onChange: (v: number | null) => void; label: string;
+}) {
   return (
-    <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-      <button
-        type="button"
-        className={value === null ? 'btn' : 'btn ghost'}
-        onClick={() => onChange(null)}
-        data-testid="level-nee"
-      >
-        Not enough evidence
-      </button>
-      {[1, 2, 3, 4, 5].map((n) => (
+    <div
+      className="row"
+      style={{ gap: 6, flexWrap: 'wrap' }}
+      role="radiogroup"
+      aria-label={`Level for ${label}`}
+      onKeyDown={(e) => moveChoice(e, LEVEL_OPTIONS, value, onChange)}
+    >
+      {LEVEL_OPTIONS.map((option) => (
         <button
-          key={n}
+          key={String(option)}
           type="button"
-          className={value === n ? 'btn' : 'btn ghost'}
-          onClick={() => onChange(n)}
-          data-testid={`level-${n}`}
+          role="radio"
+          aria-checked={value === option}
+          tabIndex={value === option ? 0 : -1}
+          className={value === option ? 'btn' : 'btn ghost'}
+          onClick={() => onChange(option)}
+          data-testid={option === null ? 'level-nee' : `level-${option}`}
         >
-          {n}
+          {option === null ? 'Not enough evidence' : option}
         </button>
       ))}
     </div>
@@ -86,7 +121,9 @@ function LevelPicker({ value, onChange }: { value: number | null; onChange: (v: 
 
 /** Side-by-side after reveal. Disagreement is the signal, so it is what stands out. */
 function Comparison({ view, levels, disposition, ai }: {
-  view: BlindView; levels: Record<string, number | null>; disposition: Disposition; ai: AiResult;
+  // Null when the verdict was recorded in an earlier visit: the server keeps
+  // it, this page did not see it typed.
+  view: BlindView; levels: Record<string, number | null>; disposition: Disposition | null; ai: AiResult;
 }) {
   const aiById = new Map(ai.competencies.map((c) => [c.id, c]));
   const rows = view.competencies.map((c) => {
@@ -111,12 +148,18 @@ function Comparison({ view, levels, disposition, ai }: {
       <div className="card">
         <h3 className="card-title"><Icon name="handoff" size={16} />Your call vs the AI</h3>
         <div className="row" style={{ gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>
-          <Stat label="You said" value={<Badge kind="blue">{disposition.replace(/_/g, ' ')}</Badge>} />
+          <Stat
+            label="You said"
+            value={disposition
+              ? <Badge kind="blue">{recommendationStatus(disposition).label}</Badge>
+              : <span className="muted">Recorded earlier</span>}
+          />
           <Stat label="AI said" value={recBadge(ai.recommendation)} />
-          <Stat label="AI overall" value={`${ai.overallScore}/100`} />
-          <Stat label="AI confidence" value={`${Math.round(ai.confidence * 100)}%`} />
+          <Stat label="AI overall" value={formatScoreOutOf100(ai.overallScore)} />
+          <Stat label="AI confidence" value={formatPercent(ai.confidence)} />
         </div>
-        {disposition !== ai.recommendation && (
+        {/* An AI that produced no verdict has not disagreed with yours. */}
+        {isDisposition(ai.recommendation) && disposition !== ai.recommendation && (
           <Banner kind="info">
             You and the AI reached different conclusions. Yours is the one that counts — the AI's
             output is advisory. Worth noting what it saw that you did not, or vice versa.
@@ -171,18 +214,29 @@ export default function BlindReview() {
   const [disposition, setDisposition] = useState<Disposition | null>(null);
   const [reason, setReason] = useState('');
   const [reveal, setReveal] = useState<RevealResp | null>(null);
+  // The verdict is recorded on the server even when the reveal that follows it
+  // fails, and it cannot be recorded twice.
+  const [verdictSaved, setVerdictSaved] = useState(false);
   const [selfReview, setSelfReview] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [revealing, setRevealing] = useState(false);
   const [error, setError] = useState('');
   const [showTranscript, setShowTranscript] = useState(true);
 
+  // `cancelled` so evidence for an assessment the reviewer has already left
+  // cannot appear over the one they are reading now.
   useEffect(() => {
+    let cancelled = false;
     api.get<BlindView>(`/assessments/${id}/blind`)
       .then((v) => {
+        if (cancelled) return;
         setView(v);
         setLevels(Object.fromEntries(v.competencies.map((c) => [c.id, null])));
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load the evidence.');
+      });
+    return () => { cancelled = true; };
   }, [id]);
 
   const scoredCount = useMemo(
@@ -190,8 +244,26 @@ export default function BlindReview() {
     [levels],
   );
 
+  // Only ever called after a verdict is recorded. Before that point the AI's
+  // output has never been in the browser, so there is nothing for a curious
+  // reviewer to find in devtools.
+  const loadReveal = async () => {
+    setRevealing(true);
+    setError('');
+    try {
+      setReveal(await api.get<RevealResp>(`/assessments/${id}/reveal`));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not load the AI assessment.');
+    } finally {
+      setRevealing(false);
+    }
+  };
+
+  // Two requests, two outcomes. Sharing one try meant a reveal that failed
+  // rolled the screen back to an unsubmitted form over a verdict the server had
+  // already accepted — and pressing save again answered 409.
   const submit = async () => {
-    if (!disposition || reason.trim().length < 3) return;
+    if (!disposition || reason.trim().length < 3 || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -206,13 +278,12 @@ export default function BlindReview() {
           .map(([competencyId, l]) => ({ competencyId, level: l as number })),
       });
       setSelfReview(res.selfReview);
-      // Only NOW is the AI's output fetched. Before this point it has never
-      // been in the browser, so there is nothing for a curious reviewer to
-      // find in devtools.
-      setReveal(await api.get<RevealResp>(`/assessments/${id}/reveal`));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
+      setVerdictSaved(true);
+      setBusy(false);
+      await loadReveal();
+      return;
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Could not save your verdict.');
       setBusy(false);
     }
   };
@@ -220,7 +291,12 @@ export default function BlindReview() {
   if (error && !view) return <Banner kind="error">{error}</Banner>;
   if (!view) return <PageSkeleton label="Loading the evidence…" cards={3} />;
 
-  const alreadyDone = view.blindVerdictRecorded && !reveal;
+  // Recorded, one way or another: earlier by this reviewer, or a moment ago on
+  // this screen. Either way the scoring form is no longer the thing to show —
+  // pressing save again only produces a 409 from a server that is right to
+  // refuse it.
+  const recorded = view.blindVerdictRecorded || verdictSaved;
+  const awaitingReveal = recorded && !reveal;
 
   return (
     <div className="stack">
@@ -238,10 +314,10 @@ export default function BlindReview() {
         </Banner>
       )}
 
-      {alreadyDone && (
+      {awaitingReveal && (
         <Banner kind="info">
-          You have already recorded a verdict for this candidate. Open the full assessment to see
-          both, or continue below to review the evidence again.
+          Your verdict for this candidate is recorded. It cannot be edited — that is what makes it
+          independent — so the only thing left here is to see what the AI made of the same evidence.
         </Banner>
       )}
 
@@ -255,9 +331,21 @@ export default function BlindReview() {
 
       {error && <Banner kind="error">{error}</Banner>}
 
-      {reveal
-        ? <Comparison view={view} levels={levels} disposition={disposition!} ai={reveal.result} />
-        : (
+      {reveal ? (
+        <Comparison view={view} levels={levels} disposition={disposition} ai={reveal.result} />
+      ) : awaitingReveal ? (
+        <div className="card">
+          <h3 className="card-title"><Icon name="eye" size={16} />The AI's assessment</h3>
+          <p className="muted">
+            Held back until a verdict was recorded. It is available now — and if this does not load,
+            the full assessment page shows the same thing.
+          </p>
+          <button type="button" className="btn" disabled={revealing} onClick={loadReveal}>
+            <Icon name={revealing ? 'hourglass' : 'eye'} size={16} />
+            {revealing ? 'Loading…' : 'Show the AI assessment'}
+          </button>
+        </div>
+      ) : (
           <>
             <div className="card">
               <h3 className="card-title"><Icon name="evidence" size={16} />Score each competency from the evidence</h3>
@@ -290,7 +378,7 @@ export default function BlindReview() {
                       <div>{e.quote}</div>
                     </blockquote>
                   ))}
-                <LevelPicker value={levels[c.id] ?? null} onChange={(v) => setLevels((s) => ({ ...s, [c.id]: v }))} />
+                <LevelPicker label={c.name} value={levels[c.id] ?? null} onChange={(v) => setLevels((s) => ({ ...s, [c.id]: v }))} />
               </div>
             ))}
 
@@ -311,16 +399,25 @@ export default function BlindReview() {
 
             <div className="card">
               <h3 className="card-title"><Icon name="check-circle" size={16} />Your recommendation</h3>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+              <div
+                className="row"
+                style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}
+                role="radiogroup"
+                aria-label="Your recommendation"
+                onKeyDown={(e) => moveChoice(e, DISPOSITIONS, disposition, (next) => setDisposition(next))}
+              >
                 {DISPOSITIONS.map((d) => (
                   <button
                     key={d}
                     type="button"
+                    role="radio"
+                    aria-checked={disposition === d}
+                    tabIndex={disposition === d || (disposition === null && d === DISPOSITIONS[0]) ? 0 : -1}
                     className={disposition === d ? 'btn' : 'btn ghost'}
                     onClick={() => setDisposition(d)}
                     data-testid={`disposition-${d}`}
                   >
-                    {d.replace(/_/g, ' ')}
+                    {recommendationStatus(d).label}
                   </button>
                 ))}
               </div>

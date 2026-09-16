@@ -6,6 +6,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { formatScoreOutOf100, hasScore } from '../components/scoreFormat';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
@@ -85,11 +86,15 @@ export function CandidatesList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // `cancelled` so a response that arrives after someone has navigated away
+  // does not set state on a page that is gone.
   useEffect(() => {
+    let cancelled = false;
     api.get<{ candidates: CandidateRow[] }>('/candidates')
-      .then((d) => setCandidates(d.candidates ?? []))
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((d) => { if (!cancelled) setCandidates(d.candidates ?? []); })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load candidates.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   // Client-side because the endpoint returns the caller's whole scoped pipeline
@@ -193,7 +198,10 @@ export function CandidatesList() {
                       ? <Link to={`/roles/${c.roleId}`}>{c.roleTitle}</Link>
                       : <span className="muted">—</span>}
                   </td>
-                  <td>{c.fit ? `${Math.round(c.fit.overall)}/100` : <span className="muted">—</span>}</td>
+                  {/* A fit row stored before `overall` existed still has a fit
+                      object, so "c.fit ?" is not the question — "is there a
+                      number?" is. */}
+                  <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>{formatScoreOutOf100(c.fit?.overall)}</td>
                   <td>{interviewCell(c.latestInterview)}</td>
                   <td className="muted small">{new Date(c.createdAt).toLocaleDateString()}</td>
                   <td>

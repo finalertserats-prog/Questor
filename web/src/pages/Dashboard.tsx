@@ -7,7 +7,7 @@ import { Icon, type IconName } from '../components/Icon';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
 import { EmptyState } from '../components/EmptyState';
-import { chartTone, formatHours, groupSessionStates, trimSparseWeeks } from '../components/dashboardModel';
+import { chartTone, formatHours, groupSessionStates, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
 
 interface Metrics {
@@ -25,6 +25,8 @@ interface Metrics {
   interviewsPerWeek: WeekPoint[];
   pipelineStages: { key: string; label: string; count: number }[];
   stateCounts: Record<string, number>;
+  /** Set by the server when the series came from a capped row set, not from everything. */
+  truncated?: boolean;
   recentInterviews: {
     id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
     candidate: { id: string; name: string }; role: { id: string; title: string };
@@ -67,14 +69,21 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
 
+  // `cancelled` so a slow metrics response cannot set state on a page the
+  // person has already left.
   useEffect(() => {
+    let cancelled = false;
     api.get<Metrics>('/dashboard/metrics?weeks=12&recent=8')
-      .then(setMetrics)
-      .catch((err: unknown) => setError({
-        status: err instanceof ApiError ? err.status : 0,
-        message: err instanceof Error ? err.message : 'Could not load dashboard metrics.',
-      }))
-      .finally(() => setLoading(false));
+      .then((d) => { if (!cancelled) setMetrics(d); })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError({
+          status: err instanceof ApiError ? err.status : 0,
+          message: err instanceof Error ? err.message : 'Could not load dashboard metrics.',
+        });
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, []);
 
   const k = metrics?.kpis;
@@ -84,6 +93,7 @@ export function Dashboard() {
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
   const stopped = stateItems.find((g) => g.key === 'stopped')?.count ?? 0;
   const weeklyData = trimSparseWeeks(metrics?.interviewsPerWeek ?? []);
+  const truncation = truncationNote(metrics?.truncated);
 
   return (
     <div className="dashboard">
@@ -125,8 +135,11 @@ export function Dashboard() {
               <Kpi icon="role" label="Open roles" value={k.openRoles} hint="Draft or approved" />
               <Kpi icon="candidates" label="Candidates" value={k.candidates} to="/candidates" hint="You can access" />
               <Kpi icon="funnel" label="In pipeline" value={k.activePipelines} hint="Active, not yet decided" />
-              <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="Next 7 days" />
-              <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="Last 30 days" />
+              {/* Both counts include the human rounds, not only the AI sessions
+                  the list they link to shows. Said in the hint rather than left
+                  for someone to discover by counting rows. */}
+              <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="AI interviews and human rounds, next 7 days" />
+              <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="AI interviews and human rounds, last 30 days" />
               <Kpi icon="eye" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
               <Kpi
                 icon="user-x"
@@ -135,7 +148,9 @@ export function Dashboard() {
                 to="/interviews?state=stopped"
                 hint="No-show, withdrew or cut short"
               />
-              <Kpi icon="clock" label="Invite to interview" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
+              {/* It measures invitation to COMPLETED interview, which is a
+                  longer thing than the old label described. */}
+              <Kpi icon="clock" label="Invite to completed" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
               <Kpi
                 icon="scale"
                 label="Approved"
@@ -191,6 +206,9 @@ export function Dashboard() {
                 )}
               </div>
             </div>
+            {/* Said once, under everything it applies to: these charts and the
+                averages above them are not a picture of the whole tenant. */}
+            {truncation && <p className="muted small">{truncation}</p>}
           </section>
 
           <section className="card" aria-labelledby="dash-recent" data-tour="recent-interviews">

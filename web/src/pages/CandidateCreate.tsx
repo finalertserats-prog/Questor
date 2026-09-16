@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
@@ -25,6 +25,10 @@ export function CandidateCreate() {
   const [phone, setPhone] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [resumeText, setResumeText] = useState('');
+  // Set once the candidate record exists, so a failed resume upload can be
+  // retried against the same person rather than making a duplicate.
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.get<{ roles: Role[] }>('/roles')
@@ -37,6 +41,13 @@ export function CandidateCreate() {
       .finally(() => setLoading(false));
   }, []);
 
+  // The input keeps its own value, so clearing state alone would leave the
+  // filename on screen with nothing behind it.
+  const removeFile = () => {
+    setFile(null);
+    if (fileInput.current) fileInput.current.value = '';
+  };
+
   if (loading) return <PageSkeleton label="Loading roles…" cards={1} />;
 
   const submit = async (e: React.FormEvent) => {
@@ -44,19 +55,29 @@ export function CandidateCreate() {
     setError('');
     setSubmitting(true);
     try {
-      const { candidate } = await api.post<{ candidate: { id: string } }>('/candidates', {
-        fullName, email, phone: phone || undefined, roleId,
-      });
+      // Two requests: the candidate, then their resume. When the second failed,
+      // pressing the button again used to create a SECOND candidate for the
+      // same person — so the id from the first success is kept and the retry
+      // only re-uploads the resume.
+      let id = createdId;
+      if (!id) {
+        const { candidate } = await api.post<{ candidate: { id: string } }>('/candidates', {
+          fullName, email, phone: phone || undefined, roleId,
+        });
+        id = candidate.id;
+        setCreatedId(id);
+      }
       const form = new FormData();
       if (file) form.append('file', file);
       else form.append('text', resumeText);
-      await api.postForm(`/candidates/${candidate.id}/resume`, form);
-      nav(`/candidates/${candidate.id}`);
-    } catch (err: any) {
+      await api.postForm(`/candidates/${id}/resume`, form);
+      nav(`/candidates/${id}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Could not add this candidate.';
       if (err instanceof ApiError && err.status === 422) {
-        setError(`We could not read that resume file. Please upload a text-based PDF/DOCX or paste the resume text instead. (${err.message})`);
+        setError(`We could not read that resume file. Please upload a text-based PDF/DOCX or paste the resume text instead. (${message})`);
       } else {
-        setError(err.message);
+        setError(message);
       }
       setSubmitting(false);
     }
@@ -67,6 +88,15 @@ export function CandidateCreate() {
       <PageHeader icon="add-candidate" title="Add Candidate" />
 
       {error && <Banner kind="error">{error}</Banner>}
+      {/* Said plainly, because the form still looks unsubmitted: the person
+          exists, only their resume did not arrive. */}
+      {createdId && error && (
+        <Banner kind="info">
+          {fullName || 'This candidate'} was added — only the resume did not go through. Submitting
+          again retries just the resume, or{' '}
+          <Link className="link-action" to={`/candidates/${createdId}`}>open the candidate</Link> as they are.
+        </Banner>
+      )}
       {roles.length === 0 && (
         <Banner kind="info">
           No roles with an approved scorecard yet. Approve a role scorecard before adding candidates.{' '}
@@ -94,14 +124,24 @@ export function CandidateCreate() {
         <label>Phone (optional)</label>
         <input value={phone} onChange={(e) => setPhone(e.target.value)} />
 
-        <label>Resume file (PDF, DOCX, or TXT)</label>
+        <label htmlFor="resume-file">Resume file (PDF, DOCX, or TXT)</label>
         <input
+          id="resume-file"
+          ref={fileInput}
           type="file"
           accept=".pdf,.docx,.txt"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
-        <div className="muted small" style={{ marginTop: 6 }}>
-          If a file is selected it takes precedence over the pasted text below.
+        <div className="row muted small" style={{ marginTop: 6, gap: 8 }}>
+          <span>If a file is selected it takes precedence over the pasted text below.</span>
+          {/* Choosing a file disabled the text box, and a file picker offers no
+              way to choose nothing — so the only way back to pasting was to
+              reload the page and retype everything. */}
+          {file && (
+            <button type="button" className="btn ghost sm" onClick={removeFile}>
+              <Icon name="close" size={14} />Remove {file.name}
+            </button>
+          )}
         </div>
 
         <label>Or paste resume text</label>

@@ -8,6 +8,8 @@ import {
 } from '../speech';
 import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } from './Portal';
 import { Icon } from '../components/Icon';
+import { interviewerName } from '../components/candidateJourney';
+import { shouldCaptureAudio } from '../components/portalConsentModel';
 
 // The interview room is the only screen a candidate ever sees, and it is the
 // screen they judge the company by. It is deliberately built as a call surface
@@ -19,6 +21,9 @@ interface AgentTurn { turnId: string; text: string; competencyId: string; kind: 
 interface Msg { speaker: 'agent' | 'candidate'; text: string }
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
+  /** Who conducts this interview, and whether they may listen. Both absent on an older server. */
+  persona?: { name: string | null } | null;
+  recordingConsented?: boolean;
   speech: { stt: SttCapability };
   proctoringEnabled: boolean;
   // Whether to put the written-feedback question at the end, and the answer if
@@ -109,6 +114,11 @@ export function InterviewRoom() {
   const [feedbackSaving, setFeedbackSaving] = useState(false);
   const [feedbackError, setFeedbackError] = useState('');
 
+  // Whether this interview may listen at all. A candidate who declined voice
+  // capture is interviewed by typing: the microphone is never requested, and the
+  // speak-and-listen controls are not offered.
+  const canCapture = shouldCaptureAudio(info?.recordingConsented);
+
   /**
    * Record the candidate's answer. The server is the one that decides what
    * sticks — a replay returns the answer already on file — so this takes its
@@ -137,6 +147,8 @@ export function InterviewRoom() {
   const recordingRef = useRef<Recording | null>(null);
   const recognizerFailedRef = useRef(false);
   const startTimeRef = useRef(0);
+  // When the candidate was first able to answer the current question.
+  const turnStartRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   // One answer per turn. The recognizer's end event and the "Done answering"
   // watchdog can both fire for the same answer, and without this the candidate
@@ -154,7 +166,10 @@ export function InterviewRoom() {
         // A candidate who already answered — on another device, or before a
         // reload — is shown their answer rather than the question again.
         setFeedbackChoice(d.feedbackOptIn?.choice ?? null);
-        if (!sttSupported()) setTextMode(true);
+        // No consent to capture voice means no microphone at all — the
+        // interview is answered by typing. The AI still speaks: that is output,
+        // not capture.
+        if (!sttSupported() || !shouldCaptureAudio(d.recordingConsented)) setTextMode(true);
       })
       .catch((e: Error) => setErr(e.message));
   }, [token]);
@@ -225,10 +240,18 @@ export function InterviewRoom() {
     setInterim('');
     setPhase('thinking');
     const now = Date.now();
-    const startMs = startTimeRef.current ? now - startTimeRef.current - 25000 : 0;
+    // The real moment this answer began, not "twenty-five seconds ago". These
+    // become the timestamps quoted as evidence beside the transcript, and a
+    // made-up one points a reviewer at the wrong part of the interview. Null
+    // when it is genuinely not known; the server omits the stamp rather than
+    // inventing one.
+    const startMs = turnStartRef.current && startTimeRef.current
+      ? Math.max(0, turnStartRef.current - startTimeRef.current)
+      : null;
+    const endMs = startTimeRef.current ? now - startTimeRef.current : null;
     try {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/turn`, {
-        text, startMs: Math.max(0, startMs), endMs: startTimeRef.current ? now - startTimeRef.current : 0,
+        text, startMs, endMs,
       });
       // Only show the answer once the server has it. Showing it first made a
       // failed submit invisible: the candidate saw their answer sitting in the
@@ -276,6 +299,8 @@ export function InterviewRoom() {
   }, [token]);
 
   const beginListening = useCallback(async () => {
+    // When this turn's answer actually started, for the evidence timestamps.
+    turnStartRef.current = Date.now();
     if (textMode) { turnClosedRef.current = false; setPhase('listening'); return; }
     setInterim('');
     setPhase('listening');
@@ -340,9 +365,21 @@ export function InterviewRoom() {
     if (audio) {
       setPhase('thinking');
       setInterim('Transcribing your answer…');
-      const text = await transcribeOnServer(token, audio);
+      try {
+        const text = await transcribeOnServer(token, audio);
+        if (text) { setInterim(''); recognizerFailedRef.current = false; void submitAnswer(text); return; }
+      } catch {
+        // A failed transcription used to leave the room on "Transcribing your
+        // answer…" for good, with the rejection unhandled: the candidate sat
+        // in front of a screen that had stopped listening and never said so.
+        setInterim('');
+        turnClosedRef.current = false;
+        setTextMode(true);
+        setPhase('listening');
+        setErr('We could not transcribe that just now. Nothing you have said is lost — please type this answer below.');
+        return;
+      }
       setInterim('');
-      if (text) { recognizerFailedRef.current = false; void submitAnswer(text); return; }
     }
 
     // Nothing usable from either path. The turn did NOT close — reopen it, or
@@ -380,6 +417,25 @@ export function InterviewRoom() {
    * the recognizer, with a watchdog for the case where the end event never
    * arrives at all.
    */
+  /**
+   * Switching to the keyboard mid-answer.
+   *
+   * The recognizer used to be left running: it finalised whatever fragment it
+   * had a moment later and submitted it as the answer, over the top of someone
+   * who had just decided to type instead.
+   */
+  const switchToTyping = () => {
+    recognizerRef.current?.abort();
+    recognizerRef.current = null;
+    if (doneWatchdogRef.current !== null) {
+      window.clearTimeout(doneWatchdogRef.current);
+      doneWatchdogRef.current = null;
+    }
+    setInterim('');
+    setTextMode(true);
+    setPhase('listening');
+  };
+
   const doneAnswering = () => {
     // Repeated presses must not each install a watchdog: only the newest id is
     // stored, so an earlier timer would survive uncancelled and fire into a
@@ -431,9 +487,11 @@ export function InterviewRoom() {
     setPhase('thinking');
     // Requested here rather than on load: a permission prompt that appears
     // before the candidate has chosen to start reads as the page grabbing the
-    // mic, and gets denied.
-    meterRef.current = await createMicMeter();
-    setMicOpen(meterRef.current !== null);
+    // mic, and gets denied. Not requested at all without consent to capture.
+    if (canCapture) {
+      meterRef.current = await createMicMeter();
+      setMicOpen(meterRef.current !== null);
+    }
     try {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/start`, {});
       addMsg({ speaker: 'agent', text: res.turn.text });
@@ -456,6 +514,9 @@ export function InterviewRoom() {
     );
   }
 
+  // The persona is configurable per interview, so the name on screen is the one
+  // this candidate was actually introduced to.
+  const interviewer = interviewerName(info.persona?.name);
   const live = phase !== 'ready' && phase !== 'done';
   const speaking = phase === 'speaking';
   const listening = phase === 'listening' && !textMode;
@@ -479,7 +540,7 @@ export function InterviewRoom() {
         <div className={`tile ${speaking ? 'is-active' : ''}`}>
           <SpeakingRings active={speaking} level={0.35} />
           <div className="tile-avatar agent-avatar">A</div>
-          <div className="tile-name">Schranders <span className="tile-tag">AI interviewer</span></div>
+          <div className="tile-name">{interviewer} <span className="tile-tag">AI interviewer</span></div>
           <div className="tile-status">
             {speaking ? 'Speaking' : phase === 'thinking' ? 'Thinking…' : phase === 'done' ? 'Signed off' : 'Ready'}
           </div>
@@ -506,7 +567,7 @@ export function InterviewRoom() {
         <div className="captions">
           {listening && interim
             ? <p><span className="cap-who">You</span>{interim}</p>
-            : <p><span className="cap-who">Schranders</span>{currentAgent}</p>}
+            : <p><span className="cap-who">{interviewer}</span>{currentAgent}</p>}
         </div>
       )}
 
@@ -516,7 +577,7 @@ export function InterviewRoom() {
         {phase === 'ready' && (
           <div className="join-panel">
             <p className="muted">
-              {info.durationMinutes} minutes · voice or typed · you can ask Schranders to repeat anything.
+              {info.durationMinutes} minutes · voice or typed · you can ask {interviewer} to repeat anything.
             </p>
             {/* Repeated here, not just on the consent screen. The consent screen may
                 have been read minutes ago on another device, and this is the last
@@ -524,19 +585,19 @@ export function InterviewRoom() {
             <div className="muted" style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto' }}>
               <VoiceHandling stt={info.speech.stt} />
             </div>
-            <button className="btn btn-join" onClick={begin}><Icon name="play" size={18} />Join interview</button>
+            <button type="button" className="btn btn-join" onClick={begin}><Icon name="play" size={18} />Join interview</button>
           </div>
         )}
 
         {listening && (
           <>
-            <button className="ctl" onClick={repeat}><Icon name="refresh" /><span>Repeat</span></button>
-            <button className="ctl" onClick={() => setCaptionsOn((c) => !c)} aria-pressed={captionsOn}>
+            <button type="button" className="ctl" onClick={repeat}><Icon name="refresh" /><span>Repeat</span></button>
+            <button type="button" className="ctl" onClick={() => setCaptionsOn((c) => !c)} aria-pressed={captionsOn}>
               <Icon name="captions" label="Captions" /><span>{captionsOn ? 'On' : 'Off'}</span>
             </button>
-            <button className="btn btn-done" onClick={doneAnswering}><Icon name="check" size={18} />Done answering</button>
-            <button className="ctl" onClick={() => setTextMode(true)}><Icon name="keyboard" /><span>Type</span></button>
-            <button className="ctl" onClick={() => setShowTranscript((s) => !s)} aria-expanded={showTranscript}>
+            <button type="button" className="btn btn-done" onClick={doneAnswering}><Icon name="check" size={18} />Done answering</button>
+            <button type="button" className="ctl" onClick={switchToTyping}><Icon name="keyboard" /><span>Type</span></button>
+            <button type="button" className="ctl" onClick={() => setShowTranscript((s) => !s)} aria-expanded={showTranscript}>
               <Icon name="list" /><span>Transcript</span>
             </button>
           </>
@@ -552,8 +613,8 @@ export function InterviewRoom() {
               data-answer-input="true"
             />
             <div className="type-actions">
-              <button className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}><Icon name="send" size={16} />Send</button>
-              {sttSupported() && <button className="ctl" onClick={() => setTextMode(false)}><Icon name="mic" /><span>Voice</span></button>}
+              <button type="button" className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}><Icon name="send" size={16} />Send</button>
+              {sttSupported() && canCapture && <button type="button" className="ctl" onClick={() => setTextMode(false)}><Icon name="mic" /><span>Voice</span></button>}
             </div>
           </div>
         )}
@@ -561,7 +622,7 @@ export function InterviewRoom() {
         {(speaking || phase === 'thinking') && (
           <div className="controls-hint">
             <span>{speaking ? 'Listen to the question…' : 'One moment…'}</span>
-            {speaking && <button className="ctl" onClick={repeat}><Icon name="refresh" /><span>Repeat</span></button>}
+            {speaking && <button type="button" className="ctl" onClick={repeat}><Icon name="refresh" /><span>Repeat</span></button>}
           </div>
         )}
 
@@ -593,10 +654,10 @@ export function InterviewRoom() {
                       how your interview is considered.
                     </p>
                     <div className="row">
-                      <button className="btn" disabled={feedbackSaving} onClick={() => void answerFeedback(true)}>
+                      <button type="button" className="btn" disabled={feedbackSaving} onClick={() => void answerFeedback(true)}>
                         Yes, please
                       </button>
-                      <button className="btn secondary" disabled={feedbackSaving} onClick={() => void answerFeedback(false)}>
+                      <button type="button" className="btn secondary" disabled={feedbackSaving} onClick={() => void answerFeedback(false)}>
                         No, thank you
                       </button>
                     </div>
@@ -620,13 +681,13 @@ export function InterviewRoom() {
       <aside className={`transcript-panel ${showTranscript ? 'open' : ''}`}>
         <div className="row spread" style={{ marginBottom: 10 }}>
           <strong>Transcript</strong>
-          <button className="ctl" onClick={() => setShowTranscript(false)}><Icon name="close" label="Close transcript" /></button>
+          <button type="button" className="ctl" onClick={() => setShowTranscript(false)}><Icon name="close" label="Close transcript" /></button>
         </div>
         <div className="transcript-scroll" ref={scrollRef}>
           {msgs.length === 0 && <p className="muted small">The conversation will appear here as you go.</p>}
           {msgs.map((m, i) => (
             <div key={i} className={`turn ${m.speaker}`}>
-              <div className="who">{m.speaker === 'agent' ? 'Schranders' : 'You'}</div>
+              <div className="who">{m.speaker === 'agent' ? interviewer : 'You'}</div>
               <div className="bubble">{m.text}</div>
             </div>
           ))}

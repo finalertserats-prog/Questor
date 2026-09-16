@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, Banner } from '../components/ui';
@@ -16,6 +16,8 @@ import {
   redFlagProblem,
   removeRedFlag,
 } from '../components/scorecardModel';
+import { hasScore } from '../components/scoreFormat';
+import { weightsProblem, weightsTotal } from '../components/scorecardModel';
 
 type Category = 'technical' | 'domain' | 'behavioral' | 'situational' | 'communication';
 type Classification = 'essential' | 'preferred' | 'trainable' | 'non_scoring';
@@ -42,29 +44,61 @@ const CLASSIFICATIONS: Classification[] = ['essential', 'preferred', 'trainable'
 function catKind(c: Category): 'blue' | 'gray' {
   return c === 'technical' || c === 'domain' ? 'blue' : 'gray';
 }
-function classKind(c: Classification): 'green' | 'amber' | 'gray' {
-  return c === 'essential' ? 'green' : c === 'preferred' ? 'amber' : 'gray';
-}
-
 export function RoleDetail() {
   const { id } = useParams();
   const [data, setData] = useState<RoleResp | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  // The profile exactly as it was loaded. "Dirty" is the difference from this,
+  // not a flag someone has to remember to set on every edit path.
+  const [saved, setSaved] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState('');
   const [newFlag, setNewFlag] = useState('');
   const [flagProblem, setFlagProblem] = useState('');
+  // Half-typed weights, by competency id. They live here rather than in the
+  // profile so that "" never reaches the scorecard as 0%.
+  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
+
+  // `cancelled` so a response for a role the person has already left cannot
+  // overwrite what they are looking at now.
+  const cancelledRef = useRef(false);
 
   const load = () => {
     setLoading(true);
     api.get<RoleResp>(`/roles/${id}`)
-      .then((d) => { setData(d); setProfile(d.scorecards?.[0]?.profile ?? null); })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      .then((d) => {
+        if (cancelledRef.current) return;
+        const next = d.scorecards?.[0]?.profile ?? null;
+        setData(d);
+        setProfile(next);
+        setSaved(JSON.stringify(next));
+      })
+      .catch((err: unknown) => {
+        if (!cancelledRef.current) setError(err instanceof Error ? err.message : 'Could not load this role.');
+      })
+      .finally(() => { if (!cancelledRef.current) setLoading(false); });
   };
-  useEffect(load, [id]);
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    load();
+    return () => { cancelledRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const dirty = profile !== null && JSON.stringify(profile) !== saved;
+
+  // Closing the tab is the one departure the browser will let us question.
+  // In-app navigation cannot be blocked here — this router has no data router
+  // to hang a blocker on — so the unsaved marker beside Save carries that job.
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   if (loading) return <PageSkeleton label="Loading role…" cards={3} />;
   if (error) return <Banner kind="error">{error}</Banner>;
@@ -83,10 +117,22 @@ export function RoleDetail() {
   const scorecard = data.scorecards[0];
   const approved = scorecard?.status === 'approved';
 
+  const clearWeightDraft = (competencyId: string) =>
+    setWeightDrafts((drafts) => Object.fromEntries(Object.entries(drafts).filter(([key]) => key !== competencyId)));
+
+  const weightsError = weightsProblem(profile.competencies ?? []);
+  const total = weightsTotal(profile.competencies ?? []);
+
   const updateComp = (i: number, patch: Partial<Competency>) => {
     setProfile((p) => {
       if (!p) return p;
-      const competencies = p.competencies.map((c, idx) => (idx === i ? { ...c, ...patch } : c));
+      const competencies = p.competencies.map((c, idx) => {
+        if (idx !== i) return c;
+        const next = { ...c, ...patch };
+        // A non-scoring competency weighs nothing by definition. Leaving its old
+        // weight behind would keep it in a total it no longer contributes to.
+        return next.classification === 'non_scoring' ? { ...next, weight: 0 } : next;
+      });
       return { ...p, competencies };
     });
   };
@@ -114,6 +160,7 @@ export function RoleDetail() {
   };
 
   const save = async () => {
+    if (weightsError || !dirty) return;
     setSaving(true);
     setError('');
     setNotice('');
@@ -121,8 +168,8 @@ export function RoleDetail() {
       await api.put<{ scorecard: Scorecard }>(`/roles/${id}/scorecard`, { profile });
       setNotice('Changes saved.');
       load();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not save the scorecard.');
     } finally {
       setSaving(false);
     }
@@ -133,8 +180,8 @@ export function RoleDetail() {
     try {
       await api.post<{ scorecard: Scorecard }>(`/roles/${id}/approve`, {});
       load();
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not approve the scorecard.');
     }
   };
 
@@ -150,11 +197,28 @@ export function RoleDetail() {
         }
         actions={
           <>
-            <button className="btn secondary" onClick={save} disabled={saving}>
+            {/* Marked with words rather than a colour: nothing to save, and a
+                total the server will refuse, are different reasons for the same
+                disabled button. */}
+            <button
+              className="btn secondary"
+              onClick={save}
+              disabled={saving || !dirty || weightsError !== null}
+              title={weightsError ?? (dirty ? undefined : 'No changes to save')}
+            >
               <Icon name={saving ? 'hourglass' : 'save'} size={16} />
-              {saving ? 'Saving…' : 'Save changes'}
+              {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
             </button>
-            <button className="btn" onClick={approve} disabled={approved}>
+            {/* Approving with edits still on screen approved the version the
+                server holds — the one nobody was looking at — while the page
+                showed the edited values. Save first, then approve what you can
+                see. */}
+            <button
+              className="btn"
+              onClick={approve}
+              disabled={approved || dirty}
+              title={dirty ? 'Save your changes first — approving would approve the saved version, not these edits.' : undefined}
+            >
               <Icon name="check-circle" size={16} />
               {approved ? 'Approved' : 'Approve scorecard'}
             </button>
@@ -164,6 +228,7 @@ export function RoleDetail() {
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
+      {dirty && <p className="muted small">Unsaved changes — they are lost if you leave this page.</p>}
       {approved && (
         <Banner kind="ok">
           Scorecard approved — ready to interview candidates.{' '}
@@ -173,7 +238,10 @@ export function RoleDetail() {
 
       <div className="card">
         <div className="muted small">
-          {role.level} · {role.location} · {role.employmentType} · scorecard v{scorecard?.version}
+          {/* No scorecard yet means no version to name; "scorecard v" on its
+              own reads as a truncated one. */}
+          {role.level} · {role.location} · {role.employmentType}
+          {scorecard && hasScore(scorecard.version) ? ` · scorecard v${scorecard.version}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>
       </div>
@@ -206,17 +274,34 @@ export function RoleDetail() {
                 <td>
                   <select
                     value={c.classification}
-                    onChange={(e) => updateComp(i, { classification: e.target.value as Classification })}
+                    onChange={(e) => {
+                      // A non-scoring competency has its weight zeroed, so any
+                      // half-typed weight beside it is no longer what it says.
+                      clearWeightDraft(c.id);
+                      updateComp(i, { classification: e.target.value as Classification });
+                    }}
                   >
                     {CLASSIFICATIONS.map((k) => <option key={k} value={k}>{k}</option>)}
                   </select>
                 </td>
                 <td style={{ minWidth: 120 }}>
                   <div className="row" style={{ gap: 6 }}>
+                    {/* An empty field is someone part-way through typing, not a
+                        weight of nothing: Number('') is 0, and clearing the box
+                        used to set the competency to 0% on the spot. The draft
+                        holds the half-typed value; the stored weight only moves
+                        when there is a number to move it to. */}
                     <input
                       type="number" min={0} max={100} step={5}
-                      value={Math.round(c.weight * 100)}
-                      onChange={(e) => updateComp(i, { weight: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })}
+                      aria-label={`Weight for ${c.name}, percent`}
+                      value={weightDrafts[c.id] ?? String(Math.round(c.weight * 100))}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        setWeightDrafts((drafts) => ({ ...drafts, [c.id]: raw }));
+                        if (!raw.trim() || !Number.isFinite(Number(raw))) return;
+                        updateComp(i, { weight: Math.max(0, Math.min(100, Number(raw))) / 100 });
+                      }}
+                      onBlur={() => clearWeightDraft(c.id)}
                       style={{ width: 70 }}
                     />
                     <span className="muted small">%</span>
@@ -228,6 +313,13 @@ export function RoleDetail() {
           </tbody>
         </table>
         </div>
+        {/* The total the server checks, shown where the weights are edited —
+            otherwise the first anyone hears of it is a refused save. */}
+        <div className="row spread" style={{ marginTop: 8 }}>
+          <span className="small">Scored weights total {total}%</span>
+          {weightsError && <span className="small">[ must total 100% ]</span>}
+        </div>
+        {weightsError && <Banner kind="error">{weightsError}</Banner>}
         <div className="row" style={{ marginTop: 10, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <label htmlFor="pass-threshold" className="muted small" style={{ margin: 0 }}>Pass threshold</label>
           <input

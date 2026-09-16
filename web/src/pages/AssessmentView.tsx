@@ -1,11 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton, Skeleton } from '../components/Skeleton';
+import {
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored, type Disposition,
+} from '../components/assessmentModel';
+import { recommendationStatus } from '../components/statusModel';
+import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -13,7 +18,9 @@ interface Competency {
   notEnoughEvidence: boolean; evidence: Evidence[]; rationale: string;
 }
 interface AssessmentResult {
-  recommendation: string; confidence: number; evidenceCoverage: number; overallScore: number;
+  // Null when the grading provider was unreachable: the interview happened and
+  // the evidence is here, but nothing was scored.
+  recommendation: string; confidence: number; evidenceCoverage: number; overallScore: number | null;
   summary: string; competencies: Competency[];
   strengths: string[]; concerns: string[]; contradictions: string[];
   openQuestions: string[]; limitations: string[];
@@ -24,8 +31,6 @@ interface AssessmentResp {
   candidate: { id: string; name: string }; role: { id: string; title: string };
   result: AssessmentResult; reviews: Review[];
 }
-
-type Disposition = 'PROCEED' | 'CONSIDER' | 'DO_NOT_PROGRESS';
 
 // ---------------------------------------------------------------------------
 // Scoring-validity status
@@ -100,7 +105,9 @@ export function ValidationStatus() {
         Nothing here becomes validated by accumulating verdicts. {sufficiency.minimumN} paired blind
         verdicts is only the point at which the confidence interval starts to mean anything — a floor for
         reading the statistic, not a pass mark. Clearing the gate additionally requires the LOWER bound of
-        that interval to reach {gate.threshold}, which a larger sample does not bring about on its own.
+        {/* Named, because every other number on this page is out of 100 or a
+            percentage, and a bare "0.75" beside them reads as one of those. */}
+        that interval to reach a kappa of {gate.threshold}, which a larger sample does not bring about on its own.
         Treat the recommendation and score as one opinion to argue with, not as a measurement.
       </div>
       <details style={{ marginTop: 8 }}>
@@ -137,31 +144,50 @@ export function AssessmentView() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const [disposition, setDisposition] = useState<Disposition>('CONSIDER');
+  // Empty until the reviewer chooses. Pre-filling it — from the AI's own
+  // recommendation, of all things — meant a verdict could be recorded that
+  // nobody had made, including against an assessment that failed to load.
+  const [disposition, setDisposition] = useState<Disposition | ''>('');
   const [reason, setReason] = useState('');
   const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const [exportStatus, setExportStatus] = useState('');
+  const [exporting, setExporting] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [report, setReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [skipReason, setSkipReason] = useState('');
 
-  const load = () => {
+  // `cancelled` so a response for an assessment the reviewer has already left
+  // cannot overwrite the one in front of them.
+  const cancelledRef = useRef(false);
+
+  // Returns its promise so callers can wait for fresh data before re-enabling
+  // the button that asked for it.
+  const load = () =>
     api.get<AssessmentResp>(`/assessments/${id}`)
-      .then((d) => { setData(d); setDisposition((d.result?.recommendation as Disposition) ?? 'CONSIDER'); setBlocked(false); })
-      .catch((err: Error) => {
+      .then((d) => { if (cancelledRef.current) return; setData(d); setBlocked(false); })
+      .catch((err: unknown) => {
+        if (cancelledRef.current) return;
         // The server withholds this page from a reviewer who has not yet
         // recorded their own verdict. That is a workflow state, not a failure,
-        // so it gets a route forward rather than a red error box.
-        if (/independent verdict/i.test(err.message)) setBlocked(true);
-        else setError(err.message);
+        // so it gets a route forward rather than a red error box. Read from the
+        // status, not from the prose: rewording the server's sentence used to
+        // turn this gate into a red error nobody could get past.
+        if (err instanceof ApiError && err.status === 409) setBlocked(true);
+        else setError(err instanceof Error ? err.message : 'Could not load this assessment.');
       })
-      .finally(() => setLoading(false));
-  };
-  useEffect(() => { setLoading(true); load(); }, [id]);
+      .finally(() => { if (!cancelledRef.current) setLoading(false); });
+
+  useEffect(() => {
+    cancelledRef.current = false;
+    setLoading(true);
+    void load();
+    return () => { cancelledRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const skipBlind = async () => {
     if (skipReason.trim().length < 10) return;
@@ -218,9 +244,13 @@ export function AssessmentView() {
   }
 
   const { candidate, role, result, reviews } = data;
+  const scored = isScored(result);
 
   const submitReview = async (e: React.FormEvent) => {
     e.preventDefault();
+    // The browser's own disabled button is not the only route here (Enter in a
+    // field submits too), so the rule is checked rather than assumed.
+    if (!canSubmitVerdict({ disposition, reason, scored, submitting })) return;
     setError('');
     setNotice('');
     setSubmitting(true);
@@ -229,38 +259,47 @@ export function AssessmentView() {
         disposition, reason, comments: comments || undefined, overrides: [],
       });
       setNotice('Review submitted.');
+      setDisposition('');
       setReason('');
       setComments('');
-      load();
-    } catch (err: any) {
-      setError(err.message);
+      // Awaited: the button used to re-enable over a page still showing the
+      // state from before the review landed.
+      await load();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not submit your review.');
     } finally {
       setSubmitting(false);
     }
   };
 
   const doExport = async () => {
+    if (exporting) return;
     setExportStatus('');
+    setExporting(true);
     try {
       const r = await api.post<{ status: string }>(`/assessments/${id}/export`, {});
       setExportStatus(r.status);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not export this assessment.');
+    } finally {
+      setExporting(false);
     }
   };
 
   const toggleReport = async () => {
     if (showReport) { setShowReport(false); return; }
+    if (reportLoading) return;
     if (!report) {
       setReportLoading(true);
       try {
         const r = await api.get<{ report: string; result: AssessmentResult }>(`/assessments/${id}/report?format=json`);
         setReport(r.report);
-      } catch (err: any) {
-        setError(err.message);
-      } finally {
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Could not load the full report.');
         setReportLoading(false);
+        return;
       }
+      setReportLoading(false);
     }
     setShowReport(true);
   };
@@ -278,10 +317,13 @@ export function AssessmentView() {
                 once a reviewer has read it they cannot un-read it, so the blind
                 route has to be reachable before they form a view, not after. */}
             <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>
-            <button className="btn secondary" onClick={doExport}><Icon name="export" size={16} />Export to ATS</button>
-            <button className="btn ghost" onClick={toggleReport}>
+            <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
+              <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
+              {exporting ? 'Exporting…' : 'Export to ATS'}
+            </button>
+            <button type="button" className="btn ghost" onClick={toggleReport} disabled={reportLoading}>
               <Icon name={showReport ? 'eye-off' : 'eye'} size={16} />
-              {showReport ? 'Hide full report' : 'View full report'}
+              {reportLoading ? 'Loading…' : showReport ? 'Hide full report' : 'View full report'}
             </button>
           </>
         }
@@ -289,17 +331,30 @@ export function AssessmentView() {
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
-      {exportStatus && <Banner kind="info">Export status: {exportStatus}</Banner>}
+      {exportStatus && <Banner kind="info">{exportStatusSentence(exportStatus)}</Banner>}
 
       {/* Above the score, not below it. A reviewer who has already read
           "76/100" has formed the impression the notice is meant to qualify. */}
       <ValidationStatus />
 
-      <div className="grid cols-3" style={{ marginBottom: 16 }}>
-        <Stat label="Overall score" value={`${Math.round(result.overallScore)}/100`} />
-        <Stat label="Confidence" value={`${Math.round(result.confidence * 100)}%`} />
-        <Stat label="Evidence coverage" value={`${Math.round(result.evidenceCoverage * 100)}%`} />
-      </div>
+      {scored ? (
+        <div className="grid cols-3" style={{ marginBottom: 16 }}>
+          <Stat label="Overall score" value={formatScoreOutOf100(result.overallScore)} />
+          <Stat label="Confidence" value={formatPercent(result.confidence)} />
+          <Stat label="Evidence coverage" value={formatPercent(result.evidenceCoverage)} />
+        </div>
+      ) : (
+        /* Rounding a score that is not there rendered "NaN/100" and "NaN%",
+           which reads as a real, very bad result. Say what actually happened. */
+        <Banner kind="error">
+          <strong>This assessment has no score.</strong>
+          <div style={{ marginTop: 6 }}>
+            Grading did not complete, so there is no overall score, no confidence and no usable
+            recommendation. The transcript and whatever evidence was captured are still below —
+            read those, and re-run the assessment from the interview if you need a score.
+          </div>
+        </Banner>
+      )}
 
       <div className="card">
         <h2 className="card-title"><Icon name="about" />Summary</h2>
@@ -342,7 +397,7 @@ export function AssessmentView() {
                     : <b>{c.level ?? '—'}/5</b>}
                 </td>
                 <td className="muted">{c.requiredLevel}/5</td>
-                <td>{Math.round(c.confidence * 100)}%</td>
+                <td>{formatPercent(c.confidence)}</td>
                 <td>{(c.evidence ?? []).length}</td>
               </tr>
             ))}
@@ -364,21 +419,35 @@ export function AssessmentView() {
         <form onSubmit={submitReview}>
           <div className="grid cols-2">
             <div>
-              <label>Disposition</label>
-              <select value={disposition} onChange={(e) => setDisposition(e.target.value as Disposition)}>
-                <option value="PROCEED">PROCEED</option>
-                <option value="CONSIDER">CONSIDER</option>
-                <option value="DO_NOT_PROGRESS">DO_NOT_PROGRESS</option>
+              <label htmlFor="disposition">Disposition</label>
+              <select
+                id="disposition"
+                value={disposition}
+                disabled={!scored}
+                onChange={(e) => setDisposition(isDisposition(e.target.value) ? e.target.value : '')}
+              >
+                <option value="">Choose a disposition…</option>
+                {DISPOSITIONS.map((d) => (
+                  <option key={d} value={d}>{recommendationStatus(d).label}</option>
+                ))}
               </select>
+              {!scored && (
+                <p className="muted small" style={{ marginTop: 6 }}>
+                  There is no assessment to judge, so no verdict can be recorded here. Record your
+                  decision from the candidate's page instead.
+                </p>
+              )}
             </div>
           </div>
-          <label>Reason (required)</label>
-          <textarea value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3}
+          <label htmlFor="review-reason">Reason (required)</label>
+          <textarea id="review-reason" value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3}
+            disabled={!scored}
             placeholder="Explain your decision…" style={{ minHeight: 90 }} />
-          <label>Comments (optional)</label>
-          <textarea value={comments} onChange={(e) => setComments(e.target.value)} style={{ minHeight: 60 }} />
+          <label htmlFor="review-comments">Comments (optional)</label>
+          <textarea id="review-comments" value={comments} onChange={(e) => setComments(e.target.value)} disabled={!scored}
+            style={{ minHeight: 60 }} />
           <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit" disabled={submitting || reason.trim().length < 3}>
+            <button className="btn" type="submit" disabled={!canSubmitVerdict({ disposition, reason, scored, submitting })}>
               <Icon name={submitting ? 'hourglass' : 'send'} size={16} />
               {submitting ? 'Submitting…' : 'Submit review'}
             </button>

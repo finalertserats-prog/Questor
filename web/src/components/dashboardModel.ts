@@ -25,6 +25,22 @@ const STATE_GROUPS: ReadonlyArray<{ key: string; label: string; states: readonly
   },
 ];
 
+/**
+ * What the charts say about themselves when they were not drawn from
+ * everything.
+ *
+ * The server caps how many rows it will read for the metrics
+ * (services/dashboardMetrics.ts) and sets `truncated` when it hit that cap. A
+ * chart of "the most recent 20,000" presented as a chart of everything is the
+ * kind of thing someone plans hiring on, so the page says which one it is.
+ */
+export const TRUNCATION_NOTE = 'Charts and averages were computed from the most recent 20,000 records only.';
+
+/** The line to show under the charts, or null when the series covers everything. */
+export function truncationNote(truncated: unknown): string | null {
+  return truncated === true ? TRUNCATION_NOTE : null;
+}
+
 /** Fold session counts by state into display groups; unknown states land in a trailing Other group. */
 export function groupSessionStates(stateCounts: Readonly<Record<string, number>>): StateGroup[] {
   const known = new Set(STATE_GROUPS.flatMap((g) => g.states));

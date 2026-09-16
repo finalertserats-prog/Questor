@@ -12,6 +12,7 @@ interface CreateResp {
   jdWarnings: { term: string; suggestion: string }[];
 }
 
+
 export function RoleCreate() {
   const nav = useNavigate();
   const [sourceText, setSourceText] = useState('');
@@ -20,12 +21,14 @@ export function RoleCreate() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<{ term: string; suggestion: string }[]>([]);
+  // Set once the role exists: the warnings are shown against it, and the way on
+  // is a button rather than a timer.
+  const [createdRoleId, setCreatedRoleId] = useState<string | null>(null);
 
-  // The sample is a demonstration. It loads only into an empty form, and it
-  // fills the title as well as the description, because loading one without
-  // the other produced a role named for one job with a scorecard for another.
+  // The sample loads only into an empty form, and fills the title as well as
+  // the description: loading one without the other produced a role named for
+  // one job with a scorecard for another.
   const sampleAllowed = canLoadSample({ sourceText, title });
-
   const loadSample = () => {
     if (!sampleAllowed) return;
     const draft = sampleDraft();
@@ -45,14 +48,18 @@ export function RoleCreate() {
         useLlm,
       });
       if (resp.jdWarnings && resp.jdWarnings.length) {
+        // The warnings are about fairness in the wording someone is about to
+        // interview against. 1200ms was never enough to read them, and the page
+        // left of its own accord while they were still reading — so the role is
+        // there when they are ready for it.
         setWarnings(resp.jdWarnings);
-        // brief pause so the user sees the warnings, then navigate
-        setTimeout(() => nav(`/roles/${resp.role.id}`), 1200);
-      } else {
-        nav(`/roles/${resp.role.id}`);
+        setCreatedRoleId(resp.role.id);
+        setSubmitting(false);
+        return;
       }
+      nav(`/roles/${resp.role.id}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'The role could not be created.');
+      setError(err instanceof Error ? err.message : 'Could not create this role.');
       setSubmitting(false);
     }
   };
@@ -70,16 +77,22 @@ export function RoleCreate() {
               <li key={i} className="small"><b>{w.term}</b> — {w.suggestion}</li>
             ))}
           </ul>
+          {createdRoleId && (
+            <div className="row" style={{ marginTop: 10 }}>
+              <button type="button" className="btn" onClick={() => nav(`/roles/${createdRoleId}`)}>
+                Continue to the role<Icon name="arrow-right" size={16} />
+              </button>
+            </div>
+          )}
         </Banner>
       )}
 
       <form className="card" onSubmit={submit}>
-        <label htmlFor="role-title">Role title (optional — inferred from the JD if left blank)</label>
-        <input id="role-title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
+        <label>Role title (optional — inferred from the JD if left blank)</label>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
 
-        <label htmlFor="role-jd">Job description</label>
+        <label>Job description</label>
         <textarea
-          id="role-jd"
           value={sourceText}
           onChange={(e) => setSourceText(e.target.value)}
           placeholder="Paste the full job description here…"
@@ -97,22 +110,26 @@ export function RoleCreate() {
           Use AI extraction (falls back to built-in extractor)
         </label>
 
-        <div className="row" style={{ marginTop: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="row" style={{ marginTop: 16 }}>
           <button className="btn" type="submit" disabled={submitting || !sourceText.trim()}>
             <Icon name={submitting ? 'hourglass' : 'sparkle'} size={16} />
             {submitting ? 'Creating…' : 'Create role'}
           </button>
-          <button
-            className="btn secondary"
-            type="button"
-            onClick={loadSample}
-            disabled={!sampleAllowed}
-            aria-describedby="sample-jd-hint"
-          >
-            <Icon name="job" size={16} />
-            Load sample JD
-          </button>
-          {!sampleAllowed && (
+          {/* Development only. A button that fills a real hiring form with a
+              made-up job has no business in a console someone hires from. */}
+          {import.meta.env.DEV && (
+            <button
+              className="btn secondary"
+              type="button"
+              onClick={loadSample}
+              disabled={!sampleAllowed}
+              aria-describedby="sample-jd-hint"
+            >
+              <Icon name="job" size={16} />
+              Load sample JD
+            </button>
+          )}
+          {import.meta.env.DEV && !sampleAllowed && (
             <span id="sample-jd-hint" className="muted small">
               The sample only loads into an empty form, so it never replaces what you have written.
             </span>

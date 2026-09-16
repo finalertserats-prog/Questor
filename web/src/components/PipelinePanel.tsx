@@ -7,6 +7,9 @@ import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
+import { decisionStatus } from './statusModel';
+import { interviewerName } from './candidateJourney';
+import { formatDate, formatDateTime } from './dateFormat';
 
 interface Round {
   id: string;
@@ -47,9 +50,14 @@ interface InterviewOption {
   id: string;
   state: string;
   createdAt: string;
+  /** The AI interviewer's name for that session; absent on an older server. */
+  personaName?: string | null;
 }
 
 type Decision = 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
+
+/** The server's own floor for a decision reason, checked here too. */
+const MIN_DECISION_REASON = 10;
 
 interface SchedulingNotice {
   delivered: boolean;
@@ -83,8 +91,8 @@ function StageBadge({ stageKey }: { stageKey: string }) {
  * with it rather than sitting on a stale copy until someone reloads.
  */
 export function PipelinePanel(
-  { candidateId, interviews, onChanged }:
-  { candidateId: string; interviews: InterviewOption[]; onChanged?: () => void },
+  { candidateId, candidateName, interviews, onChanged }:
+  { candidateId: string; candidateName: string; interviews: InterviewOption[]; onChanged?: () => void },
 ) {
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -103,6 +111,10 @@ export function PipelinePanel(
   const [roundToComplete, setRoundToComplete] = useState('');
   const [roundNotes, setRoundNotes] = useState('');
   const [schedulingNotice, setSchedulingNotice] = useState<SchedulingNotice | null>(null);
+  // Set while a candidacy-ending outcome waits to be confirmed.
+  const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
+  // The stage a move is waiting to be confirmed for.
+  const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -182,6 +194,12 @@ export function PipelinePanel(
   const scheduleRound = (e: React.FormEvent) => {
     e.preventDefault();
     if (!current || !scheduledAt) return;
+    // A round in the past is almost always a mistyped date, and it reaches the
+    // candidate as an invitation to a time that has already gone.
+    if (new Date(scheduledAt).getTime() < Date.now()) {
+      setError('That time has already passed. Pick a date and time in the future.');
+      return;
+    }
     const names = interviewers.split(',').map((n) => n.trim()).filter(Boolean);
     void run(() => api.post<{ notification?: SchedulingNotice }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
@@ -204,9 +222,37 @@ export function PipelinePanel(
       .then(() => { setRoundNotes(''); setRoundToComplete(''); }));
   };
 
+  const submitDecision = () => {
+    // Trimmed and checked here, not only by the browser: this reason is the
+    // record of why someone's candidacy ended.
+    if (reason.trim().length < MIN_DECISION_REASON) {
+      setError(`Say why in at least ${MIN_DECISION_REASON} characters — this is the record of the decision.`);
+      return;
+    }
+    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason: reason.trim() })
+      .then(() => { setReason(''); setPendingDecision(null); }));
+  };
+
+  // Approving moves someone forward; the other two end their candidacy and
+  // close the pipeline, and nothing in this panel undoes that. Those two get
+  // named back — outcome and person — before they are recorded.
   const recordDecision = (e: React.FormEvent) => {
     e.preventDefault();
-    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason }).then(() => setReason('')));
+    if (reason.trim().length < MIN_DECISION_REASON) {
+      setError(`Say why in at least ${MIN_DECISION_REASON} characters — this is the record of the decision.`);
+      return;
+    }
+    if (decision === 'APPROVED') { submitDecision(); return; }
+    setPendingDecision(decision);
+  };
+
+  // Moving someone on is visible to them and to the next interviewer, and the
+  // button sits beside the stage track where a stray click lands easily.
+  const advance = () => {
+    if (!next) return;
+    if (pendingAdvance !== next.key) { setPendingAdvance(next.key); return; }
+    setPendingAdvance(null);
+    void run(() => api.post(`/pipelines/${pipeline.id}/advance`, { toStageKey: next.key }));
   };
 
   return (
@@ -245,9 +291,18 @@ export function PipelinePanel(
           <div className="pipeline-action">
             <h3 className="card-title"><Icon name="arrow-right" size={16} />Next stage</h3>
             {next ? (
-              <button className="btn secondary" disabled={busy} onClick={() => run(() => api.post(`/pipelines/${pipeline.id}/advance`, { toStageKey: next.key }))}>
-                <Icon name="arrow-right" size={16} />Move to {next.label}
-              </button>
+              <>
+                <button type="button" className="btn secondary" disabled={busy} onClick={advance}>
+                  <Icon name="arrow-right" size={16} />
+                  {pendingAdvance === next.key ? `Confirm move to ${next.label}` : `Move to ${next.label}`}
+                </button>
+                {pendingAdvance === next.key && (
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    {candidateName} moves to {next.label}.{' '}
+                    <button type="button" className="btn ghost sm" onClick={() => setPendingAdvance(null)}>Not yet</button>
+                  </p>
+                )}
+              </>
             ) : (
               <p className="muted small">This is the final stage. Record a decision when ready.</p>
             )}
@@ -265,7 +320,7 @@ export function PipelinePanel(
                     <select id="round-session" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
                       <option value="">Link one later</option>
                       {interviews.map((iv) => (
-                        <option key={iv.id} value={iv.id}>{new Date(iv.createdAt).toLocaleDateString()} · {iv.state}</option>
+                        <option key={iv.id} value={iv.id}>{formatDate(iv.createdAt)} · {iv.state}</option>
                       ))}
                     </select>
                   </>
@@ -285,7 +340,11 @@ export function PipelinePanel(
           <form className="pipeline-action" onSubmit={recordDecision}>
             <h3 className="card-title"><Icon name="check-circle" size={16} />Record decision</h3>
             <label htmlFor="decision">Outcome</label>
-            <select id="decision" value={decision} onChange={(e) => setDecision(e.target.value as Decision)}>
+            <select
+              id="decision"
+              value={decision}
+              onChange={(e) => { setDecision(e.target.value as Decision); setPendingDecision(null); }}
+            >
               <option value="APPROVED">Approve</option>
               <option value="REJECTED">Do not progress</option>
               <option value="WITHDRAWN">Candidate withdrew</option>
@@ -293,6 +352,20 @@ export function PipelinePanel(
             <label htmlFor="decision-reason">Reason</label>
             <textarea id="decision-reason" value={reason} onChange={(e) => setReason(e.target.value)} minLength={10} required placeholder="What in the evidence led to this decision?" />
             <button className="btn" style={{ marginTop: 10 }} disabled={busy}><Icon name="check-circle" size={16} />Record decision</button>
+            {pendingDecision && (
+              <Banner kind="info">
+                Record <b>{decisionStatus(pendingDecision).label.toLowerCase()}</b> for {candidateName}?
+                This closes their pipeline and is recorded against your name.
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button type="button" className="btn" disabled={busy} onClick={submitDecision}>
+                    <Icon name="check-circle" size={16} />Yes, record it
+                  </button>
+                  <button type="button" className="btn ghost" disabled={busy} onClick={() => setPendingDecision(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </Banner>
+            )}
           </form>
         </div>
       )}
@@ -309,9 +382,15 @@ export function PipelinePanel(
               {pipeline.rounds.map((round) => (
                 <tr key={round.id}>
                   <td>{labelFor(round.stageKey)}</td>
-                  <td>{round.conductedBy === 'AI' ? 'AI (Schranders)' : round.interviewers.join(', ') || 'Human interviewer'}</td>
+                  {/* The persona is configurable per interview, so the name
+                      comes from the session rather than from this file. */}
+                  <td>
+                    {round.conductedBy === 'AI'
+                      ? `AI (${interviewerName(interviews.find((iv) => iv.id === round.sessionId)?.personaName)})`
+                      : round.interviewers.join(', ') || 'Human interviewer'}
+                  </td>
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
-                  <td>{new Date(round.scheduledAt).toLocaleString()}</td>
+                  <td>{formatDateTime(round.scheduledAt)}</td>
                   <td>
                     <span className="row" style={{ gap: 8 }}>
                       <StatusBadge kind="round" value={round.status} />
@@ -337,7 +416,7 @@ export function PipelinePanel(
               <label htmlFor="complete-round">Round</label>
               <select id="complete-round" value={roundToComplete || openHumanRounds[0].id} onChange={(e) => setRoundToComplete(e.target.value)}>
                 {openHumanRounds.map((round) => (
-                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {new Date(round.scheduledAt).toLocaleString()}</option>
+                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {formatDateTime(round.scheduledAt)}</option>
                 ))}
               </select>
             </>

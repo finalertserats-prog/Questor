@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { barRadius, chartTone, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks } from '../src/components/dashboardModel';
+import { barRadius, chartTone, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks, truncationNote, TRUNCATION_NOTE } from '../src/components/dashboardModel';
+
+describe('truncationNote', () => {
+  it('says the charts were drawn from a capped set when the server capped one', () => {
+    expect(truncationNote(true)).toBe(TRUNCATION_NOTE);
+  });
+
+  it('names the cap, so the reader knows what is missing', () => {
+    expect(TRUNCATION_NOTE).toContain('20,000');
+  });
+
+  it('says nothing when the series covers everything', () => {
+    expect(truncationNote(false)).toBe(null);
+  });
+
+  // An older server does not send the flag at all; absent is not truncated.
+  it('says nothing when the flag is missing', () => {
+    expect(truncationNote(undefined)).toBe(null);
+  });
+
+  it('says nothing for a value that is not the flag', () => {
+    expect([truncationNote('true'), truncationNote(1), truncationNote(null)]).toEqual([null, null, null]);
+  });
+});
 
 describe('groupSessionStates', () => {
   it('folds raw session states into the groups an HR reader thinks in', () => {

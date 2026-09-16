@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
-import { isInFlight } from './CandidatesList';
+import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
 import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
 import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
@@ -10,6 +10,11 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
+import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
+import {
+  MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
+} from '../components/interviewSetupModel';
+import { formatDateTime } from '../components/dateFormat';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -25,7 +30,8 @@ interface Fit {
 }
 interface Interview { id: string; state: string; scheduledAt: string | null; createdAt: string; }
 interface CandidateResp {
-  candidate: { id: string; fullName: string; email: string; phone: string; roleId: string };
+  // A candidate can exist before anyone has put them against a role.
+  candidate: { id: string; fullName: string; email: string; phone: string; roleId: string | null };
   profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
   // What the candidate asked for at the end of their interview. Structurally
   // the journey's JourneyCandidateFeedback; spelled out here so this response
@@ -46,6 +52,8 @@ interface CandidateResp {
  */
 interface SessionSummary {
   id: string; recommendation: string | null; assessmentId: string | null; invited: boolean;
+  /** The AI interviewer's name for that session; absent on an older server. */
+  personaName?: string | null;
 }
 
 /** The role and its latest scorecard: between them, the job description. */
@@ -133,9 +141,18 @@ export function CandidateDetail() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
+  // Only a change of candidate blanks the page. A refresh bump re-reads in
+  // place: swapping the whole page for a skeleton unmounted the pipeline panel,
+  // and with it the scheduling notice holding the meeting link someone had just
+  // created — gone before they could copy it.
+  const loadedId = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (loadedId.current !== id) {
+      loadedId.current = id;
+      setLoading(true);
+    }
 
     api.get<CandidateResp>(`/candidates/${id}`)
       .then((candidateResp) => {
@@ -275,7 +292,10 @@ export function CandidateDetail() {
     window.requestAnimationFrame(() => document.getElementById(candidateDetailTabId(next))?.focus());
   };
 
-  const createInterview = async () => {
+  const createInterview = async (event: React.FormEvent) => {
+    event.preventDefault();
+    // Checked here as well as on the button: Enter in a field submits too.
+    if (creating || setupProblem) return;
     setCreating(true);
     setCreateError('');
     try {
@@ -293,11 +313,13 @@ export function CandidateDetail() {
         approve: true,
       });
       nav(`/interviews/${resp.session.id}`);
-    } catch (err: any) {
-      setCreateError(err.message);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Could not create this interview.');
       setCreating(false);
     }
   };
+
+  const setupProblem = interviewSetupProblem({ durationMinutes, personaName });
 
   return (
     <div>
@@ -308,7 +330,11 @@ export function CandidateDetail() {
         actions={
           <>
             <Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>
-            <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
+            {/* Without a role there is nothing to view; the link used to lead
+                to /roles/null. */}
+            {candidate.roleId && (
+              <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
+            )}
           </>
         }
       />
@@ -357,20 +383,38 @@ export function CandidateDetail() {
       >
         {journey && <CandidateJourneyBoard journey={journey} />}
 
-        <PipelinePanel candidateId={candidate.id} interviews={interviews ?? []} onChanged={refresh} />
+        <PipelinePanel
+          candidateId={candidate.id}
+          candidateName={candidate.fullName}
+          // The interviewer's name lives on the /interviews summary, not on the
+          // candidate's own record, so it is joined on here.
+          interviews={(interviews ?? []).map((iv) => ({ ...iv, personaName: sessions[iv.id]?.personaName ?? null }))}
+          onChanged={refresh}
+        />
 
       <div className="card">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
         {createError && <Banner kind="error">{createError}</Banner>}
+        {/* A form, so Enter works and the browser checks the field bounds it is
+            given — the button used to be a plain onClick, which meant neither. */}
+        <form onSubmit={createInterview}>
         <div className="grid cols-3">
           <div>
-            <label>Duration (minutes)</label>
-            <input type="number" min={15} max={120} value={durationMinutes}
-              onChange={(e) => setDurationMinutes(Number(e.target.value))} />
+            <label htmlFor="interview-duration">Duration (minutes)</label>
+            <input
+              id="interview-duration"
+              type="number"
+              min={MIN_DURATION_MINUTES}
+              max={MAX_DURATION_MINUTES}
+              value={durationMinutes}
+              onChange={(e) => setDurationMinutes(Number(e.target.value))}
+              onBlur={() => setDurationMinutes(clampDuration(durationMinutes))}
+              required
+            />
           </div>
           <div>
-            <label>Persona name</label>
-            <input value={personaName} onChange={(e) => setPersonaName(e.target.value)} />
+            <label htmlFor="interview-persona">Persona name</label>
+            <input id="interview-persona" value={personaName} onChange={(e) => setPersonaName(e.target.value)} required />
           </div>
           <div>
             <label>Tone</label>
@@ -402,12 +446,14 @@ export function CandidateDetail() {
             </div>
           </div>
         </div>
+        {setupProblem && <p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
         <div className="row" style={{ marginTop: 16 }}>
-          <button className="btn" onClick={createInterview} disabled={creating}>
+          <button className="btn" type="submit" disabled={creating || setupProblem !== null}>
             <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />
             {creating ? 'Creating…' : 'Approve & create interview'}
           </button>
         </div>
+        </form>
       </div>
 
       <div className="card">
@@ -438,12 +484,16 @@ export function CandidateDetail() {
                     <td>
                       <span className="row" style={{ gap: 6 }}>
                         {stateBadge(iv.state)}
-                        {isInFlight(iv.state) && <span className="inflight-note">in progress</span>}
+                        {/* An invited candidate who has not turned up is not
+                            "in progress"; the candidates list already makes
+                            that distinction, and this row now makes the same one. */}
+                        {isAwaitingCandidate(iv.state) && <span className="inflight-note">not started yet</span>}
+                        {isUnderway(iv.state) && <span className="inflight-note">in progress</span>}
                       </span>
                     </td>
                     <td>{recBadge(s?.recommendation)}</td>
-                    <td>{iv.scheduledAt ? new Date(iv.scheduledAt).toLocaleString() : <span className="muted">—</span>}</td>
-                    <td>{new Date(iv.createdAt).toLocaleString()}</td>
+                    <td>{iv.scheduledAt ? formatDateTime(iv.scheduledAt) : <span className="muted">—</span>}</td>
+                    <td>{formatDateTime(iv.createdAt)}</td>
                     <td>
                       {/* Both routes are always offered. The assessment is what the
                           recruiter came for when it exists; the interview page is
@@ -593,9 +643,9 @@ function CandidateProfileTab({
                         <h3 style={{ margin: 0 }}>{alt.title}</h3>
                         {alt.level && <div className="muted small">{alt.level}</div>}
                       </div>
-                      <b>{Math.round(alt.score)}/100</b>
+                      <b>{formatScoreOutOf100(alt.score)}</b>
                     </div>
-                    <Meter value={alt.score} />
+                    <Meter value={roundScore(alt.score) ?? 0} />
                     <p className="small">{alt.why}</p>
                   </div>
                 ))}
@@ -617,11 +667,11 @@ function FitScoreBlock({ fit }: { fit: Fit }) {
         <div>
           <div className="row spread">
             <span className="muted small">Overall resume fit</span>
-            <b>{Math.round(fit.overall)}/100</b>
+            <b>{formatScoreOutOf100(fit.overall)}</b>
           </div>
-          <Meter value={fit.overall} />
+          <Meter value={roundScore(fit.overall) ?? 0} />
         </div>
-        <Stat label="Confidence" value={`${Math.round(fit.confidence * 100)}%`} />
+        <Stat label="Confidence" value={formatPercent(fit.confidence)} />
       </div>
 
       <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Fit score components and reasons">
