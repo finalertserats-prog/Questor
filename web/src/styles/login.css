@@ -314,3 +314,19 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* The full lockup introduces the product to someone who has never seen it —
+   the tagline is part of the image, so no separate line repeats it. */
+.landing-logo {
+  display: block;
+  width: 210px;
+  max-width: 62%;
+  height: auto;
+  margin: 0 0 12px;
+}
+
+@media (max-width: 900px) {
+  .landing-logo {
+    width: 168px;
+  }
+}

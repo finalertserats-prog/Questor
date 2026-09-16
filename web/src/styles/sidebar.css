@@ -421,3 +421,26 @@
     transition: none;
   }
 }
+
+/* The mark sits beside the name rather than replacing it: collapsing the
+   sidebar narrows it, it does not take the product's name off the screen. */
+.sidebar .logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar .logo-mark {
+  width: 26px;
+  height: auto;
+  flex: none;
+}
+
+.sidebar .logo-rail {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sidebar .logo-rail .logo-mark {
+  width: 30px;
+}

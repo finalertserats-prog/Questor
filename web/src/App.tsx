@@ -180,7 +180,12 @@ function Layout({ children }: { children: React.ReactNode }) {
             {/* Collapsing narrows the sidebar; it does not take the product's
                 name off the screen. In the rail the wordmark is simply set
                 smaller, above the icons it names. */}
-            <div className={brand.className} title={brand.label}>{brand.lead}<span>{brand.tail}</span></div>
+            <div className={brand.className} title={brand.label}>
+              {/* The mark carries no meaning the name does not: it is decorative
+                  here, and the name beside it is the accessible label. */}
+              <img className="logo-mark" src="/brand/questor-mark.webp" alt="" width={26} height={27} />
+              <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>
+            </div>
             <button
               ref={railToggleRef}
               type="button"

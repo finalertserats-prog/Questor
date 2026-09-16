@@ -42,7 +42,13 @@ export function LandingHero() {
   return (
     <section className={reducedMotion ? 'landing-hero is-still' : 'landing-hero'}>
       <div className="landing-hero-copy">
-        <p className="landing-eyebrow">Questor</p>
+        <img
+          className="landing-logo"
+          src="/brand/questor-logo.webp"
+          alt="Questor — the intelligence behind every hire"
+          width={210}
+          height={161}
+        />
         <h2 className="landing-headline">Hire through evidence, not impressions.</h2>
         <p className="landing-lede">
           Questor turns a job description into an agreed scorecard, runs the first interview round itself,
