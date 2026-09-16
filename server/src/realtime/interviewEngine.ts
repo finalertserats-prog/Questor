@@ -91,15 +91,48 @@ function elapsedMinutes(turns: TurnRecord[]): number {
   return (turns.length * AVG_MS_PER_TURN) / 60000;
 }
 
-async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id'>, meta?: Record<string, unknown>): Promise<TurnRecord> {
-  const rec = await prisma.turn.create({
-    data: {
-      id: nanoid(10), sessionId, index: turn.index, speaker: turn.speaker, text: turn.text,
-      startMs: turn.startMs, endMs: turn.endMs, confidence: turn.confidence, competencyId: turn.competencyId ?? '',
-      ...(meta ? { metaJson: JSON.stringify(meta) } : {}),
-    },
-  });
-  return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
+/** A unique-constraint violation, however the driver reports it. */
+function isDuplicateIndex(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
+}
+
+/**
+ * Append a turn, allocating its index atomically.
+ *
+ * Callers used to pass `turns.length`, computed from a read that had already
+ * happened — so two requests arriving together (the socket and the HTTP
+ * fallback, or one candidate on two devices) both inserted at the same index
+ * and the canonical transcript order became row insertion order. The index is
+ * now read and written inside one transaction, and the unique constraint on
+ * (sessionId, index) is what catches the interleaving the transaction does not:
+ * the loser retries once against the newly-current tail.
+ */
+async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'index'>, meta?: Record<string, unknown>): Promise<TurnRecord> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const rec = await prisma.$transaction(async (tx) => {
+        const tail = await tx.turn.findFirst({
+          where: { sessionId }, orderBy: { index: 'desc' }, select: { index: true },
+        });
+        return tx.turn.create({
+          data: {
+            id: nanoid(10), sessionId, index: (tail?.index ?? -1) + 1, speaker: turn.speaker, text: turn.text,
+            startMs: turn.startMs, endMs: turn.endMs, confidence: turn.confidence, competencyId: turn.competencyId ?? '',
+            ...(meta ? { metaJson: JSON.stringify(meta) } : {}),
+          },
+        });
+      });
+      return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
+    } catch (err) {
+      if (!isDuplicateIndex(err)) throw err;
+      lastErr = err;
+    }
+  }
+  // Two collisions in a row means sustained concurrent writing on one session,
+  // which is not a transcript anyone should be appending to blindly.
+  logger.error({ sessionId }, 'Could not allocate a turn index after a retry');
+  throw lastErr;
 }
 
 export async function setState(sessionId: string, from: string, to: string) {
@@ -116,7 +149,7 @@ async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
 
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const agentTurn = await appendTurn(sessionId, {
-    index: turns.length, speaker: 'agent', text: utter.text,
+    speaker: 'agent', text: utter.text,
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.
@@ -285,7 +318,7 @@ export async function submitCandidateTurn(sessionId: string, text: string, timin
   }
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   await appendTurn(sessionId, {
-    index: turns.length, speaker: 'candidate', text,
+    speaker: 'candidate', text,
     startMs: timing?.startMs ?? lastEnd + 1000,
     endMs: timing?.endMs ?? lastEnd + 30_000,
     confidence: timing?.confidence ?? 0.9,
