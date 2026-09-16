@@ -243,9 +243,29 @@ function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Shown when the session check failed for a reason that is not "signed out".
+ *
+ * The session is still standing — the server simply could not be reached or
+ * answered with a fault — so the way out is to ask again, not to send someone
+ * to the login page and lose whatever they were in the middle of.
+ */
+function SessionRetry({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="center-screen">
+      <div className="banner error" style={{ maxWidth: 480 }}>
+        <div>We could not confirm your sign-in. {message}</div>
+        <div className="small muted" style={{ marginTop: 6 }}>You are still signed in; this is a problem reaching the server.</div>
+        <button type="button" className="btn sm" style={{ marginTop: 10 }} onClick={onRetry}>Try again</button>
+      </div>
+    </div>
+  );
+}
+
 function Protected({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, loadError, retrySession } = useAuth();
   if (loading) return <div className="center-screen muted">Loading…</div>;
+  if (!user && loadError) return <SessionRetry message={loadError} onRetry={retrySession} />;
   if (!user) return <Navigate to="/login" replace />;
   return <Layout>{children}</Layout>;
 }

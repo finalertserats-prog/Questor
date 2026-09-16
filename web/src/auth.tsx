@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, setToken, getToken } from './api/client';
+import { endsSession, sessionLoadMessage } from './authModel';
 
 export interface User {
   id: string;
@@ -10,6 +11,10 @@ export interface User {
   tourCompletedAt: string | null;
 }
 interface AuthCtx { user: User | null; tenant: { id: string; name: string } | null; loading: boolean;
+  /** Set when the session check failed for a reason that is not "signed out" — see retrySession. */
+  loadError: string | null;
+  /** Runs the session check again, for the banner shown when loadError is set. */
+  retrySession: () => void;
   login: (email: string, password: string, orgSlug?: string) => Promise<void>;
   register: (b: { email: string; password: string; name: string; tenantName?: string }) => Promise<void>;
   logout: () => void;
@@ -25,17 +30,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [tenant, setTenant] = useState<{ id: string; name: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!getToken()) { setLoading(false); return; }
+  // A failed check is not a logout. Only the server refusing the credential
+  // ends the session (authModel.endsSession); anything else leaves it standing
+  // and surfaces a retry, because signing someone out over a 500 loses their
+  // work for a fault that has usually already passed.
+  const checkSession = useCallback(() => {
+    if (!getToken()) { setLoading(false); setLoadError(null); return; }
+    setLoading(true);
+    setLoadError(null);
     api.get<{ user: User; tenant: any }>('/auth/me')
       .then((d) => { setUser(d.user); setTenant(d.tenant); })
-      .catch(() => setToken(null))
+      .catch((err: unknown) => {
+        if (endsSession(err)) { setToken(null); setUser(null); setTenant(null); return; }
+        setLoadError(sessionLoadMessage(err));
+      })
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => { checkSession(); }, [checkSession]);
+
   const login = async (email: string, password: string, orgSlug?: string) => {
     const d = await api.post<{ token: string; user: User }>('/auth/login', orgSlug ? { email, password, orgSlug } : { email, password });
+    setLoadError(null);
     setToken(d.token); setUser(d.user);
     const me = await api.get<{ tenant: any }>('/auth/me'); setTenant(me.tenant);
   };
@@ -44,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(d.token); setUser(d.user);
     const me = await api.get<{ tenant: any }>('/auth/me'); setTenant(me.tenant);
   };
-  const logout = () => { setToken(null); setUser(null); setTenant(null); };
+  const logout = () => { setToken(null); setUser(null); setTenant(null); setLoadError(null); };
   // Stable, since the tour keeps it in an effect's dependencies.
   const markTourComplete = useCallback(async () => {
     const d = await api.post<{ tourCompletedAt: string | null }>('/auth/tour/complete');
@@ -65,5 +83,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  return <Ctx.Provider value={{ user, tenant, loading, login, register, logout, markTourComplete, refreshTourStatus }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, tenant, loading, loadError, retrySession: checkSession, login, register, logout, markTourComplete, refreshTourStatus }}>{children}</Ctx.Provider>;
 }
