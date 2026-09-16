@@ -36,7 +36,11 @@ export const SHOWCASE_STEPS: readonly ShowcaseStep[] = [
     // Not called an AI score: server/src/engines/fitScoring.ts is a transparent
     // rule engine, and it excludes protected signals by name (fitScoring.ts:7-10).
     title: 'Profile summary and job fit',
-    detail: 'Scored against the approved scorecard, every point traced to evidence — never to a name, age or address.',
+    // Deliberately not "approved scorecard" or "every point traced to evidence":
+    // fit scoring runs against the latest scorecard, approved or not, and some
+    // of its components (outcome overlap, trajectory) are judgements about the
+    // profile rather than quotes from it.
+    detail: 'Scored against the role’s scorecard, with the reasons shown — never a name, age or address.',
   },
   {
     key: 'ai-interview',
@@ -133,7 +137,9 @@ export const SHOWCASE_FEATURES: readonly ShowcaseFeature[] = [
     icon: 'admin',
     // server/src/routes/orgs.ts:19; auth.ts:10-27 (wrong-org answers as wrong password).
     title: 'Your organisation’s own link',
-    detail: 'Everyone signs in at your address. A guessed one never reveals who is registered.',
+    // Not "a guessed link reveals nothing": GET /api/orgs/:slug answers with the
+    // organisation's name, so only the credentials claim is made here.
+    detail: 'Everyone signs in at your address, and the wrong organisation answers exactly like a wrong password.',
   },
   {
     key: 'consent',
@@ -196,6 +202,9 @@ export const SHOWCASE_FEATURES: readonly ShowcaseFeature[] = [
     icon: 'settings',
     // server/src/routes/connectors.ts:9-14 — no endpoint accepts or stores a key.
     title: 'Connectors without stored keys',
-    detail: 'Email, ATS, speech and model providers are set on your server. Questor never holds the keys.',
+    // The running server does read them from its own configuration; what the
+    // product never does is accept a key through the app or keep one in the
+    // database, where a backup or an injection would reach it.
+    detail: 'Email, ATS, speech and model providers are set in your server’s configuration — no key is typed into Questor or kept in its database.',
   },
 ];

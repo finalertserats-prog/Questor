@@ -36,7 +36,9 @@ import { ObserveInterview } from './pages/ObserveInterview';
 
 // Below this width the sidebar is an overlay drawer; above it, it is docked
 // beside the page. Kept in step with the breakpoint in styles/sidebar.css.
-const NARROW_VIEWPORT = '(max-width: 820px)';
+// Matches sidebar.css exactly, fractional bound included: a viewport at 820.5px
+// must be narrow for both, or the drawer and the docked sidebar disagree.
+const NARROW_VIEWPORT = '(max-width: 820.98px)';
 
 function narrowViewportQuery(): MediaQueryList | null {
   try {
@@ -72,7 +74,11 @@ function Layout({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<SidebarMode>(() => readSidebarMode());
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const railToggleRef = useRef<HTMLButtonElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  // Mirrors navOpen for the breakpoint effect below, which must not re-run every
+  // time the drawer opens or closes.
+  const navOpenRef = useRef(false);
   // Set when the user closes the drawer themselves, so focus returns to the
   // toggle — but only after the toggle stops being inert.
   const restoreFocusRef = useRef(false);
@@ -94,6 +100,22 @@ function Layout({ children }: { children: React.ReactNode }) {
       toggleRef.current?.focus();
     }
   }, [overlayOpen]);
+
+  useEffect(() => { navOpenRef.current = navOpen; }, [navOpen]);
+
+  // Crossing the breakpoint ends the errand the drawer was opened for. Without
+  // this the flag outlives the drawer: widen the window and it disappears,
+  // narrow it again — rotate a tablet, restore a window — and it springs open
+  // on its own, making the page inert and pulling focus out of whatever the
+  // person was doing. Focus is handed over deliberately too, because the close
+  // button it was sitting on is display:none once docked, and focus would
+  // otherwise fall to the document.
+  useEffect(() => {
+    if (!navOpenRef.current) return;
+    restoreFocusRef.current = false;
+    setNavOpen(false);
+    if (!isNarrow) railToggleRef.current?.focus();
+  }, [isNarrow]);
 
   // Following a link is the end of the errand the drawer was opened for.
   useEffect(() => {
@@ -157,15 +179,19 @@ function Layout({ children }: { children: React.ReactNode }) {
                 smaller, above the icons it names. */}
             <div className={brand.className} title={brand.label}>{brand.lead}<span>{brand.tail}</span></div>
             <button
+              ref={railToggleRef}
               type="button"
               className="rail-toggle"
               aria-controls="app-sidebar"
-              aria-expanded={mode === 'expanded'}
-              aria-label={sidebarToggleLabel(mode)}
-              title={sidebarToggleLabel(mode)}
+              // Not aria-expanded: the navigation is never hidden here, only
+              // narrowed, and "collapsed" would tell a screen reader the links
+              // are gone while every one of them is still focusable.
+              aria-pressed={railMode === 'collapsed'}
+              aria-label={sidebarToggleLabel(railMode)}
+              title={sidebarToggleLabel(railMode)}
               onClick={toggleRail}
             >
-              <Icon name={mode === 'collapsed' ? 'sidebar-expand' : 'sidebar-collapse'} />
+              <Icon name={railMode === 'collapsed' ? 'sidebar-expand' : 'sidebar-collapse'} />
             </button>
           </div>
           {/* The ticked rule is the instrument's edge; it recurs under every

@@ -223,7 +223,11 @@
    with a backdrop behind it. The rail is a desktop idea and does not apply.
    ========================================================================== */
 
-@media (max-width: 820px) {
+/* 820.98 rather than 820: at a fractional width like 820.5px — ordinary with
+   Windows display scaling or browser zoom — a max-width of 820 and the docked
+   block's min-width of 821 would both miss, leaving a docked sidebar with the
+   floating Menu button on top of it. */
+@media (max-width: 820.98px) {
   .app {
     display: block;
   }

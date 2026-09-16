@@ -57,7 +57,9 @@ export function LandingHero() {
           activeStep={state.step}
           onActivate={(step) => dispatch({ type: 'select', step })}
           onPause={() => dispatch({ type: 'pause' })}
-          onResume={() => dispatch({ type: 'resume' })}
+          // Leaving the diagram must not restart a sequence that reduced motion
+          // stopped: the pause is the preference, not a hover state.
+          onResume={() => { if (!reducedMotion) dispatch({ type: 'resume' }); }}
         />
 
         <h3 className="showcase-heading">What is in the product</h3>
