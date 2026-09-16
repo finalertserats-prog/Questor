@@ -118,7 +118,9 @@ async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
   const agentTurn = await appendTurn(sessionId, {
     index: turns.length, speaker: 'agent', text: utter.text,
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
-  });
+    // Recorded so a repeated start can hand back the turn that already exists
+    // instead of guessing what kind of utterance it was.
+  }, { kind: utter.kind });
 
   // 'close' invites the candidate's own questions and must stay open for their
   // reply; the session ends on the sign-off that follows it.
@@ -170,6 +172,30 @@ export async function withdrawInterview(sessionId: string, reason: 'candidate_wi
 }
 
 /**
+ * The opening agent turn already on the record, replayed without writing.
+ *
+ * Returns null when a live session somehow has no agent turn yet, so the caller
+ * falls through and produces one rather than handing back nothing.
+ */
+async function existingOpeningTurn(sessionId: string, state: string): Promise<AgentTurnOut | null> {
+  const first = await prisma.turn.findFirst({
+    where: { sessionId, speaker: 'agent' },
+    orderBy: { index: 'asc' },
+  });
+  if (!first) return null;
+  const kind = parseJson<{ kind?: unknown }>(first.metaJson, {}).kind;
+  return {
+    turnId: first.id, index: first.index, text: first.text, competencyId: first.competencyId,
+    kind: typeof kind === 'string' ? kind : 'question',
+    state,
+    // An opening is by definition not the end of the interview, so replaying it
+    // must never tell the caller the session is over.
+    done: false,
+    withdrawn: false,
+  };
+}
+
+/**
  * Whether this session carries a consent record.
  *
  * `consentedAt` is the field every consent path stamps (portal, seed, sim), and
@@ -185,6 +211,15 @@ function hasRecordedConsent(consentJson: string): boolean {
 /** Begin the assessed conversation: move to ASSESSING and emit the opening. */
 export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   const { session } = await loadContext(sessionId);
+  // Starting an interview that is already live is a repeat, not a new start.
+  // A refresh, a double-tap, or a socket reconnect racing the portal fallback
+  // used to append a second opening: another paid LLM call, another
+  // 'interview.started' event, and a transcript whose canonical order contains
+  // two greetings — the interviewer introducing itself again mid-interview.
+  if (LIVE_STATES.includes(session.state)) {
+    const opening = await existingOpeningTurn(sessionId, session.state);
+    if (opening) return opening;
+  }
   // Pre-live states (invite/accept/consent/ready-check) are governed by the
   // portal + recruiter flows. "Start" converges every valid entry point to the
   // live ASSESSING state; the opening disclosure/warmup turns are still emitted
