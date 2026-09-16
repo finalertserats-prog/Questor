@@ -42,17 +42,18 @@ After cutover: watch `pm2 logs questor`, log in, open a candidate and a transcri
 
 NUL characters in string values are stripped during import (with per-table counts), because PostgreSQL rejects them.
 
-### 2. Third UI release — in flight
-Merged and awaiting deploy: `feature/ui-icons-polish` (icons, status badges, empty states, skeleton loaders across the older pages, keyboard-reachable scrollable tables, Gemini empty-state art). Already deployed: `feature/dashboard-overhaul`, `feature/meeting-connectors`.
+### 2. UI releases — all deployed as of 2120942 (2026-09-16)
+Deployed: the dashboard overhaul and audit-log page, meeting-connector setup and testing, icons/status badges/empty states/skeletons with keyboard-reachable tables, the sidebar docked open with a collapsible rail, and the sign-in page showcase. Every branch was reviewed before merge and its findings fixed: the drawer reopening itself after a resize, a reduced-motion sequence restarting on hover, three sign-in claims the code did not support, audit actor names vanishing after page 1, connector configuration readable by any signed-in user, and missing tenant/date indexes.
 
-Still building, in worktrees under `D:/Projects/ClaudeCode/Questor/`:
-
+### 2a. In flight
 | Branch | Worktree | What |
 |---|---|---|
-| `feature/sidebar-default-open` | `wt-sidebar` | Sidebar docked and open by default on desktop, collapsible to an icon rail with the Questor name always visible, overlay drawer kept for phones, choice remembered |
-| `feature/landing-showcase` | `wt-landing` | Sign-in page shows the workflow and what Questor actually does, moving through the steps, instead of the static medallion grid |
+| `feature/guided-tour` | `wt-tour` | First-sign-in product tour: anchored steps over the real UI, skippable, restartable from the profile menu, completion stored per user on the server |
 
-For each: run server + web tests and the web build, get a review (Codex when available, else Claude), merge into `feature/postgres`, then deploy with `scripts/deploy.sh`.
+Review it, merge into `feature/postgres`, deploy with `scripts/deploy.sh`.
+
+### 2b. ScaleHealthTech pilot
+Organisation and administrator exist in production (`/o/scalehealthtech`). The password is on the server at `/root/Questor/secrets/questor-…` — root-only, never copied into the repo. The user guide is built in `D:/Projects/ClaudeCode/Questor/deliverables/` (Word + PDF from one Markdown source via `build-guide.py`), drafted by Gemini and checked against the code by Codex.
 
 ### 3. Backlog
 - AI observer transcription for human rounds (needs a decision: hosted Questor room vs Teams/Zoom).
