@@ -81,16 +81,31 @@ assessmentsRouter.get('/:id/blind', requireCapability('assessment:review'), asyn
   res.json(view);
 }));
 
+/**
+ * Ceilings on the free text and the arrays these routes accept.
+ *
+ * Everything posted here is stored, re-read on every later request, and
+ * rendered into the compliance record a regulator reads. A type check alone let
+ * an authenticated caller file a hundred-thousand-character reason or ten
+ * thousand competency overrides. 20k characters is far above any real reviewer
+ * note, and no scorecard carries 40 competencies.
+ */
+const MAX_TEXT_CHARS = 20_000;
+const MAX_COMPETENCY_ENTRIES = 40;
+
+// .strict() throughout: these body shapes are closed, and a typo'd field name
+// must fail loudly rather than be dropped. A reviewer whose "commments" went
+// nowhere still believes they filed them.
 const blindVerdictSchema = z.object({
   disposition: z.enum(DISPOSITIONS),
-  reason: z.string().min(3),
-  comments: z.string().optional(),
+  reason: z.string().min(3).max(MAX_TEXT_CHARS),
+  comments: z.string().max(MAX_TEXT_CHARS).optional(),
   competencyLevels: z.array(z.object({
-    competencyId: z.string().min(1),
+    competencyId: z.string().min(1).max(200),
     level: z.number().int().min(1).max(5),
-    reason: z.string().optional(),
-  })).default([]),
-});
+    reason: z.string().max(MAX_TEXT_CHARS).optional(),
+  }).strict()).max(MAX_COMPETENCY_ENTRIES).default([]),
+}).strict();
 
 assessmentsRouter.post('/:id/blind-verdict', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const body = blindVerdictSchema.parse(req.body);
@@ -130,9 +145,8 @@ assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asy
 // candidate, so an unbounded field is an unbounded message going out over our
 // domain with our branding on it — and 20k characters is already far more than
 // any real piece of interview feedback.
-const FEEDBACK_MAX_CHARS = 20_000;
-const feedbackTextSchema = z.object({ draftText: z.string().min(10).max(FEEDBACK_MAX_CHARS) });
-const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10).max(FEEDBACK_MAX_CHARS) });
+const feedbackTextSchema = z.object({ draftText: z.string().min(10).max(MAX_TEXT_CHARS) }).strict();
+const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10).max(MAX_TEXT_CHARS) }).strict();
 
 function presentFeedback(feedback: {
   id: string;
@@ -365,7 +379,9 @@ assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), async
  * a team that bypasses habitually is visible rather than assumed compliant.
  */
 assessmentsRouter.post('/:id/skip-blind-review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
-  const { reason } = z.object({ reason: z.string().min(10, 'Give a real reason (at least 10 characters).') }).parse(req.body);
+  const { reason } = z.object({
+    reason: z.string().min(10, 'Give a real reason (at least 10 characters).').max(MAX_TEXT_CHARS),
+  }).strict().parse(req.body);
   const a = await getAssessment(req.auth!, req.params.id);
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
@@ -378,10 +394,18 @@ assessmentsRouter.post('/:id/skip-blind-review', requireCapability('assessment:r
 // Human review / override (FR-033)
 const reviewSchema = z.object({
   disposition: z.enum(['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS']),
-  reason: z.string().min(3),
-  comments: z.string().optional(),
-  overrides: z.array(z.object({ competencyId: z.string(), from: z.any(), to: z.any(), reason: z.string() })).default([]),
-});
+  reason: z.string().min(3).max(MAX_TEXT_CHARS),
+  comments: z.string().max(MAX_TEXT_CHARS).optional(),
+  // `from`/`to` stay open because an override may restate a level, a null, or a
+  // future scale — but `unknown` rather than `any`, so nothing downstream can
+  // treat them as a known shape without narrowing first.
+  overrides: z.array(z.object({
+    competencyId: z.string().min(1).max(200),
+    from: z.unknown(),
+    to: z.unknown(),
+    reason: z.string().max(MAX_TEXT_CHARS),
+  }).strict()).max(MAX_COMPETENCY_ENTRIES).default([]),
+}).strict();
 assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const body = reviewSchema.parse(req.body);
@@ -429,7 +453,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
 // is no legitimate one containing a slash, a dot or a query string.
 const exportSchema = z.object({
   externalCandidateId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
-});
+}).strict();
 
 assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
   const body = exportSchema.parse(req.body ?? {});
