@@ -22,6 +22,7 @@ import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
 import { hasObserverNotice } from '../services/observerPolicy.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
+import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
 export const portalRouter = Router();
@@ -105,6 +106,35 @@ portalRouter.get('/:token/feedback', asyncHandler(async (req, res) => {
   return res.json({ approvedText: feedback.approvedText, sentAt: feedback.sentAt });
 }));
 
+const feedbackOptInSchema = z.object({ wantsFeedback: z.boolean() });
+
+/**
+ * "Would you like written feedback by email?" — asked once, at the moment the
+ * interview finishes, while the candidate is still on the page.
+ *
+ * Deliberately NOT gated on `requireUnconsumed`. The invitation is consumed the
+ * instant the interview finalises, which is precisely when this question is
+ * put; requiring an unconsumed invitation would make the answer unrecordable at
+ * the only moment it can be asked for.
+ *
+ * This records an answer and nothing else. It cannot send: everything that
+ * reaches a candidate still goes through a person approving it in
+ * routes/assessments.ts. A "yes" prepares a draft for the hiring team to edit.
+ */
+portalRouter.post('/:token/feedback-opt-in', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token);
+  const body = feedbackOptInSchema.parse(req.body);
+  const { optIn, created } = await recordFeedbackOptIn({
+    sessionId: inv.sessionId,
+    wantsFeedback: body.wantsFeedback,
+  });
+  // 200 rather than 201 on a replay, with the answer already on file. The
+  // candidate sees a consistent confirmation either way.
+  res.status(created ? 201 : 200).json({
+    optIn: { choice: optIn.choice, decidedAt: optIn.decidedAt },
+  });
+}));
+
 portalRouter.get('/:token', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token);
   const s = inv.session;
@@ -138,6 +168,13 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
   // and, via `sttLikelySupported`, stop implying a voice path we cannot promise
   // in that language. The typed-answer fallback exists for exactly that case.
   const disclosure = getDisclosureText(s.language, englishDisclosure);
+
+  // The end-of-interview question. `offered` is false unless the tenant has
+  // candidate feedback switched on AND the interview has actually finished:
+  // asking someone whether they would like feedback we are not able to send
+  // would be a promise we do not keep, and it is the kind a candidate remembers.
+  const [optInOffered, existingOptIn] = await Promise.all([feedbackOptInOffered(s), getOptIn(s.id)]);
+
   res.json({
     candidateName: s.candidate.fullName,
     roleTitle: s.role.title,
@@ -152,6 +189,7 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     proctoringEnabled,
     observerNotice: hasObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : ''),
     speech: { stt: sttCapability(), tts: ttsCapability() },
+    feedbackOptIn: { offered: optInOffered, choice: existingOptIn?.choice ?? null },
   });
 }));
 

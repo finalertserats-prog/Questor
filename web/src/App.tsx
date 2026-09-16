@@ -35,6 +35,7 @@ import { Settings } from './pages/Settings';
 import { About } from './pages/About';
 import { Contact } from './pages/Contact';
 import { ObserveInterview } from './pages/ObserveInterview';
+import { TalkToAPerson } from './pages/TalkToAPerson';
 
 // Below this width the sidebar is an overlay drawer; above it, it is docked
 // beside the page. Kept in step with the breakpoint in styles/sidebar.css.
@@ -283,6 +284,9 @@ export function App() {
       <Route path="/o/:slug" element={<OrgLogin />} />
       <Route path="/portal/:token" element={<Portal />} />
       <Route path="/room/:token" element={<InterviewRoom />} />
+      {/* Followed from a feedback email. Unauthenticated by design: asking to
+          speak to a person must not require making an account. */}
+      <Route path="/talk-to-a-person/:token" element={<TalkToAPerson />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/roles/new" element={<Protected><RoleCreate /></Protected>} />
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />

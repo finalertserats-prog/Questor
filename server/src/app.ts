@@ -12,6 +12,7 @@ import { rolesRouter } from './routes/roles.js';
 import { candidatesRouter } from './routes/candidates.js';
 import { interviewsRouter } from './routes/interviews.js';
 import { portalRouter } from './routes/portal.js';
+import { feedbackRequestRouter } from './routes/feedbackRequest.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { dashboardRouter } from './routes/dashboard.js';
@@ -118,6 +119,13 @@ export function createApp() {
   // does exactly that) would otherwise be throttled out of their own interview.
   const isIntegrityEvent = (req: Request) => /^\/api\/portal\/[^/]+\/integrity-event(?:[/?]|$)/.test(req.originalUrl);
   app.use('/api/portal', rateLimit({ name: 'portal', windowMs: 15 * 60_000, max: 300, keyOf: portalKey, skip: isIntegrityEvent }));
+
+  // "Would you like to speak to a person?", followed from a feedback email.
+  // Keyed on IP rather than on the token, deliberately: the only threat here is
+  // someone guessing tokens, and a per-token bucket would hand every guess its
+  // own fresh allowance — which is no limit at all. The token is 256 bits, so
+  // this is a bound on scanning rather than the thing standing in the way.
+  app.use('/api/feedback-request', rateLimit({ name: 'feedback-request', windowMs: 15 * 60_000, max: 60 }), feedbackRequestRouter);
 
   // Public organisation lookup for sign-in links. A person follows a link once
   // or twice; 30 per 15 minutes per IP stops anyone guessing slugs at speed.

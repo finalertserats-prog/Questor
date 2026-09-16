@@ -11,6 +11,10 @@ import { getEmail } from '../providers/email/index.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { candidateFeedbackEnabledForTenant } from '../services/candidateFeedbackPolicy.js';
+import {
+  candidateFeedbackState, getOptIn, issueHumanRequestToken, OPT_IN_NO,
+} from '../services/candidateFeedback.js';
+import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedbackEmail.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
@@ -110,6 +114,7 @@ function presentFeedback(feedback: {
   approvedAt: Date | null;
   sentAt: Date | null;
   status: string;
+  candidateRequested: boolean;
   createdAt: Date;
 }) {
   return {
@@ -121,6 +126,9 @@ function presentFeedback(feedback: {
     approvedAt: feedback.approvedAt,
     sentAt: feedback.sentAt,
     status: feedback.status,
+    // Tells the reviewer that a real person is waiting on this one, rather than
+    // it being a draft somebody on the team started.
+    candidateRequested: feedback.candidateRequested,
     createdAt: feedback.createdAt,
   };
 }
@@ -165,6 +173,12 @@ assessmentsRouter.post('/:id/feedback/draft', requireCapability('assessment:revi
 assessmentsRouter.post('/:id/feedback/approve', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const body = feedbackApprovalSchema.parse(req.body);
   const a = await getAssessment(req.auth!, req.params.id);
+  // Asserted here as well as on the draft route. A draft can now also arrive by
+  // the candidate asking for feedback at the end of their interview, and that
+  // path must not become a way round the human-review gate: without this, a
+  // candidate-requested draft could be approved and sent by someone who had
+  // never read the transcript.
+  await assertCompletedHumanReview(a.id);
   const existing = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
   if (!existing || existing.status !== 'DRAFT') throw new HttpError(409, 'Candidate feedback must be in DRAFT status before approval.');
 
@@ -189,6 +203,20 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
     throw new HttpError(409, 'Candidate feedback delivery is disabled for this tenant.');
   }
 
+  // A candidate who was asked and said no is never emailed. Checked at the last
+  // gate before anything leaves rather than only at draft time: the answer can
+  // be recorded after a draft was written, and this is the only place that
+  // actually sends.
+  //
+  // Note the asymmetry, which is deliberate. A recorded NO blocks. NO RECORD AT
+  // ALL does not: recruiter-driven interviews and everything from before this
+  // existed have no answer on file, and reading silence as refusal would
+  // quietly switch off feedback a person had deliberately approved.
+  const optIn = await getOptIn(a.sessionId);
+  if (optIn?.choice === OPT_IN_NO) {
+    throw new HttpError(409, 'This candidate declined written feedback, so it cannot be sent to them.');
+  }
+
   const session = await prisma.interviewSession.findUnique({
     where: { id: a.sessionId },
     include: { candidate: { select: { email: true } }, role: { select: { title: true } }, invitation: { select: { token: true } } },
@@ -206,24 +234,39 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
   const email = getEmail();
   let delivered = false;
   let deliveryNote: string;
-  if (!session || !portalUrl) {
-    deliveryNote = 'This candidate has no interview link, so they cannot open the feedback. Contact them directly.';
+  if (!session) {
+    deliveryNote = 'This interview no longer exists, so nothing could be sent. Contact the candidate directly.';
   } else if (!email.delivers) {
     deliveryNote = `Email is not configured to deliver (provider "${email.name}"). Share the candidate's link yourself.`;
   } else {
-    const title = session.role.title.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+    // The offer to speak to a person rides in this email and nowhere else, so
+    // the link is minted here — once, for the single message that carries it.
+    // Failing to mint costs the offer, never the feedback.
+    let talkUrl: string | null = null;
     try {
-      await email.send({
-        to: session.candidate.email,
-        subject: `Feedback on your interview for ${session.role.title}`,
-        text: `Feedback on your interview for ${session.role.title} is ready.\n\nRead it here: ${portalUrl}\n\nThanks,\nRecruiting Team`,
-        html: `<p>Feedback on your interview for <b>${title}</b> is ready.</p><p><a href="${portalUrl}">Read your feedback</a></p>`,
+      const requestToken = await issueHumanRequestToken({
+        sessionId: session.id, candidateId: session.candidateId, tenantId: req.auth!.tenantId,
       });
+      talkUrl = `${config.webOrigin.replace(/\/+$/, '')}/talk-to-a-person/${requestToken}`;
+    } catch (err) {
+      logger.error(
+        { err: err instanceof Error ? err.message : String(err), assessmentId: a.id },
+        'Could not issue a talk-to-a-person link; the feedback email will go without the offer',
+      );
+    }
+    try {
+      await email.send(renderCandidateFeedbackEmail({
+        to: session.candidate.email,
+        roleTitle: session.role.title,
+        // What the reviewer approved, verbatim. The draft is never what goes out.
+        approvedText: feedback.approvedText ?? existing.approvedText ?? '',
+        talkUrl,
+      }));
       delivered = true;
       deliveryNote = `Sent to ${session.candidate.email}.`;
     } catch (err) {
-      logger.error({ err: err instanceof Error ? err.message : String(err), assessmentId: a.id }, 'Feedback notification email failed');
-      deliveryNote = 'The notification email could not be sent. Share the candidate\'s link yourself, or try again.';
+      logger.error({ err: err instanceof Error ? err.message : String(err), assessmentId: a.id }, 'Feedback email failed');
+      deliveryNote = 'The feedback email could not be sent. Share the candidate\'s link yourself, or try again.';
     }
   }
 
@@ -240,7 +283,12 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
 assessmentsRouter.get('/:id/feedback', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const feedback = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
-  res.json({ feedback: feedback ? presentFeedback(feedback) : null });
+  const state = await candidateFeedbackState([a.sessionId]);
+  res.json({
+    feedback: feedback ? presentFeedback(feedback) : null,
+    optIn: state.optIn,
+    humanRequest: state.humanRequest,
+  });
 }));
 
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {

@@ -106,6 +106,8 @@ model Candidate {
   artifacts     Artifact[]
   assignments   CandidateAssignment[]
   pipelines     CandidatePipeline[]
+  feedbackOptIns   CandidateFeedbackOptIn[]
+  humanRequests    CandidateHumanRequest[]
 
   @@index([tenantId, createdAt])
 }
@@ -210,6 +212,8 @@ model InterviewSession {
   assessments       AssessmentVersion[]
   artifacts         Artifact[]
   integrityEvents   IntegrityEvent[]
+  feedbackOptIn     CandidateFeedbackOptIn?
+  humanRequest      CandidateHumanRequest?
 
   // The dashboard counts interviews per tenant by when they were created,
   // scheduled and completed, and groups them by state; the lists read newest
@@ -310,7 +314,76 @@ model CandidateFeedbackDelivery {
   approvedAt       DateTime?
   sentAt           DateTime?
   status           String   @default("DRAFT") // DRAFT | APPROVED | SENT
+  // True when this draft exists because the candidate asked for feedback at the
+  // end of their interview, rather than because someone on the team started it.
+  // It changes nothing about approval — it tells the reviewer who is waiting.
+  candidateRequested Boolean @default(false)
   createdAt        DateTime @default(now())
+}
+
+// The candidate's own answer to "would you like written feedback by email?",
+// asked once, at the moment their interview finishes.
+//
+// Explicit rather than inferred. "No row" means we never asked or they never
+// answered; it must never be read as either consent or refusal, because those
+// two are not the same and both are actionable.
+//
+// One per session, which is also the idempotency guarantee: a double submit or
+// a replayed request finds the first answer and returns it.
+model CandidateFeedbackOptIn {
+  id              String   @id @default(cuid())
+  sessionId       String   @unique
+  session         InterviewSession @relation(fields: [sessionId], references: [id])
+  // Denormalised from the session so erasure, the retention sweep and the HR
+  // views can all reach this row through the person it is about.
+  candidateId     String
+  candidate       Candidate @relation(fields: [candidateId], references: [id])
+  tenantId        String
+  choice          String   // YES | NO
+  decidedAt       DateTime @default(now())
+  // Consent evidence: who made this choice. Always the candidate today; stored
+  // rather than assumed, because "who decided" is the part that gets asked about.
+  decidedBy       String   @default("candidate")
+  // Outcome of preparing the draft, so "they asked and nothing happened" is
+  // visible instead of silent.
+  // PENDING | PREPARED | ALREADY_DRAFTED | NO_ASSESSMENT | FAILED
+  draftStatus     String   @default("PENDING")
+  draftNote       String   @default("")
+  draftPreparedAt DateTime?
+
+  @@index([tenantId, choice])
+  @@index([candidateId])
+}
+
+// The single-purpose link in the feedback email: "would you like to speak to a
+// person?".
+//
+// Deliberately NOT the InterviewSession MANUAL_HANDOFF state. That state means
+// the AI interview stopped part-way and a person must take over mid-interview —
+// the state machine only allows it from live states, and dashboards count it
+// beside no-shows and technical failures. A finished interview whose candidate
+// would like a conversation about their feedback is a different fact about a
+// different moment, and folding the two together would both corrupt a completed
+// interview's record and misreport it as a failed one.
+//
+// Only the hash of the token is stored: the link lives in a mailbox, and a
+// database copy should not also be a working credential.
+model CandidateHumanRequest {
+  id           String   @id @default(cuid())
+  sessionId    String   @unique
+  session      InterviewSession @relation(fields: [sessionId], references: [id])
+  candidateId  String
+  candidate    Candidate @relation(fields: [candidateId], references: [id])
+  tenantId     String
+  tokenHash    String   @unique
+  issuedAt     DateTime @default(now())
+  expiresAt    DateTime
+  status       String   @default("ISSUED") // ISSUED | REQUESTED
+  // First click only. Replays never move it.
+  requestedAt  DateTime?
+
+  @@index([tenantId, status])
+  @@index([candidateId])
 }
 
 model Artifact {

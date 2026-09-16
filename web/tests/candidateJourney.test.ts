@@ -48,6 +48,7 @@ function input(over: Partial<JourneyInput> = {}): JourneyInput {
     assessment: null,
     assessmentBlockedReason: null,
     missingEvidence: [],
+    candidateFeedback: null,
     ...over,
   };
 }
@@ -193,6 +194,89 @@ describe('a candidate whose resume has not been parsed', () => {
   it('says the job fit has not been scored', () => {
     expect(journey.onboard.fit.scored).toBe(false);
     expect(journey.onboard.fit.overall).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// What the candidate themselves asked for
+// ---------------------------------------------------------------------------
+
+describe('a candidate who asked for written feedback', () => {
+  const journey = buildJourney(input({
+    candidateFeedback: {
+      optIn: { choice: 'YES', decidedAt: '2026-10-02T10:00:00.000Z' },
+      draft: { status: 'DRAFT', candidateRequested: true, assessmentId: 'assess-1' },
+      humanRequest: { requested: false, requestedAt: null },
+    },
+  }));
+
+  it('says they asked, and when', () => {
+    expect(journey.decision.candidateFeedback.answered).toBe(true);
+    expect(journey.decision.candidateFeedback.wantsFeedback).toBe(true);
+    expect(journey.decision.candidateFeedback.answerLabel).toMatch(/asked us for written feedback/i);
+    expect(journey.decision.candidateFeedback.decidedAt).toBe('2026-10-02T10:00:00.000Z');
+  });
+
+  it('flags the draft as waiting on a person, and links to it', () => {
+    expect(journey.decision.candidateFeedback.draftWaiting).toBe(true);
+    expect(journey.decision.candidateFeedback.draftLabel).toMatch(/waiting/i);
+    expect(journey.decision.candidateFeedback.draftHref).toBe('/assessments/assess-1');
+  });
+});
+
+describe('a candidate who declined written feedback', () => {
+  const journey = buildJourney(input({
+    candidateFeedback: {
+      optIn: { choice: 'NO', decidedAt: '2026-10-02T10:00:00.000Z' },
+      draft: { status: null, candidateRequested: false, assessmentId: null },
+      humanRequest: { requested: false, requestedAt: null },
+    },
+  }));
+
+  it('says so in words that stop someone emailing them anyway', () => {
+    expect(journey.decision.candidateFeedback.wantsFeedback).toBe(false);
+    expect(journey.decision.candidateFeedback.answerLabel).toMatch(/declined/i);
+    expect(journey.decision.candidateFeedback.answerLabel).toMatch(/do not email/i);
+  });
+
+  it('shows nothing waiting on anyone', () => {
+    expect(journey.decision.candidateFeedback.draftWaiting).toBe(false);
+    expect(journey.decision.candidateFeedback.draftHref).toBeNull();
+  });
+});
+
+describe('a candidate nobody has asked yet', () => {
+  const journey = buildJourney(input());
+
+  it('reports "not asked" as its own outcome rather than as a refusal', () => {
+    // These two lead to opposite actions — one means somebody may still offer,
+    // the other means nobody may email — so the board must never render them
+    // alike. That is how a candidate who said no ends up contacted anyway.
+    expect(journey.decision.candidateFeedback.answered).toBe(false);
+    expect(journey.decision.candidateFeedback.wantsFeedback).toBe(false);
+    expect(journey.decision.candidateFeedback.answerLabel).toMatch(/not a refusal/i);
+    expect(journey.decision.candidateFeedback.humanRequested).toBe(false);
+  });
+});
+
+describe('a candidate who asked to speak to a person', () => {
+  const journey = buildJourney(input({
+    candidateFeedback: {
+      optIn: { choice: 'YES', decidedAt: '2026-10-02T10:00:00.000Z' },
+      draft: { status: 'SENT', candidateRequested: true, assessmentId: 'assess-1' },
+      humanRequest: { requested: true, requestedAt: '2026-10-05T12:00:00.000Z' },
+    },
+  }));
+
+  it('surfaces the request beside the decision, with when they asked', () => {
+    expect(journey.decision.candidateFeedback.humanRequested).toBe(true);
+    expect(journey.decision.candidateFeedback.humanRequestLabel).toMatch(/speak to a person/i);
+    expect(journey.decision.candidateFeedback.humanRequestedAt).toBe('2026-10-05T12:00:00.000Z');
+  });
+
+  it('does not describe already-sent feedback as waiting on anyone', () => {
+    expect(journey.decision.candidateFeedback.draftWaiting).toBe(false);
+    expect(journey.decision.candidateFeedback.draftLabel).toMatch(/sent/i);
   });
 });
 

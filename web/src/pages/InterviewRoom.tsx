@@ -21,6 +21,11 @@ interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
   speech: { stt: SttCapability };
   proctoringEnabled: boolean;
+  // Whether to put the written-feedback question at the end, and the answer if
+  // one is already on file. `offered` is false when this tenant has candidate
+  // feedback switched off — offering something we cannot deliver would be worse
+  // than not asking.
+  feedbackOptIn?: { offered: boolean; choice: string | null };
 }
 type Phase = 'ready' | 'speaking' | 'listening' | 'thinking' | 'done';
 
@@ -98,6 +103,34 @@ export function InterviewRoom() {
   // not being captured and must not be shown a badge saying they are.
   const [micOpen, setMicOpen] = useState(false);
   const [err, setErr] = useState('');
+  // The end-of-interview question. `null` means no answer is on file yet; once
+  // there is one the question is not put again, in either direction.
+  const [feedbackChoice, setFeedbackChoice] = useState<string | null>(null);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
+
+  /**
+   * Record the candidate's answer. The server is the one that decides what
+   * sticks — a replay returns the answer already on file — so this takes its
+   * result rather than assuming the click won.
+   */
+  const answerFeedback = useCallback(async (wantsFeedback: boolean) => {
+    setFeedbackSaving(true);
+    setFeedbackError('');
+    try {
+      const res = await api.post<{ optIn: { choice: string } }>(
+        `/portal/${token}/feedback-opt-in`, { wantsFeedback },
+      );
+      setFeedbackChoice(res.optIn.choice);
+    } catch {
+      // Never a blocking error: their interview is already safely submitted, and
+      // this question is an extra. Offer them a way through that does not depend
+      // on us.
+      setFeedbackError('We could not record that just now — please reply to your invitation email instead.');
+    } finally {
+      setFeedbackSaving(false);
+    }
+  }, [token]);
 
   const recognizerRef = useRef<Recognizer | null>(null);
   const meterRef = useRef<MicMeter | null>(null);
@@ -116,7 +149,13 @@ export function InterviewRoom() {
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`)
-      .then((d) => { setInfo(d); if (!sttSupported()) setTextMode(true); })
+      .then((d) => {
+        setInfo(d);
+        // A candidate who already answered — on another device, or before a
+        // reload — is shown their answer rather than the question again.
+        setFeedbackChoice(d.feedbackOptIn?.choice ?? null);
+        if (!sttSupported()) setTextMode(true);
+      })
       .catch((e: Error) => setErr(e.message));
   }, [token]);
 
@@ -539,6 +578,41 @@ export function InterviewRoom() {
               it. Take as long as you like to read it before closing this window. If something you said is
               missing or came out wrong, reply to your invitation email and tell us — we would rather know.
             </p>
+
+            {/* Asked here, and only here: the invitation link is consumed the
+                moment the interview finalises, so this is the last moment the
+                candidate can be asked anything at all. */}
+            {info?.feedbackOptIn?.offered && (
+              <div style={{ marginTop: 16 }}>
+                {feedbackChoice === null ? (
+                  <>
+                    <p><b>Would you like written feedback by email?</b></p>
+                    <p className="muted">
+                      If you say yes, someone on the hiring team writes it, reads it over and sends it to
+                      you. It is not automatic and it may take a few days. Saying no changes nothing about
+                      how your interview is considered.
+                    </p>
+                    <div className="row">
+                      <button className="btn" disabled={feedbackSaving} onClick={() => void answerFeedback(true)}>
+                        Yes, please
+                      </button>
+                      <button className="btn secondary" disabled={feedbackSaving} onClick={() => void answerFeedback(false)}>
+                        No, thank you
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <p className="muted">
+                    {feedbackChoice === 'YES'
+                      ? 'Thank you — we have noted that you would like written feedback. Someone on the hiring '
+                        + 'team will write it and send it on to you.'
+                      : 'Thank you — we have noted that you would rather not have written feedback, and we will '
+                        + 'not email you about it.'}
+                  </p>
+                )}
+                {feedbackError && <p className="muted">{feedbackError}</p>}
+              </div>
+            )}
           </div>
         )}
       </footer>

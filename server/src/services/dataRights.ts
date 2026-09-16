@@ -106,9 +106,18 @@ async function deleteSessionCascade(
   const assessmentIds = assessments.map((a) => a.id);
 
   if (assessmentIds.length) {
+    // The candidate-facing feedback draft quotes the candidate verbatim, so it
+    // is transcript data under another name. It also holds a required foreign
+    // key onto AssessmentVersion: without this line the delete below fails the
+    // constraint and the whole erasure — a legal obligation — errors out.
+    await count('candidateFeedback', () => tx.candidateFeedbackDelivery.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('humanReviews', () => tx.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('assessments', () => tx.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
   }
+  // The candidate's own answer about feedback, and any request to speak to a
+  // person. Both name the candidate and both hold foreign keys onto the session.
+  await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+  await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   // Turn.text is the canonical transcript — the single most sensitive record
   // here. If this line does not run, nothing else in the sweep matters.
   await count('turns', () => tx.turn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
@@ -214,6 +223,11 @@ export async function eraseCandidate(o: {
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
+    // Belt and braces alongside the session cascade: these rows also key on the
+    // candidate, so a row whose session was already gone would otherwise block
+    // the delete below.
+    await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId: o.candidateId } }));
+    await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
 
@@ -429,6 +443,8 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId } } }));
         await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId } }));
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
+        await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId } }));
+        await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));
       });
     } catch (err) {
