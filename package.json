@@ -6,7 +6,8 @@
   "license": "Apache-2.0",
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "e2e"
   ],
   "scripts": {
     "install:all": "npm install",
@@ -20,7 +21,7 @@
     "build": "npm run build -w server && npm run build -w web",
     "start": "npm run start -w server",
     "test": "npm run test -w server && npm run test -w web",
-    "test:e2e": "npm run test:e2e -w server",
+    "test:e2e": "npm run test:e2e -w e2e",
     "lint": "npm run lint -w server",
     "test:server": "npm run test -w server",
     "test:web": "npm run test -w web"
