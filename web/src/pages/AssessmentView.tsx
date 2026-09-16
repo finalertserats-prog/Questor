@@ -195,8 +195,8 @@ export function AssessmentView() {
     try {
       await api.post(`/assessments/${id}/skip-blind-review`, { reason: skipReason.trim() });
       setLoading(true);
-      load();
-    } catch (e) { setError((e as Error).message); }
+      await load();
+    } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Could not open this assessment.'); }
   };
 
   if (loading) return <PageSkeleton label="Loading assessment…" cards={3} />;
