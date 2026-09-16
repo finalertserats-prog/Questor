@@ -12,6 +12,7 @@
     "db:push": "prisma db push --skip-generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx src/seed/seed.ts",
+    "pretest": "node ../scripts/generate-postgres-schema.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:pg": "node ../scripts/test-postgres.mjs",

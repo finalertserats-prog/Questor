@@ -38,3 +38,5 @@ App.txt
 *credential*.txt
 *secret*.txt
 docs/Questor-v1-hr-guide-20260719.pdf.bak
+# Generated from schema.prisma by scripts/generate-postgres-schema.mjs (npm pretest).
+server/prisma/postgres/
