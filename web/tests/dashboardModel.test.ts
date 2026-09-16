@@ -24,8 +24,14 @@ describe('niceCeiling', () => {
     expect(niceCeiling(0)).toBe(1);
   });
 
-  it('rounds up to the next 1, 2 or 5 step', () => {
-    expect([3, 5, 7, 12, 51].map(niceCeiling)).toEqual([5, 5, 10, 20, 100]);
+  it('rounds up to the next nice step', () => {
+    expect([3, 5, 7, 12, 51].map(niceCeiling)).toEqual([3, 5, 8, 15, 60]);
+  });
+
+  it('does not strand a series under an axis it can never reach', () => {
+    // The dashboard's own case: 30 interviews drawn against an axis of 50 left
+    // the tallest bar at three fifths of the plot and the rest empty.
+    expect(niceCeiling(30)).toBe(30);
   });
 });
 

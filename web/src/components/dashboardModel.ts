@@ -39,9 +39,12 @@ export function groupSessionStates(stateCounts: Readonly<Record<string, number>>
   return other > 0 ? [...groups, { key: 'other', label: 'Other', count: other }] : groups;
 }
 
-const NICE_STEPS = [1, 2, 5, 10] as const;
+// Finer than the usual 1/2/5: with only those steps a series topping out at
+// 30 is drawn against an axis of 50, and 40% of the plot is dead space that
+// no data can ever reach. These steps still produce round, readable ticks.
+const NICE_STEPS = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10] as const;
 
-/** The smallest 1/2/5 × 10^n at or above `value`; 1 for an empty series. */
+/** The smallest nice step × 10^n at or above `value`; 1 for an empty series. */
 export function niceCeiling(value: number): number {
   if (value <= 0) return 1;
   const magnitude = 10 ** Math.floor(Math.log10(value));

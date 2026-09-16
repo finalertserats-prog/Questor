@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { barRadius, niceCeiling, scaleLength, shortDate } from './dashboardModel';
 
 /**
@@ -6,7 +6,37 @@ import { barRadius, niceCeiling, scaleLength, shortDate } from './dashboardModel
  * shapes are needed, and each is a few dozen lines. Every chart is an
  * accessible image (role="img" with <title>/<desc>) and also shows its numbers
  * as text, so nothing is conveyed by bar length or colour alone.
+ *
+ * Each chart measures the column it is sitting in and draws its viewBox at that
+ * many user units, so one user unit is one CSS pixel. A fixed viewBox with
+ * `width: 100%` looks like it scales only the drawing, but an SVG scales
+ * uniformly: on a 1010px column a 480-unit viewBox magnifies everything 2.1x,
+ * including the type. That is what turned an 11px axis label into 23px of
+ * shouting date and stretched a 220px chart into a screen of whitespace.
  */
+
+/**
+ * The rendered width of `ref`, in CSS pixels. Falls back to `fallback` before
+ * the first measurement and anywhere ResizeObserver is missing (jsdom in the
+ * unit tests), so a chart always has sane geometry to draw with.
+ */
+function useMeasuredWidth(fallback: number) {
+  const ref = useRef<HTMLElement | null>(null);
+  const [width, setWidth] = useState(fallback);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver((entries) => {
+      const measured = Math.round(entries[0]?.contentRect.width ?? 0);
+      if (measured > 0) setWidth(measured);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return { ref, width };
+}
 
 export interface WeekPoint {
   readonly weekStart: string;
@@ -14,24 +44,33 @@ export interface WeekPoint {
   readonly completed: number;
 }
 
-const COL = { width: 480, height: 220, left: 30, right: 8, top: 12, bottom: 28 } as const;
+/** Plot height in CSS pixels, and the gutters around it. */
+const COL = { height: 240, left: 34, right: 8, top: 14, bottom: 30 } as const;
+const COL_FALLBACK_WIDTH = 900;
 
 /** Grouped columns: interviews set up vs completed, per rolling week. */
 export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
   const id = useId();
+  const { ref, width } = useMeasuredWidth(COL_FALLBACK_WIDTH);
   const max = niceCeiling(Math.max(0, ...data.flatMap((d) => [d.created, d.completed])));
-  const plotW = COL.width - COL.left - COL.right;
+  const plotW = Math.max(120, width - COL.left - COL.right);
   const plotH = COL.height - COL.top - COL.bottom;
   const slot = data.length ? plotW / data.length : plotW;
-  const barW = Math.max(2, slot * 0.34);
-  const labelEvery = data.length > 8 ? 2 : 1;
+  // Bars keep their own proportion of the slot but never grow into slabs on a
+  // wide screen: twelve weeks across 1600px would otherwise be 45px wide each.
+  const barW = Math.max(3, Math.min(18, slot * 0.28));
+  const labelEvery = slot < 60 ? 2 : 1;
   const totals = data.reduce((acc, d) => ({ created: acc.created + d.created, completed: acc.completed + d.completed }), { created: 0, completed: 0 });
-  const ticks = [0, max / 2, max];
+  // Quarter steps rather than halves: with a tight ceiling the extra two lines
+  // are what let you read a bar's value off the grid instead of guessing.
+  const ticks = [0, max / 4, max / 2, (max * 3) / 4, max];
 
   return (
-    <figure className="chart">
+    <figure className="chart" ref={ref}>
       <svg
-        viewBox={`0 0 ${COL.width} ${COL.height}`}
+        viewBox={`0 0 ${width} ${COL.height}`}
+        width={width}
+        height={COL.height}
         role="img"
         aria-labelledby={`${id}-t ${id}-d`}
         className="chart-svg"
@@ -45,8 +84,10 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
           const y = COL.top + plotH - scaleLength(t, max, plotH);
           return (
             <g key={t}>
-              <line x1={COL.left} x2={COL.width - COL.right} y1={y} y2={y} className="chart-grid" />
-              <text x={COL.left - 6} y={y + 4} textAnchor="end" className="chart-axis">{Number.isInteger(t) ? t : t.toFixed(1)}</text>
+              <line x1={COL.left} x2={width - COL.right} y1={y} y2={y} className="chart-grid" />
+              <text x={COL.left - 8} y={y + 4} textAnchor="end" className="chart-axis">
+                {Number.isInteger(t) ? t : t.toFixed(1)}
+              </text>
             </g>
           );
         })}
@@ -67,7 +108,7 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
                 className="chart-series-b chart-rise"
               />
               {i % labelEvery === (data.length - 1) % labelEvery && (
-                <text x={COL.left + i * slot + slot / 2} y={COL.height - 8} textAnchor="middle" className="chart-axis">
+                <text x={COL.left + i * slot + slot / 2} y={COL.height - 10} textAnchor="middle" className="chart-axis">
                   {shortDate(d.weekStart)}
                 </text>
               )}
@@ -103,18 +144,27 @@ export interface BarItem {
 }
 
 const ROW_H = 30;
-const BAR = { width: 480, labelW: 120, valueW: 40 } as const;
+const BAR = { labelW: 120, valueW: 40 } as const;
+const BAR_FALLBACK_WIDTH = 480;
 
 /** Horizontal bars with the label and value printed on each row. */
 export function HorizontalBarChart({ items, title, summary }: { items: readonly BarItem[]; title: string; summary: string }) {
   const id = useId();
+  const { ref, width } = useMeasuredWidth(BAR_FALLBACK_WIDTH);
   const max = niceCeiling(Math.max(0, ...items.map((i) => i.count)));
-  const plotW = BAR.width - BAR.labelW - BAR.valueW;
+  const plotW = Math.max(60, width - BAR.labelW - BAR.valueW);
   const height = Math.max(ROW_H, items.length * ROW_H);
 
   return (
-    <figure className="chart">
-      <svg viewBox={`0 0 ${BAR.width} ${height}`} role="img" aria-labelledby={`${id}-t ${id}-d`} className="chart-svg">
+    <figure className="chart" ref={ref}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        width={width}
+        height={height}
+        role="img"
+        aria-labelledby={`${id}-t ${id}-d`}
+        className="chart-svg"
+      >
         <title id={`${id}-t`}>{title}</title>
         <desc id={`${id}-d`}>{`${summary} ${items.map((i) => `${i.label}: ${i.count}.`).join(' ')}`}</desc>
         {items.map((item, index) => {
