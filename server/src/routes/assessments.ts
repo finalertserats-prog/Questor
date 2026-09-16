@@ -126,8 +126,13 @@ assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asy
 }));
 
 
-const feedbackTextSchema = z.object({ draftText: z.string().min(10) });
-const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10) });
+// Capped as well as floored. `approvedText` is emailed verbatim to the
+// candidate, so an unbounded field is an unbounded message going out over our
+// domain with our branding on it — and 20k characters is already far more than
+// any real piece of interview feedback.
+const FEEDBACK_MAX_CHARS = 20_000;
+const feedbackTextSchema = z.object({ draftText: z.string().min(10).max(FEEDBACK_MAX_CHARS) });
+const feedbackApprovalSchema = z.object({ approvedText: z.string().min(10).max(FEEDBACK_MAX_CHARS) });
 
 function presentFeedback(feedback: {
   id: string;
@@ -416,7 +421,18 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
 }));
 
 // Export to ATS (FR-040)
+//
+// The id is spliced into the ATS URL (providers/ats/index.ts), so it is
+// validated here rather than cast. A bare cast let a caller aim the push at a
+// different endpoint of the customer's own ATS by shaping the id like a path.
+// Opaque vendor identifiers are alphanumeric with dashes or underscores; there
+// is no legitimate one containing a slash, a dot or a query string.
+const exportSchema = z.object({
+  externalCandidateId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+});
+
 assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
+  const body = exportSchema.parse(req.body ?? {});
   const a = await getAssessment(req.auth!, req.params.id);
   const result = readAssessmentResult(a);
   // An assessment with no score must not reach the system of record. The ATS
@@ -426,7 +442,7 @@ assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), as
   if (result.overallScore === null) {
     throw new HttpError(409, 'This assessment could not be scored, so there is nothing to export. It needs a human assessment first.');
   }
-  const externalId = (req.body?.externalCandidateId as string) || a.session.candidateId;
+  const externalId = body.externalCandidateId ?? a.session.candidateId;
   const out = await getAts().pushAssessment(externalId, {
     candidate: a.session.candidate.fullName, role: a.session.role.title,
     recommendation: result.recommendation, confidence: result.confidence, overallScore: result.overallScore,

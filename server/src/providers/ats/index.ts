@@ -46,7 +46,10 @@ class GenericAtsProvider implements AtsProvider {
       logger.info({ externalCandidateId }, 'ATS not configured; assessment export is a no-op.');
       return { status: 'skipped' };
     }
-    const res = await fetch(`${config.ats.baseUrl}/candidates/${externalCandidateId}/assessments`, {
+    // Encoded, not trusted. The caller validates the shape, but this is the
+    // line that builds the URL, so it is the line that must not let an
+    // identifier become extra path segments or a query string.
+    const res = await fetch(`${config.ats.baseUrl}/candidates/${encodeURIComponent(externalCandidateId)}/assessments`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
