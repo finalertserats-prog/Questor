@@ -31,6 +31,30 @@ assessmentsRouter.use(authenticate);
  */
 const getAssessment = assertCanAccessAssessment;
 
+/**
+ * Read a stored assessment result, or refuse to serve the assessment at all.
+ *
+ * `parseJson(a.resultJson, {})` turned a truncated, half-written or
+ * older-shaped row into an empty object and served it with a 200. The web
+ * rendered "NaN/100" from it, and a reviewer could file a disposition against a
+ * screen showing no evidence whatsoever — a signed-off hiring decision based on
+ * nothing. A damaged row is an incident for us to fix, not a page to render.
+ *
+ * `overallScore` is the probe because it is the one field every result shape
+ * has carried, and null is a legitimate value for it (see SCORING_UNAVAILABLE).
+ */
+function readAssessmentResult(assessment: { id: string; resultJson: string }): AssessmentResult {
+  const parsed = parseJson<unknown>(assessment.resultJson, null);
+  const score = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as { overallScore?: unknown }).overallScore
+    : undefined;
+  if (!(score === null || typeof score === 'number' && Number.isFinite(score))) {
+    logger.error({ assessmentId: assessment.id }, 'Stored assessment result is unreadable; refusing to serve it');
+    throw new HttpError(500, 'This assessment could not be read.');
+  }
+  return parsed as AssessmentResult;
+}
+
 // ---------------------------------------------------------------------------
 // Shadow mode (see services/shadowMode.ts and docs/VALIDATION.md)
 //
@@ -95,7 +119,7 @@ assessmentsRouter.get('/:id/reveal', requireCapability('assessment:review'), asy
   });
   res.json({
     id: a.id,
-    result: parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult),
+    result: readAssessmentResult(a),
     note: 'Advisory only. Agreement between this output and blind human review has not been established — '
       + 'see GET /api/assessments/shadow-metrics and docs/VALIDATION.md.',
   });
@@ -305,7 +329,7 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     sessionId: a.sessionId,
     candidate: { id: a.session.candidateId, name: a.session.candidate.fullName },
     role: { id: a.session.roleId, title: a.session.role.title },
-    result: parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult),
+    result: readAssessmentResult(a),
     reviews: reviews.map((r) => ({ id: r.id, status: r.status, disposition: r.disposition, reason: r.reason, overrides: parseJson(r.overridesJson, []), completedAt: r.completedAt })),
   });
 }));
@@ -317,7 +341,7 @@ assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), async
   await assertUnblindedReadAllowed({
     assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
   });
-  const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
+  const result = readAssessmentResult(a);
   const md = renderReportMarkdown({ candidateName: a.session.candidate.fullName, roleTitle: a.session.role.title, assessment: result });
   if (req.query.format === 'json') return res.json({ report: md, result });
   res.type('text/markdown').send(md);
@@ -394,7 +418,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
 // Export to ATS (FR-040)
 assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
-  const result = parseJson<AssessmentResult>(a.resultJson, {} as AssessmentResult);
+  const result = readAssessmentResult(a);
   // An assessment with no score must not reach the system of record. The ATS
   // has no way to render "unavailable": it stores whatever number arrives, and
   // a 0 born of a grading outage becomes a permanent hiring signal that nobody
