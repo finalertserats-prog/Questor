@@ -34,7 +34,10 @@ const FORWARD: Record<string, string[]> = {
   WARMUP: ['ASSESSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'INCOMPLETE'],
   ASSESSING: ['CANDIDATE_QUESTIONS', 'CLOSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE'],
   CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE'],
-  CLOSING: ['PROCESSING'],
+  // TECHNICAL_FAILURE is reachable because a finalisation can die between the
+  // CLOSING transition and the PROCESSING one. Without it the recovery sweep had
+  // no legal move for such a session and it stayed in CLOSING for ever.
+  CLOSING: ['PROCESSING', 'TECHNICAL_FAILURE'],
   PROCESSING: ['REVIEW_READY', 'TECHNICAL_FAILURE'],
   REVIEW_READY: ['HUMAN_REVIEWED'],
   HUMAN_REVIEWED: ['CLOSED'],

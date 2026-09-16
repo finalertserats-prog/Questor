@@ -554,9 +554,11 @@ export interface AgreementReport {
   };
   readonly caveats: readonly string[];
   /**
-   * How often blinding was skipped. Present only on the DB-backed report;
+   * How often blinding was skipped, and what else is missing from the sample —
+   * `note` also carries the count of blind verdicts whose competency overrides
+   * could not be read. Present only on the DB-backed report;
    * `computeAgreementReport` is a pure function over observations and has no
-   * view of bypasses.
+   * view of either.
    */
   readonly blindingBypassed?: {
     readonly events: number;
@@ -739,6 +741,7 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
 
   const observations: ShadowObservation[] = [];
   const seen = new Set<string>();
+  let unreadableOverrides = 0;
 
   for (const review of blindReviews) {
     // One observation per assessment. Two reviewers blind-reviewing the same
@@ -754,9 +757,15 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
       if (typeof c.level === 'number' && !c.notEnoughEvidence) aiLevels.set(c.id, { name: c.name, level: c.level });
     }
 
-    const humanLevels = parseJson<Array<{ competencyId?: unknown; to?: unknown }>>(review.overridesJson, []);
+    // A damaged overrides row used to read as "this reviewer graded no
+    // competencies", so its pairs vanished from the competency-level kappa and
+    // the report described a sample larger than the one it actually used. The
+    // verdict itself is kept — only the levels are missing — and the loss is
+    // counted so it can be stated instead of absorbed.
+    const humanLevels = readOverrides(review.overridesJson);
+    if (humanLevels === null) unreadableOverrides++;
     const competencies: Array<ShadowObservation['competencies'][number]> = [];
-    for (const entry of humanLevels) {
+    for (const entry of humanLevels ?? []) {
       const competencyId = typeof entry.competencyId === 'string' ? entry.competencyId : null;
       const humanLevel = typeof entry.to === 'number' ? entry.to : null;
       if (competencyId === null || humanLevel === null) continue;
@@ -786,17 +795,41 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
   });
   const bypassedAssessments = new Set(bypasses.map((b) => b.entityId)).size;
 
+  const bypassNote = bypassedAssessments === 0
+    ? 'No reviewer has opened an assessment without recording a blind verdict first.'
+    : `${bypassedAssessments} assessment(s) were opened without a blind verdict. Those reviews are `
+      + 'not in the sample above, so the agreement figure describes only the reviews that were blinded.';
+  // Reported next to the bypass count because both answer the same question:
+  // how much of what this report claims to measure is actually in the sample.
+  const overridesNote = unreadableOverrides === 0
+    ? ''
+    : ` ${unreadableOverrides} blind verdict(s) had unreadable competency overrides, so their competency `
+      + 'levels are missing from the sample above and the competency-level statistics rest on fewer pairs '
+      + 'than the verdict count suggests.';
+
   return {
     ...report,
     blindingBypassed: {
       events: bypasses.length,
       assessments: bypassedAssessments,
-      note: bypassedAssessments === 0
-        ? 'No reviewer has opened an assessment without recording a blind verdict first.'
-        : `${bypassedAssessments} assessment(s) were opened without a blind verdict. Those reviews are `
-          + 'not in the sample above, so the agreement figure describes only the reviews that were blinded.',
+      note: `${bypassNote}${overridesNote}`,
     },
   };
+}
+
+/**
+ * Competency overrides as recorded by a blind verdict, or null when the row
+ * cannot be read. Distinguished from an empty list on purpose: "graded nothing"
+ * and "we lost what they graded" are different facts about the sample.
+ */
+function readOverrides(json: string | null): Array<{ competencyId?: unknown; to?: unknown }> | null {
+  if (!json) return [];
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return Array.isArray(parsed) ? parsed as Array<{ competencyId?: unknown; to?: unknown }> : null;
+  } catch {
+    return null;
+  }
 }
 
 function isDisposition(value: string): value is Disposition {

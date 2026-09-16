@@ -275,6 +275,13 @@ model Turn {
   competencyId  String   @default("")
   metaJson      String   @default("{}")
   createdAt     DateTime @default(now())
+
+  // The transcript's canonical order. Two writers reading the turn count and
+  // inserting at that number wrote the same index twice, leaving the order a
+  // reviewer reads — and the evidence quotes anchored to it — dependent on row
+  // insertion order. The application allocates the index in a transaction; this
+  // is what makes that allocation actually safe.
+  @@unique([sessionId, index])
 }
 
 model AssessmentVersion {

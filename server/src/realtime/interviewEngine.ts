@@ -91,20 +91,71 @@ function elapsedMinutes(turns: TurnRecord[]): number {
   return (turns.length * AVG_MS_PER_TURN) / 60000;
 }
 
-async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id'>, meta?: Record<string, unknown>): Promise<TurnRecord> {
-  const rec = await prisma.turn.create({
-    data: {
-      id: nanoid(10), sessionId, index: turn.index, speaker: turn.speaker, text: turn.text,
-      startMs: turn.startMs, endMs: turn.endMs, confidence: turn.confidence, competencyId: turn.competencyId ?? '',
-      ...(meta ? { metaJson: JSON.stringify(meta) } : {}),
-    },
-  });
-  return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
+/** A unique-constraint violation, however the driver reports it. */
+function isDuplicateIndex(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
+}
+
+/**
+ * Append a turn, allocating its index atomically.
+ *
+ * Callers used to pass `turns.length`, computed from a read that had already
+ * happened — so two requests arriving together (the socket and the HTTP
+ * fallback, or one candidate on two devices) both inserted at the same index
+ * and the canonical transcript order became row insertion order. The index is
+ * now read and written inside one transaction, and the unique constraint on
+ * (sessionId, index) is what catches the interleaving the transaction does not:
+ * the loser retries once against the newly-current tail.
+ */
+async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'index'>, meta?: Record<string, unknown>): Promise<TurnRecord> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const rec = await prisma.$transaction(async (tx) => {
+        const tail = await tx.turn.findFirst({
+          where: { sessionId }, orderBy: { index: 'desc' }, select: { index: true },
+        });
+        return tx.turn.create({
+          data: {
+            id: nanoid(10), sessionId, index: (tail?.index ?? -1) + 1, speaker: turn.speaker, text: turn.text,
+            startMs: turn.startMs, endMs: turn.endMs, confidence: turn.confidence, competencyId: turn.competencyId ?? '',
+            ...(meta ? { metaJson: JSON.stringify(meta) } : {}),
+          },
+        });
+      });
+      return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
+    } catch (err) {
+      if (!isDuplicateIndex(err)) throw err;
+      lastErr = err;
+    }
+  }
+  // Two collisions in a row means sustained concurrent writing on one session,
+  // which is not a transcript anyone should be appending to blindly.
+  logger.error({ sessionId }, 'Could not allocate a turn index after a retry');
+  throw lastErr;
 }
 
 export async function setState(sessionId: string, from: string, to: string) {
   assertTransition(from, to);
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: to } });
+}
+
+/**
+ * Move the session only if it is still in `from`, reporting whether it applied.
+ *
+ * `setState` validates a state that was read earlier and then updates by id, so
+ * two callers racing the same transition both pass the check and both write.
+ * Matching on the state in the WHERE clause makes the update itself the
+ * decision: at most one caller can move a session out of a given state, and the
+ * loser is told so rather than quietly proceeding on a stale assumption.
+ */
+async function transitionIfInState(sessionId: string, from: string, to: string): Promise<boolean> {
+  assertTransition(from, to);
+  const { count } = await prisma.interviewSession.updateMany({
+    where: { id: sessionId, state: from },
+    data: { state: to },
+  });
+  return count > 0;
 }
 
 /** Produce and persist the next agent turn given the current transcript. */
@@ -116,9 +167,11 @@ async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
 
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const agentTurn = await appendTurn(sessionId, {
-    index: turns.length, speaker: 'agent', text: utter.text,
+    speaker: 'agent', text: utter.text,
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
-  });
+    // Recorded so a repeated start can hand back the turn that already exists
+    // instead of guessing what kind of utterance it was.
+  }, { kind: utter.kind });
 
   // 'close' invites the candidate's own questions and must stay open for their
   // reply; the session ends on the sign-off that follows it.
@@ -169,9 +222,55 @@ export async function withdrawInterview(sessionId: string, reason: 'candidate_wi
   logger.info({ sessionId, reason }, 'Interview ended at candidate request — not assessed');
 }
 
+/**
+ * The opening agent turn already on the record, replayed without writing.
+ *
+ * Returns null when a live session somehow has no agent turn yet, so the caller
+ * falls through and produces one rather than handing back nothing.
+ */
+async function existingOpeningTurn(sessionId: string, state: string): Promise<AgentTurnOut | null> {
+  const first = await prisma.turn.findFirst({
+    where: { sessionId, speaker: 'agent' },
+    orderBy: { index: 'asc' },
+  });
+  if (!first) return null;
+  const kind = parseJson<{ kind?: unknown }>(first.metaJson, {}).kind;
+  return {
+    turnId: first.id, index: first.index, text: first.text, competencyId: first.competencyId,
+    kind: typeof kind === 'string' ? kind : 'question',
+    state,
+    // An opening is by definition not the end of the interview, so replaying it
+    // must never tell the caller the session is over.
+    done: false,
+    withdrawn: false,
+  };
+}
+
+/**
+ * Whether this session carries a consent record.
+ *
+ * `consentedAt` is the field every consent path stamps (portal, seed, sim), and
+ * its presence is what distinguishes "the candidate agreed" from "a disclosure
+ * was drafted for them". A session created by the recruiter routes carries the
+ * disclosure text but no `consentedAt` until the candidate accepts it.
+ */
+function hasRecordedConsent(consentJson: string): boolean {
+  const consent = parseJson<{ consentedAt?: unknown }>(consentJson, {});
+  return typeof consent.consentedAt === 'string' && consent.consentedAt.length > 0;
+}
+
 /** Begin the assessed conversation: move to ASSESSING and emit the opening. */
 export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   const { session } = await loadContext(sessionId);
+  // Starting an interview that is already live is a repeat, not a new start.
+  // A refresh, a double-tap, or a socket reconnect racing the portal fallback
+  // used to append a second opening: another paid LLM call, another
+  // 'interview.started' event, and a transcript whose canonical order contains
+  // two greetings — the interviewer introducing itself again mid-interview.
+  if (LIVE_STATES.includes(session.state)) {
+    const opening = await existingOpeningTurn(sessionId, session.state);
+    if (opening) return opening;
+  }
   // Pre-live states (invite/accept/consent/ready-check) are governed by the
   // portal + recruiter flows. "Start" converges every valid entry point to the
   // live ASSESSING state; the opening disclosure/warmup turns are still emitted
@@ -183,6 +282,15 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   // decision a human had already made. That also defeated the turn-state guard
   // below, since the guard only checks the state this function could reset.
   if (!LIVE_STATES.includes(session.state)) {
+    // Consent is checked before the state converges, not after. Without this,
+    // any caller holding a valid invitation could skip the disclosure entirely
+    // and still reach a scored assessment: a transcript and a recommendation
+    // would exist with nothing on the session saying the person agreed to
+    // either. That record is the first thing a GDPR Art. 22 or LL144 enquiry
+    // asks for, and it cannot be reconstructed afterwards.
+    if (!hasRecordedConsent(session.consentJson)) {
+      throw new HttpError(409, 'This interview cannot start until the disclosure has been read and consent recorded. Please go back to your invitation link and accept the disclosure first.');
+    }
     if (!STARTABLE_STATES.includes(session.state)) {
       // Candidate-facing. An internal state name reads as a crash to the person
       // it is shown to, and MANUAL_HANDOFF in particular means "a human is
@@ -228,7 +336,7 @@ export async function submitCandidateTurn(sessionId: string, text: string, timin
   }
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   await appendTurn(sessionId, {
-    index: turns.length, speaker: 'candidate', text,
+    speaker: 'candidate', text,
     startMs: timing?.startMs ?? lastEnd + 1000,
     endMs: timing?.endMs ?? lastEnd + 30_000,
     confidence: timing?.confidence ?? 0.9,
@@ -249,48 +357,122 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
     if (existing) return { assessmentId: existing.id };
     throw new HttpError(409, `This interview cannot be finalised from its current state (${session.state}).`);
   }
-  // Transition CLOSING -> PROCESSING.
-  if (session.state === 'ASSESSING' || session.state === 'CANDIDATE_QUESTIONS') {
-    if (session.state === 'ASSESSING') { await setState(sessionId, 'ASSESSING', 'CANDIDATE_QUESTIONS'); }
-    await setState(sessionId, 'CANDIDATE_QUESTIONS', 'CLOSING');
+  // Walk to PROCESSING one conditional step at a time. Every step applies only
+  // if the session is still in the state it is being moved out of, so a second
+  // finalisation arriving mid-flight cannot re-walk the same path — and, worse,
+  // cannot drag a session that already reached REVIEW_READY back to
+  // CANDIDATE_QUESTIONS, which an update-by-id did.
+  await transitionIfInState(sessionId, 'ASSESSING', 'CANDIDATE_QUESTIONS');
+  await transitionIfInState(sessionId, 'CANDIDATE_QUESTIONS', 'CLOSING');
+
+  // The CLOSING -> PROCESSING claim is the mutex. Exactly one caller wins it,
+  // and only the winner writes an assessment; the previous code let both
+  // callers past, both read a count of zero, and both mint a version — leaving
+  // the candidate with two scored records of one interview and a reviewer with
+  // no way to tell which one a decision was made against.
+  //
+  // Deliberately NOT a database transaction around the whole body: evaluate()
+  // is a network call to a paid provider, and holding a write lock open across
+  // it would serialise every interview in the tenant behind the slowest vendor
+  // response.
+  if (!await transitionIfInState(sessionId, 'CLOSING', 'PROCESSING')) {
+    const existing = await prisma.assessmentVersion.findFirst({
+      where: { sessionId }, orderBy: { version: 'desc' }, select: { id: true },
+    });
+    if (existing) return { assessmentId: existing.id };
+    // Another finalisation holds PROCESSING and has not written yet. Waiting
+    // here would hold an HTTP request open on a paid call we are not making;
+    // if that other run dies, the sweep recovers the session.
+    throw new HttpError(409, 'This interview is already being finalised. Give it a moment and refresh.');
   }
-  if ((await currentState(sessionId)) === 'CLOSING') await setState(sessionId, 'CLOSING', 'PROCESSING');
 
-  const count = await prisma.assessmentVersion.count({ where: { sessionId } });
-  const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
-  const result = await evaluate({
-    role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
-    // The plan knows which competencies it had no room for. Passing that on is
-    // what lets the assessment say "not asked" instead of "no evidence".
-    notAssessed: plan.notAssessed,
-  });
+  // Everything below runs with the session already moved to PROCESSING, and any
+  // one step of it can fail: the evaluator calls a paid provider, three writes
+  // follow it, and the invitation burn follows those. An unguarded throw left
+  // the session in PROCESSING with no AssessmentVersion — permanently, because
+  // PROCESSING is neither live (so no sweep touched it) nor finished (so no
+  // reviewer saw it). The candidate stayed "in progress" for ever.
+  try {
+    const count = await prisma.assessmentVersion.count({ where: { sessionId } });
+    const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
+    const result = await evaluate({
+      role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
+      // The plan knows which competencies it had no room for. Passing that on is
+      // what lets the assessment say "not asked" instead of "no evidence".
+      notAssessed: plan.notAssessed,
+    });
 
-  const assessment = await prisma.assessmentVersion.create({
-    data: {
-      sessionId, scorecardId: session.scorecardId, version: count + 1,
-      recommendation: result.recommendation, confidence: result.confidence,
-      evidenceCoverage: result.evidenceCoverage, resultJson: JSON.stringify(result),
-    },
-  });
+    // Version numbering is read and written together: the count taken before
+    // evaluate() is minutes old by the time the result comes back.
+    const assessment = await prisma.$transaction(async (tx) => {
+      const current = await tx.assessmentVersion.count({ where: { sessionId } });
+      return tx.assessmentVersion.create({
+        data: {
+          sessionId, scorecardId: session.scorecardId, version: current + 1,
+          recommendation: result.recommendation, confidence: result.confidence,
+          evidenceCoverage: result.evidenceCoverage, resultJson: JSON.stringify(result),
+        },
+      });
+    });
 
-  // Persist a transcript + report artifact.
-  const report = renderReportMarkdown({ candidateName: session.candidate.fullName, roleTitle: session.role.title, assessment: result });
-  await prisma.artifact.create({
-    data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'report', filename: `${assessmentVersion}.md`, contentType: 'text/markdown', storageKey: report, sizeBytes: report.length, retentionDays: 180 },
-  });
-  const transcript = turns.map((t) => `[${fmt(t.startMs)}] ${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
-  await prisma.artifact.create({
-    data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'transcript', filename: `${sessionId}-transcript.txt`, contentType: 'text/plain', storageKey: transcript, sizeBytes: transcript.length, retentionDays: 180 },
-  });
+    // Persist a transcript + report artifact.
+    const report = renderReportMarkdown({ candidateName: session.candidate.fullName, roleTitle: session.role.title, assessment: result });
+    await prisma.artifact.create({
+      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'report', filename: `${assessmentVersion}.md`, contentType: 'text/markdown', storageKey: report, sizeBytes: report.length, retentionDays: 180 },
+    });
+    const transcript = turns.map((t) => `[${fmt(t.startMs)}] ${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
+    await prisma.artifact.create({
+      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'transcript', filename: `${sessionId}-transcript.txt`, contentType: 'text/plain', storageKey: transcript, sizeBytes: transcript.length, retentionDays: 180 },
+    });
 
-  await prisma.interviewSession.update({ where: { id: sessionId }, data: { completedAt: new Date() } });
-  // Burn the invite link. updateMany (not update) because recruiter-driven
-  // sessions can finalise without an invitation ever being issued.
-  await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
-  await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
-  await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
-  await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
-  return { assessmentId: assessment.id };
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { completedAt: new Date() } });
+    // Burn the invite link. updateMany (not update) because recruiter-driven
+    // sessions can finalise without an invitation ever being issued.
+    await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
+    await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
+    await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
+    await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
+    return { assessmentId: assessment.id };
+  } catch (err) {
+    await releaseStalledFinalisation(sessionId, err);
+    // Rethrown, never swallowed: the caller decides what the candidate or the
+    // recruiter is told, and a silent success here would be a finalisation that
+    // produced nothing while reporting that it had.
+    throw err;
+  }
+}
+
+/**
+ * Move a finalisation that died mid-write out of PROCESSING.
+ *
+ * TECHNICAL_FAILURE is the state the machine allows from PROCESSING, and it is
+ * also the honest one: the interview happened, our processing of it did not.
+ * From there the existing recovery routes apply (RESCHEDULE_REQUIRED, CLOSED).
+ *
+ * Only PROCESSING is recovered. A throw from the audit or webhook calls that
+ * follow the REVIEW_READY transition leaves a perfectly good assessment behind,
+ * and dragging that session into TECHNICAL_FAILURE would destroy a completed
+ * result over a bookkeeping failure.
+ */
+async function releaseStalledFinalisation(sessionId: string, cause: unknown): Promise<void> {
+  const message = cause instanceof Error ? cause.message : String(cause);
+  const state = await currentState(sessionId);
+  if (state !== 'PROCESSING') {
+    logger.error({ sessionId, state, err: message }, 'Finalisation failed after the assessment was written');
+    return;
+  }
+  try {
+    await setState(sessionId, 'PROCESSING', 'TECHNICAL_FAILURE');
+    logger.error({ sessionId, err: message }, 'Finalisation failed; session released from PROCESSING to TECHNICAL_FAILURE');
+  } catch (recoveryErr) {
+    // The session is still stranded, so this line is the only trace that says
+    // which one and why. The sweep in services/incompleteInterviews.ts is the
+    // backstop that picks it up later.
+    logger.error(
+      { sessionId, err: message, recoveryErr: recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr) },
+      'Finalisation failed and the session could not be released from PROCESSING',
+    );
+  }
 }
 
 async function currentState(sessionId: string): Promise<string> {

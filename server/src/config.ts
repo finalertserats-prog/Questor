@@ -4,9 +4,33 @@ function env(key: string, fallback = ''): string {
   return process.env[key] ?? fallback;
 }
 
+/**
+ * Read a TCP port, or refuse to start.
+ *
+ * This was `parseInt(env('PORT', '4000'), 10)` with nothing checking the
+ * result. PORT="" yields NaN and `listen(NaN)` does not fail — Node binds an
+ * ephemeral port instead, so the server came up, logged that it was running,
+ * and was unreachable behind the reverse proxy. A deploy that looks successful
+ * and serves nobody is the worst failure mode available here, so a bad value
+ * stops the process at startup, naming the variable that caused it.
+ *
+ * Number rather than parseInt, so "80.5" and "8080abc" are refused instead of
+ * silently truncated to a port nobody configured.
+ */
+export function parsePortSetting(variable: string, raw: string): number {
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    throw new Error(
+      `${variable} must be a whole number between 1 and 65535 (got "${raw}"). `
+      + 'Fix the environment variable; the server will not start with an unusable port.',
+    );
+  }
+  return value;
+}
+
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
-  port: parseInt(env('PORT', '4000'), 10),
+  port: parsePortSetting('PORT', env('PORT', '4000')),
   /**
    * Network interface to listen on. Defaults to loopback: the app is reached
    * through a reverse proxy that terminates TLS, so binding to every interface
@@ -43,7 +67,7 @@ export const config = {
     from: env('EMAIL_FROM', 'Questor <no-reply@questor.local>'),
     sendgridKey: env('SENDGRID_API_KEY'),
     smtpHost: env('SMTP_HOST'),
-    smtpPort: parseInt(env('SMTP_PORT', '587'), 10),
+    smtpPort: parsePortSetting('SMTP_PORT', env('SMTP_PORT', '587')),
     smtpUser: env('SMTP_USER'),
     smtpPass: env('SMTP_PASS'),
   },

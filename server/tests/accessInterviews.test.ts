@@ -57,7 +57,11 @@ async function makeInterview(
       sessionId: session.id,
       scorecardId,
       recommendation: 'CONSIDER',
-      resultJson: JSON.stringify({ recommendation: 'CONSIDER', competencies: [] }),
+      // overallScore included because the read routes now refuse a result they
+      // cannot read, and a fixture without one is not a shape the evaluator
+      // ever produces. These tests are about access, so they must arrive at the
+      // access check rather than at the integrity check.
+      resultJson: JSON.stringify({ recommendation: 'CONSIDER', overallScore: 68, competencies: [] }),
     },
   });
   // ranTheInterview() reads the audit trail, so this is what "drove it" means.
