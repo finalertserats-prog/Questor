@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
@@ -15,7 +16,7 @@ export function OrgLogin() {
   const { login, user } = useAuth();
   const nav = useNavigate();
   const [org, setOrg] = useState<OrgSummary | null>(null);
-  const [lookup, setLookup] = useState<'loading' | 'found' | 'missing'>('loading');
+  const [lookup, setLookup] = useState<'loading' | 'found' | 'missing' | 'unreachable'>('loading');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
@@ -25,23 +26,28 @@ export function OrgLogin() {
     if (user) nav('/');
   }, [user, nav]);
 
-  useEffect(() => {
+  // Through the shared client, so this page gets the same timeout, the same
+  // error type and the same unreadable-body handling as everything else.
+  // "Link not recognised" for an outage was the worst possible reading: it
+  // tells someone their own organisation's link is wrong when the truth is
+  // that nothing could be reached.
+  const lookUpOrg = useCallback(() => {
     let active = true;
     setLookup('loading');
-    fetch(`/api/orgs/${encodeURIComponent(slug)}`)
-      .then((res) => (res.ok ? (res.json() as Promise<{ org: OrgSummary }>) : Promise.reject(new Error('not found'))))
+    api.get<{ org: OrgSummary }>(`/orgs/${encodeURIComponent(slug)}`)
       .then((data) => {
         if (!active) return;
         setOrg(data.org);
         setLookup('found');
       })
-      .catch(() => {
-        if (active) setLookup('missing');
+      .catch((error: unknown) => {
+        if (!active) return;
+        setLookup(error instanceof ApiError && error.status === 404 ? 'missing' : 'unreachable');
       });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [slug]);
+
+  useEffect(lookUpOrg, [lookUpOrg]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,6 +81,20 @@ export function OrgLogin() {
               <h1 className="landing-title">Link not recognised</h1>
               <p className="muted small">Check the link your organisation shared, or ask your Questor administrator for it.</p>
               <Link className="btn secondary" style={{ width: '100%', marginTop: 14 }} to="/login">Back to sign in</Link>
+            </>
+          )}
+
+          {lookup === 'unreachable' && (
+            <>
+              <h1 className="landing-title">We can't reach Questor right now</h1>
+              <p className="muted small">
+                Your link looks fine — we simply could not load your organisation. This is usually
+                brief.
+              </p>
+              <button type="button" className="btn" style={{ width: '100%', marginTop: 14 }} onClick={lookUpOrg}>
+                Try again
+              </button>
+              <Link className="btn secondary" style={{ width: '100%', marginTop: 8 }} to="/login">Back to sign in</Link>
             </>
           )}
 
