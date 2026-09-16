@@ -1,0 +1,160 @@
+/* ==========================================================================
+   Asking for an account, and deciding on one.
+   --------------------------------------------------------------------------
+   Nothing here fills a block with colour to mark it. The chosen mode is marked
+   by a rail and a weight, the way the sidebar marks its current page and the
+   banner marks its kind; the caution beside a request is a rule and a word.
+   ========================================================================== */
+
+/* Said before the field it governs, so it reads as a rule rather than a
+   complaint. Sits tight under the label it belongs to. */
+.field-hint {
+  margin: 0 0 6px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.signup-modes {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.signup-modes legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+.signup-mode {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  margin: 0;
+  padding: 10px 12px;
+  border: var(--hair) solid var(--rule);
+  border-left-width: var(--rail);
+  border-left-color: var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.4;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.signup-mode:hover {
+  border-color: var(--rule-strong);
+  border-left-color: var(--rule-strong);
+}
+
+/* The chosen one is marked at its edge, not filled. */
+.signup-mode.is-chosen {
+  border-color: var(--accent-edge);
+  border-left-color: var(--accent);
+}
+
+.signup-mode input[type='radio'] {
+  grid-row: 1 / span 2;
+  width: auto;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.signup-mode-title {
+  font-weight: 600;
+}
+.signup-mode.is-chosen .signup-mode-title {
+  color: var(--accent);
+}
+
+.signup-mode-detail {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.signup-mode:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Who is asking, on the operator's decision page
+   -------------------------------------------------------------------------- */
+
+.signup-facts {
+  margin: 16px 0;
+  border-top: var(--hair) solid var(--rule);
+}
+
+.signup-facts > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: var(--hair) solid var(--rule);
+}
+
+.signup-facts dt {
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+.signup-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.signup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.signup-actions .btn {
+  flex: 1;
+}
+
+/* --------------------------------------------------------------------------
+   The caution beside a request whose address does not fit its organisation
+   -------------------------------------------------------------------------- */
+
+.signup-flag {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding-left: 8px;
+  border-left: var(--rail) solid var(--hold);
+  color: var(--hold);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.signup-flag .icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.signup-who {
+  font-weight: 600;
+}

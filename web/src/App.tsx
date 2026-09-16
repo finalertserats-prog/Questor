@@ -17,6 +17,9 @@ import {
 } from './components/sidebarModel';
 import { Login } from './pages/Login';
 import { OrgLogin } from './pages/OrgLogin';
+import { Signup } from './pages/Signup';
+import { SignupDecision } from './pages/SignupDecision';
+import { SignupQueue } from './pages/SignupQueue';
 import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
 import { RoleDetail } from './pages/RoleDetail';
@@ -282,6 +285,12 @@ export function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/o/:slug" element={<OrgLogin />} />
+      {/* Both unauthenticated, for the same reason from two directions: someone
+          asking for an account has none to sign in with, and the operator's
+          emailed link carries its own credential in the token — putting the
+          decision behind a session would gate granting access on having it. */}
+      <Route path="/signup" element={<Signup />} />
+      <Route path="/signup/decision/:token" element={<SignupDecision />} />
       <Route path="/portal/:token" element={<Portal />} />
       <Route path="/room/:token" element={<InterviewRoom />} />
       {/* Followed from a feedback email. Unauthenticated by design: asking to
@@ -302,6 +311,7 @@ export function App() {
           the score by accident. */}
       <Route path="/assessments/:id/review" element={<Protected><BlindReview /></Protected>} />
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
+      <Route path="/admin/signups" element={<Protected><SignupQueue /></Protected>} />
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="/about" element={<PublicOrApp><About /></PublicOrApp>} />

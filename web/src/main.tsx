@@ -8,6 +8,7 @@ import './styles/app.css';
 import './styles/sidebar.css';
 import './styles/workflow.css';
 import './styles/login.css';
+import './styles/signup.css';
 import './styles/about.css';
 import './styles/pipeline.css';
 import './styles/journey.css';

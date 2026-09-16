@@ -37,6 +37,7 @@ const AUDIT_ROLES = ['admin', 'auditor'] as const;
 const MENU_ENTRIES: readonly MenuEntry[] = [
   { key: 'settings', label: 'Settings', kind: 'link', to: '/settings' },
   { key: 'admin', label: 'Admin console', kind: 'link', to: '/admin', roles: ADMIN_ROLES },
+  { key: 'signups', label: 'Account requests', kind: 'link', to: '/admin/signups', roles: ADMIN_ROLES },
   { key: 'audit', label: 'Audit log', kind: 'link', to: '/audit', roles: AUDIT_ROLES },
   { key: 'about', label: 'About', kind: 'link', to: '/about' },
   { key: 'contact', label: 'Contact', kind: 'link', to: '/contact' },
