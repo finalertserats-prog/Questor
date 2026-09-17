@@ -1,6 +1,6 @@
 import type { Server as HttpServer } from 'node:http';
 import { Server, type Socket, type DefaultEventsMap } from 'socket.io';
-import { prisma } from '../db.js';
+import { CorruptRecordError, prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { verifyToken } from '../services/auth.js';
@@ -57,6 +57,14 @@ function withinLimit(event: keyof typeof SOCKET_LIMITS, sessionId: string): bool
 
 function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Log fields for a failed socket event. A corrupt record is named by model, id
+ * and field so it can be found and repaired; its content is never logged.
+ */
+export function socketFailureLog(err: unknown): { err: string; model?: string; id?: string; field?: string } {
+  return err instanceof CorruptRecordError ? { err: err.message, ...err.record } : { err: describe(err) };
 }
 
 /**
@@ -203,7 +211,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         io.to(session.id).emit('agent_turn', turn);
         ack?.({ ok: true });
       } catch (err) {
-        logger.error({ err: describe(err) }, 'start failed');
+        logger.error(socketFailureLog(err), 'start failed');
         ack?.({ error: FAILED });
       }
     });
@@ -235,7 +243,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         }
         ack?.({ ok: true });
       } catch (err) {
-        logger.error({ err: describe(err) }, 'candidate_turn failed');
+        logger.error(socketFailureLog(err), 'candidate_turn failed');
         ack?.({ error: FAILED });
       }
     });
@@ -255,7 +263,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         io.to(session.id).emit('assessment_ready', { assessmentId });
         ack?.({ ok: true, assessmentId });
       } catch (err) {
-        logger.error({ err: describe(err) }, 'finalize failed');
+        logger.error(socketFailureLog(err), 'finalize failed');
         ack?.({ error: FAILED });
       }
     });

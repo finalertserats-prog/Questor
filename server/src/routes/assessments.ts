@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { invitationLink } from '../services/invitations.js';
 import { z } from 'zod';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJson, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
@@ -350,7 +350,7 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     candidate: { id: a.session.candidateId, name: a.session.candidate.fullName },
     role: { id: a.session.roleId, title: a.session.role.title },
     result: readAssessmentResult(a),
-    reviews: reviews.map((r) => ({ id: r.id, status: r.status, disposition: r.disposition, reason: r.reason, overrides: parseJson(r.overridesJson, []), completedAt: r.completedAt })),
+    reviews: reviews.map((r) => ({ id: r.id, status: r.status, disposition: r.disposition, reason: r.reason, overrides: parseJsonOptional(r.overridesJson, [], { model: 'HumanReview', id: r.id, field: 'overridesJson' }), completedAt: r.completedAt })),
   });
 }));
 

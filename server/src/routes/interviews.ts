@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
 import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.js';
@@ -69,15 +69,15 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: candidate.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
   if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
 
-  const profile = parseJson<RoleSuccessProfile>(scorecard.profileJson, {} as RoleSuccessProfile);
+  const profile = parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' });
   const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' } });
-  const fit = latestProfile ? parseJson<FitScore>(latestProfile.fitScoreJson, undefined as any) : undefined;
+  const fit = latestProfile ? parseJsonStrict<FitScore>(latestProfile.fitScoreJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'fitScoreJson' }) : undefined;
 
   // Pitch the interview at the candidate rather than at the requisition. Their
   // parsed resume already knew how long they have worked and what they have
   // owned; until now none of it reached the plan, so a first-year applicant to a
   // senior req was questioned as though they held the job.
-  const parsed = latestProfile ? parseJson<NormalizedProfile>(latestProfile.profileJson, {} as NormalizedProfile) : ({} as NormalizedProfile);
+  const parsed = latestProfile ? parseJsonStrict<NormalizedProfile>(latestProfile.profileJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'profileJson' }) : ({} as NormalizedProfile);
   const banding = resolveCandidateBand({
     profile: parsed,
     resumeText: latestProfile?.rawText ?? '',
@@ -91,7 +91,7 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   });
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
-  const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
+  const tenantPolicy = parseJsonOptional<{ disclosureText?: string }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
   const baseDisclosureText = tenantPolicy.disclosureText ??
     // No `recordingRequested` branch: it offered two different sentences for a
     // distinction that does not exist, since no audio artefact is produced
@@ -246,10 +246,10 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   ]);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
-    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, persona: parseJson(session.personaJson, {}), consent: parseJson(session.consentJson, {}) },
-    plan: plan ? parseJson(plan.planJson, {}) : null,
+    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
+    plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
     turns: turns.map((t) => ({ id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId })),
-    assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJson(assessment.resultJson, {}) } : null,
+    assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJsonStrict(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' }) } : null,
     // Integrity events are human-review context only. They are deliberately not
     // passed into assessment generation or score fields.
     integrityEvents: { count: integrityEvents.length, events: integrityEvents },
@@ -338,17 +338,20 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   // A retake is the same interview again, so it keeps the original's modules
   // (a work sample, say) and its interviewer persona.
   const originalPlan = await prisma.interviewPlanVersion.findUnique({ where: { sessionId: original.id } });
-  const originalModules = parseJson<{ modules?: string[] }>(originalPlan?.planJson ?? '{}', {}).modules ?? [];
-  const persona = parseJson<{ name?: string }>(original.personaJson, {});
+  // Losing the modules would silently drop a work sample from the retake.
+  const originalModules = originalPlan
+    ? parseJsonStrict<{ modules?: string[] }>(originalPlan.planJson, { model: 'InterviewPlanVersion', id: originalPlan.id, field: 'planJson' }).modules ?? []
+    : [];
+  const persona = parseJsonOptional<{ name?: string }>(original.personaJson, {}, { model: 'InterviewSession', id: original.id, field: 'personaJson' });
 
   const candidate = await assertCanAccessCandidate(req.auth!, original.candidateId);
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: original.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
   if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
 
-  const profile = parseJson<RoleSuccessProfile>(scorecard.profileJson, {} as RoleSuccessProfile);
+  const profile = parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' });
   const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' } });
-  const fit = latestProfile ? parseJson<FitScore>(latestProfile.fitScoreJson, undefined as any) : undefined;
-  const parsed = latestProfile ? parseJson<NormalizedProfile>(latestProfile.profileJson, {} as NormalizedProfile) : ({} as NormalizedProfile);
+  const fit = latestProfile ? parseJsonStrict<FitScore>(latestProfile.fitScoreJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'fitScoreJson' }) : undefined;
+  const parsed = latestProfile ? parseJsonStrict<NormalizedProfile>(latestProfile.profileJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'profileJson' }) : ({} as NormalizedProfile);
   const banding = resolveCandidateBand({ profile: parsed, resumeText: latestProfile?.rawText ?? '', roleSeniority: profile.seniority ?? '' });
 
   const plan = buildInterviewPlan({
@@ -358,7 +361,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   });
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
-  const tenantPolicy = parseJson<any>(tenant?.policyJson ?? '{}', {});
+  const tenantPolicy = parseJsonOptional<{ disclosureText?: string }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
   const baseDisclosureText = tenantPolicy.disclosureText ??
     `Hello, I'm ${persona.name ? `${persona.name}, an AI interviewer` : 'an AI interviewer'} for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
@@ -437,7 +440,7 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
     throw new HttpError(502, 'The email could not be sent. Copy the link and send it yourself, or try again.');
   }
 
-  const events = parseJson<Array<Record<string, unknown>>>(invitation.eventsJson, []);
+  const events = parseJsonOptional<Array<Record<string, unknown>>>(invitation.eventsJson, [], { model: 'Invitation', id: invitation.id, field: 'eventsJson' });
   events.push({ type: 'resent', at: new Date().toISOString(), by: req.auth!.userId });
   await prisma.invitation.update({
     where: { id: invitation.id },
@@ -573,7 +576,7 @@ interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncH
 
   res.json({
     session: { id: session.id, state: session.state },
-    persona: { name: parseJson<{ name?: unknown }>(session.personaJson, {}).name ?? DEFAULT_PERSONA_NAME },
+    persona: { name: parseJsonOptional<{ name?: unknown }>(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }).name ?? DEFAULT_PERSONA_NAME },
     turns,
   });
 }));
@@ -620,8 +623,8 @@ async function inviteSession(req: Request, session: InvitableSession) {
   // A re-invite must add to the invitation's history, not start it over: the
   // update below used to write a one-element list, erasing every earlier
   // sent / resent / not-delivered event.
-  const previous = await prisma.invitation.findUnique({ where: { sessionId: session.id }, select: { eventsJson: true } });
-  const priorEvents = previous ? parseJson<unknown[]>(previous.eventsJson, []) : [];
+  const previous = await prisma.invitation.findUnique({ where: { sessionId: session.id }, select: { id: true, eventsJson: true } });
+  const priorEvents = previous ? parseJsonOptional<unknown[]>(previous.eventsJson, [], { model: 'Invitation', id: previous.id, field: 'eventsJson' }) : [];
 
   const token = mintInvitationToken();
   const secret = invitationSecretColumns(token);

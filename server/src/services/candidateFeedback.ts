@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { prisma, parseJson } from '../db.js';
+import { CorruptRecordError, prisma, parseJsonStrict } from '../db.js';
 import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
@@ -205,7 +205,16 @@ export async function prepareDraftForOptIn(sessionId: string): Promise<string> {
     return record('ALREADY_DRAFTED', 'A draft already existed for this assessment and was left as it was.');
   }
 
-  const result = parseJson<AssessmentResult>(assessment.resultJson, {} as AssessmentResult);
+  // A draft built from {} would tell the candidate nothing was covered. Record
+  // the failure on the opt-in, where the hiring team sees it, and stop.
+  let result: AssessmentResult;
+  try {
+    result = parseJsonStrict<AssessmentResult>(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' });
+  } catch (err) {
+    if (!(err instanceof CorruptRecordError)) throw err;
+    logger.error(err.record, 'Stored assessment is unreadable; feedback draft not prepared');
+    return record('FAILED', 'The assessment record could not be read, so no draft was prepared.');
+  }
   const draft = buildFeedbackDraft({
     candidateName: session.candidate.fullName,
     roleTitle: session.role.title,

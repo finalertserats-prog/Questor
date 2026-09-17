@@ -1,4 +1,5 @@
-import { prisma, parseJson } from '../db.js';
+import { CorruptRecordError, prisma, parseJsonStrict } from '../db.js';
+import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import { assertCanAccessAssessment, ranTheInterview } from './access.js';
 import type { AuthClaims } from './auth.js';
@@ -251,8 +252,10 @@ export async function getBlindView(
   // the tenant let a caller read or file against another user's identity.
   const reviewerId = auth.userId;
   const assessment = await loadAssessment(auth, assessmentId);
-  const result = parseJson<AssessmentResult>(assessment.resultJson, {} as AssessmentResult);
-  const profile = parseJson<RoleSuccessProfile>(assessment.scorecard.profileJson, {} as RoleSuccessProfile);
+  // A blind view built from {} hands the reviewer no evidence and no rubric,
+  // and the verdict they file is then treated as a real sample point.
+  const result = parseJsonStrict<AssessmentResult>(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' });
+  const profile = parseJsonStrict<RoleSuccessProfile>(assessment.scorecard.profileJson, { model: 'RoleScorecardVersion', id: assessment.scorecard.id, field: 'profileJson' });
 
   const turns = await prisma.turn.findMany({
     where: { sessionId: assessment.sessionId },
@@ -742,6 +745,7 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
   const observations: ShadowObservation[] = [];
   const seen = new Set<string>();
   let unreadableOverrides = 0;
+  let unreadableResults = 0;
 
   for (const review of blindReviews) {
     // One observation per assessment. Two reviewers blind-reviewing the same
@@ -751,9 +755,13 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
     if (!isDisposition(review.disposition)) continue;
     seen.add(review.assessmentId);
 
-    const result = parseJson<AssessmentResult>(review.assessment.resultJson, {} as AssessmentResult);
+    // Same treatment as unreadable overrides: the verdict and the stored
+    // recommendation stay in the sample, the AI's levels are missing, and the
+    // loss is counted rather than read as "the AI scored nothing".
+    const result = readAiResult(review.assessment);
+    if (result === null) unreadableResults++;
     const aiLevels = new Map<string, { name: string; level: number }>();
-    for (const c of result.competencies ?? []) {
+    for (const c of result?.competencies ?? []) {
       if (typeof c.level === 'number' && !c.notEnoughEvidence) aiLevels.set(c.id, { name: c.name, level: c.level });
     }
 
@@ -806,13 +814,17 @@ export async function getAgreementReport(tenantId: string): Promise<AgreementRep
     : ` ${unreadableOverrides} blind verdict(s) had unreadable competency overrides, so their competency `
       + 'levels are missing from the sample above and the competency-level statistics rest on fewer pairs '
       + 'than the verdict count suggests.';
+  const resultsNote = unreadableResults === 0
+    ? ''
+    : ` ${unreadableResults} AI result(s) could not be read, so their competency levels are missing from the `
+      + 'sample above; the verdicts against them still count.';
 
   return {
     ...report,
     blindingBypassed: {
       events: bypasses.length,
       assessments: bypassedAssessments,
-      note: `${bypassNote}${overridesNote}`,
+      note: `${bypassNote}${overridesNote}${resultsNote}`,
     },
   };
 }
@@ -828,6 +840,17 @@ function readOverrides(json: string | null): Array<{ competencyId?: unknown; to?
     const parsed: unknown = JSON.parse(json);
     return Array.isArray(parsed) ? parsed as Array<{ competencyId?: unknown; to?: unknown }> : null;
   } catch {
+    return null;
+  }
+}
+
+/** The AI's stored result, or null when the row cannot be read (logged by id). */
+function readAiResult(assessment: { id: string; resultJson: string }): AssessmentResult | null {
+  try {
+    return parseJsonStrict<AssessmentResult>(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' });
+  } catch (err) {
+    if (!(err instanceof CorruptRecordError)) throw err;
+    logger.error(err.record, 'Stored AI result is unreadable; excluded from competency agreement');
     return null;
   }
 }

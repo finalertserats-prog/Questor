@@ -1,4 +1,4 @@
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonOptional } from '../db.js';
 
 /**
  * HR as a silent observer of the AI interview.
@@ -30,7 +30,7 @@ export const LIVE_INTERVIEW_STATES = new Set([
 ]);
 
 export async function mayObserveLive(session: { id: string; consentJson: string }): Promise<boolean> {
-  const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
+  const consent = parseJsonOptional<Record<string, unknown>>(session.consentJson, {}, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
   // Two conditions. The consent flag comes from the portal page and could be
   // sent by anyone holding the candidate's link, so on its own it proves
   // nothing. The server-side proof is the transcript: an AI turn in which the

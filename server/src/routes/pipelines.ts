@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import type { CandidatePipeline, InterviewRound } from '@prisma/client';
-import { prisma, parseJson, parseJsonOptional } from '../db.js';
+import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessRole } from '../services/access.js';
 import { logAudit } from '../services/audit.js';
@@ -245,7 +245,9 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     // retroactively; observation of that session then stays unavailable.
     if (roles.hrMayObserve && body.sessionId) {
       const session = await tx.interviewSession.findUniqueOrThrow({ where: { id: body.sessionId }, select: { consentJson: true } });
-      const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
+      // Read strictly: this block writes the record back, and a damaged one
+      // would be replaced by a disclosure holding only the observer notice.
+      const consent = parseJsonStrict<Record<string, unknown>>(session.consentJson, { model: 'InterviewSession', id: body.sessionId, field: 'consentJson' });
       if (!consent.consentedAt) {
         const disclosureText = withObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : '');
         if (disclosureText !== consent.disclosureText) {
@@ -372,9 +374,11 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
   const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
 
   const profile = await prisma.candidateProfileVersion.findFirst({
-    where: { candidateId: pipeline.candidateId }, orderBy: { version: 'desc' }, select: { fitScoreJson: true },
+    where: { candidateId: pipeline.candidateId }, orderBy: { version: 'desc' }, select: { id: true, fitScoreJson: true },
   });
-  const fit = profile ? parseJson<{ overall?: unknown }>(profile.fitScoreJson, {}) : {};
+  const fit = profile
+    ? parseJsonStrict<{ overall?: unknown }>(profile.fitScoreJson, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' })
+    : {};
   const aiSessionIds = pipeline.rounds.filter((r) => r.conductedBy === 'AI' && r.sessionId).map((r) => r.sessionId as string);
   const assessments = aiSessionIds.length > 0
     ? await prisma.assessmentVersion.findMany({ where: { sessionId: { in: aiSessionIds } }, orderBy: { version: 'desc' }, select: { sessionId: true, recommendation: true } })

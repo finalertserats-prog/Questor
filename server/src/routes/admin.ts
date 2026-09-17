@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
@@ -464,7 +464,8 @@ adminRouter.patch('/retention/sessions/:id', requireCapability('retention:config
 // disclosure text a candidate must see is served separately by the portal.
 adminRouter.get('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
-  res.json({ policy: parseJson(tenant?.policyJson ?? '{}', {}) });
+  // An admin shown {} would read every safeguard as off and "restore" them.
+  res.json({ policy: tenant ? parseJsonStrict(tenant.policyJson, { model: 'Tenant', id: tenant.id, field: 'policyJson' }) : {} });
 }));
 // The policy is the candidate-facing consent notice and the switches for
 // proctoring, candidate feedback and human review. This route used to take
@@ -484,7 +485,8 @@ const policySchema = z.object({
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const patch = z.object({ policy: policySchema }).strict().parse(req.body).policy;
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true } });
-  const before = parseJson<Record<string, unknown>>(tenant.policyJson, {});
+  // Merging onto {} would save the patch alone as the whole policy.
+  const before = parseJsonStrict<Record<string, unknown>>(tenant.policyJson, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
   const policy = { ...before, ...patch };
   await prisma.tenant.update({ where: { id: req.auth!.tenantId }, data: { policyJson: JSON.stringify(policy) } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'tenant.policy.updated', entityType: 'Tenant', entityId: req.auth!.tenantId, before, after: policy });
