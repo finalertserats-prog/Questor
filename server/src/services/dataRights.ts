@@ -681,8 +681,11 @@ export async function runRetentionSweep(now = new Date()): Promise<PurgeResult> 
   return result;
 }
 
+/** Exported so the system health view judges the job by the same interval. */
+export const RETENTION_SWEEP_EVERY_MS = 24 * 60 * 60_000;
+
 /** Start the daily retention sweep. Returns a stop function. */
-export function startRetentionSweep(intervalMs = 24 * 60 * 60_000): () => void {
+export function startRetentionSweep(intervalMs = RETENTION_SWEEP_EVERY_MS): () => void {
   // Opt-in, and deliberately so. Every existing session has a null `retainUntil`
   // and therefore inherits the default window the moment this ships, so the
   // first sweep on an established database can delete a large backlog of real

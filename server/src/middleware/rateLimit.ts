@@ -113,11 +113,14 @@ export function rateLimit(opts: RateLimitOptions) {
   };
 }
 
+/** Exported so the system health view judges the job by the same interval. */
+export const RATE_LIMIT_PURGE_EVERY_MS = 10 * 60_000;
+
 /**
  * Purge ended windows from the shared store, under a lease so one instance
  * does it. A no-op schedule when counters live in memory.
  */
-export function startRateLimitPurge(intervalMs = 10 * 60_000): () => void {
+export function startRateLimitPurge(intervalMs = RATE_LIMIT_PURGE_EVERY_MS): () => void {
   if (config.rateLimitStore !== 'database') return () => undefined;
   return startJob({
     name: 'rate-limit-purge',

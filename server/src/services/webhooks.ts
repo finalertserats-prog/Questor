@@ -31,7 +31,7 @@ import { startJob } from './jobs.js';
  */
 
 const MAX_ATTEMPTS = 4;
-const DELIVER_EVERY_MS = 15_000;
+export const DELIVER_EVERY_MS = 15_000;
 const BATCH = 50;
 const WEBHOOK_TIMEOUT_MS = 8000;
 

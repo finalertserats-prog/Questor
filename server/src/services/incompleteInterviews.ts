@@ -214,6 +214,9 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
   return outcomes;
 }
 
+/** Exported so the system health view judges the job by the same interval. */
+export const INCOMPLETE_SWEEP_EVERY_MS = 5 * 60_000;
+
 /**
  * Run the sweep on a timer.
  *
@@ -221,7 +224,7 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
  * database must not let a second pass start on top of the first and race it to
  * the same rows.
  */
-export function startIncompleteSweep(intervalMs = 5 * 60_000): () => void {
+export function startIncompleteSweep(intervalMs = INCOMPLETE_SWEEP_EVERY_MS): () => void {
   // The lease replaces the in-process `running` flag: it also stops a second
   // instance sweeping, and a run that throws is recorded and alerted.
   return startJob({
