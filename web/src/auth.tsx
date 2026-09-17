@@ -39,8 +39,12 @@ interface AuthCtx { user: User | null; tenant: Tenant | null; loading: boolean;
   /** Re-reads the tour flag from the server and returns it, for a tab that may hold a stale one. */
   refreshTourStatus: () => Promise<string | null>; }
 
-const Ctx = createContext<AuthCtx>(null as any);
-export const useAuth = () => useContext(Ctx);
+const Ctx = createContext<AuthCtx | null>(null);
+export const useAuth = () => {
+  const ctx = useContext(Ctx);
+  if (!ctx) throw new Error('useAuth must be used inside AuthProvider.');
+  return ctx;
+};
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);

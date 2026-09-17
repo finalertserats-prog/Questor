@@ -39,4 +39,7 @@ App.txt
 *secret*.txt
 docs/Questor-v1-hr-guide-20260719.pdf.bak
 # Generated from schema.prisma by scripts/generate-postgres-schema.mjs (npm pretest).
-server/prisma/postgres/
+# Keep the generated schema ignored, but commit Postgres migrations.
+server/prisma/postgres/*
+!server/prisma/postgres/migrations/
+!server/prisma/postgres/migrations/**

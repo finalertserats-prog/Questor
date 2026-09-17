@@ -15,7 +15,7 @@
     "pretest": "node ../scripts/generate-postgres-schema.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:pg": "node ../scripts/test-postgres.mjs",
+    "test:pg": "node ../scripts/test-migrations.mjs && node ../scripts/test-postgres.mjs",
     "test:e2e": "tsx src/seed/simulateInterview.ts",
     "sim": "tsx src/sim/run.ts",
     "sim:smoke": "tsx src/sim/smoke.ts",

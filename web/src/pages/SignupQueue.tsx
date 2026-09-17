@@ -6,6 +6,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { applicantIntent, joinEmailCaution, withoutSignup, type SignupMode } from '../components/signupModel';
+import { formatDate } from '../components/dateFormat';
 
 interface PendingSignup {
   id: string;
@@ -29,6 +30,7 @@ export function SignupQueue() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [actingId, setActingId] = useState<string | null>(null);
+  const [pendingDeclineId, setPendingDeclineId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +54,7 @@ export function SignupQueue() {
     try {
       await api.post(`/admin/signups/${signup.id}/${decision}`);
       setSignups((current) => withoutSignup(current, signup.id));
+      setPendingDeclineId(null);
       setNotice(`${signup.name}'s request was ${decision === 'approve' ? 'approved' : 'declined'}.`);
       // Re-read rather than trust the row we just removed: the same request can
       // be decided from the emailed link, or by another admin, while this page
@@ -115,13 +118,24 @@ export function SignupQueue() {
                           )}
                         </td>
                         <td>{applicantIntent(signup.mode, signup.organisation)}</td>
-                        <td className="muted small">{new Date(signup.createdAt).toLocaleDateString()}</td>
+                        <td className="muted small">{formatDate(signup.createdAt)}</td>
                         <td>
                           <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
                             <button type="button" className="btn sm" disabled={busy}
                               onClick={() => void decide(signup, 'approve')}>Approve</button>
-                            <button type="button" className="btn sm secondary" disabled={busy}
-                              onClick={() => void decide(signup, 'decline')}>Decline</button>
+                            {pendingDeclineId === signup.id ? (
+                              <>
+                                <button type="button" className="btn sm secondary" disabled={busy}
+                                  onClick={() => void decide(signup, 'decline')}>
+                                  {busy ? 'Declining…' : 'Confirm decline'}
+                                </button>
+                                <button type="button" className="btn sm ghost" disabled={busy}
+                                  onClick={() => setPendingDeclineId(null)}>Cancel</button>
+                              </>
+                            ) : (
+                              <button type="button" className="btn sm secondary" disabled={busy}
+                                onClick={() => setPendingDeclineId(signup.id)}>Decline</button>
+                            )}
                           </span>
                         </td>
                       </tr>

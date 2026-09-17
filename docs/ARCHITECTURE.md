@@ -1,77 +1,126 @@
-# Questor Architecture
+# Questor architecture
 
-Maps to BRD §14 (Technical Architecture), §15 (Data Model), §16 (AI/ML).
+Questor is a modular monolith: one web client and one server application. The server process owns the API, live interview sockets, provider adapters, and background jobs.
 
-## Layers
+## Runtime components
 
-- **Experience layer** (`web/`): recruiter console, candidate portal, hosted interview room, admin.
-- **Domain services** (`server/src/routes`, `services`): roles, candidates, scheduling/comms,
-  interview orchestration, assessment, integration hub.
-- **AI/media layer** (`server/src/engines`, `realtime`): media/turn handling, conversation runtime,
-  Interview Director, evidence extractor, independent evaluator, policy engine.
-- **Platform layer**: Express API gateway, JWT/RBAC identity, event/webhook bus, Prisma + SQLite/PG,
-  artifact storage (DB-backed for MVP), model-execution telemetry.
-
-## Core services → code
-
-| BRD service | Location |
-| --- | --- |
-| API Gateway / BFF | `server/src/app.ts`, `middleware/` |
-| Identity & Tenant | `services/auth.ts`, `routes/auth.ts`, JWT claims `{userId, tenantId, role}` |
-| Role Intelligence | `engines/roleIntelligence.ts` |
-| Candidate Profile | `engines/resumeParser.ts`, `engines/fitScoring.ts`, `engines/evidenceExtractor.ts` |
-| Scheduling & Comms | `routes/interviews.ts`, `providers/email/` |
-| Interview Orchestrator | `realtime/interviewEngine.ts`, `domain/stateMachine.ts` |
-| Realtime Media | `realtime/socket.ts`, `web` Web Speech, `providers/speech.ts` |
-| Conversation Runtime | `engines/conversationRuntime.ts`, `engines/interviewDirector.ts` |
-| Policy & Guardrail | `engines/policyEngine.ts` |
-| Assessment | `engines/evaluator.ts`, `engines/reportWriter.ts` |
-| Artifact | `Artifact` table (resume, transcript, report) |
-| Integration Hub | `providers/ats/`, `providers/meeting/`, `services/webhooks.ts` |
-| Analytics/Governance | `routes/admin.ts`, `AuditEvent`, `ModelExecution` |
-
-## Interview session state machine (§14.3)
-
-`PROVISIONED → INVITED → ACCEPTED → READY_CHECK → WAITING → CONNECTING → DISCLOSURE → CONSENTED →
-WARMUP → ASSESSING → CANDIDATE_QUESTIONS → CLOSING → PROCESSING → REVIEW_READY → HUMAN_REVIEWED →
-CLOSED`, with exception states `RESCHEDULE_REQUIRED, NO_SHOW, CANDIDATE_WITHDREW, TECHNICAL_FAILURE,
-POLICY_STOP, MANUAL_HANDOFF, CANCELLED`. Transitions are validated in `domain/stateMachine.ts`.
-
-## The live interview loop
-
-```
-                 ┌────────────────────────────────────────────────┐
- candidate turn  │  submitCandidateTurn(text)                     │
- (voice/text) ─► │    1. persist Turn (diarized, timestamped)     │
-                 │    2. Interview Director  → DirectorSignal      │  time / coverage / depth
-                 │    3. Conversation Runtime → utterance          │  question bank + STAR follow-ups
-                 │    4. Policy screen (block/rewrite)             │  + LLM augmentation (optional)
-                 │    5. persist agent Turn, return it            │
-                 └────────────────────────────────────────────────┘
- on close ─► finalizeInterview() ─► independent Evaluator ─► AssessmentVersion + report artifact
-                                                             ─► webhook assessment.ready
+```mermaid
+flowchart LR
+  Browser[Recruiter and candidate browsers] --> Nginx[nginx / static web]
+  Browser --> API[Node process: Express API]
+  Browser <--> Socket[Socket.IO interview room]
+  API --- Socket
+  API --> Prisma[Prisma client]
+  Socket --> Prisma
+  Jobs[Leased background jobs] --> Prisma
+  API --> Providers[LLM / STT / TTS / email / ATS / meeting adapters]
+  Jobs --> Webhooks[Webhook receivers]
+  Prisma --> DB[(Postgres in production)]
+  Local[(SQLite locally)] -. dev .- Prisma
 ```
 
-The Director never speaks; the Runtime never scores; the Evaluator sees only transcript + rubric
-(never name/appearance/accent). Checkpoints are persisted every turn so reconnects never duplicate
-questions (BRD §14.4 resilience).
+Production uses PostgreSQL. Local development defaults to SQLite. The Postgres Prisma schema is generated from the SQLite source schema before Postgres client generation.
 
-## Data model (§15.1)
+## Server shape
 
-`Tenant, User, Role, RoleScorecardVersion, Candidate, CandidateProfileVersion, EvidenceNode,
-EvidenceEdge, InterviewPlanVersion, Invitation, InterviewSession, Turn, AssessmentVersion,
-HumanReview, Artifact, AuditEvent, ModelExecution, WebhookEndpoint, WebhookDelivery`. Complex
-sub-objects are stored as JSON strings for portability between SQLite and Postgres. Full schema:
-`server/prisma/schema.prisma`.
+- Express REST API: `server/src/routes/*`.
+- Socket.IO live interview runtime: `server/src/realtime/*`.
+- Interview, evaluation, policy, role, and resume logic: `server/src/engines/*` and `server/src/domain/*`.
+- Provider adapters: `server/src/providers/*`.
+- Background jobs: `server/src/services/*`, started from `server/src/index.ts`.
 
-## AI/ML responsibilities (§16.1) — enforced boundaries
+`server/src/index.ts` runs preflight, starts retention, incomplete-interview, webhook delivery, and invitation-secret backfill work, creates the Express app, attaches Socket.IO, and listens. Jobs use database leases in `services/jobs.ts` and record `JobRun` rows for `/api/admin/ops`.
 
-| Function | Allowed | Not allowed | Where |
-| --- | --- | --- | --- |
-| Role parser | propose competencies | approve hiring criteria | `roleIntelligence.ts` (+ human approval gate) |
-| Resume assessor | map evidence & uncertainty | infer protected traits / auto-reject | `fitScoring.ts` (excluded signals list) |
-| Live interviewer | ask approved questions, capture evidence | finalize decisions, invent facts | `conversationRuntime.ts` |
-| Interview Director | control time/coverage/policy | speak / change rubric | `interviewDirector.ts` |
-| Evidence extractor | link claims to transcript spans | interpret emotion/appearance | `evidenceExtractor.ts` |
-| Independent evaluator | score against rubric | use name/appearance/accent | `evaluator.ts` |
-| Report writer | summarize structured facts | unsupported narrative | `reportWriter.ts` |
+## Provider adapters
+
+The zero-key path uses the heuristic LLM, browser speech, hosted interview rooms, generic connectors, and console email. Paid or external adapters are selected by environment. Variable names include `LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `STT_PROVIDER`, `DEEPGRAM_API_KEY`, `AZURE_SPEECH_KEY`, `TTS_PROVIDER`, `ELEVENLABS_API_KEY`, `EMAIL_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SENDGRID_API_KEY`, `ATS_PROVIDER`, `ATS_BASE_URL`, `ATS_API_KEY`, and `MEETING_PROVIDER`.
+
+## Multi-tenancy and authorization
+
+Most business rows carry `tenantId`. Capabilities live in `server/src/domain/capabilities.ts`; object-level checks live in `server/src/services/access.ts`. Access decisions combine tenant, capability, and object scope. Role ownership and candidate ownership are separate because a recruiter can share a role without seeing every candidate under it.
+
+## Interview state machine
+
+The state machine is in `server/src/domain/stateMachine.ts`.
+
+Main states: `PROVISIONED`, `INVITED`, `ACCEPTED`, `READY_CHECK`, `WAITING`, `CONNECTING`, `DISCLOSURE`, `CONSENTED`, `WARMUP`, `ASSESSING`, `CANDIDATE_QUESTIONS`, `CLOSING`, `PROCESSING`, `REVIEW_READY`, `HUMAN_REVIEWED`, `CLOSED`.
+
+Exception states: `RESCHEDULE_REQUIRED`, `NO_SHOW`, `CANDIDATE_WITHDREW`, `TECHNICAL_FAILURE`, `POLICY_STOP`, `MANUAL_HANDOFF`, `CANCELLED`, `INCOMPLETE`.
+
+```mermaid
+stateDiagram-v2
+  [*] --> PROVISIONED
+  PROVISIONED --> INVITED
+  INVITED --> ACCEPTED
+  ACCEPTED --> READY_CHECK
+  READY_CHECK --> WAITING
+  WAITING --> CONNECTING
+  CONNECTING --> DISCLOSURE
+  DISCLOSURE --> CONSENTED
+  CONSENTED --> WARMUP
+  WARMUP --> ASSESSING
+  ASSESSING --> CANDIDATE_QUESTIONS
+  ASSESSING --> CLOSING
+  CANDIDATE_QUESTIONS --> CLOSING
+  CLOSING --> PROCESSING
+  PROCESSING --> REVIEW_READY
+  REVIEW_READY --> HUMAN_REVIEWED
+  HUMAN_REVIEWED --> CLOSED
+  INVITED --> NO_SHOW
+  ACCEPTED --> RESCHEDULE_REQUIRED
+  READY_CHECK --> TECHNICAL_FAILURE
+  DISCLOSURE --> CANDIDATE_WITHDREW
+  ASSESSING --> POLICY_STOP
+  ASSESSING --> MANUAL_HANDOFF
+  ASSESSING --> INCOMPLETE
+  TECHNICAL_FAILURE --> RESCHEDULE_REQUIRED
+  RESCHEDULE_REQUIRED --> INVITED
+  POLICY_STOP --> MANUAL_HANDOFF
+  NO_SHOW --> CLOSED
+  CANDIDATE_WITHDREW --> CLOSED
+  INCOMPLETE --> RESCHEDULE_REQUIRED
+  CANCELLED --> [*]
+  CLOSED --> [*]
+```
+
+## Consent, retention, erasure, legal hold
+
+Consent is captured on sessions and controls observation/transcript behavior. Retention is session-centered in `services/dataRights.ts` because turns, assessments, artifacts, reviews, feedback, and model executions all belong to the recruitment purpose. Erasure deletes candidate-derived data in dependency order and keeps a non-personal audit record. Legal hold on a session or artifact blocks retention purge and explicit erasure.
+
+## Trust boundaries and tokens
+
+- Browser to API: cookie auth, CSRF protection, rate limits.
+- Candidate portal: invitation token in URL; limiter keys on token where possible.
+- API to providers: candidate data may leave the deployment when remote providers are configured.
+- API to webhook receivers: signed outbound requests, public URL checks, durable retries.
+- Operator shell to database: backups and drills contain candidate personal data.
+
+Invitation tokens are hashed for lookup and sealed for display/resend in `services/invitations.ts`. The seal key is derived from `AUTH_SECRET`, so rotation makes stored sealed links unopenable. Signup-decision and feedback/human-request tokens are hash-only. Webhooks include the original signature and timestamped v2 signature; v1 should be retired after receivers move.
+
+## Web client
+
+The React/Vite client lives under `web/src`:
+
+- `pages/*` for route pages.
+- `components/*` for shared UI and pure model helpers.
+- `api/*` for API client and response modeling.
+- Pure model modules include score/status/tour/dashboard/journey/pipeline helpers and are testable without a browser.
+
+The interview room uses browser speech in the zero-key path and the server for session state and turns.
+
+## Test strategy
+
+Server tests run on SQLite per worker. Web model tests cover pure client behavior. Simulation scripts exercise interview flows without a browser or paid keys. The e2e suite belongs under `e2e/`; `docs/PENDING.md` says browser smoke coverage is still pending. Deploy health checks are not a replacement for migrations or e2e tests.
+
+## Why not microservices now
+
+Interviews, consent, retention, erasure, audit, and evidence need strong consistency. Splitting now would add distributed transactions, event replay, and cross-service authorization before independent scaling is needed. One process also keeps local setup simple.
+
+## Seams if it ever splits
+
+Likely split points are webhook delivery, retention/erasure, a provider gateway, the realtime interview service, and reporting read models. Before splitting, move rate limiting out of process and replace `prisma db push` with migrations.
+
+## Could not confirm from the repo
+
+- Exact production nginx configuration and backup log paths.
+- Actual nightly dump format on the VPS; confirm with `pg_restore --list`.
