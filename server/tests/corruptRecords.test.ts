@@ -136,6 +136,17 @@ describe('an unreadable interviewer persona', () => {
   });
 });
 
+describe('an unreadable scorecard on the candidate page', () => {
+  it('leaves browser monitoring off rather than failing the page', async () => {
+    const ids = await seeded();
+    await corruptScorecard(ids.scorecardId);
+
+    const res = await request(app).get(`/api/portal/${ids.token}`);
+
+    expect(res.body.proctoringEnabled).toBe(false);
+  });
+});
+
 describe('recruiter routes over unreadable decision data', () => {
   it('refuses to approve a scorecard it cannot read, rather than calling it empty', async () => {
     const ids = await seeded();
