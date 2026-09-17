@@ -146,6 +146,18 @@ describe('shellClassName', () => {
   it('always carries the app class', () => {
     expect(shellClassName('expanded').split(' ')).toContain('app');
   });
+
+  // The width only animates while the reader is toggling the rail. Animated
+  // all the time, any layout change — crossing the drawer breakpoint, a
+  // full-page capture — replayed the sidebar growing from nothing, with its
+  // wordmark spilling over the page and its labels clipped mid-word.
+  it('marks the shell as animating only while the rail is being toggled', () => {
+    expect([
+      shellClassName('collapsed', true).split(' ').includes('is-rail-animating'),
+      shellClassName('expanded', true).split(' ').includes('is-rail-animating'),
+      shellClassName('expanded').split(' ').includes('is-rail-animating'),
+    ]).toEqual([true, true, false]);
+  });
 });
 
 describe('sidebarToggleLabel', () => {

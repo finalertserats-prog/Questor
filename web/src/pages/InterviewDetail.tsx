@@ -221,9 +221,9 @@ export function InterviewDetail() {
                 If it’s been a day, ask them to check their spam folder.
               </div>
             )}
-            <label>Candidate portal link</label>
+            <label htmlFor="portal-link">Candidate portal link</label>
             <div className="row">
-              <input readOnly value={invitation.portalUrl} style={{ flex: 1 }} />
+              <input id="portal-link" readOnly value={invitation.portalUrl} style={{ flex: 1 }} />
               <button className="btn secondary" type="button" onClick={() => void copyUrl()}>
                 <Icon name={copied ? 'check' : 'copy'} size={16} />{copied ? 'Copied!' : 'Copy'}
               </button>
@@ -250,9 +250,9 @@ export function InterviewDetail() {
         )}
 
         <div style={{ marginTop: 16 }}>
-          <label>Schedule</label>
+          <label htmlFor="schedule-at">Schedule</label>
           <div className="row">
-            <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ flex: 1 }} />
+            <input id="schedule-at" type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ flex: 1 }} />
             <button type="button" className="btn secondary" onClick={schedule} disabled={busyAction !== null || !scheduleAt}>
               <Icon name={busyAction === 'schedule' ? 'hourglass' : 'schedule'} size={16} />
               {busyAction === 'schedule' ? 'Saving…' : 'Save'}

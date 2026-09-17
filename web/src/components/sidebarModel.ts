@@ -87,10 +87,20 @@ export function brandDisplay(mode: SidebarMode): BrandDisplay {
   };
 }
 
-/** Classes for the app shell, which is what the CSS keys the rail layout off. */
-export function shellClassName(mode: SidebarMode): string {
-  return mode === 'collapsed' ? 'app is-rail' : 'app';
+/**
+ * Classes for the app shell, which is what the CSS keys the rail layout off.
+ * `animating` is true only for the moment after the reader toggles the rail:
+ * the sidebar's width transition is scoped to it, so no other layout change
+ * (a resize across the drawer breakpoint, a full-page capture) replays the
+ * sidebar growing from nothing with its contents spilling over the page.
+ */
+export function shellClassName(mode: SidebarMode, animating = false): string {
+  const classes = mode === 'collapsed' ? ['app', 'is-rail'] : ['app'];
+  return (animating ? [...classes, 'is-rail-animating'] : classes).join(' ');
 }
+
+/** How long the rail's width transition runs; styles/sidebar.css uses the same. */
+export const RAIL_TRANSITION_MS = 180;
 
 /** What the collapse control offers to do next, for its label and tooltip. */
 export function sidebarToggleLabel(mode: SidebarMode): string {

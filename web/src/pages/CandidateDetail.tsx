@@ -423,16 +423,16 @@ export function CandidateDetail() {
             <input id="interview-persona" value={personaName} onChange={(e) => setPersonaName(e.target.value)} required />
           </div>
           <div>
-            <label>Tone</label>
-            <select value={tone} onChange={(e) => setTone(e.target.value as typeof tone)}>
+            <label htmlFor="interview-tone">Tone</label>
+            <select id="interview-tone" value={tone} onChange={(e) => setTone(e.target.value as typeof tone)}>
               <option value="warm">warm</option>
               <option value="neutral">neutral</option>
               <option value="formal">formal</option>
             </select>
           </div>
           <div>
-            <label>Provider</label>
-            <select value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
+            <label htmlFor="interview-provider">Provider</label>
+            <select id="interview-provider" value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
               <option value="hosted">hosted</option>
               <option value="teams">teams</option>
               <option value="zoom">zoom</option>
@@ -446,7 +446,8 @@ export function CandidateDetail() {
               same. Stating what the product actually does is the honest control
               here; a toggle for a capability that does not exist is not. */}
           <div>
-            <label>Record of the interview</label>
+            {/* A caption, not a form label: there is no control here to name. */}
+            <div className="field-label">Record of the interview</div>
             <div className="muted small" style={{ marginTop: 5 }}>
               A written transcript, kept and reviewed by a person. No audio is stored.
             </div>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { barRadius, chartTone, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks, truncationNote, TRUNCATION_NOTE } from '../src/components/dashboardModel';
+import { barRadius, chartTone, countAxis, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks, truncationNote, TRUNCATION_NOTE } from '../src/components/dashboardModel';
 
 describe('truncationNote', () => {
   it('says the charts were drawn from a capped set when the server capped one', () => {
@@ -69,6 +69,44 @@ describe('scaleLength', () => {
 
   it('draws nothing for a zero or negative value', () => {
     expect([scaleLength(0, 10, 120), scaleLength(-3, 10, 120)]).toEqual([0, 0]);
+  });
+});
+
+describe('countAxis', () => {
+  const counts = Array.from({ length: 1000 }, (_, i) => i + 1);
+
+  it('labels a count axis in whole numbers', () => {
+    // The dashboard's own case: five interviews drawn against 0, 1.3, 2.5, 3.8, 5.
+    expect(countAxis(5).ticks).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('never produces a fractional tick for any count up to a thousand', () => {
+    expect(counts.filter((n) => !countAxis(n).ticks.every(Number.isInteger))).toEqual([]);
+  });
+
+  it('always reaches the largest value', () => {
+    expect(counts.filter((n) => countAxis(n).max < n)).toEqual([]);
+  });
+
+  it('keeps the axis to a handful of steps', () => {
+    expect(counts.filter((n) => countAxis(n).ticks.length > 7)).toEqual([]);
+  });
+
+  it('ends the axis on its last tick', () => {
+    const axis = countAxis(51);
+    expect(axis.ticks.at(-1)).toBe(axis.max);
+  });
+
+  it('steps by a round integer for larger counts', () => {
+    expect(countAxis(51).ticks).toEqual([0, 10, 20, 30, 40, 50, 60]);
+  });
+
+  it('does not strand a series under an axis it can never reach', () => {
+    expect(countAxis(30).max).toBe(30);
+  });
+
+  it('draws a 0 to 1 axis for an empty series so the chart never divides by zero', () => {
+    expect(countAxis(0)).toEqual({ max: 1, ticks: [0, 1] });
   });
 });
 

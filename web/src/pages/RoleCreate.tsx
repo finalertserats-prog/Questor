@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
@@ -24,6 +24,7 @@ export function RoleCreate() {
   const { user } = useAuth();
   const [source, setSource] = useState<Source>('paste');
   const [requisitionId, setRequisitionId] = useState('');
+  const fieldId = useId();
   const [sourceText, setSourceText] = useState('');
   const [title, setTitle] = useState('');
   const [useLlm, setUseLlm] = useState(true);
@@ -108,14 +109,14 @@ export function RoleCreate() {
           </label>
         </fieldset>
 
-        <label>Role title (optional — inferred from the {source === 'ats' ? 'requisition' : 'JD'} if left blank)</label>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
+        <label htmlFor={`${fieldId}-title`}>Role title (optional — inferred from the {source === 'ats' ? 'requisition' : 'JD'} if left blank)</label>
+        <input id={`${fieldId}-title`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
 
         {source === 'ats' ? (
           <>
-            <label htmlFor="ats-requisition-id">ATS requisition id</label>
+            <label htmlFor={`${fieldId}-req`}>ATS requisition id</label>
             <input
-              id="ats-requisition-id"
+              id={`${fieldId}-req`}
               value={requisitionId}
               onChange={(e) => setRequisitionId(e.target.value)}
               placeholder="e.g. REQ-1042"
@@ -127,8 +128,9 @@ export function RoleCreate() {
           </>
         ) : (
           <>
-            <label>Job description</label>
+            <label htmlFor={`${fieldId}-jd`}>Job description</label>
             <textarea
+              id={`${fieldId}-jd`}
               value={sourceText}
               onChange={(e) => setSourceText(e.target.value)}
               placeholder="Paste the full job description here…"

@@ -362,7 +362,11 @@ a.kpi-link:hover .kpi-icon::after {
 
 /* --- Tables on narrow screens --------------------------------------------- */
 
+/* position: relative so the visually hidden "Actions" header is contained by
+   this scroller. Without it that absolutely positioned text was placed against
+   the page and widened the whole document past a phone's viewport. */
 .dash-table-wrap {
+  position: relative;
   overflow-x: auto;
 }
 
