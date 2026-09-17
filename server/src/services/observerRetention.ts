@@ -49,15 +49,15 @@ export async function deleteCandidateObservations(tx: Prisma.TransactionClient, 
  */
 export async function purgeExpiredObservations(now: Date, days: number): Promise<number> {
   const cutoff = new Date(now.getTime() - days * 86_400_000);
-  const due = await prisma.roundObservation.findMany({
-    where: {
-      legalHold: false,
-      status: { not: 'LISTENING' },
-      OR: [{ endedAt: { lte: cutoff } }, { endedAt: null, createdAt: { lte: cutoff } }],
-      round: { pipeline: { candidate: { interviews: { none: { legalHold: true } }, artifacts: { none: { legalHold: true } } } } },
-    },
-    select: { id: true, tenantId: true },
-  });
+  // One predicate for selecting and for deleting: a hold placed, or capture
+  // started, between the two must still win.
+  const dueWhere: Prisma.RoundObservationWhereInput = {
+    legalHold: false,
+    status: { not: 'LISTENING' },
+    OR: [{ endedAt: { lte: cutoff } }, { endedAt: null, createdAt: { lte: cutoff } }],
+    round: { pipeline: { candidate: { interviews: { none: { legalHold: true } }, artifacts: { none: { legalHold: true } } } } },
+  };
+  const due = await prisma.roundObservation.findMany({ where: dueWhere, select: { id: true, tenantId: true } });
 
   let purged = 0;
   for (const row of due) {
@@ -65,9 +65,7 @@ export async function purgeExpiredObservations(now: Date, days: number): Promise
     const count: Counter = async (label, fn) => { deleted[label] = (deleted[label] ?? 0) + (await fn()).count; };
     try {
       await prisma.$transaction(async (tx) => {
-        // Re-checked at the moment of deletion: a hold placed since the
-        // selection above must still win.
-        const still = await tx.roundObservation.count({ where: { id: row.id, legalHold: false } });
+        const still = await tx.roundObservation.count({ where: { AND: [{ id: row.id }, dueWhere] } });
         if (still === 1) await deleteObservations(tx, [row.id], count);
       });
     } catch (err) {
