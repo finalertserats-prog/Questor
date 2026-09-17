@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client';
 import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { CandidateFeedbackPanel } from '../components/CandidateFeedbackPanel';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton, Skeleton } from '../components/Skeleton';
 import {
@@ -475,6 +476,10 @@ export function AssessmentView() {
           </div>
         )}
       </div>
+
+      {/* After the review on purpose: feedback can only be drafted once a
+          person has completed one. Keyed so a different assessment starts clean. */}
+      {id && <CandidateFeedbackPanel key={id} assessmentId={id} />}
     </div>
   );
 }

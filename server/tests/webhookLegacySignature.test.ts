@@ -22,7 +22,16 @@ let adminToken = '';
 let tenantId = '';
 const auth = () => ({ Authorization: `Bearer ${adminToken}` });
 const calls: Array<{ headers: Record<string, string>; body: string }> = [];
-const settle = () => new Promise((r) => setTimeout(r, 50));
+// The first attempt runs in the background after emitEvent returns. Wait until
+// every delivery has finished it (delivered, or a failure recorded) instead of a
+// fixed pause, which a loaded machine outran.
+const settle = async (timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (await prisma.webhookDelivery.count({ where: { status: 'pending', attempts: 0 } }) > 0) {
+    if (Date.now() > deadline) throw new Error('webhook deliveries did not settle');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
 
 beforeAll(async () => {
   await prisma.webhookDelivery.deleteMany();

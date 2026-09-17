@@ -144,6 +144,7 @@ portalRouter.post('/:token/feedback-opt-in', asyncHandler(async (req, res) => {
   const { optIn, created } = await recordFeedbackOptIn({
     sessionId: inv.sessionId,
     wantsFeedback: body.wantsFeedback,
+    via: 'end-of-interview',
   });
   // 200 rather than 201 on a replay, with the answer already on file. The
   // candidate sees a consistent confirmation either way.

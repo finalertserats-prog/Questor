@@ -1,4 +1,3 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { prisma, parseJson } from '../db.js';
 import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
@@ -6,6 +5,7 @@ import { logAudit } from './audit.js';
 import { candidateFeedbackEnabledForTenant } from './candidateFeedbackPolicy.js';
 import { buildFeedbackDraft } from './candidateFeedbackDraft.js';
 import type { AssessmentResult } from '../domain/types.js';
+import { DAY_MS, hashCandidateLinkToken, mintCandidateLinkToken, resolveCandidateLink } from './candidateLinkToken.js';
 
 /**
  * The candidate's own decision about written feedback, and the single-purpose
@@ -17,6 +17,10 @@ import type { AssessmentResult } from '../domain/types.js';
  *   DRAFT. Approval and sending stay exactly where they were, behind
  *   `assessment:review` in routes/assessments.ts. This module has no email path
  *   at all, which is the structural version of the promise.
+ *
+ *   FEEDBACK GOES ONLY TO A "YES". No answer on file is not consent: the send
+ *   route refuses it (candidateFeedbackPolicy.ts), and the hiring team can ask
+ *   by email (candidateFeedbackOptInRequest.ts), which records the answer here.
  *
  *   A RECORDED "NO" IS FINAL. The first answer is the record; replays return it
  *   rather than overwrite it. A double submit, a back button or a forged repeat
@@ -31,42 +35,14 @@ export const OPT_IN_NO = 'NO';
 /** Long enough that the link is worth something for a real job search, short enough to age out. */
 export const HUMAN_REQUEST_TTL_DAYS = 30;
 
-const DAY_MS = 24 * 60 * 60_000;
-
 /** Shape a caller may safely hand to the candidate's browser. */
 export interface OptInView {
   choice: string;
   decidedAt: string;
 }
 
-/**
- * 256 bits from the CSPRNG, base64url so it survives being pasted out of a mail
- * client. Unguessable is the whole access control here: there is no second
- * factor and no login behind it.
- */
-export function mintHumanRequestToken(): string {
-  return randomBytes(32).toString('base64url');
-}
-
-/**
- * Only the hash is stored. The link lives in the candidate's mailbox; a leaked
- * database backup or an over-broad support query should not also hand over a
- * working one. It is a high-entropy random value rather than a password, so a
- * single SHA-256 is the right primitive — there is nothing to brute-force.
- */
-export function hashHumanRequestToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
-
-/** Rejects anything that is not shaped like one of our tokens before it reaches the database. */
-const TOKEN_SHAPE = /^[A-Za-z0-9_-]{24,128}$/;
-
-function hashesMatch(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
-}
+/** Where an answer came from, recorded with it for the audit trail. */
+export type OptInSource = 'end-of-interview' | 'emailed-request';
 
 // ---------------------------------------------------------------------------
 // Opt-in
@@ -101,6 +77,7 @@ export async function getOptIn(sessionId: string) {
 export async function recordFeedbackOptIn(opts: {
   sessionId: string;
   wantsFeedback: boolean;
+  via: OptInSource;
 }): Promise<{ optIn: { choice: string; decidedAt: Date }; created: boolean }> {
   const session = await prisma.interviewSession.findUnique({
     where: { id: opts.sessionId },
@@ -147,10 +124,12 @@ export async function recordFeedbackOptIn(opts: {
     tenantId: session.tenantId,
     actorType: 'system',
     actorId: 'candidate-portal',
-    action: 'feedback.optin.recorded',
+    // Two actions rather than one with a field, so "who opted out" is a filter
+    // on the audit log and not a JSON search.
+    action: choice === OPT_IN_YES ? 'feedback.opted_in' : 'feedback.opted_out',
     entityType: 'InterviewSession',
     entityId: session.id,
-    after: { choice, decidedAt: optIn.decidedAt, decidedBy: 'candidate' },
+    after: { choice, decidedAt: optIn.decidedAt, decidedBy: 'candidate', via: opts.via },
   });
 
   if (choice === OPT_IN_YES) {
@@ -252,10 +231,8 @@ export async function prepareDraftForOptIn(sessionId: string): Promise<string> {
  * Issue the link that goes in the feedback email, returning the raw token to
  * the caller exactly once — it is never readable again from storage.
  *
- * Deliberately NOT the interview token. That one is consumed when the interview
- * finishes, it opens a portal that reads the candidate's own data, and it is
- * the credential for a surface that costs money per call. A link mailed out
- * afterwards needs none of that reach, so it gets none of it.
+ * Uses the shared scheme in candidateLinkToken.ts, which says why this is not
+ * the interview token.
  */
 export async function issueHumanRequestToken(opts: {
   sessionId: string;
@@ -264,8 +241,8 @@ export async function issueHumanRequestToken(opts: {
   now?: Date;
 }): Promise<string> {
   const now = opts.now ?? new Date();
-  const token = mintHumanRequestToken();
-  const tokenHash = hashHumanRequestToken(token);
+  const token = mintCandidateLinkToken();
+  const tokenHash = hashCandidateLinkToken(token);
   const expiresAt = new Date(now.getTime() + HUMAN_REQUEST_TTL_DAYS * DAY_MS);
 
   await prisma.candidateHumanRequest.upsert({
@@ -312,15 +289,12 @@ export interface ResolvedHumanRequest {
  * allowed to be a way of reading about a person.
  */
 export async function resolveHumanRequest(token: string, now = new Date()): Promise<ResolvedHumanRequest> {
-  if (!TOKEN_SHAPE.test(token)) throw new HttpError(404, 'This link is not valid.');
-
-  const tokenHash = hashHumanRequestToken(token);
-  const row = await prisma.candidateHumanRequest.findUnique({ where: { tokenHash } });
-  if (!row || !hashesMatch(row.tokenHash, tokenHash)) throw new HttpError(404, 'This link is not valid.');
-  if (row.expiresAt <= now) {
-    throw new HttpError(410, 'This link has expired. Please reply to your feedback email instead.');
-  }
-  return row;
+  return resolveCandidateLink({
+    token,
+    now,
+    findByHash: (tokenHash) => prisma.candidateHumanRequest.findUnique({ where: { tokenHash } }),
+    expiredMessage: 'This link has expired. Please reply to your feedback email instead.',
+  });
 }
 
 /**

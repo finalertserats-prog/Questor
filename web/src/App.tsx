@@ -39,6 +39,7 @@ import { About } from './pages/About';
 import { Contact } from './pages/Contact';
 import { ObserveInterview } from './pages/ObserveInterview';
 import { TalkToAPerson } from './pages/TalkToAPerson';
+import { FeedbackConsent } from './pages/FeedbackConsent';
 
 // Below this width the sidebar is an overlay drawer; above it, it is docked
 // beside the page. Kept in step with the breakpoint in styles/sidebar.css.
@@ -316,6 +317,9 @@ export function App() {
       {/* Followed from a feedback email. Unauthenticated by design: asking to
           speak to a person must not require making an account. */}
       <Route path="/talk-to-a-person/:token" element={<TalkToAPerson />} />
+      {/* Followed from a recruiter's "would you like feedback?" email. Same
+          reasoning: answering must not require an account. */}
+      <Route path="/feedback-consent/:token" element={<FeedbackConsent />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
       <Route path="/roles/new" element={<Protected><RoleCreate /></Protected>} />
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />

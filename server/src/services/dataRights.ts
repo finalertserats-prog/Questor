@@ -119,6 +119,7 @@ async function deleteSessionCascade(
   // person. Both name the candidate and both hold foreign keys onto the session.
   await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+  await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   // Turn.text is the canonical transcript — the single most sensitive record
   // here. If this line does not run, nothing else in the sweep matters.
   await count('turns', () => tx.turn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
@@ -236,6 +237,7 @@ export async function eraseCandidate(o: {
     // the delete below.
     await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId: o.candidateId } }));
+    await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
 
@@ -455,6 +457,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
         await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId } }));
         await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId } }));
+        await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));
       });
     } catch (err) {

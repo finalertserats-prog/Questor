@@ -29,6 +29,12 @@ async function seededAssessment() {
       resultJson: JSON.stringify(result),
     },
   });
+  // These tests are about the review, approval and delivery gates, so the
+  // candidate has said yes. Consent itself is covered in
+  // candidateFeedbackConsent.test.ts.
+  await prisma.candidateFeedbackOptIn.create({
+    data: { sessionId: ids.sessionId, candidateId: ids.candidateId, tenantId: ids.tenantId, choice: 'YES' },
+  });
   return { ...ids, auth: login.body.token as string, assessmentId: assessment.id, result };
 }
 

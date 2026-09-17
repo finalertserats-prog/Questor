@@ -85,7 +85,7 @@ stateDiagram-v2
 
 ## Consent, retention, erasure, legal hold
 
-Consent is captured on sessions and controls observation/transcript behavior. Retention is session-centered in `services/dataRights.ts` because turns, assessments, artifacts, reviews, feedback, and model executions all belong to the recruitment purpose. Erasure deletes candidate-derived data in dependency order and keeps a non-personal audit record. Legal hold on a session or artifact blocks retention purge and explicit erasure.
+Consent is captured on sessions and controls observation/transcript behavior. Written candidate feedback is sent only after an explicit yes (`CandidateFeedbackOptIn`); no answer on file blocks sending as firmly as a no, and a recruiter can email a never-asked candidate the question (`services/candidateFeedbackOptInRequest.ts`). Retention is session-centered in `services/dataRights.ts` because turns, assessments, artifacts, reviews, feedback, and model executions all belong to the recruitment purpose. Erasure deletes candidate-derived data in dependency order and keeps a non-personal audit record. Legal hold on a session or artifact blocks retention purge and explicit erasure.
 
 ## Trust boundaries and tokens
 
@@ -95,7 +95,7 @@ Consent is captured on sessions and controls observation/transcript behavior. Re
 - API to webhook receivers: signed outbound requests, public URL checks, durable retries.
 - Operator shell to database: backups and drills contain candidate personal data.
 
-Invitation tokens are hashed for lookup and sealed for display/resend in `services/invitations.ts`. The seal key is derived from `AUTH_SECRET`, so rotation makes stored sealed links unopenable. Signup-decision and feedback/human-request tokens are hash-only. Webhooks always carry the timestamped v2 signature. The original v1 header goes only to webhooks with `sendLegacySignature` on (new webhooks default off; rows that predate the column were backfilled on) and to none while `WEBHOOK_V1_SIGNATURE=off`.
+Invitation tokens are hashed for lookup and sealed for display/resend in `services/invitations.ts`. The seal key is derived from `AUTH_SECRET`, so rotation makes stored sealed links unopenable. Signup-decision tokens and the two post-interview candidate links (talk-to-a-person and feedback opt-in request, one scheme in `services/candidateLinkToken.ts`) are hash-only. Webhooks always carry the timestamped v2 signature. The original v1 header goes only to webhooks with `sendLegacySignature` on (new webhooks default off; rows that predate the column were backfilled on) and to none while `WEBHOOK_V1_SIGNATURE=off`.
 
 ## Web client
 

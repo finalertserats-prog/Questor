@@ -273,6 +273,34 @@ describe('a candidate nobody has asked yet', () => {
     expect(journey.decision.candidateFeedback.answerLabel).toMatch(/not a refusal/i);
     expect(journey.decision.candidateFeedback.humanRequested).toBe(false);
   });
+
+  it('says feedback cannot go to them until they say yes', () => {
+    expect(journey.decision.candidateFeedback.answerLabel).toMatch(/only sent after they say yes/i);
+  });
+});
+
+describe('approved feedback for a candidate who has not said yes', () => {
+  const approvedFor = (optIn: { choice: string; decidedAt: string } | null) => buildJourney(input({
+    candidateFeedback: {
+      optIn,
+      draft: { status: 'APPROVED', candidateRequested: false, assessmentId: 'assess-1' },
+      humanRequest: { requested: false, requestedAt: null },
+    },
+  }));
+
+  it('is not described as waiting to be sent when nobody asked them', () => {
+    expect(approvedFor(null).decision.candidateFeedback.draftLabel).toMatch(/cannot be sent until the candidate says yes/i);
+  });
+
+  it('is not described as waiting to be sent when they declined', () => {
+    expect(approvedFor({ choice: 'NO', decidedAt: '2026-10-02T10:00:00.000Z' }).decision.candidateFeedback.draftLabel)
+      .toMatch(/cannot be sent/i);
+  });
+
+  it('is described as waiting to be sent once they said yes', () => {
+    expect(approvedFor({ choice: 'YES', decidedAt: '2026-10-02T10:00:00.000Z' }).decision.candidateFeedback.draftLabel)
+      .toBe('Approved and waiting to be sent.');
+  });
 });
 
 describe('a candidate who asked to speak to a person', () => {
