@@ -1,8 +1,8 @@
-import { createSign } from 'node:crypto';
 import { prisma } from '../../db.js';
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
-import { readEnv, type MeetingAdapterId } from './connectorEnv.js';
+import type { MeetingAdapterId } from './connectorEnv.js';
+import { meetTokenRequest, teamsTokenRequest, UNUSABLE_GOOGLE_KEY, zoomTokenRequest, type TokenRequest } from './tokens.js';
 
 // "Test connection" for meeting adapters: the lightest call that proves the
 // credentials authenticate — obtaining an OAuth token — and nothing more. No
@@ -13,10 +13,6 @@ import { readEnv, type MeetingAdapterId } from './connectorEnv.js';
 // a live access token; both are discarded here so no caller can leak them.
 
 export const VENDOR_TIMEOUT_MS = 8_000;
-export const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-export const GOOGLE_MEET_SCOPE = 'https://www.googleapis.com/auth/meetings.space.created';
-const GRAPH_DEFAULT_SCOPE = 'https://graph.microsoft.com/.default';
-const JWT_LIFETIME_SECONDS = 300;
 
 export interface ConnectionResult {
   readonly ok: boolean;
@@ -31,22 +27,17 @@ const VENDOR_NAME: Readonly<Record<VendorAdapterId, string>> = {
   meet: 'Google',
 };
 
-// Said on success so a green test is not mistaken for "interviews now run in Zoom".
-const NOT_YET_WIRED = 'Interviews keep using the hosted Questor room until meeting creation for this adapter is built.';
+// Said on success so a green test is not mistaken for "interviews now run in
+// Zoom": the AI interview stays in the hosted room; vendors create the links
+// for human rounds.
+const NOT_YET_WIRED = 'AI interviews keep using the hosted Questor room; this connector creates meeting links for human interview rounds once it is selected and its organiser is set.';
 
 const REJECTION_HINT: Readonly<Record<VendorAdapterId, string>> = {
   zoom: 'Zoom rejected these credentials. Check ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID and ZOOM_CLIENT_SECRET, make sure the Server-to-Server OAuth app is activated, then restart the server.',
   teams: 'Microsoft rejected these credentials. Check MS_GRAPH_TENANT_ID, MS_GRAPH_CLIENT_ID and MS_GRAPH_CLIENT_SECRET (use the secret\'s Value, not its ID, and check it has not expired), then restart the server.',
-  meet: 'Google rejected the service account. Check the key, that domain-wide delegation grants the Meet scope to this service account\'s client ID, and that GOOGLE_IMPERSONATED_USER is a user in your Workspace domain, then restart the server.',
+  meet: 'Google rejected the service account. Check the key, that domain-wide delegation grants the Calendar events scope to this service account\'s client ID, and that GOOGLE_IMPERSONATED_USER is a user in your Workspace domain, then restart the server.',
 };
 
-interface TokenRequest {
-  readonly url: string;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body: string;
-}
-
-const FORM = 'application/x-www-form-urlencoded';
 
 function rejectionMessage(adapter: VendorAdapterId, status: number): string {
   const vendor = VENDOR_NAME[adapter];
@@ -91,59 +82,6 @@ async function requestToken(adapter: VendorAdapterId, req: TokenRequest): Promis
   return { ok: true, message: `Connected: ${vendor} issued an access token for these credentials. ${NOT_YET_WIRED}` };
 }
 
-function zoomRequest(): TokenRequest {
-  const basic = Buffer.from(`${readEnv('ZOOM_CLIENT_ID')}:${readEnv('ZOOM_CLIENT_SECRET')}`).toString('base64');
-  const query = new URLSearchParams({ grant_type: 'account_credentials', account_id: readEnv('ZOOM_ACCOUNT_ID') });
-  return {
-    url: `https://zoom.us/oauth/token?${query.toString()}`,
-    headers: { authorization: `Basic ${basic}`, 'content-type': FORM },
-    body: '',
-  };
-}
-
-function teamsRequest(): TokenRequest {
-  const body = new URLSearchParams({
-    client_id: readEnv('MS_GRAPH_CLIENT_ID'),
-    client_secret: readEnv('MS_GRAPH_CLIENT_SECRET'),
-    scope: GRAPH_DEFAULT_SCOPE,
-    grant_type: 'client_credentials',
-  });
-  return {
-    url: `https://login.microsoftonline.com/${encodeURIComponent(readEnv('MS_GRAPH_TENANT_ID'))}/oauth2/v2.0/token`,
-    headers: { 'content-type': FORM },
-    body: body.toString(),
-  };
-}
-
-/** Returns null when the private key cannot be used to sign. */
-function meetRequest(): TokenRequest | null {
-  // .env files usually hold the PEM on one line with literal "\n" sequences,
-  // exactly as it appears in Google's JSON key file.
-  const privateKey = readEnv('GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY').replace(/\\n/g, '\n');
-  const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const claims = Buffer.from(JSON.stringify({
-    iss: readEnv('GOOGLE_SERVICE_ACCOUNT_EMAIL'),
-    sub: readEnv('GOOGLE_IMPERSONATED_USER'),
-    scope: GOOGLE_MEET_SCOPE,
-    aud: GOOGLE_TOKEN_URL,
-    iat: now,
-    exp: now + JWT_LIFETIME_SECONDS,
-  })).toString('base64url');
-
-  let signature: string;
-  try {
-    signature = createSign('RSA-SHA256').update(`${header}.${claims}`).sign(privateKey).toString('base64url');
-  } catch {
-    return null;
-  }
-  const body = new URLSearchParams({
-    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-    assertion: `${header}.${claims}.${signature}`,
-  });
-  return { url: GOOGLE_TOKEN_URL, headers: { 'content-type': FORM }, body: body.toString() };
-}
-
 async function testHosted(): Promise<ConnectionResult> {
   try {
     await prisma.$queryRaw`SELECT 1`;
@@ -170,13 +108,13 @@ export async function testMeetingConnection(id: MeetingAdapterId): Promise<Conne
     case 'hosted':
       return testHosted();
     case 'zoom':
-      return requestToken('zoom', zoomRequest());
+      return requestToken('zoom', zoomTokenRequest());
     case 'teams':
-      return requestToken('teams', teamsRequest());
+      return requestToken('teams', teamsTokenRequest());
     case 'meet': {
-      const req = meetRequest();
+      const req = meetTokenRequest();
       if (!req) {
-        return { ok: false, message: 'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY could not be read as a private key. Paste the private_key value from the JSON key file (keeping its \\n sequences), then restart the server.' };
+        return { ok: false, message: UNUSABLE_GOOGLE_KEY };
       }
       return requestToken('meet', req);
     }

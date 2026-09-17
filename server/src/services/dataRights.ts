@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { clearExpiredMeetingLinks, collectVendorMeetings, removeVendorMeetings } from './roundMeeting.js';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
@@ -218,8 +219,13 @@ export async function eraseCandidate(o: {
 
   const deleted: Record<string, number> = {};
   const count = makeCounter(deleted);
+  // Read inside the transaction, just before the rows go: they are the only
+  // record of which vendor meetings belong to this candidate. A creation still
+  // in flight finds its round gone and removes its own meeting.
+  let vendorMeetings: Awaited<ReturnType<typeof collectVendorMeetings>> = [];
 
   await prisma.$transaction(async (tx) => {
+    vendorMeetings = await collectVendorMeetings(o.candidateId, o.tenantId, tx);
     await deleteSessionCascade(tx, sessionIds, count);
     await deleteProfileCascade(tx, o.candidateId, count);
     // Artifacts attached to the candidate rather than to a session (résumé
@@ -238,6 +244,12 @@ export async function eraseCandidate(o: {
     await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
+
+  // After the commit, and best effort: a vendor outage must not block erasure.
+  // Booked meetings for an erased candidate have no purpose left.
+  if (vendorMeetings.length > 0) {
+    deleted.externalMeetings = await removeVendorMeetings(vendorMeetings);
+  }
 
   // Retained intentionally, and free of personal data: the free-text reason
   // is not stored here, because a sentence like "asked for deletion after a
@@ -642,8 +654,9 @@ export async function purgeExpiredSignupRequests(now = new Date()): Promise<numb
 export async function runRetentionSweep(now = new Date()): Promise<PurgeResult> {
   const sessions = await purgeExpiredSessions(now);
   const roundNotes = await purgeExpiredRoundNotes(now);
+  const roundMeetingLinks = await clearExpiredMeetingLinks(new Date(now.getTime() - retentionDays() * DAY_MS));
   const signupRequests = await purgeExpiredSignupRequests(now);
-  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes, signupRequests } };
+  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes, roundMeetingLinks, signupRequests } };
   // Logged unconditionally and on every outcome. Logging only when something was
   // deleted makes a sweep that has failed on 100% of rows for months look
   // identical to a sweep with nothing to do — and under GDPR Art. 5(2) you must

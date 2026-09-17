@@ -13,6 +13,10 @@ import { logger } from '../logger.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
+import {
+  createMeeting, initialMeetingFields, isStaleCreation, tenantMeetingProvider, MEETING_STATUS, type MeetingOutcome,
+} from '../services/roundMeeting.js';
+import { meetingUrlSchema, durationSchema } from './roundMeetingSchemas.js';
 
 /**
  * The medallion pipeline: one candidate moving through ordered stages for one
@@ -22,9 +26,9 @@ import {
 export const pipelinesRouter = Router();
 pipelinesRouter.use(authenticate);
 
-type PipelineWithRounds = CandidatePipeline & { rounds: InterviewRound[] };
+export type PipelineWithRounds = CandidatePipeline & { rounds: InterviewRound[] };
 
-function presentRound(round: InterviewRound) {
+export function presentRound(round: InterviewRound) {
   return {
     id: round.id,
     stageKey: round.stageKey,
@@ -45,6 +49,18 @@ function presentRound(round: InterviewRound) {
     notes: round.notes,
     completedAt: round.completedAt,
     createdAt: round.createdAt,
+    durationMinutes: round.durationMinutes,
+    // The vendor's meeting id stays server-side: nothing in the UI needs it.
+    // A human round from before meetings existed has no status; it simply
+    // needs a link. The AI round runs in the Questor room and has none.
+    meeting: round.conductedBy !== 'HUMAN' ? null : {
+      provider: round.meetingProvider,
+      status: round.meetingStatus ?? 'NEEDS_LINK',
+      url: round.meetingUrl,
+      error: round.meetingError,
+      // A creation that never finished (server restart): offer the fallbacks again.
+      stuck: isStaleCreation(round),
+    },
   };
 }
 
@@ -69,7 +85,7 @@ function presentPipeline(pipeline: PipelineWithRounds) {
 const withRounds = { rounds: { orderBy: { scheduledAt: 'asc' as const } } };
 
 /** A pipeline in the caller's organisation AND object scope; 404 otherwise. */
-async function loadPipeline(req: Request, id: string): Promise<PipelineWithRounds> {
+export async function loadPipeline(req: Request, id: string): Promise<PipelineWithRounds> {
   const pipeline = await prisma.candidatePipeline.findFirst({ where: { id, tenantId: req.auth!.tenantId }, include: withRounds });
   if (!pipeline) throw new HttpError(404, 'Pipeline not found');
   // Pipelines inherit the candidate's scope rather than defining their own.
@@ -81,7 +97,7 @@ async function reload(id: string): Promise<PipelineWithRounds> {
   return prisma.candidatePipeline.findUniqueOrThrow({ where: { id }, include: withRounds });
 }
 
-function labelOf(stages: readonly PipelineStage[], key: string): string {
+export function labelOf(stages: readonly PipelineStage[], key: string): string {
   return stages.find((stage) => stage.key === key)?.label ?? key;
 }
 
@@ -173,7 +189,7 @@ const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.char
  * was actually delivered — the console provider delivers nothing, and saying
  * "sent" regardless is how links silently go unseen.
  */
-async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; link: string; aiRound: boolean }): Promise<SchedulingNotice> {
+async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
   const email = getEmail();
   if (!email.delivers) {
     return { delivered: false, link: o.link, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Use the link here.` };
@@ -186,18 +202,28 @@ async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt:
   const intro = o.aiRound
     ? `The ${label} AI interview is scheduled for ${when}. You can observe it live here:`
     : `The ${label} interview is scheduled for ${when}. The candidate and their pipeline are here:`;
+  const join = o.meetingUrl ? `\nMeeting link: ${o.meetingUrl}` : '';
+  const joinHtml = o.meetingUrl ? `<p>Meeting link: <a href="${escapeHtml(o.meetingUrl)}">${escapeHtml(o.meetingUrl)}</a></p>` : '';
   try {
     await email.send(brandedEmail({
       to: o.to,
       subject: `${headerSafe(label)} interview scheduled`,
-      text: `${intro}\n${o.link}`,
-      html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(o.link)}">${escapeHtml(o.link)}</a></p>`,
+      text: `${intro}\n${o.link}${join}`,
+      html: `<p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(o.link)}">${escapeHtml(o.link)}</a></p>${joinHtml}`,
     }));
     return { delivered: true, link: o.link, deliveryNote: `Sent to ${o.to}.` };
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Round scheduling email failed');
     return { delivered: false, link: o.link, deliveryNote: 'The email could not be sent. Use the link here.' };
   }
+}
+
+async function firstMeeting(round: InterviewRound, stageLabel: string, candidateId: string): Promise<MeetingOutcome> {
+  if (round.meetingStatus === MEETING_STATUS.CREATING) return createMeeting(round, { stageLabel, candidateId });
+  if (round.meetingStatus === MEETING_STATUS.MANUAL) {
+    return { ok: true, provider: 'manual', status: MEETING_STATUS.MANUAL, url: round.meetingUrl, message: 'Your meeting link was saved.' };
+  }
+  return { ok: false, provider: 'manual', status: MEETING_STATUS.NEEDS_LINK, url: null, message: 'No meeting provider is selected. Add a meeting link for this round.' };
 }
 
 const roundSchema = z.object({
@@ -207,6 +233,9 @@ const roundSchema = z.object({
   scheduledAt: z.string().datetime({ offset: true }),
   sessionId: z.string().min(1).optional(),
   interviewers: z.array(z.string().trim().min(1).max(120)).max(10).optional(),
+  durationMinutes: durationSchema.optional(),
+  // A link the recruiter already has. Human rounds only; skips vendor creation.
+  meetingUrl: meetingUrlSchema.optional(),
 });
 
 pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
@@ -221,6 +250,9 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   const stage = parseStages(pipeline.stagesJson).find((s) => s.key === body.stageKey);
   const roles = stage ? roundRolesFor(stage.kind) : null;
   if (!stage || !roles) throw new HttpError(409, `${stage?.label ?? 'This stage'} is not an interview stage.`);
+  const humanRound = roles.conductedBy === 'HUMAN';
+  if (body.meetingUrl && !humanRound) throw new HttpError(400, 'The AI interview runs in the Questor room; it takes no meeting link.');
+  const meetingFields = humanRound ? initialMeetingFields(await tenantMeetingProvider(tenantId), body.meetingUrl) : {};
 
   if (body.sessionId) {
     const session = await prisma.interviewSession.findFirst({
@@ -267,6 +299,8 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         conductedBy: roles.conductedBy, aiObserver: roles.aiObserver, hrMayObserve: roles.hrMayObserve,
         sessionId: body.sessionId ?? null, interviewersJson: JSON.stringify(body.interviewers ?? []),
         scheduledAt: new Date(body.scheduledAt), createdById: req.auth!.userId,
+        ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}),
+        ...meetingFields,
       },
     });
     return { round: created, noticeAdded };
@@ -289,15 +323,29 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     after: { roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy, scheduledAt: body.scheduledAt },
   });
 
+  // The booking is saved above; the meeting is set up now, outside the
+  // transaction, and a failure only changes what the recruiter is told.
+  const meeting = humanRound ? await firstMeeting(round, stage.label, pipeline.candidateId) : null;
+  if (meeting) {
+    await logAudit({
+      tenantId, actorType: 'user', actorId: req.auth!.userId,
+      action: 'pipeline.round_meeting', entityType: 'CandidatePipeline', entityId: pipeline.id,
+      after: { roundId: round.id, operation: 'create', provider: meeting.provider, status: meeting.status },
+    });
+  }
+
   // HR gets the link they need: the live observe page for the AI interview,
   // otherwise the candidate's page, where the pipeline lives.
   const aiRound = round.conductedBy === 'AI' && round.sessionId !== null;
   const link = aiRound
     ? `${config.webOrigin}/interviews/${round.sessionId}/observe`
     : `${config.webOrigin}/candidates/${pipeline.candidateId}`;
-  const notification = await notifyScheduler({ to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt, link, aiRound });
+  const notification = await notifyScheduler({
+    to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt, link, aiRound, meetingUrl: meeting?.url ?? null,
+  });
 
-  res.status(201).json({ round: presentRound(round), notification });
+  const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
+  res.status(201).json({ round: presentRound(saved), notification, meeting });
 }));
 
 const completeSchema = z.object({

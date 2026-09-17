@@ -8,6 +8,7 @@ import { rateLimit } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
 import { orgsRouter } from './routes/orgs.js';
 import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
+import { roundMeetingsRouter } from './routes/roundMeetings.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
 import { candidatesRouter } from './routes/candidates.js';
@@ -142,6 +143,8 @@ export function createApp() {
   app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/interviews', interviewsRouter);
+  // Before pipelinesRouter, whose GET /:id would otherwise claim /meeting-provider.
+  app.use('/api/pipelines', roundMeetingsRouter);
   app.use('/api/pipelines', pipelinesRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);

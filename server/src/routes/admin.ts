@@ -12,6 +12,8 @@ import { getLlm } from '../providers/llm/index.js';
 import { getEmail } from '../providers/email/index.js';
 import { getAts } from '../providers/ats/index.js';
 import { allMeetingCapabilities } from '../providers/meeting/index.js';
+import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
+import { ROUND_MEETING_PROVIDERS } from '../providers/meeting/types.js';
 import { findSessionsDueForPurge, retentionDays, DEFAULT_RETENTION_DAYS } from '../services/dataRights.js';
 import { logAudit } from '../services/audit.js';
 import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
@@ -42,6 +44,9 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
   const llm = getLlm();
   const showEnv = capabilitiesOf(req.auth!.role).includes('admin:manage');
   const meeting = allMeetingCapabilities().map(({ env, ...rest }) => (showEnv ? { ...rest, env } : rest));
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId }, select: { policyJson: true } });
+  // Who creates links for human rounds in this organisation, and whether it can.
+  const roundMeeting = roundMeetingStatus(parseJson<Record<string, unknown>>(tenant?.policyJson ?? '{}', {}), { includeEnv: showEnv });
   res.json({
     llm: { provider: llm.name, enabled: llm.enabled, configured: llm.enabled, mode: llm.enabled ? 'remote' : 'built-in heuristic' },
     stt: sttCapability(),
@@ -49,6 +54,7 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
     email: { provider: getEmail().name, configured: getEmail().configured },
     ats: { provider: getAts().name, configured: getAts().configured },
     meeting,
+    roundMeeting,
     build: { commit: resolveCommit() },
   });
 }));
@@ -479,6 +485,9 @@ const policySchema = z.object({
   candidateFeedbackEnabled: z.boolean().optional(),
   proctoringEnabled: z.boolean().optional(),
   recordingDefault: z.boolean().optional(),
+  // Which provider creates meeting links for human rounds. Credentials stay
+  // deployment-wide in server/.env; this only chooses among them.
+  roundMeetingProvider: z.enum(ROUND_MEETING_PROVIDERS).optional(),
 }).strict();
 
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
