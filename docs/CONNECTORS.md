@@ -73,13 +73,50 @@ Implementation: `server/src/providers/email/`.
 
 ## ATS
 
-Default `ATS_PROVIDER=generic` — a generic REST connector (set `ATS_BASE_URL`, `ATS_API_KEY`). Fetch a
-requisition to create a role, and push assessments back.
+Each organisation connects **its own** ATS. A tenant admin opens **Settings → ATS connection**,
+chooses the provider (`generic` REST or `greenhouse`), enters the API address, an account name when
+the ATS serves many companies from one address, and the API key.
+
+- The key is write-only. It is sealed under `AUTH_SECRET` (AES-256-GCM, as invitation links are)
+  in `AtsConnection.apiKeySealed` and is never returned; the API says only whether one is set.
+  Rotating `AUTH_SECRET` makes the saved key unreadable, and the admin enters it again.
+- The address gets the webhook outbound checks: https only in production, no credentials, no
+  loopback or private network, and the name is resolved.
+- One ATS account (provider + address + account) belongs to one organisation. A second
+  organisation cannot connect it.
+- Requisition import (`POST /api/roles` with `sourceType: "ats"`) and candidate import
+  (`POST /api/candidates/import-ats`) use only the caller's connection. Without one they answer
+  `409` with `code: "ATS_NOT_CONNECTED"`. Each imported requisition is recorded per ATS account
+  (`AtsRequisitionImport`), so it is imported once and a repeat import answers `200` with the
+  same role (`alreadyImported: true`).
+- Assessment export (`POST /api/assessments/:id/export`) goes only to the candidate's stored
+  link (`CandidateAtsLink`). A request that names an ATS candidate is refused (`400`); a
+  candidate with no link answers `409` with `code: "ATS_LINK_MISSING"`. Links are made when a
+  candidate is imported from the ATS, or by a tenant admin on the candidate page
+  (`PUT /api/candidates/:id/ats-link`), which first checks the id exists in that organisation's
+  ATS. Moving the connection to a different ATS account removes the links; erasure removes a
+  candidate's link.
+- **Test connection** (`POST /api/admin/ats/test`) tests only the caller's own connection.
+- Disconnect deletes the saved key and stops imports and exports; the connection row stays so the
+  account is not free for another organisation to claim.
+
+The generic connector calls, with `Authorization: Bearer <key>` (and `X-ATS-Account` when an
+account is set): `GET <base>/requisitions?limit=1` (test), `GET <base>/requisitions/<id>`,
+`GET <base>/candidates/<id>`, `POST <base>/candidates/<id>/assessments`. Redirects are refused.
+
+### Server-configured ATS (one organisation)
+
+The old deployment-wide variables still work, but only for the one organisation named by
+`ATS_TENANT_ID`. Without it they are ignored and the server warns at start (`ATS_UNBOUND`).
+The key stays in the environment and is never copied into the database; on that organisation's
+first ATS use a connection row with `source: "env"` is created. An admin of that organisation can
+take the connection over in Settings by entering a key, or disconnect it.
 
 ```env
 ATS_PROVIDER=greenhouse
 ATS_BASE_URL=https://harvest.greenhouse.io/v1
 ATS_API_KEY=...
+ATS_TENANT_ID=<the organisation's id>
 ```
 
 Implementation: `server/src/providers/ats/`.

@@ -73,18 +73,23 @@ Still to finish:
 
 ## 3. Decisions for the owner
 
-- [ ] **ATS requisition import is deployment-wide.** `POST /roles` with
-      `sourceType: ats` fetches any requisition id from the one configured ATS
-      before any tenant check. With one customer this is harmless; with two it
-      is a cross-tenant read. Needs a tenant-owned ATS mapping. (Codex auth #5)
-- [ ] **ATS export target is caller-supplied.** `externalCandidateId` is now
-      shape-validated, but the right design is a stored mapping from candidate
-      to ATS id. (Codex auth #6)
+- [x] **ATS requisition import is deployment-wide.** Built: each tenant has its own
+      `AtsConnection` (key sealed under AUTH_SECRET, write-only); imports use only the
+      caller's connection and are recorded per ATS account, so a requisition is imported
+      once. The env ATS works only when bound by `ATS_TENANT_ID`. (Codex auth #5;
+      docs/CONNECTORS.md)
+- [x] **ATS export target is caller-supplied.** Built: exports go only to the stored
+      `CandidateAtsLink`; a request-supplied id is refused. Links come from ATS import or
+      an admin's validated, audited `PUT /candidates/:id/ats-link`; erasure removes them.
+      (Codex auth #6)
 - [ ] **Retire the v1 webhook signature** once every known receiver verifies
       `x-questor-signature-v2` with the timestamp.
 - [ ] **"Silence is consent" on candidate feedback**: a candidate never asked
       can still be sent feedback; only an explicit "no" blocks it.
-- [ ] **Operator-only connector tests**; **Teams/Zoom/Meet meeting creation**.
+- [x] **Operator-only connector tests.** Meeting connector tests now require the
+      deployment operator (the signup approver); tenant admins test only their own ATS
+      connection (`POST /api/admin/ats/test`).
+- [ ] **Teams/Zoom/Meet meeting creation**.
 - [ ] **AI observer on human rounds (task #10)**: decided (transcribe and quote
       only, both parties consent), not built.
 

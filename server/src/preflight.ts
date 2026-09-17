@@ -94,6 +94,18 @@ export function collectIssues(env: NodeJS.ProcessEnv = process.env): PreflightIs
     });
   }
 
+  // The ATS variables used to be a deployment-wide ATS every tenant could read.
+  // They now apply to one named organisation or to nobody; say so, rather than
+  // leave an operator wondering why imports stopped.
+  if (config.ats.baseUrl && !config.ats.tenantId) {
+    issues.push({
+      level: 'warn',
+      code: 'ATS_UNBOUND',
+      message: 'ATS_BASE_URL is set but ATS_TENANT_ID is not, so the server-configured ATS is disabled. Organisations connect their own ATS in Settings.',
+      fix: 'Set ATS_TENANT_ID to the id of the one organisation that ATS belongs to, or remove the ATS_* variables.',
+    });
+  }
+
   issues.push(...databaseExposureIssues(isProd));
 
   return issues;

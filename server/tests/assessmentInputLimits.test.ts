@@ -72,12 +72,15 @@ describe('the external candidate id an export is pushed under', () => {
     expect(res.status).toBe(400);
   });
 
-  it('accepts an ordinary ATS identifier', async () => {
+  // The target now comes only from the candidate's stored ATS link
+  // (atsTenantIsolation.test.ts); even a well-formed id is not taken from the
+  // request.
+  it('refuses even an ordinary ATS identifier sent with the request', async () => {
     const { assessmentId, token } = await signedIn();
 
     const res = await request(app).post(`/api/assessments/${assessmentId}/export`)
       .set('Authorization', `Bearer ${token}`).send({ externalCandidateId: 'gh-4821_b' });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
   });
 });

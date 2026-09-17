@@ -231,6 +231,8 @@ export async function eraseCandidate(o: {
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
+    // The link says which ATS record this person is; it goes with them.
+    await count('atsLinks', () => tx.candidateAtsLink.deleteMany({ where: { candidateId: o.candidateId } }));
     // Belt and braces alongside the session cascade: these rows also key on the
     // candidate, so a row whose session was already gone would otherwise block
     // the delete below.
@@ -453,6 +455,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId } } }));
         await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId } }));
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
+        await count('atsLinks', () => tx.candidateAtsLink.deleteMany({ where: { candidateId } }));
         await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId } }));
         await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));

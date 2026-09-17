@@ -19,6 +19,8 @@ import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { connectorsRouter } from './routes/connectors.js';
+import { atsConnectionRouter } from './routes/atsConnection.js';
+import { candidateAtsRouter } from './routes/candidateAts.js';
 
 
 export function createApp() {
@@ -140,12 +142,14 @@ export function createApp() {
   app.use('/api/auth', authRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
+  app.use('/api/candidates', candidateAtsRouter);
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/interviews', interviewsRouter);
   app.use('/api/pipelines', pipelinesRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);
   app.use('/api/admin/connectors', connectorsRouter);
+  app.use('/api/admin/ats', atsConnectionRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
 

@@ -7,7 +7,8 @@ import type { AssessmentResult } from '../domain/types.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
-import { getAts } from '../providers/ats/index.js';
+import { atsFailure, requireTenantAts } from '../services/atsConnections.js';
+import { findCandidateLink } from '../services/atsRecords.js';
 import { getEmail } from '../providers/email/index.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -447,17 +448,20 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
 
 // Export to ATS (FR-040)
 //
-// The id is spliced into the ATS URL (providers/ats/index.ts), so it is
-// validated here rather than cast. A bare cast let a caller aim the push at a
-// different endpoint of the customer's own ATS by shaping the id like a path.
-// Opaque vendor identifiers are alphanumeric with dashes or underscores; there
-// is no legitimate one containing a slash, a dot or a query string.
-const exportSchema = z.object({
-  externalCandidateId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
-}).strict();
+// The ATS candidate is the one stored against this candidate for the caller's
+// own ATS (services/atsRecords.ts), never one named in the request. A caller-
+// supplied id let anyone with export rights write an assessment onto whichever
+// ATS record they typed.
+const exportSchema = z.object({}).strict();
+
+export const ATS_LINK_MISSING = 'ATS_LINK_MISSING';
 
 assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
-  const body = exportSchema.parse(req.body ?? {});
+  const raw: unknown = req.body ?? {};
+  if (typeof raw === 'object' && raw !== null && 'externalCandidateId' in raw) {
+    throw new HttpError(400, "The ATS candidate comes from the candidate's stored ATS link; it cannot be given with the export. An administrator can set the link on the candidate page.");
+  }
+  exportSchema.parse(raw);
   const a = await getAssessment(req.auth!, req.params.id);
   const result = readAssessmentResult(a);
   // An assessment with no score must not reach the system of record. The ATS
@@ -467,12 +471,16 @@ assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), as
   if (result.overallScore === null) {
     throw new HttpError(409, 'This assessment could not be scored, so there is nothing to export. It needs a human assessment first.');
   }
-  const externalId = body.externalCandidateId ?? a.session.candidateId;
-  const out = await getAts().pushAssessment(externalId, {
+  const { connection, client } = await requireTenantAts(req.auth!.tenantId);
+  const link = await findCandidateLink(req.auth!.tenantId, a.session.candidateId, connection.id);
+  if (!link) {
+    throw new HttpError(409, 'This candidate is not linked to a candidate in your ATS yet. An administrator can link them from the candidate page.', ATS_LINK_MISSING);
+  }
+  const out = await client.pushAssessment(link.externalCandidateId, {
     candidate: a.session.candidate.fullName, role: a.session.role.title,
     recommendation: result.recommendation, confidence: result.confidence, overallScore: result.overallScore,
     competencies: result.competencies.map((c) => ({ name: c.name, level: c.level })),
-  });
+  }).catch((err: unknown) => atsFailure(err, 'candidate'));
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'assessment.exported', entityType: 'AssessmentVersion', entityId: a.id, after: out });
   res.json(out);
 }));
