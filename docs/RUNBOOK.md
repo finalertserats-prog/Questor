@@ -56,12 +56,21 @@ Rollback resets to the previous commit, reinstalls, regenerates the Postgres Pri
 
 ## Backups and restore drill
 
-Run monthly and before schema changes:
+Run monthly and before schema changes. The drill must create a database, which
+the app's own role may not do, and `root` has no Postgres role; so run it as
+`postgres` from a private copy (that user cannot read `/root`), and remove the
+copy afterwards because the dump holds candidate data:
 
 ```bash
-cd /root/Questor/repo
-./scripts/restore-drill.sh /root/Questor/backups/questor-nightly-YYYYMMDD.dump
+D=$(mktemp -d /tmp/drill.XXXXXX)
+cp /root/Questor/repo/scripts/restore-drill.sh /root/Questor/backups/questor-nightly-YYYYMMDD-HHMMSS.dump "$D"/
+chown -R postgres:postgres "$D" && chmod 700 "$D"
+(cd "$D" && sudo -u postgres env LOG_DIR="$D/logs" bash "$D/restore-drill.sh" "$D"/questor-nightly-*.dump)
+rm -rf "$D"
 ```
+
+Last real run: 2026-09-17 against `questor-nightly-20260917-023001.dump`,
+restore status ok.
 
 The drill restores into `questor_restore_drill_<timestamp>`, checks core row counts, prints newest audit time and age, then drops the scratch database. Use `--keep` only for inspection and drop it afterwards. Use `--dry-run` to print commands without a database.
 

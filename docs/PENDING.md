@@ -98,11 +98,16 @@ so the signup email path and operator approval work in production.
 
 ## 4. Operations
 
-- The restore drill (`scripts/restore-drill.sh`) has been dry-run against the
-  2026-09-17 nightly dump, which `pg_restore --list` reads as a valid custom
-  archive. Run it for real on the VPS monthly and before schema changes.
-- After the first deploy with the drain, run `pm2 save` once so the kill timeout
-  survives a reboot (see RUNBOOK).
+- **Deployed 2026-09-17** (`938ab77`): migration applied, API healthy, pre-deploy
+  backup `questor-20260917-155726.dump`, `pm2 save` done so the kill timeout
+  survives a reboot. Login answered 401 (not 503), so the shared rate-limit
+  store is live.
+- **Restore drill run for real** the same day against
+  `questor-nightly-20260917-023001.dump`: restore ok, core tables present. It
+  needs the `postgres` role; see RUNBOOK for the exact steps. Repeat monthly
+  and before schema changes.
+- Expected 4xx refusals (a started interview, wrong credentials) are logged at
+  error level with a stack, which makes the pm2 log noisier than it should be.
 
 ## 5. Housekeeping
 
