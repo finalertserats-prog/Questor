@@ -11,6 +11,7 @@ import { buildJourney, type JourneyAssessment, type JourneyPipeline, type Journe
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
+import { ResumeUploadCard } from '../components/ResumeFields';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
 import {
@@ -374,6 +375,7 @@ export function CandidateDetail() {
           error={profileAnalysisError}
           fallbackProfile={profile}
           fallbackFit={fit}
+          onResumeUploaded={refresh}
         />
       </section>
 
@@ -541,13 +543,14 @@ const STATIC_IGNORED_SIGNALS = [
 ];
 
 function CandidateProfileTab({
-  fallbackCandidate, analysis, error, fallbackProfile, fallbackFit,
+  fallbackCandidate, analysis, error, fallbackProfile, fallbackFit, onResumeUploaded,
 }: {
   fallbackCandidate: CandidateResp['candidate'];
   analysis: ProfileAnalysisResp | null;
   error: string;
   fallbackProfile: Profile | null;
   fallbackFit: Fit | null;
+  onResumeUploaded: () => void;
 }) {
   const candidate = analysis?.candidate ?? fallbackCandidate;
   const profile = analysis?.profile ?? fallbackProfile;
@@ -572,12 +575,15 @@ function CandidateProfileTab({
       </div>
 
       {!profile ? (
-        <EmptyState
-          compact
-          icon="evidence"
-          title="No parsed resume profile yet"
-          message="Upload or paste a resume before Questor can show experience, skills, employment history, role fit, or alternatives."
-        />
+        <>
+          <EmptyState
+            compact
+            icon="evidence"
+            title="No parsed resume profile yet"
+            message="Upload or paste a resume before Questor can show experience, skills, employment history, role fit, or alternatives."
+          />
+          <ResumeUploadCard candidateId={candidate.id} onUploaded={onResumeUploaded} />
+        </>
       ) : (
         <div className="card">
           <h2 className="card-title"><Icon name="job" />Parsed resume{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>

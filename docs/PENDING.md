@@ -72,8 +72,6 @@ so the signup email path and operator approval work in production.
       credentials exist (all vendor calls are tested against mocked HTTP only).
 - [ ] **Generic ATS connector paths** (including the `X-ATS-Account` header) are
       assumed and tested against a mock, not a live ATS.
-- [ ] **ATS candidate import has no UI**; the endpoint
-      (`POST /api/candidates/import-ats`) exists.
 - [ ] **Meeting creation runs inside the schedule request.** With token retries
       it can exceed the web client's 30 s timeout: the booking is saved and
       appears on reload, but the recruiter first sees an error. Moving creation

@@ -1,9 +1,19 @@
 import { spawn } from 'node:child_process';
 
+// Built-in AI and speech unless a run asks otherwise. A developer's server/.env
+// may name paid providers, and server-side speech keeps the room "speaking"
+// long after the suite's browser-speech stub has finished, so the portal spec
+// passed in CI and failed on a configured machine. Values set here win because
+// dotenv never overrides a variable that is already present.
+const builtInProviders = process.env.E2E_REAL_PROVIDERS === '1'
+  ? {}
+  : { LLM_PROVIDER: 'heuristic', STT_PROVIDER: 'webspeech', TTS_PROVIDER: 'webspeech' };
+
 const child = spawn('npm', ['run', 'dev'], {
   cwd: process.cwd(),
   env: {
     ...process.env,
+    ...builtInProviders,
     DATABASE_URL: process.env.DATABASE_URL ?? 'file:./data/questor.db',
     // Signup fails closed without someone to approve it. The console email
     // provider only logs the notice, so a placeholder address is enough here.

@@ -54,11 +54,8 @@ export async function addCandidateThroughUi(page: Page, title: string, name: str
   const roleValue = await roleSelect.locator('option').filter({ hasText: title }).first().getAttribute('value');
   if (!roleValue) throw new Error('Created role was not available for candidate creation.');
   await roleSelect.selectOption(roleValue);
-  // Full name, email and phone have unbound labels and no placeholder; their
-  // order in the form is the stable handle.
-  const textboxes = form.getByRole('textbox');
-  await textboxes.nth(0).fill(name);
-  await textboxes.nth(1).fill(email);
+  await form.getByLabel('Full name').fill(name);
+  await form.getByLabel('Email', { exact: true }).fill(email);
   await page.getByPlaceholder(/Paste the candidate's resume text/).fill(resumeText(name, email));
   await page.getByRole('button', { name: 'Add candidate & analyse resume' }).click();
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 20_000 });
