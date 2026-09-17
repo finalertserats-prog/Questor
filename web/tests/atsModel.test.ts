@@ -81,6 +81,28 @@ describe('atsFormProblem', () => {
     expect(atsFormProblem(form({ apiKey: '' }), connection({ source: 'env' }))).toMatch(/key/i);
   });
 
+  // The server refuses to carry a saved key to another ATS account, so the
+  // form asks for one before the press rather than after.
+  it('asks for a key when the address changes', () => {
+    expect(atsFormProblem(form({ apiKey: '', baseUrl: 'https://other.example.com/api' }), connection())).toMatch(/key/i);
+  });
+
+  it('asks for a key when the account changes', () => {
+    expect(atsFormProblem(form({ apiKey: '', accountId: 'globex' }), connection({ accountId: 'acme' }))).toMatch(/key/i);
+  });
+
+  it('asks for a key when the provider changes', () => {
+    expect(atsFormProblem(form({ apiKey: '', provider: 'greenhouse' }), connection())).toMatch(/key/i);
+  });
+
+  it('treats a differently typed spelling of the same address as the same account', () => {
+    expect(atsFormProblem(form({ apiKey: '', baseUrl: ' https://ATS.example.com/api/ ' }), connection())).toBeNull();
+  });
+
+  it('asks for a key after a disconnect, when none is saved', () => {
+    expect(atsFormProblem(form({ apiKey: '' }), connection({ connected: false, status: 'disconnected', hasApiKey: false }))).toMatch(/key/i);
+  });
+
   it('accepts a complete form', () => {
     expect(atsFormProblem(form(), null)).toBeNull();
   });

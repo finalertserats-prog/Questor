@@ -36,7 +36,10 @@ const KEY_UNREADABLE_MESSAGE =
 const BAD_URL_MESSAGE =
   'Enter the ATS API address as a full https:// URL on the public internet, with no credentials or query string in it.';
 
-const isUniqueViolation = (err: unknown) => (err as { code?: string } | null)?.code === 'P2002';
+const KEY_REQUIRED_MESSAGE =
+  'Enter the API key for this ATS. A saved key is kept only while the ATS, address and account stay the same.';
+
+const isUniqueViolation =(err: unknown) => (err as { code?: string } | null)?.code === 'P2002';
 
 /**
  * One ATS account, as a string. The same account must look the same however
@@ -198,6 +201,13 @@ export async function saveConnection(input: SaveConnectionInput): Promise<AtsCon
   if (claimed && claimed.tenantId !== input.tenantId) throw alreadyClaimed();
 
   const existing = await prisma.atsConnection.findUnique({ where: { tenantId: input.tenantId } });
+  // A saved key may only stay with the ATS account it was entered for. Kept
+  // across a change of provider, address or account, a blank key field would
+  // send the old key to whatever host the admin typed, which is the one thing
+  // a write-only key must never allow. An env connection's key lives in the
+  // environment and is never inherited either.
+  const canKeepKey = Boolean(existing && existing.source === 'tenant' && existing.apiKeySealed && existing.atsKey === atsKey);
+  if (!input.apiKey && !canKeepKey) throw new HttpError(400, KEY_REQUIRED_MESSAGE);
   const newKey = input.apiKey ? sealSecret('ats-credential', input.apiKey) : null;
   const fields = {
     provider: input.provider,
@@ -207,9 +217,7 @@ export async function saveConnection(input: SaveConnectionInput): Promise<AtsCon
     source: 'tenant',
     status: 'untested',
     disconnectedAt: null,
-    // An env connection's key lives in the environment; taking the connection
-    // over means entering a key, not inheriting one.
-    ...(newKey !== null ? { apiKeySealed: newKey } : existing?.source === 'env' ? { apiKeySealed: '' } : {}),
+    ...(newKey !== null ? { apiKeySealed: newKey } : {}),
   };
 
   let linksCleared = 0;

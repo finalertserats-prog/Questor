@@ -7,6 +7,7 @@ import {
   atsFormProblem,
   connectionStatus,
   formFromConnection,
+  keepsSavedKey,
   savePayload,
   type AtsConnectionView,
   type AtsForm,
@@ -99,7 +100,10 @@ export function AtsConnectionPanel() {
 
   if (loading) return <div className="card"><h2>ATS connection</h2><div className="muted">Loading…</div></div>;
 
-  const keyStored = conn?.hasApiKey && conn.source !== 'env';
+  // A saved key is kept only for the same ATS account; change the address,
+  // account or provider and the field asks for a key again.
+  const keyStored = keepsSavedKey(form, conn);
+  const keyWillBeDropped = Boolean(conn?.hasApiKey && conn.source !== 'env' && !keyStored);
 
   return (
     <section className="card" data-testid="ats-connection-panel" aria-labelledby="ats-connection-title">
@@ -149,6 +153,9 @@ export function AtsConnectionPanel() {
           placeholder={keyStored ? 'A key is saved. Leave blank to keep it.' : 'Paste the key your ATS issued'}
         />
         <div className="muted small">The key is stored encrypted and is never shown again, here or anywhere else.</div>
+        {keyWillBeDropped && (
+          <div className="muted small">You changed the ATS, address or account, so the saved key will not be used. Enter the key for this one.</div>
+        )}
 
         {problem && form.baseUrl.trim() !== '' && <div className="muted small" style={{ marginTop: 8 }}>{problem}</div>}
 
