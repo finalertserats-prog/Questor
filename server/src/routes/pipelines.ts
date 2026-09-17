@@ -306,8 +306,9 @@ const completeSchema = z.object({
   notes: z.string().trim().min(20, 'Record what the round showed — this is the evidence for the stage.').max(10000),
 });
 
-// Closing a round with what it showed. Until the AI observer can transcribe
-// human rounds, these notes are the evidence the summary relies on.
+// Closing a round with what it showed. The interviewers' notes are the
+// assessment; an AI observer, where both parties agreed, only adds a transcript
+// and verbatim quotes beside them.
 pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const { notes } = completeSchema.parse(req.body);
   const pipeline = await loadPipeline(req, req.params.id);

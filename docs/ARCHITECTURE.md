@@ -87,6 +87,8 @@ stateDiagram-v2
 
 Consent is captured on sessions and controls observation/transcript behavior. Retention is session-centered in `services/dataRights.ts` because turns, assessments, artifacts, reviews, feedback, and model executions all belong to the recruitment purpose. Erasure deletes candidate-derived data in dependency order and keeps a non-personal audit record. Legal hold on a session or artifact blocks retention purge and explicit erasure.
 
+The AI observer on human rounds (`services/roundObserver.ts`, `routes/observer.ts`) keeps its own records: `RoundObservation` (both parties' consent, status, evidence quotes) and `ObservationSegment` (transcript chunks, or GAPs where capture failed). Nothing is stored unless both the interviewer and the candidate (via a token link, `/api/observer-consent/:token`) agreed and the observer is LISTENING; the check is a conditional update at write time, so a stop wins over an in-flight upload. Quotes come from `services/observerQuotes.ts`, which keeps only verbatim substrings of one segment filed under a scorecard competency and drops any score, rating, recommendation or summary. Observations are erased with the candidate and purged by the sweep from `endedAt` (`services/observerRetention.ts`); their own `legalHold`, or a hold on the candidate's sessions or artifacts, spares them.
+
 ## Trust boundaries and tokens
 
 - Browser to API: cookie auth, CSRF protection, rate limits.

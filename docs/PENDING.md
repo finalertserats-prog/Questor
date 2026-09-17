@@ -85,8 +85,12 @@ Still to finish:
 - [ ] **"Silence is consent" on candidate feedback**: a candidate never asked
       can still be sent feedback; only an explicit "no" blocks it.
 - [ ] **Operator-only connector tests**; **Teams/Zoom/Meet meeting creation**.
-- [ ] **AI observer on human rounds (task #10)**: decided (transcribe and quote
-      only, both parties consent), not built.
+- [x] **AI observer on human rounds (task #10)**: built (transcribe and quote
+      only, both parties consent). Observer room at `/rounds/:roundId/observer`,
+      candidate consent at `/observer-consent/:token`. Still to decide: whether
+      the candidate link should also be emailed, and whether a stopped observer
+      may be restarted with fresh consent (today a stop is final for the round).
+      Needs a real-browser check of microphone capture on the VPS origin.
 
 ---
 
