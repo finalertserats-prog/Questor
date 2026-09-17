@@ -70,11 +70,32 @@ export function atsFormProblem(form: AtsForm, conn: AtsConnectionView | null): s
     return 'Enter the full address, starting with https://.';
   }
   if (url.protocol !== 'https:') return 'The address must start with https://.';
-  // A server-configured key is not carried over when the connection is taken
-  // over here, so it has to be entered.
-  const keyStored = conn !== null && conn.hasApiKey && conn.source !== 'env';
-  if (!form.apiKey.trim() && !keyStored) return 'Enter the API key your ATS issued for Questor.';
+  if (!form.apiKey.trim() && !keepsSavedKey(form, conn)) return 'Enter the API key your ATS issued for Questor.';
   return null;
+}
+
+/**
+ * Mirrors atsKeyOf on the server: one ATS account, however it was typed.
+ * Null when the address cannot be read.
+ */
+function accountKey(provider: string, baseUrl: string, accountId: string): string | null {
+  try {
+    const url = new URL(baseUrl.trim());
+    return [provider, `${url.protocol}//${url.host.toLowerCase()}${url.pathname.replace(/\/+$/, '')}`, accountId.trim().toLowerCase()].join('|');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a blank key field keeps the saved key. Only for the same ATS
+ * account: the server never sends a saved key to a changed address, account
+ * or provider, and a server-configured key is never inherited here.
+ */
+export function keepsSavedKey(form: AtsForm, conn: AtsConnectionView | null): boolean {
+  if (!conn || !conn.hasApiKey || conn.source === 'env') return false;
+  const saved = accountKey(conn.provider, conn.baseUrl, conn.accountId);
+  return saved !== null && saved === accountKey(form.provider, form.baseUrl, form.accountId);
 }
 
 export type StatusKind = 'green' | 'amber' | 'red' | 'gray';

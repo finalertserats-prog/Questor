@@ -81,12 +81,63 @@ describe('a tenant admin connects their own ATS', () => {
     expect(row.apiKeySealed.includes('MARKER') || row.apiKeySealed === '').toBe(false);
   });
 
-  it('keeps the stored key when an edit leaves it blank', async () => {
-    const fake = installFakeAts({ 'ats-a2.example.com': {} });
+  it('keeps the stored key when an edit to the same account leaves it blank', async () => {
+    const fake = installFakeAts({ 'ats-a.example.com': {} });
     await connect(adminA, { baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
-    await connect(adminA, { baseUrl: 'https://ats-a2.example.com/api', apiKey: '' });
+    await connect(adminA, { baseUrl: 'https://ATS-A.example.com/api/', apiKey: '' });
     await request(app).post('/api/admin/ats/test').set(as(adminA));
     expect(fake.calls[0].authorization).toBe(`Bearer ${KEY_A}`);
+  });
+
+  // The stored key must never follow the connection to another host: a blank
+  // key on a new address would hand the old key to whoever runs that address.
+  it('refuses a new address without a new key', async () => {
+    await connect(adminA, { baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
+    const res = await connect(adminA, { baseUrl: 'https://attacker.example.com/api', apiKey: '' });
+    expect({ status: res.status, error: res.body.error }).toEqual({ status: 400, error: expect.stringMatching(/API key/) });
+  });
+
+  it('sends nothing anywhere after refusing a new address without a key', async () => {
+    const fake = installFakeAts({ 'ats-a.example.com': {}, 'attacker.example.com': {} });
+    await connect(adminA, { baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
+    await connect(adminA, { baseUrl: 'https://attacker.example.com/api' });
+    await request(app).post('/api/admin/ats/test').set(as(adminA));
+    await request(app).post('/api/roles').set(as(adminA)).send({ sourceType: 'ats', atsRequisitionId: 'REQ-1', useLlm: false });
+    expect(fake.hostsCalled()).not.toContain('attacker.example.com');
+  });
+
+  it('leaves the saved connection unchanged when the refused edit is refused', async () => {
+    await connect(adminA, { baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
+    await connect(adminA, { baseUrl: 'https://attacker.example.com/api', apiKey: '' });
+    const row = await prisma.atsConnection.findUniqueOrThrow({ where: { tenantId: tenantA } });
+    expect(row.baseUrl).toBe('https://ats-a.example.com/api');
+  });
+
+  it('refuses a new account name without a new key', async () => {
+    await connect(adminA, { provider: 'greenhouse', baseUrl: 'https://harvest.example.com/v1', accountId: 'acme', apiKey: KEY_A });
+    const res = await connect(adminA, { provider: 'greenhouse', baseUrl: 'https://harvest.example.com/v1', accountId: 'globex' });
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a new provider without a new key', async () => {
+    await connect(adminA, { provider: 'generic', baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
+    const res = await connect(adminA, { provider: 'greenhouse', baseUrl: 'https://ats-a.example.com/api' });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a new address together with a new key, and uses only the new key', async () => {
+    const fake = installFakeAts({ 'ats-a2.example.com': {} });
+    await connect(adminA, { baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
+    await connect(adminA, { baseUrl: 'https://ats-a2.example.com/api', apiKey: KEY_A2 });
+    await request(app).post('/api/admin/ats/test').set(as(adminA));
+    expect(fake.calls[0].authorization).toBe(`Bearer ${KEY_A2}`);
+  });
+
+  it('asks for a key again after a disconnect, even for the same address', async () => {
+    await connect(adminA, { baseUrl: 'https://ats-a.example.com/api', apiKey: KEY_A });
+    await request(app).delete('/api/admin/ats').set(as(adminA));
+    const res = await connect(adminA, { baseUrl: 'https://ats-a.example.com/api' });
+    expect(res.status).toBe(400);
   });
 
   it('replaces the key when a new one is entered', async () => {
