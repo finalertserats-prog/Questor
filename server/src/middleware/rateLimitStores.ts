@@ -99,6 +99,10 @@ function isUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
 }
 
+function isNotFound(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2025';
+}
+
 // Each attempt is at most three statements, and each statement decides on its
 // own; a retry is needed only when two callers race to create the same row.
 const MAX_ATTEMPTS = 4;
@@ -111,8 +115,7 @@ const MAX_ATTEMPTS = 4;
  *      expiry in the WHERE clause means only one racer can win the restart;
  *   3. otherwise create it; a unique violation means another caller just did,
  *      and the loop goes round to increment theirs.
- * The count is read back only after the increment has been applied, so a
- * concurrent hit can make it read higher, never lower.
+ * The increment and its read-back share a transaction (see below).
  */
 export const databaseRateLimitStore: RateLimitStore = {
   name: 'database',
@@ -121,15 +124,21 @@ export const databaseRateLimitStore: RateLimitStore = {
     const at = new Date(now);
     const expiresAt = new Date(now + windowMs);
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-      const bumped = await prisma.rateLimitBucket.updateMany({
+      // `update`, not updateMany + findUnique: the engine returns the row this
+      // increment produced within the same write, so the count is this hit's
+      // own. Read separately, a burst's early requests could see later
+      // requests' increments and be refused although they were within the
+      // limit. (An interactive transaction would do the same on Postgres but
+      // times out under concurrency on SQLite's single connection.)
+      const bumped = await prisma.rateLimitBucket.update({
         where: { key: id, expiresAt: { gt: at } },
         data: { count: { increment: 1 } },
+        select: { count: true, expiresAt: true },
+      }).catch((err: unknown) => {
+        if (isNotFound(err)) return null; // window closed, or no row yet
+        throw err;
       });
-      if (bumped.count === 1) {
-        const row = await prisma.rateLimitBucket.findUnique({ where: { key: id }, select: { count: true, expiresAt: true } });
-        if (row) return { count: row.count, resetAt: row.expiresAt.getTime() };
-        continue; // purged between the two statements
-      }
+      if (bumped) return { count: bumped.count, resetAt: bumped.expiresAt.getTime() };
 
       const restarted = await prisma.rateLimitBucket.updateMany({
         where: { key: id, expiresAt: { lte: at } },

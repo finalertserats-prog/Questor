@@ -12,7 +12,7 @@ import { startInterview, submitCandidateTurn, finalizeInterview, withdrawIntervi
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { HttpError } from '../middleware/index.js';
 import { isDraining, SERVER_RESTARTING_MESSAGE } from '../services/drainState.js';
-import { beginRequest, holdCandidateSocket } from './liveSessions.js';
+import { beginRequest, holdCandidateSocket, UNDER_WAY_STATES } from './liveSessions.js';
 
 // The credential is kept after the handshake, not just the identity it proved:
 // a socket can stay open for days, outliving the 12h recruiter JWT, and an
@@ -58,10 +58,6 @@ async function withinLimit(event: keyof typeof SOCKET_LIMITS, sessionId: string)
   return (await consume(`socket-${event}`, sessionId, SOCKET_WINDOW_MS, SOCKET_LIMITS[event])).allowed;
 }
 
-// States in which the interview is already under way. A candidate reconnecting
-// to one of these is exactly who a draining process is waiting for.
-const UNDER_WAY_STATES = new Set(['ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING']);
-
 /**
  * Why a draining process turns this join away, or null to let it in.
  *
@@ -70,7 +66,7 @@ const UNDER_WAY_STATES = new Set(['ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING',
  * interview must be able to reconnect after a network blip.
  */
 export function drainRefusal(draining: boolean, authKind: SocketAuth['kind'], state: string): string | null {
-  if (!draining || authKind !== 'candidate' || UNDER_WAY_STATES.has(state)) return null;
+  if (!draining || authKind !== 'candidate' || UNDER_WAY_STATES.includes(state)) return null;
   return SERVER_RESTARTING_MESSAGE;
 }
 

@@ -99,6 +99,15 @@ describe('the database rate-limit store', () => {
     expect(row.count).toBe(20);
   });
 
+  it('refuses exactly the hits past the limit in a burst, not earlier ones', async () => {
+    const now = Date.now();
+    await databaseRateLimitStore.hit('t:edge', 60_000, 10, now);
+
+    const hits = await Promise.all(Array.from({ length: 19 }, () => databaseRateLimitStore.hit('t:edge', 60_000, 10, now)));
+
+    expect(hits.filter((h) => h.count <= 10)).toHaveLength(9);
+  });
+
   it('never stores the raw key, which can be a live invitation token', async () => {
     await databaseRateLimitStore.hit('portal-turn:t:secret-invitation-token', 60_000, 5, Date.now());
 

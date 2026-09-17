@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { wipe, createDemoData } from '../src/seed/demoData.js';
 import { markDraining, _resetDraining } from '../src/services/drainState.js';
-import { countLiveSessions, inFlightRequests, _resetLiveSessions, DRAIN_IDLE_MS } from '../src/realtime/liveSessions.js';
+import { countLiveSessions, inFlightRequests, holdCandidateSocket, _resetLiveSessions, DRAIN_IDLE_MS } from '../src/realtime/liveSessions.js';
 import { drainRefusal } from '../src/realtime/socket.js';
 
 /**
@@ -168,6 +168,22 @@ describe('counting interviews this process is still serving', () => {
     await request(app).post(`/api/portal/${ids.token}/start`).send({});
 
     expect(await countLiveSessions(Date.now() + DRAIN_IDLE_MS + 1)).toBe(0);
+  });
+
+  it('does not wait for a candidate who has the room open but has not started', async () => {
+    const ids = await consentedInterview();
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state: 'CONSENTED' } });
+    holdCandidateSocket(ids.sessionId);
+
+    expect(await countLiveSessions()).toBe(0);
+  });
+
+  it('waits for a candidate holding a socket to an interview under way', async () => {
+    const ids = await consentedInterview();
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state: 'ASSESSING' } });
+    holdCandidateSocket(ids.sessionId);
+
+    expect(await countLiveSessions()).toBe(1);
   });
 
   it('counts nothing when no interview has been touched', async () => {

@@ -26,8 +26,13 @@ export const DRAIN_IDLE_MS = 15 * 60_000;
 /**
  * States in which ending the process would cut something off: the conversation
  * itself, and the finalisation that runs in-process after the sign-off.
+ *
+ * Pre-start states (disclosure, consent, warm-up) are deliberately absent. A
+ * draining process refuses to start those interviews, so a candidate sitting
+ * on the consent page would otherwise hold the restart for the whole window
+ * waiting for an interview that cannot begin here.
  */
-const ACTIVE_STATES = ['DISCLOSURE', 'CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING'];
+export const UNDER_WAY_STATES: readonly string[] = ['ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING'];
 
 const lastActivity = new Map<string, number>();
 const candidateSockets = new Map<string, number>();
@@ -78,7 +83,7 @@ export async function countLiveSessions(now = Date.now()): Promise<number> {
   const ids = [...new Set([...lastActivity.keys(), ...candidateSockets.keys()])];
   if (ids.length === 0) return 0;
   try {
-    return await prisma.interviewSession.count({ where: { id: { in: ids }, state: { in: ACTIVE_STATES } } });
+    return await prisma.interviewSession.count({ where: { id: { in: ids }, state: { in: [...UNDER_WAY_STATES] } } });
   } catch (err) {
     logger.warn({ err: err instanceof Error ? err.message : String(err), sessions: ids.length },
       'Could not check interview states during drain; counting every recent session as live');
