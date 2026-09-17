@@ -68,6 +68,35 @@ export function niceCeiling(value: number): number {
   return step * magnitude;
 }
 
+export interface CountAxis {
+  readonly max: number;
+  readonly ticks: readonly number[];
+}
+
+// Whole-number steps only. A count axis split into quarters of a nice ceiling
+// labelled five interviews as 1.3, 2.5 and 3.8 — values no week can have.
+const COUNT_STEP_BASES = [1, 2, 5] as const;
+const MAX_COUNT_INTERVALS = 6;
+
+/**
+ * An axis for counts: the smallest round integer step that covers `value` in
+ * at most six intervals, ending on the first multiple of that step at or above
+ * `value`. Every tick is a whole number; an empty series gets 0 to 1.
+ */
+export function countAxis(value: number): CountAxis {
+  const top = Math.max(1, Math.ceil(value));
+  let step = 1;
+  for (let magnitude = 1; ; magnitude *= 10) {
+    const found = COUNT_STEP_BASES.map((base) => base * magnitude).find((s) => Math.ceil(top / s) <= MAX_COUNT_INTERVALS);
+    if (found !== undefined) {
+      step = found;
+      break;
+    }
+  }
+  const intervals = Math.ceil(top / step);
+  return { max: intervals * step, ticks: Array.from({ length: intervals + 1 }, (_, i) => i * step) };
+}
+
 /** Length of a bar for `value` on an axis ending at `max`, clamped to [0, length]. */
 export function scaleLength(value: number, max: number, length: number): number {
   if (value <= 0 || max <= 0) return 0;

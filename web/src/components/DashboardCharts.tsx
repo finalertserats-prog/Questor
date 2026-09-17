@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { barRadius, niceCeiling, scaleLength, shortDate } from './dashboardModel';
+import { barRadius, countAxis, niceCeiling, scaleLength, shortDate } from './dashboardModel';
 
 /**
  * Small in-house SVG charts for the dashboard. No chart dependency: three
@@ -78,7 +78,9 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
   const id = useId();
   const { ref, width } = useMeasuredWidth(COL_FALLBACK_WIDTH);
   const patternId = `ruled-${id.replace(/:/g, '')}`;
-  const max = niceCeiling(Math.max(0, ...data.flatMap((d) => [d.created, d.completed])));
+  // Interviews come in whole numbers, so the axis does too: one line per
+  // integer step, never quarter-splits of a ceiling.
+  const { max, ticks } = countAxis(Math.max(0, ...data.flatMap((d) => [d.created, d.completed])));
   const plotW = Math.max(120, width - COL.left - COL.right);
   const plotH = COL.height - COL.top - COL.bottom;
   const slot = data.length ? plotW / data.length : plotW;
@@ -89,9 +91,6 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
   const barW = Math.max(6, Math.min(18, slot * 0.28));
   const labelEvery = slot < 60 ? 2 : 1;
   const totals = data.reduce((acc, d) => ({ created: acc.created + d.created, completed: acc.completed + d.completed }), { created: 0, completed: 0 });
-  // Quarter steps rather than halves: with a tight ceiling the extra two lines
-  // are what let you read a bar's value off the grid instead of guessing.
-  const ticks = [0, max / 4, max / 2, (max * 3) / 4, max];
 
   return (
     <figure className="chart" ref={ref}>
@@ -126,7 +125,7 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
               )}
               <line x1={COL.left - 4} x2={COL.left} y1={y} y2={y} className="chart-tick" shapeRendering="crispEdges" />
               <text x={COL.left - 8} y={y + 4} textAnchor="end" className="chart-axis">
-                {Number.isInteger(t) ? t : t.toFixed(1)}
+                {t}
               </text>
             </g>
           );
