@@ -14,7 +14,7 @@ test('join-organisation signup request confirms nothing was created', async ({ p
   await org.fill('acm');
   await expect(page.getByRole('option', { name: /Acme Corp/ })).toBeVisible();
   await org.press('Enter');
-  await expect(page.getByText('Acme Corp')).toBeVisible();
+  await expect(page.getByText('Acme Corp', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Send request' }).click();
   await expect(page.getByRole('heading', { name: 'Your request has been sent' })).toBeVisible();
   await expect(page.getByText(/Nothing has been created yet/)).toBeVisible();

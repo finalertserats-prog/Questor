@@ -5,6 +5,10 @@ const child = spawn('npm', ['run', 'dev'], {
   env: {
     ...process.env,
     DATABASE_URL: process.env.DATABASE_URL ?? 'file:./data/questor.db',
+    // Signup fails closed without someone to approve it. The console email
+    // provider only logs the notice, so a placeholder address is enough here.
+    SIGNUP_APPROVER_EMAIL: process.env.SIGNUP_APPROVER_EMAIL ?? 'approver@questor.local',
+    EMAIL_PROVIDER: process.env.EMAIL_PROVIDER ?? 'console',
   },
   shell: true,
   stdio: 'inherit',

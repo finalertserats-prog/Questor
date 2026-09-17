@@ -14,7 +14,7 @@ test('creates a role from typed JD and persists scorecard edits', async ({ page 
   await expect(page.getByText('Changes saved.')).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+  await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   await expect(page.getByLabel('Pass threshold')).toHaveValue('70');
   await expect(page.getByText(flag)).toBeVisible();
 });

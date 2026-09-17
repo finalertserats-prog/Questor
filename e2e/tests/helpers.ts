@@ -22,13 +22,18 @@ export async function dismissTour(page: Page) {
 export async function createRoleThroughUi(page: Page, title: string) {
   await page.goto('/roles/new');
   await dismissTour(page);
-  await expect(page.getByRole('heading', { name: 'New Role' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'New Role', exact: true })).toBeVisible();
+  // The form's labels are not bound to their fields, so the placeholders are
+  // the only user-visible handle on them.
   await page.getByPlaceholder('Senior Data Engineer').fill(title);
-  await page.getByLabel('Job description').fill(jobDescription(title));
+  await page.getByPlaceholder(/Paste the full job description/).fill(jobDescription(title));
   await page.getByRole('button', { name: /^Create role$/ }).click();
+  // Fairness warnings on the JD hold the page until someone moves on.
   const continueButton = page.getByRole('button', { name: /Continue to the role/ });
-  if (await continueButton.isVisible({ timeout: 3000 }).catch(() => false)) await continueButton.click();
-  await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 20_000 });
+  const roleHeading = page.getByRole('heading', { name: title, exact: true });
+  await expect(continueButton.or(roleHeading)).toBeVisible({ timeout: 20_000 });
+  if (await continueButton.isVisible()) await continueButton.click();
+  await expect(roleHeading).toBeVisible({ timeout: 20_000 });
   return page.url();
 }
 
@@ -43,17 +48,20 @@ export async function approveRoleIfNeeded(page: Page) {
 export async function addCandidateThroughUi(page: Page, title: string, name: string, email: string) {
   await page.goto('/candidates/new');
   await dismissTour(page);
-  await expect(page.getByRole('heading', { name: 'Add Candidate' })).toBeVisible();
-  const roleSelect = page.getByRole('combobox').first();
+  await expect(page.getByRole('heading', { name: 'Add Candidate', exact: true })).toBeVisible();
+  const form = page.locator('form.card');
+  const roleSelect = form.getByRole('combobox');
   const roleValue = await roleSelect.locator('option').filter({ hasText: title }).first().getAttribute('value');
   if (!roleValue) throw new Error('Created role was not available for candidate creation.');
   await roleSelect.selectOption(roleValue);
-  const inputs = page.locator('form.card input');
-  await inputs.nth(0).fill(name);
-  await inputs.nth(1).fill(email);
-  await page.getByLabel('Or paste resume text').fill(resumeText(name, email));
-  await page.getByRole('button', { name: /^Add candidate$/ }).click();
-  await expect(page.getByRole('heading', { name })).toBeVisible({ timeout: 20_000 });
+  // Full name, email and phone have unbound labels and no placeholder; their
+  // order in the form is the stable handle.
+  const textboxes = form.getByRole('textbox');
+  await textboxes.nth(0).fill(name);
+  await textboxes.nth(1).fill(email);
+  await page.getByPlaceholder(/Paste the candidate's resume text/).fill(resumeText(name, email));
+  await page.getByRole('button', { name: 'Add candidate & analyse resume' }).click();
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 20_000 });
 }
 
 export async function createRoleAndCandidate(page: Page, id: string) {
@@ -66,7 +74,13 @@ export async function createRoleAndCandidate(page: Page, id: string) {
   return { title, name, email, candidateUrl: page.url() };
 }
 
-export async function assertNoMicrophoneRequest(context: BrowserContext, page: Page) {
+/**
+ * Counts microphone requests instead of granting them, and makes speech
+ * synthesis finish at once. Headless Chromium has no audio output, so a real
+ * utterance only ends on the page's own watchdog — up to a minute — before
+ * the room opens the answer box.
+ */
+export async function instrumentCandidateBrowser(context: BrowserContext, page: Page) {
   await context.clearPermissions();
   await page.addInitScript(() => {
     const mediaDevices = navigator.mediaDevices ?? {};
@@ -80,6 +94,22 @@ export async function assertNoMicrophoneRequest(context: BrowserContext, page: P
           gumCalls += 1;
           throw new Error('E2E detected an unexpected microphone request');
         },
+      },
+    });
+    Object.defineProperty(window, 'speechSynthesis', {
+      configurable: true,
+      value: {
+        speak: (utterance: SpeechSynthesisUtterance) => {
+          setTimeout(() => utterance.onend?.call(utterance, new Event('end') as SpeechSynthesisEvent), 0);
+        },
+        cancel: () => undefined,
+        pause: () => undefined,
+        resume: () => undefined,
+        getVoices: () => [],
+        speaking: false,
+        pending: false,
+        paused: false,
+        onvoiceschanged: null,
       },
     });
   });
