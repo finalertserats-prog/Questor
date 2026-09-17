@@ -82,6 +82,11 @@ describe('meetingSummary', () => {
     expect(meetingSummary(leftover, 'CANCELLED')).toMatchObject({ canRetry: true, canAddLink: false, link: null });
   });
 
+  it('offers retry for a meeting whose removal was interrupted', () => {
+    const pending: RoundMeetingView = { ...linked, status: 'CANCEL_PENDING' };
+    expect(meetingSummary(pending, 'CANCELLED')).toMatchObject({ canRetry: true, canAddLink: false, link: null, tone: 'error' });
+  });
+
   it('hides the link of a cancelled round', () => {
     expect(meetingSummary({ ...linked, status: 'CANCELLED' }, 'CANCELLED')).toMatchObject({ link: null, canRetry: false });
   });

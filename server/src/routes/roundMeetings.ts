@@ -7,7 +7,7 @@ import { logAudit } from '../services/audit.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
 import {
-  cancelMeeting, isStaleCreation, rescheduleMeeting, retryMeeting, setManualLink, MEETING_STATUS,
+  cancelMeeting, isStaleCreation, markRoundCancelled, rescheduleMeeting, retryMeeting, setManualLink, MEETING_STATUS,
   type MeetingOutcome, type RoundContext,
 } from '../services/roundMeeting.js';
 import { labelOf, loadPipeline, presentRound, type PipelineWithRounds } from './pipelines.js';
@@ -53,6 +53,9 @@ async function respond(req: Request, pipeline: PipelineWithRounds, roundId: stri
 }
 
 const NOT_SCHEDULED = 'This round has already been completed or cancelled.';
+// The AI interview's time and availability live on its interview session;
+// moving or cancelling only the round would leave the session usable at the old time.
+const AI_ROUND = 'The AI interview is managed from the interview itself, not from the round. Reschedule or cancel it on the interview page.';
 const BUSY = 'The meeting for this round is being created. Try again in a moment.';
 
 const rescheduleSchema = z.object({
@@ -63,6 +66,7 @@ const rescheduleSchema = z.object({
 roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const body = rescheduleSchema.parse(req.body);
   const { pipeline, round, ctx } = await loadRound(req);
+  if (round.conductedBy !== 'HUMAN') throw new HttpError(409, AI_ROUND);
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, 'A decision has already been recorded for this pipeline.');
   if (round.meetingStatus === MEETING_STATUS.CREATING && !isStaleCreation(round)) throw new HttpError(409, BUSY);
 
@@ -80,19 +84,16 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
   });
 
   const updated = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
-  const meeting = updated.conductedBy === 'HUMAN' ? await rescheduleMeeting(updated, ctx) : null;
+  const meeting = await rescheduleMeeting(updated, ctx);
   res.json(await respond(req, pipeline, round.id, 'reschedule', meeting));
 }));
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   z.object({}).strict().parse(req.body ?? {});
   const { pipeline, round } = await loadRound(req);
+  if (round.conductedBy !== 'HUMAN') throw new HttpError(409, AI_ROUND);
 
-  const cancelled = await prisma.interviewRound.updateMany({
-    where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED' },
-    data: { status: 'CANCELLED' },
-  });
-  if (cancelled.count !== 1) throw new HttpError(409, NOT_SCHEDULED);
+  if (!(await markRoundCancelled(round.id, pipeline.id))) throw new HttpError(409, NOT_SCHEDULED);
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
@@ -102,7 +103,7 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCap
 
   // Reads the row again so a creation that finished in the meantime is seen.
   const current = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
-  const meeting = current.conductedBy === 'HUMAN' ? await cancelMeeting(current) : null;
+  const meeting = await cancelMeeting(current);
   res.json(await respond(req, pipeline, round.id, 'cancel', meeting));
 }));
 

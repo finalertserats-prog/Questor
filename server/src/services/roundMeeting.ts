@@ -28,9 +28,44 @@ export const MEETING_STATUS = {
   CREATING: 'CREATING',         // a vendor call is in flight
   OUT_OF_SYNC: 'OUT_OF_SYNC',   // the round moved but the vendor meeting did not
   CANCELLED: 'CANCELLED',       // the vendor meeting was removed with the round
+  // The round is cancelled and its vendor meeting is being removed. Written in
+  // the same update that cancels the round, so a crash before the vendor call
+  // still leaves a row that erasure, retention and retry treat as live.
+  CANCEL_PENDING: 'CANCEL_PENDING',
   CANCEL_FAILED: 'CANCEL_FAILED', // the round is cancelled; the vendor meeting may remain
 } as const;
 export type MeetingStatus = (typeof MEETING_STATUS)[keyof typeof MEETING_STATUS];
+
+/**
+ * Rows whose vendor meeting may still exist and must not lose its id: any row
+ * holding an id that has not been confirmed removed. Completed rounds are
+ * excluded — their meeting has taken place and nothing further is due.
+ */
+export const VENDOR_MEETING_OUTSTANDING: Prisma.InterviewRoundWhereInput = {
+  meetingExternalId: { not: null },
+  status: { not: 'COMPLETED' },
+  OR: [{ meetingStatus: null }, { meetingStatus: { not: MEETING_STATUS.CANCELLED } }],
+};
+
+/**
+ * The first step of cancelling a round: one conditional write that marks the
+ * round cancelled and, when a vendor meeting exists, its removal as pending.
+ * Retried once if a creation attaches a meeting between the read and the write.
+ */
+export async function markRoundCancelled(roundId: string, pipelineId: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const current = await prisma.interviewRound.findFirst({ where: { id: roundId, pipelineId }, select: { status: true, meetingExternalId: true } });
+    if (!current || current.status !== 'SCHEDULED') return false;
+    const { count } = await prisma.interviewRound.updateMany({
+      where: { id: roundId, pipelineId, status: 'SCHEDULED', meetingExternalId: current.meetingExternalId },
+      data: current.meetingExternalId
+        ? { status: 'CANCELLED', meetingStatus: MEETING_STATUS.CANCEL_PENDING, meetingUpdatedAt: new Date() }
+        : { status: 'CANCELLED' },
+    });
+    if (count === 1) return true;
+  }
+  return false;
+}
 
 // A creation that has been "in flight" this long is assumed dead (process
 // restart mid-call) and may be claimed again. Well above the worst case of a
@@ -215,7 +250,9 @@ export type RetryResult = { readonly kind: 'done'; readonly outcome: MeetingOutc
  * out-of-date one, or remove one left behind by a cancellation.
  */
 export async function retryMeeting(round: InterviewRound, ctx: RoundContext, tenantId: string): Promise<RetryResult> {
-  if (round.meetingStatus === MEETING_STATUS.CANCEL_FAILED) return { kind: 'done', outcome: await cancelMeeting(round) };
+  if (round.meetingStatus === MEETING_STATUS.CANCEL_FAILED || round.meetingStatus === MEETING_STATUS.CANCEL_PENDING) {
+    return { kind: 'done', outcome: await cancelMeeting(round) };
+  }
   if (round.status !== 'SCHEDULED') return { kind: 'conflict', message: 'This round is no longer scheduled.' };
   if (round.meetingStatus === MEETING_STATUS.OUT_OF_SYNC) return { kind: 'done', outcome: await rescheduleMeeting(round, ctx) };
 
@@ -273,8 +310,7 @@ export async function collectVendorMeetings(candidateId: string, tenantId: strin
     where: {
       tenantId,
       pipeline: { candidateId },
-      meetingExternalId: { not: null },
-      OR: [{ status: 'SCHEDULED' }, { meetingStatus: MEETING_STATUS.CANCEL_FAILED }],
+      AND: [VENDOR_MEETING_OUTSTANDING],
     },
   });
 }
@@ -304,7 +340,7 @@ export async function clearExpiredMeetingLinks(cutoff: Date): Promise<number> {
     where: {
       status: { in: ['COMPLETED', 'CANCELLED'] },
       // Still the only record of a vendor meeting that has to be removed.
-      NOT: { meetingStatus: MEETING_STATUS.CANCEL_FAILED },
+      NOT: VENDOR_MEETING_OUTSTANDING,
       OR: [{ meetingUrl: { not: null } }, { meetingExternalId: { not: null } }, { meetingError: { not: null } }],
       AND: [{
         OR: [

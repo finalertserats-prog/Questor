@@ -5,7 +5,7 @@
  */
 
 export type MeetingStatus =
-  | 'LINKED' | 'MANUAL' | 'NEEDS_LINK' | 'CREATING' | 'OUT_OF_SYNC' | 'CANCELLED' | 'CANCEL_FAILED';
+  | 'LINKED' | 'MANUAL' | 'NEEDS_LINK' | 'CREATING' | 'OUT_OF_SYNC' | 'CANCELLED' | 'CANCEL_PENDING' | 'CANCEL_FAILED';
 
 export interface RoundMeetingView {
   readonly provider: string | null;
@@ -101,6 +101,10 @@ export function meetingSummary(meeting: RoundMeetingView, roundStatus: string, v
     }
     case 'OUT_OF_SYNC':
       return { text: meeting.error ?? `The ${label} meeting still has the old time.`, tone: 'error', link, canRetry: scheduled, canAddLink: false };
+    case 'CANCEL_PENDING':
+      // Normally resolved within the request; if it is still shown, the removal
+      // was interrupted, and a vendor delete is safe to repeat.
+      return { text: `Removing the ${label} meeting did not finish. Try again to remove it.`, tone: 'error', link: null, canRetry: true, canAddLink: false };
     case 'CANCEL_FAILED':
       return { text: meeting.error ?? `The ${label} meeting could not be removed.`, tone: 'error', link: null, canRetry: true, canAddLink: false };
     case 'CANCELLED':
