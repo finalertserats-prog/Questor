@@ -64,7 +64,23 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T>(method: string, path: string, body?: unknown, isForm = false): Promise<T> {
+export interface RequestOptions {
+  /** Aborts this request, e.g. when the component that asked for it unmounts. */
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * The deadline always applies; a caller's own signal is added to it. Without
+ * AbortSignal.any (older browsers) the caller's signal wins, because a request
+ * nobody is waiting for any more is worse than one without a timeout.
+ */
+function requestSignal(external?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  if (!external) return deadline;
+  return typeof AbortSignal.any === 'function' ? AbortSignal.any([external, deadline]) : external;
+}
+
+async function req<T>(method: string, path: string, body?: unknown, isForm = false, opts?: RequestOptions): Promise<T> {
   const headers: Record<string, string> = {};
   if (UNSAFE_METHODS.has(method)) {
     const csrf = readCookie(CSRF_COOKIE);
@@ -89,7 +105,7 @@ async function req<T>(method: string, path: string, body?: unknown, isForm = fal
       // Without a deadline a request that never answers — a hung proxy, a
       // dropped connection the OS has not noticed — leaves the page on its
       // loading state forever, with no error and no way forward.
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: requestSignal(opts?.signal),
     });
   } catch (err: unknown) {
     if (isAbort(err)) throw new ApiError(0, TIMEOUT_MESSAGE);
@@ -107,7 +123,7 @@ function isAbort(err: unknown): boolean {
 }
 
 export const api = {
-  get: <T>(p: string) => req<T>('GET', p),
+  get: <T>(p: string, opts?: RequestOptions) => req<T>('GET', p, undefined, false, opts),
   post: <T>(p: string, body?: unknown) => req<T>('POST', p, body),
   put: <T>(p: string, body?: unknown) => req<T>('PUT', p, body),
   patch: <T>(p: string, body?: unknown) => req<T>('PATCH', p, body),

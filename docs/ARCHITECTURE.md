@@ -31,6 +31,12 @@ Production uses PostgreSQL. Local development defaults to SQLite. The Postgres P
 
 `server/src/index.ts` runs preflight, starts retention, incomplete-interview, webhook delivery, and invitation-secret backfill work, creates the Express app, attaches Socket.IO, and listens. Jobs use database leases in `services/jobs.ts` and record `JobRun` rows for `/api/admin/ops`.
 
+### System health
+
+`GET /api/admin/health` (`routes/systemHealth.ts`) is the one request behind the Admin console's System health panel. `services/systemHealth.ts` runs each check in parallel under its own 3-second deadline, so a hung dependency becomes one failed check rather than a request that never answers, and caches the whole report for 15 s per scope. The checks themselves live beside the thing they judge: `systemHealthPlatform.ts` (database, migrations, process, drain, disk, commit, backups), `systemHealthJobs.ts` (every `startJob` name against the interval its own module exports), `systemHealthDelivery.ts` (email, AI provider and failure rate, speech, rate-limit store, retention sweep, webhook v1) and `systemHealthTenant.ts` (one organisation's webhooks, ATS, meeting provider, stuck or failed interviews, feedback drafts, legal holds, resumes).
+
+Scope is the security boundary: deployment-wide checks go only to the operator (`isOperator`, the same rule as the signup queue); every other admin gets their own organisation's checks, filtered by `tenantId`. No check returns a setting's value, an internal address, another organisation's data or an error's text — environment variables are named, never shown, and job notes are redacted before they leave. `BACKUP_DIR` (optional; `/root/Questor/backups` in production) is the only new setting.
+
 ## Provider adapters
 
 The zero-key path uses the heuristic LLM, browser speech, hosted interview rooms, generic connectors, and console email. Paid or external adapters are selected by environment. Variable names include `LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `STT_PROVIDER`, `DEEPGRAM_API_KEY`, `AZURE_SPEECH_KEY`, `TTS_PROVIDER`, `ELEVENLABS_API_KEY`, `EMAIL_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SENDGRID_API_KEY`, `ATS_PROVIDER`, `ATS_BASE_URL`, `ATS_API_KEY`, `ATS_TENANT_ID` (the ATS variables apply only to that one organisation; every other organisation connects its own ATS in Settings, stored sealed in `AtsConnection`), `MEETING_PROVIDER` (the AI interview room) and `ROUND_MEETING_PROVIDER` (meeting links for human rounds; see docs/CONNECTORS.md).
@@ -106,7 +112,8 @@ The React/Vite client lives under `web/src`:
 - `pages/*` for route pages.
 - `components/*` for shared UI and pure model helpers.
 - `api/*` for API client and response modeling.
-- Pure model modules include score/status/tour/dashboard/journey/pipeline helpers and are testable without a browser.
+- Pure model modules include score/status/tour/dashboard/journey/pipeline/system-health helpers and are testable without a browser.
+- `components/SystemHealthPanel.tsx` sits at the top of the Admin page, re-checks every 60 s while the tab is visible and cancels its request on unmount; its wording and ordering are in `components/systemHealthModel.ts`.
 
 The interview room uses browser speech in the zero-key path and the server for session state and turns.
 

@@ -6,6 +6,7 @@ import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/Roun
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
+import { SystemHealthPanel } from '../components/SystemHealthPanel';
 import {
   LEGACY_OFF_CONFIRMATION, eventsForApi, eventsLabel, signatureView,
 } from '../components/webhookSignatureModel';
@@ -32,6 +33,15 @@ interface ModelExecution { id: string; provider: string; model: string; function
 // `events` is the comma-separated string the server stores, not an array.
 interface Webhook { id: string; url: string; events: string; active: boolean; sendLegacySignature: boolean; }
 interface WebhookList { webhooks: Webhook[]; legacySignatureDisabledEverywhere?: boolean; }
+
+/** Repeated by the loading branch, so the health panel is on screen either way. */
+function AdminTopbar() {
+  return (
+    <div className="topbar">
+      <h1>Admin &amp; Connectors</h1>
+    </div>
+  );
+}
 
 function activeBadge(c: ProviderComponent) {
   if (c.enabled || c.configured) return <Badge kind="green">Active</Badge>;
@@ -106,7 +116,18 @@ export function Admin() {
     return () => { cancelled = true; };
   }, []);
 
-  if (loading) return <div className="muted">Loading…</div>;
+  // System health does not wait for the panels below it: "is anything wrong?"
+  // is the question this page is opened for, and it is answered by its own
+  // request.
+  if (loading) {
+    return (
+      <div>
+        <AdminTopbar />
+        <SystemHealthPanel />
+        <div className="muted">Loading…</div>
+      </div>
+    );
+  }
 
   const createWebhook = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -189,9 +210,9 @@ export function Admin() {
 
   return (
     <div>
-      <div className="topbar">
-        <h1>Admin & Connectors</h1>
-      </div>
+      <AdminTopbar />
+
+      <SystemHealthPanel />
 
       {error && <Banner kind="error">{error}</Banner>}
 

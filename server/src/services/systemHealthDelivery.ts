@@ -150,10 +150,16 @@ const legacyWebhooks: CheckDef = {
     if (s.killSwitch === 'off') {
       return { status: 'info', value: 0, summary: `Switched off everywhere (WEBHOOK_V1_SIGNATURE=off); ${plural(s.flagged, 'webhook')} would get it back if switched on.` };
     }
+    if (s.sending === 0) {
+      return {
+        status: 'info', value: 0, summary: 'No webhook on this deployment receives the v1 signature.',
+        action: 'Nobody needs v1: set WEBHOOK_V1_SIGNATURE=off so it cannot come back.',
+      };
+    }
     return {
       status: 'info', value: s.sending,
-      summary: `${plural(s.sending, 'active webhook')} still receive the v1 signature.`,
-      action: s.sending === 0 ? 'Nobody needs v1: set WEBHOOK_V1_SIGNATURE=off.' : undefined,
+      summary: `${plural(s.sending, 'active webhook')} still receive${s.sending === 1 ? 's' : ''} the v1 signature.`,
+      detail: 'Each of those receivers breaks if the kill switch is set to off before it verifies v2.',
     };
   },
 };
