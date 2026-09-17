@@ -82,8 +82,6 @@ so the signup email path and operator approval work in production.
       both pick Zoom share one Zoom account.
 - [ ] **Feedback opt-in cooldown** is check-then-write; two exactly simultaneous
       requests could both send (the button is disabled while one is in flight).
-- [ ] **Dashboard at 1280 px** shows the key-metric cards in two columns with
-      empty space to the right (cosmetic).
 
 ## 3. Decisions for the owner
 

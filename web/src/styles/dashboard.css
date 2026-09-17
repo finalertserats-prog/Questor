@@ -45,9 +45,12 @@
      and was right to -- but only because the count was fixed: 4 x 240px cannot
      fit the 672px column between the 820px and 980px breakpoints. auto-fit
      chooses a count that fits, so the minimum never overflows, and on a wide
-     screen the row fills the width instead of stopping short of it. */
-  grid-template-columns: repeat(auto-fit, minmax(200px, var(--kpi-card-max)));
-  justify-content: start;
+     screen the row fills the width instead of stopping short of it.
+     The count comes from the minimum: with a definite maximum in minmax() the
+     browser counts columns by the maximum, so a 320px cap fitted only two
+     columns into a 970px page and left a third of it empty. auto-fill keeps
+     the empty tracks, so a short row does not stretch its cards. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--kpi-grid-gap);
   margin: 0 0 var(--space-4);
   padding: 0;
