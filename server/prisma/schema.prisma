@@ -626,7 +626,75 @@ model InterviewRound {
   completedAt      DateTime?
   createdById      String?
   createdAt        DateTime @default(now())
+  observation      RoundObservation?
 
   @@index([pipelineId])
+  @@index([tenantId])
+}
+
+// The AI observer on a human round (services/roundObserver.ts). Both the
+// interviewer and the candidate consent before anything is captured; either
+// may decline or stop it. It produces a transcript and, once the round ends,
+// verbatim quotes mapped to scorecard competencies — never a score, rating,
+// recommendation or characterisation of the candidate.
+model RoundObservation {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  roundId              String    @unique
+  round                InterviewRound @relation(fields: [roundId], references: [id])
+  // Denormalised from the round's pipeline so erasure, retention and holds can
+  // find a candidate's observations without walking the pipeline.
+  candidateId          String
+  // AWAITING_CANDIDATE | CONSENTED | LISTENING | STOPPED | DECLINED | ENDED
+  status               String    @default("AWAITING_CANDIDATE")
+  // Which wording of the capture notice both parties agreed to.
+  noticeVersion        String
+  // The interviewer who consented; the only person who may send audio.
+  interviewerId        String
+  interviewerConsentAt DateTime?
+  candidateTokenHash   String?   @unique
+  candidateTokenSealed String    @default("")
+  candidateConsentAt   DateTime?
+  declinedBy           String?   // interviewer | candidate
+  declinedAt           DateTime?
+  startedAt            DateTime?
+  stoppedBy            String?   // interviewer | candidate
+  stoppedAt            DateTime?
+  endedAt              DateTime?
+  // OK | DEGRADED (some stretch of the round could not be captured)
+  captureStatus        String    @default("OK")
+  // PENDING | READY | NONE | UNAVAILABLE
+  quotesStatus         String    @default("PENDING")
+  quotesNote           String    @default("")
+  // JSON [{competencyId, competencyName, quote, segmentIndex, offsetMs}]
+  quotesJson           String    @default("[]")
+  // JSON counts of model output the validator refused, by reason.
+  quotesDroppedJson    String    @default("{}")
+  legalHold            Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  segments             ObservationSegment[]
+
+  @@index([tenantId])
+  @@index([candidateId])
+}
+
+// One captured stretch of a human round, or a GAP where capture failed. Gaps
+// are stored so the transcript says where it is incomplete instead of reading
+// as if nothing was said.
+model ObservationSegment {
+  id            String   @id @default(cuid())
+  tenantId      String
+  observationId String
+  observation   RoundObservation @relation(fields: [observationId], references: [id])
+  index         Int
+  kind          String   // SPEECH | GAP
+  offsetMs      Int
+  durationMs    Int      @default(0)
+  text          String   @default("")
+  source        String   @default("") // browser | server provider id
+  createdAt     DateTime @default(now())
+
+  @@unique([observationId, index])
   @@index([tenantId])
 }

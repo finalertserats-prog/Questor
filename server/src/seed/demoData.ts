@@ -97,6 +97,9 @@ export async function wipe(): Promise<void> {
   await prisma.evidenceNode.deleteMany();
   await prisma.candidateProfileVersion.deleteMany();
   // Pipelines reference Candidate and Role, and rounds reference pipelines.
+  // Observer segments and observations hang off rounds, so they go first.
+  await prisma.observationSegment.deleteMany();
+  await prisma.roundObservation.deleteMany();
   await prisma.interviewRound.deleteMany();
   await prisma.candidatePipeline.deleteMany();
   // Assignment rows hold foreign keys onto Candidate, Role and User, so they
