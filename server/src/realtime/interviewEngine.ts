@@ -92,6 +92,23 @@ function elapsedMinutes(turns: TurnRecord[]): number {
 }
 
 /** A unique-constraint violation, however the driver reports it. */
+type TransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * Queue appenders to one session behind a row lock.
+ *
+ * SQLite serialises writers, so read-tail-then-insert is already safe there.
+ * Postgres runs the two transactions side by side: both read the same tail,
+ * both insert the same index, and each answer writes two turns (the answer and
+ * the next question), so the loser collides again on its retry and the answer
+ * is lost. Locking the session row makes the second appender wait and then read
+ * the tail the first one committed.
+ */
+async function lockSessionForAppend(tx: TransactionClient, sessionId: string): Promise<void> {
+  if (!/^postgres(ql)?:/.test(process.env.DATABASE_URL ?? '')) return;
+  await tx.$queryRaw`SELECT "id" FROM "InterviewSession" WHERE "id" = ${sessionId} FOR UPDATE`;
+}
+
 function isDuplicateIndex(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
 }
@@ -112,6 +129,7 @@ async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'inde
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const rec = await prisma.$transaction(async (tx) => {
+        await lockSessionForAppend(tx, sessionId);
         const tail = await tx.turn.findFirst({
           where: { sessionId }, orderBy: { index: 'desc' }, select: { index: true },
         });
