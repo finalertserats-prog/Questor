@@ -105,3 +105,24 @@
 .has-evidence .evidence-mark {
   color: var(--accent);
 }
+
+/* Meeting cell of a human round. A failure is marked with a rule and colour,
+   not a tinted block. */
+.round-meeting {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+}
+.round-meeting-error {
+  color: var(--danger);
+  border-left: 2px solid var(--danger);
+  padding-left: 6px;
+}
+.round-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

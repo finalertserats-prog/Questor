@@ -84,6 +84,22 @@ it. Additionally:
 - Set a hard spend cap on the LLM API key. The candidate portal is
   unauthenticated by design and every answer costs money.
 - Rotate the key if it has ever been shared, pasted, or stored elsewhere.
+- Meeting providers for human interview rounds (optional; default
+  `ROUND_MEETING_PROVIDER=manual` needs none of these). Set only the block for
+  the provider you use, restart, then check Admin → Connectors:
+  - Zoom: `ZOOM_ACCOUNT_ID`, `ZOOM_CLIENT_ID`, `ZOOM_CLIENT_SECRET`,
+    `ZOOM_HOST_USER_ID`.
+  - Microsoft Teams: `MS_GRAPH_TENANT_ID`, `MS_GRAPH_CLIENT_ID`,
+    `MS_GRAPH_CLIENT_SECRET`, `MS_GRAPH_ORGANIZER_USER_ID`. The Graph
+    application permission `Calendars.ReadWrite` lets the app write to every
+    mailbox in the tenant; an Exchange admin should restrict it to the organiser
+    mailbox with an application access policy (`New-ApplicationAccessPolicy`).
+  - Google Meet: `GOOGLE_SERVICE_ACCOUNT_EMAIL`,
+    `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`, `GOOGLE_IMPERSONATED_USER`, with
+    domain-wide delegation for `https://www.googleapis.com/auth/calendar.events`.
+  - These are secrets like the LLM key: Step 1's restrictions apply, the server
+    never logs or returns them, and the client secrets expire — note the dates.
+  See docs/CONNECTORS.md → "Meeting links for human rounds".
 
 ## Step 5 — Backups
 
