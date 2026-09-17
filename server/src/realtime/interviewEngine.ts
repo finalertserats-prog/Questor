@@ -97,7 +97,6 @@ function elapsedMinutes(turns: TurnRecord[]): number {
   return (turns.length * AVG_MS_PER_TURN) / 60000;
 }
 
-/** A unique-constraint violation, however the driver reports it. */
 type TransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 /**
@@ -115,6 +114,7 @@ async function lockSessionForAppend(tx: TransactionClient, sessionId: string): P
   await tx.$queryRaw`SELECT "id" FROM "InterviewSession" WHERE "id" = ${sessionId} FOR UPDATE`;
 }
 
+/** A unique-constraint violation, however the driver reports it. */
 function isDuplicateIndex(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
 }
