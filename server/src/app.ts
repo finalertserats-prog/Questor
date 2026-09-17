@@ -21,6 +21,7 @@ import { dashboardRouter } from './routes/dashboard.js';
 import { connectorsRouter } from './routes/connectors.js';
 import { atsConnectionRouter } from './routes/atsConnection.js';
 import { candidateAtsRouter } from './routes/candidateAts.js';
+import { observerConsentRouter, observerRouter } from './routes/observer.js';
 
 
 export function createApp() {
@@ -122,6 +123,15 @@ export function createApp() {
   app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60 }), signupDecisionRouter);
   app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10 }), signupRouter);
 
+  // The candidate's consent link for an AI observer on a human round. Public
+  // and token-gated like the feedback link, and keyed on IP for the same
+  // reason: the only abuse is guessing tokens.
+  app.use('/api/observer-consent', rateLimit({ name: 'observer-consent', windowMs: 15 * 60_000, max: 60 }), observerConsentRouter);
+  // The observer room uploads a chunk of the round every ~30 seconds and each
+  // one can be a billed transcription, so the ceiling is a few hours of rounds
+  // per hour per address: slack for real use, a bound on a runaway client.
+  app.use('/api/observer/rounds/:roundId/segments', rateLimit({ name: 'observer-segments', windowMs: 60 * 60_000, max: 600 }));
+
   // Public organisation lookup for sign-in links. A person follows a link once
   // or twice; 30 per 15 minutes per IP stops anyone guessing slugs at speed.
   //
@@ -146,6 +156,7 @@ export function createApp() {
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/interviews', interviewsRouter);
   app.use('/api/pipelines', pipelinesRouter);
+  app.use('/api/observer', observerRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);
   app.use('/api/admin/connectors', connectorsRouter);

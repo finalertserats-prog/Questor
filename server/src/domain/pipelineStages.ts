@@ -6,7 +6,8 @@ import { CorruptRecordError, type CorruptRecordRef } from '../db.js';
  *
  * Only one stage is conducted by the AI: the AI interview (Silver by default),
  * which HR may silently observe. Every other interview stage is conducted by a
- * person, with the AI as a silent observer that transcribes and summarises.
+ * person, with the AI as a silent observer that, when both parties agree,
+ * transcribes and quotes (never summarises or judges; services/roundObserver.ts).
  * HR decides every advancement and every final outcome.
  */
 

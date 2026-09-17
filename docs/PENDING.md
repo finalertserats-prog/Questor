@@ -90,8 +90,12 @@ Still to finish:
       deployment operator (the signup approver); tenant admins test only their own ATS
       connection (`POST /api/admin/ats/test`).
 - [ ] **Teams/Zoom/Meet meeting creation**.
-- [ ] **AI observer on human rounds (task #10)**: decided (transcribe and quote
-      only, both parties consent), not built.
+- [x] **AI observer on human rounds (task #10)**: built (transcribe and quote
+      only, both parties consent). Observer room at `/rounds/:roundId/observer`,
+      candidate consent at `/observer-consent/:token`. Still to decide: whether
+      the candidate link should also be emailed, and whether a stopped observer
+      may be restarted with fresh consent (today a stop is final for the round).
+      Needs a real-browser check of microphone capture on the VPS origin.
 
 ---
 

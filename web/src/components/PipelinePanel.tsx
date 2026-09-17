@@ -397,6 +397,11 @@ export function PipelinePanel(
                       {round.conductedBy === 'AI' && round.sessionId && round.status === 'SCHEDULED' && (
                         <Link to={`/interviews/${round.sessionId}/observe`}><Icon name="eye" size={15} />Observe live</Link>
                       )}
+                      {round.conductedBy === 'HUMAN' && round.aiObserver && (
+                        <Link to={`/rounds/${round.id}/observer`}>
+                          <Icon name="captions" size={15} />{round.status === 'SCHEDULED' ? 'Observer room' : 'Transcript & quotes'}
+                        </Link>
+                      )}
                     </span>
                   </td>
                 </tr>

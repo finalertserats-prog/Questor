@@ -6,6 +6,8 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { assertCanAccessCandidate, assertCanAccessRole } from '../services/access.js';
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
+import { endObservation } from '../services/roundObserver.js';
+import { extractEvidenceQuotes } from '../services/observerQuotes.js';
 import { getEmail } from '../providers/email/index.js';
 import { brandedEmail, headerSafe } from '../providers/email/branding.js';
 import { config } from '../config.js';
@@ -306,8 +308,9 @@ const completeSchema = z.object({
   notes: z.string().trim().min(20, 'Record what the round showed — this is the evidence for the stage.').max(10000),
 });
 
-// Closing a round with what it showed. Until the AI observer can transcribe
-// human rounds, these notes are the evidence the summary relies on.
+// Closing a round with what it showed. The interviewers' notes are the
+// assessment; an AI observer, where both parties agreed, only adds a transcript
+// and verbatim quotes beside them.
 pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const { notes } = completeSchema.parse(req.body);
   const pipeline = await loadPipeline(req, req.params.id);
@@ -319,6 +322,16 @@ pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('intervi
     data: { status: 'COMPLETED', notes, completedAt: new Date() },
   });
   if (completed.count !== 1) throw new HttpError(409, 'This round has already been completed or cancelled.');
+
+  // The round is over, so its AI observer is too: capture closes and the
+  // transcript becomes read-only. Quotes are extracted in the background; the
+  // round's own completion does not wait on a model.
+  const observationId = await endObservation(round.id, req.auth!.userId);
+  if (observationId) {
+    void extractEvidenceQuotes(observationId).catch((err: unknown) => {
+      logger.error({ err: err instanceof Error ? err.message : String(err), observationId }, 'Observer quote extraction crashed');
+    });
+  }
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,

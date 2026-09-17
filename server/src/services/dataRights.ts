@@ -4,6 +4,7 @@ import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
+import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredObservations } from './observerRetention.js';
 
 // Candidate data-rights operations.
 //
@@ -203,7 +204,9 @@ export async function eraseCandidate(o: {
   // Resume uploads hang off the candidate, not a session, so a hold on one was
   // invisible to the session-based check above and the file was deleted anyway.
   const heldArtifacts = await prisma.artifact.count({ where: { candidateId: o.candidateId, tenantId: o.tenantId, legalHold: true } });
-  if (held > 0 || heldArtifacts > 0) {
+  // An AI-observer transcript of a human round can be held on its own.
+  const heldObservation = await candidateHasHeldObservation(o.candidateId, o.tenantId);
+  if (held > 0 || heldArtifacts > 0 || heldObservation) {
     throw new HttpError(
       409,
       'This candidate has interview data under legal hold and cannot be erased. Release the hold first if erasure is appropriate.',
@@ -228,6 +231,7 @@ export async function eraseCandidate(o: {
     // Access-control rows hold a foreign key onto Candidate, so they must go
     // first or the delete below fails the constraint and erasure — a legal
     // obligation — errors out entirely.
+    await deleteCandidateObservations(tx, o.candidateId, count);
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
@@ -433,8 +437,8 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
     // below are unconditional, so the hold has to be checked before, not
     // filtered inside — otherwise the sweep would shred held evidence.
     const held = await prisma.artifact.count({ where: { candidateId, legalHold: true } });
-    if (held > 0) {
-      logger.info({ candidateId, held }, 'Skipped candidate purge: artifacts under legal hold');
+    if (held > 0 || await candidateHasHeldObservation(candidateId)) {
+      logger.info({ candidateId, held }, 'Skipped candidate purge: artifacts or an observed round under legal hold');
       continue;
     }
 
@@ -452,6 +456,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('artifacts', () => tx.artifact.deleteMany({ where: { candidateId } }));
         // Same foreign-key ordering as erasure: assignment rows reference the
         // candidate and must go first.
+        await deleteCandidateObservations(tx, candidateId, count);
         await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId } } }));
         await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId } }));
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
@@ -645,8 +650,9 @@ export async function purgeExpiredSignupRequests(now = new Date()): Promise<numb
 export async function runRetentionSweep(now = new Date()): Promise<PurgeResult> {
   const sessions = await purgeExpiredSessions(now);
   const roundNotes = await purgeExpiredRoundNotes(now);
+  const observations = await purgeExpiredObservations(now, retentionDays());
   const signupRequests = await purgeExpiredSignupRequests(now);
-  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes, signupRequests } };
+  const result: PurgeResult = { ...sessions, deleted: { ...sessions.deleted, roundNotes, observations, signupRequests } };
   // Logged unconditionally and on every outcome. Logging only when something was
   // deleted makes a sweep that has failed on 100% of rows for months look
   // identical to a sweep with nothing to do — and under GDPR Art. 5(2) you must

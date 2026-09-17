@@ -15,6 +15,7 @@ import './styles/journey.css';
 import './styles/dashboard.css';
 import './styles/polish.css';
 import './styles/tour.css';
+import './styles/observer.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
