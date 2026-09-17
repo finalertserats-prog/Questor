@@ -356,6 +356,25 @@ describe('asking a candidate to opt in', () => {
     expect(retry.status).toBe(200);
   });
 
+  it('sends exactly one first request when two recruiters ask at once', async () => {
+    const f = await approvedFeedback();
+
+    const results = await Promise.all([askToOptIn(f), askToOptIn(f)]);
+
+    expect([results.map((r) => r.status).sort(), sent.messages.length]).toEqual([[200, 429], 1]);
+  });
+
+  it('sends exactly one resend when two recruiters ask again at once', async () => {
+    const f = await approvedFeedback();
+    await requestLink(f);
+    await prisma.candidateFeedbackOptInRequest.updateMany({ data: { issuedAt: new Date(Date.now() - 2 * 60 * 60_000) } });
+    const before = sent.messages.length;
+
+    const results = await Promise.all([askToOptIn(f), askToOptIn(f)]);
+
+    expect([results.map((r) => r.status).sort(), sent.messages.length - before]).toEqual([[200, 429], 1]);
+  });
+
   it('replaces the link when sent again, so only the newest one works', async () => {
     const f = await approvedFeedback();
     const first = await requestLink(f);

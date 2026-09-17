@@ -144,8 +144,9 @@ describe('the feedback email', () => {
   it('carries no scores, levels or recommendation to the candidate', async () => {
     const { email } = await sentFeedback();
 
-    const both = `${email.text} ${email.html}`.toLowerCase();
-    expect(both).not.toContain('/5');
+    // Links are stripped first: their random tokens can contain "/5" by chance.
+    const both = `${email.text} ${email.html}`.toLowerCase().replace(/https?:\/\/\S+/g, '');
+    expect(both).not.toMatch(/\d(?:\.\d+)?\s*\/\s*5\b/);
     expect(both).not.toContain('confidence');
     expect(both).not.toContain('recommendation');
   });

@@ -118,14 +118,9 @@ export async function requestFeedbackOptIn(opts: {
   // Replacing the hash retires any earlier link: only the newest email works.
   // Written before sending so the link already resolves when it arrives; undone
   // below if the email never goes.
-  await prisma.candidateFeedbackOptInRequest.upsert({
-    where: { sessionId: session.id },
-    create: {
-      sessionId: session.id, candidateId: session.candidateId, tenantId: session.tenantId,
-      tokenHash, requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt,
-    },
-    update: { tokenHash, requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt },
-  });
+  if (!await claimRequestSlot({ session, previous, tokenHash, requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt })) {
+    throw new HttpError(429, 'A request was just sent to this candidate. Please give them time to answer.');
+  }
 
   try {
     await email.send(renderFeedbackOptInRequestEmail({
@@ -153,6 +148,40 @@ export async function requestFeedbackOptIn(opts: {
 }
 
 type StoredRequest = NonNullable<Awaited<ReturnType<typeof prisma.candidateFeedbackOptInRequest.findUnique>>>;
+
+/**
+ * Write this attempt's request only if the row is still the one the cooldown
+ * was checked against. Two recruiters pressing "Ask" together both passed the
+ * check; the second write then replaced the first one's delivered link, and a
+ * failed send restored a row that was already stale. Now exactly one of them
+ * wins, and the other is told a request was just sent.
+ */
+async function claimRequestSlot(opts: {
+  session: { id: string; candidateId: string; tenantId: string };
+  previous: StoredRequest | null;
+  tokenHash: string;
+  requestedByUserId: string;
+  issuedAt: Date;
+  expiresAt: Date;
+}): Promise<boolean> {
+  const { session, previous, tokenHash, requestedByUserId, issuedAt, expiresAt } = opts;
+  if (previous) {
+    const claimed = await prisma.candidateFeedbackOptInRequest.updateMany({
+      where: { sessionId: session.id, tokenHash: previous.tokenHash },
+      data: { tokenHash, requestedByUserId, issuedAt, expiresAt },
+    });
+    return claimed.count === 1;
+  }
+  try {
+    await prisma.candidateFeedbackOptInRequest.create({
+      data: { sessionId: session.id, candidateId: session.candidateId, tenantId: session.tenantId, tokenHash, requestedByUserId, issuedAt, expiresAt },
+    });
+    return true;
+  } catch (err) {
+    if ((err as { code?: unknown }).code === 'P2002') return false;
+    throw err;
+  }
+}
 
 /**
  * Put back what was there before an email that never went. Otherwise a failed
