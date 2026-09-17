@@ -105,23 +105,50 @@
     display: none;
   }
 
+  /* The aside stretches with the page, so its background and edge rule run
+     the full length of a long page; the inner box is what stays in view.
+     Nothing inside may paint past the column onto the page: overflow-x is
+     clipped (clip, not hidden, so this is not a scroll container and the
+     sticky box and the nav's own scrolling are unaffected). */
   .sidebar {
+    box-sizing: border-box;
+  }
+  .sidebar-inner {
     position: sticky;
     top: 0;
+    height: 100vh;
     height: 100dvh;
     box-sizing: border-box;
-    transition: width 0.18s ease, padding 0.18s ease;
+    overflow-x: clip;
+  }
+
+  /* The width animates only while the reader toggles the rail (the shell
+     carries is-rail-animating for that moment). Left on permanently, any
+     other layout change — widening the window past the drawer breakpoint, a
+     full-page capture — replayed the sidebar growing from nothing, drawn
+     mid-way with its wordmark spilling over the page title. */
+  .app.is-rail-animating .sidebar {
+    transition: width 0.18s ease;
+  }
+  .app.is-rail-animating .sidebar-inner {
+    transition: padding 0.18s ease;
   }
 
   /* ---- The collapsed rail ---- */
 
   .app.is-rail .sidebar {
     width: 72px;
+  }
+  .app.is-rail .sidebar-inner {
     padding-left: 10px;
     padding-right: 10px;
     gap: 16px;
   }
-
+  /* The rail's tooltips have to escape the column; they may, once the rail
+     has finished narrowing. */
+  .app.is-rail:not(.is-rail-animating) .sidebar-inner {
+    overflow-x: visible;
+  }
   /* The mark stays, stacked above the control and simply set smaller. The one
      thing a collapse must never do is take the product's name off the screen. */
   .app.is-rail .sidebar-head {
@@ -246,7 +273,7 @@
      It is hidden until opened — `visibility` (not just transform) keeps its
      links out of the tab order while it is closed. */
   .sidebar {
-    display: flex;
+    display: block;
     position: fixed;
     inset: 0 auto 0 0;
     width: min(86vw, 280px);
@@ -263,6 +290,11 @@
     visibility: visible;
     box-shadow: 0 12px 40px rgba(12, 12, 24, 0.18);
     transition: transform 0.2s ease, visibility 0s, box-shadow 0.2s ease;
+  }
+  .sidebar-inner {
+    position: relative;
+    height: 100%;
+    box-sizing: border-box;
   }
 }
 
@@ -417,7 +449,9 @@
 @media (prefers-reduced-motion: reduce) {
   .sidebar,
   .sidebar.is-open,
-  .sidebar nav a::after {
+  .sidebar nav a::after,
+  .app.is-rail-animating .sidebar,
+  .app.is-rail-animating .sidebar-inner {
     transition: none;
   }
 }

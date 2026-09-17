@@ -8,6 +8,7 @@ import { TourProvider } from './components/tourContext';
 import {
   brandDisplay,
   navItemTooltip,
+  RAIL_TRANSITION_MS,
   readSidebarMode,
   shellClassName,
   sidebarToggleLabel,
@@ -78,6 +79,8 @@ function Layout({ children }: { children: React.ReactNode }) {
   const isNarrow = useIsNarrowViewport();
   const [navOpen, setNavOpen] = useState(false);
   const [mode, setMode] = useState<SidebarMode>(() => readSidebarMode());
+  // True only just after the rail is toggled; the width transition is scoped to it.
+  const [railAnimating, setRailAnimating] = useState(false);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const railToggleRef = useRef<HTMLButtonElement>(null);
@@ -153,13 +156,22 @@ function Layout({ children }: { children: React.ReactNode }) {
     const next = toggleSidebarMode(mode);
     setMode(next);
     writeSidebarMode(next);
+    setRailAnimating(true);
   };
+
+  // A timer rather than transitionend: with reduced motion there is no
+  // transition to end, and the class must still come off.
+  useEffect(() => {
+    if (!railAnimating) return undefined;
+    const timer = window.setTimeout(() => setRailAnimating(false), RAIL_TRANSITION_MS + 60);
+    return () => window.clearTimeout(timer);
+  }, [railAnimating, mode]);
 
   const brand = brandDisplay(railMode);
   const tip = (label: string) => navItemTooltip(railMode, label);
 
   return (
-    <div className={shellClassName(railMode)}>
+    <div className={shellClassName(railMode, railAnimating)}>
       <button
         ref={toggleRef}
         type="button"
@@ -176,65 +188,71 @@ function Layout({ children }: { children: React.ReactNode }) {
       {overlayOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
 
       <aside id="app-sidebar" className={overlayOpen ? 'sidebar is-open' : 'sidebar'} aria-label="Main navigation">
-        <button ref={closeRef} type="button" className="nav-close" aria-label="Close menu" onClick={closeNav}>
-          <Icon name="close" />
-        </button>
-        <div>
-          <div className="sidebar-head">
-            {/* Collapsing narrows the sidebar; it does not take the product's
-                name off the screen. In the rail the wordmark is simply set
-                smaller, above the icons it names. */}
-            <div className={brand.className} title={brand.label}>
-              {/* The mark carries no meaning the name does not: it is decorative
-                  here, and the name beside it is the accessible label. */}
-              <img className="logo-mark" src="/brand/questor-mark.webp" alt="" width={26} height={27} />
-              <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>
+        {/* The aside is the full-height column that carries the background and
+            the edge rule; this inner box is what stays pinned to the viewport.
+            Pinning the aside itself stopped its background at the first
+            screenful and left a bare strip under it on a long page. */}
+        <div className="sidebar-inner">
+          <button ref={closeRef} type="button" className="nav-close" aria-label="Close menu" onClick={closeNav}>
+            <Icon name="close" />
+          </button>
+          <div>
+            <div className="sidebar-head">
+              {/* Collapsing narrows the sidebar; it does not take the product's
+                  name off the screen. In the rail the wordmark is simply set
+                  smaller, above the icons it names. */}
+              <div className={brand.className} title={brand.label}>
+                {/* The mark carries no meaning the name does not: it is decorative
+                    here, and the name beside it is the accessible label. */}
+                <img className="logo-mark" src="/brand/questor-mark.webp" alt="" width={26} height={27} />
+                <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>
+              </div>
+              <button
+                ref={railToggleRef}
+                type="button"
+                className="rail-toggle"
+                aria-controls="app-sidebar"
+                // Not aria-expanded: the navigation is never hidden here, only
+                // narrowed, and "collapsed" would tell a screen reader the links
+                // are gone while every one of them is still focusable.
+                aria-pressed={railMode === 'collapsed'}
+                aria-label={sidebarToggleLabel(railMode)}
+                title={sidebarToggleLabel(railMode)}
+                onClick={toggleRail}
+              >
+                <Icon name={railMode === 'collapsed' ? 'sidebar-expand' : 'sidebar-collapse'} />
+              </button>
             </div>
-            <button
-              ref={railToggleRef}
-              type="button"
-              className="rail-toggle"
-              aria-controls="app-sidebar"
-              // Not aria-expanded: the navigation is never hidden here, only
-              // narrowed, and "collapsed" would tell a screen reader the links
-              // are gone while every one of them is still focusable.
-              aria-pressed={railMode === 'collapsed'}
-              aria-label={sidebarToggleLabel(railMode)}
-              title={sidebarToggleLabel(railMode)}
-              onClick={toggleRail}
-            >
-              <Icon name={railMode === 'collapsed' ? 'sidebar-expand' : 'sidebar-collapse'} />
-            </button>
+            {/* The ticked rule is the instrument's edge; it recurs under every
+                page title, which is what ties the console together. */}
+            <div className="brand-line" aria-hidden="true" />
+            <div className="small muted sidebar-tagline" style={{ marginTop: 8 }}>Hire through evidence</div>
           </div>
-          {/* The ticked rule is the instrument's edge; it recurs under every
-              page title, which is what ties the console together. */}
-          <div className="brand-line" aria-hidden="true" />
-          <div className="small muted sidebar-tagline" style={{ marginTop: 8 }}>Hire through evidence</div>
+          {/* Grouped by cadence, not by entity: the top group is the daily
+              reviewing loop, the bottom is what you set up once. The admin console
+              lives in the profile menu, beside the other account-level pages.
+
+              Each label stays in the markup in both states: in the rail it is
+              clipped rather than removed, so every icon keeps its name for a
+              screen reader, and data-tip shows that name on hover and on focus.
+
+              data-tour is what the guided tour points at (components/tourModel.ts):
+              an explicit anchor, so moving the markup cannot silently strand a step. */}
+          <nav>
+            <div className="nav-group">Review</div>
+            <NavLink to="/" end data-tip={tip('Dashboard')} data-tour="nav-dashboard"><Icon name="dashboard" /><span className="nav-label">Dashboard</span></NavLink>
+            {/* Candidates sits above "Add Candidate" because finding an existing
+                one is the far more frequent errand — and for a long time it was
+                the impossible one: creation had a nav entry, retrieval had none. */}
+            <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
+            <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
+
+            <div className="nav-group">Set up</div>
+            <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
+            <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="role" /><span className="nav-label">New role</span></NavLink>
+          </nav>
+          <ProfileMenu />
         </div>
-        {/* Grouped by cadence, not by entity: the top group is the daily
-            reviewing loop, the bottom is what you set up once. The admin console
-            lives in the profile menu, beside the other account-level pages.
-
-            Each label stays in the markup in both states: in the rail it is
-            clipped rather than removed, so every icon keeps its name for a
-            screen reader, and data-tip shows that name on hover and on focus.
-
-            data-tour is what the guided tour points at (components/tourModel.ts):
-            an explicit anchor, so moving the markup cannot silently strand a step. */}
-        <nav>
-          <div className="nav-group">Review</div>
-          <NavLink to="/" end data-tip={tip('Dashboard')} data-tour="nav-dashboard"><Icon name="dashboard" /><span className="nav-label">Dashboard</span></NavLink>
-          {/* Candidates sits above "Add Candidate" because finding an existing
-              one is the far more frequent errand — and for a long time it was
-              the impossible one: creation had a nav entry, retrieval had none. */}
-          <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
-          <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
-
-          <div className="nav-group">Set up</div>
-          <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
-          <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="role" /><span className="nav-label">New role</span></NavLink>
-        </nav>
-        <ProfileMenu />
       </aside>
 
       <main ref={mainRef} className="main">{children}</main>

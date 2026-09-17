@@ -374,8 +374,10 @@ td a:not(.btn) {
 /* --- small screens --------------------------------------------------------- */
 
 @media (max-width: 640px) {
+  /* 64px on top, as in sidebar.css: this file loads later, and an 18px top
+     put the fixed Menu button on top of every page title. */
   .main {
-    padding: 18px 16px 40px;
+    padding: 64px 16px 40px;
   }
   .table-scroll table {
     min-width: 560px;
