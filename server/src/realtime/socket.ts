@@ -10,6 +10,9 @@ import { findInvitationByToken } from '../services/invitations.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
+import { HttpError } from '../middleware/index.js';
+import { isDraining, SERVER_RESTARTING_MESSAGE } from '../services/drainState.js';
+import { beginRequest, holdCandidateSocket } from './liveSessions.js';
 
 // The credential is kept after the handshake, not just the identity it proved:
 // a socket can stay open for days, outliving the 12h recruiter JWT, and an
@@ -50,9 +53,42 @@ const SLOW_DOWN = 'Too many requests';
 // fire turns as fast as it liked against a route that funds a model call each.
 const SOCKET_WINDOW_MS = 60_000;
 const SOCKET_LIMITS = { start: 5, candidate_turn: 30, finalize: 5 } as const;
-function withinLimit(event: keyof typeof SOCKET_LIMITS, sessionId: string): boolean {
+async function withinLimit(event: keyof typeof SOCKET_LIMITS, sessionId: string): Promise<boolean> {
   if (config.nodeEnv === 'test') return true;
-  return consume(`socket-${event}`, sessionId, SOCKET_WINDOW_MS, SOCKET_LIMITS[event]).allowed;
+  return (await consume(`socket-${event}`, sessionId, SOCKET_WINDOW_MS, SOCKET_LIMITS[event])).allowed;
+}
+
+// States in which the interview is already under way. A candidate reconnecting
+// to one of these is exactly who a draining process is waiting for.
+const UNDER_WAY_STATES = new Set(['ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING']);
+
+/**
+ * Why a draining process turns this join away, or null to let it in.
+ *
+ * Only candidates are refused, and only for interviews not yet under way:
+ * staff observing keeps nothing alive for the drain, and a candidate mid-
+ * interview must be able to reconnect after a network blip.
+ */
+export function drainRefusal(draining: boolean, authKind: SocketAuth['kind'], state: string): string | null {
+  if (!draining || authKind !== 'candidate' || UNDER_WAY_STATES.has(state)) return null;
+  return SERVER_RESTARTING_MESSAGE;
+}
+
+/** The candidate-facing refusal for a start on a draining process, if that is what failed. */
+function restartingMessage(err: unknown): string | null {
+  return err instanceof HttpError && err.status === 503 && err.message === SERVER_RESTARTING_MESSAGE ? err.message : null;
+}
+
+/** Count a socket event as in-flight work for the drain while it runs. */
+function tracked<A extends unknown[]>(handler: (...args: A) => Promise<void>): (...args: A) => Promise<void> {
+  return async (...args: A) => {
+    const done = beginRequest();
+    try {
+      await handler(...args);
+    } finally {
+      done();
+    }
+  };
 }
 
 function describe(err: unknown): string {
@@ -174,12 +210,20 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
     // an input to authorisation, never a substitute for it.
     let joinedSessionId: string | null = null;
 
+    // A candidate's open socket is an interview the shutdown drain waits for;
+    // whether it is still live is the session state's call, not this one's.
+    if (socket.data.auth.kind === 'candidate') {
+      socket.once('disconnect', holdCandidateSocket(socket.data.auth.sessionId));
+    }
+
     const targetOf = (requested?: string): string | undefined => requested ?? joinedSessionId ?? undefined;
 
-    socket.on('join', async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
+    socket.on('join', tracked(async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
       try {
         const session = await authorizeSession(socket.data.auth, payload?.sessionId, 'observe');
         if (!session) { ack?.({ error: DENIED }); return; }
+        const refusal = drainRefusal(isDraining(), socket.data.auth.kind, session.state);
+        if (refusal) { ack?.({ error: refusal, retryable: true }); return; }
         joinedSessionId = session.id;
         socket.join(session.id);
         ack?.({
@@ -192,23 +236,25 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         logger.error({ err: describe(err) }, 'socket join failed');
         ack?.({ error: FAILED });
       }
-    });
+    }));
 
-    socket.on('start', async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
+    socket.on('start', tracked(async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
       try {
         const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'drive');
         if (!session) { ack?.({ error: DENIED }); return; }
-        if (!withinLimit('start', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
+        if (!await withinLimit('start', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
         const turn = await startInterview(session.id);
         io.to(session.id).emit('agent_turn', turn);
         ack?.({ ok: true });
       } catch (err) {
+        const restarting = restartingMessage(err);
+        if (restarting) { ack?.({ error: restarting, retryable: true }); return; }
         logger.error({ err: describe(err) }, 'start failed');
         ack?.({ error: FAILED });
       }
-    });
+    }));
 
-    socket.on('candidate_turn', async (payload: { text: string; sessionId?: string; startMs?: number; endMs?: number; confidence?: number }, ack?: (r: unknown) => void) => {
+    socket.on('candidate_turn', tracked(async (payload: { text: string; sessionId?: string; startMs?: number; endMs?: number; confidence?: number }, ack?: (r: unknown) => void) => {
       try {
         const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'observe');
         if (!session) { ack?.({ error: DENIED }); return; }
@@ -219,7 +265,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         // so it authenticates as the candidate and is unaffected.
         if (socket.data.auth?.kind !== 'candidate') { ack?.({ error: DENIED }); return; }
         if (!payload?.text?.trim()) { ack?.({ error: 'empty' }); return; }
-        if (!withinLimit('candidate_turn', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
+        if (!await withinLimit('candidate_turn', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
         const turn = await submitCandidateTurn(session.id, payload.text, payload);
         // Echoed to observers only now, once the words are in the transcript. An
         // echo before the write showed observers an answer the engine then
@@ -238,9 +284,9 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         logger.error({ err: describe(err) }, 'candidate_turn failed');
         ack?.({ error: FAILED });
       }
-    });
+    }));
 
-    socket.on('finalize', async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
+    socket.on('finalize', tracked(async (payload: { sessionId?: string } | undefined, ack?: (r: unknown) => void) => {
       try {
         const session = await authorizeSession(socket.data.auth, targetOf(payload?.sessionId), 'drive');
         if (!session) { ack?.({ error: DENIED }); return; }
@@ -250,7 +296,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         // system-generated result. Finalisation happens automatically when the
         // interviewer signs off, or is driven by a recruiter.
         if (socket.data.auth?.kind !== 'user') { ack?.({ error: DENIED }); return; }
-        if (!withinLimit('finalize', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
+        if (!await withinLimit('finalize', session.id)) { ack?.({ error: SLOW_DOWN }); return; }
         const { assessmentId } = await finalizeInterview(session.id);
         io.to(session.id).emit('assessment_ready', { assessmentId });
         ack?.({ ok: true, assessmentId });
@@ -258,7 +304,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         logger.error({ err: describe(err) }, 'finalize failed');
         ack?.({ error: FAILED });
       }
-    });
+    }));
   });
 
   return io;

@@ -6,9 +6,16 @@
 # for three minutes. Every guard below exists because something specific went
 # wrong, and the comments say which — none of it is defensive boilerplate.
 #
-#   ./scripts/deploy.sh              deploy the current origin branch
+#   ./scripts/deploy.sh              deploy the current origin branch, first
+#                                    waiting for live interviews to finish
+#                                    (same as --wait)
 #   ./scripts/deploy.sh --dry-run    run every check, change nothing
-#   ./scripts/deploy.sh --force      deploy even with an interview in progress
+#   ./scripts/deploy.sh --force      do not wait; restart now and let the
+#                                    server's own drain protect interviews for
+#                                    up to SHUTDOWN_DRAIN_MS
+#
+# Environment: WAIT_MAX_MIN (default 45) bounds the --wait; WAIT_POLL_SEC
+# (default 30) is how often it re-checks.
 #
 set -Eeuo pipefail
 
@@ -28,6 +35,8 @@ APP_URL="${APP_URL:-https://questor.187-127-166-193.sslip.io}"
 PM2_NAME="${PM2_NAME:-questor}"
 BACKUP_SCRIPT="${BACKUP_SCRIPT:-/root/Questor/backup-questor.sh}"
 LOG_DIR="$(mktemp -d)"
+WAIT_MAX_MIN="${WAIT_MAX_MIN:-45}"
+WAIT_POLL_SEC="${WAIT_POLL_SEC:-30}"
 
 DRY_RUN=0
 FORCE=0
@@ -35,9 +44,12 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --force)   FORCE=1 ;;
+    --wait)    FORCE=0 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
+[[ "$WAIT_MAX_MIN" =~ ^[0-9]+$ ]] || { echo "WAIT_MAX_MIN must be a whole number of minutes" >&2; exit 2; }
+[[ "$WAIT_POLL_SEC" =~ ^[1-9][0-9]*$ ]] || { echo "WAIT_POLL_SEC must be a positive whole number of seconds" >&2; exit 2; }
 
 say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 ok()   { printf '    \033[32mok\033[0m  %s\n' "$*"; }
@@ -88,54 +100,77 @@ else
 fi
 ok "database: $DB_KIND"
 
-# Refuse to restart out from under someone who is being interviewed. There is
-# no SIGTERM drain, so a restart drops live sockets and ends their interview
-# with no warning and no way back in. A candidate mid-answer is a person, not
-# a deployment window.
-ACTIVE=""
-if [ "$DB_KIND" = postgres ]; then
-  # A failed query is fatal here rather than read as "nobody is interviewing":
-  # skipping this check silently is exactly how a live interview gets cut off.
-  ACTIVE="$(psql -X -tAc "
-    SELECT COUNT(*) FROM \"InterviewSession\" s
-    WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
-                          'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
-      AND EXISTS (SELECT 1 FROM \"Turn\" t WHERE t.\"sessionId\" = s.id
-                  AND t.\"createdAt\" > (now() AT TIME ZONE 'UTC') - interval '15 minutes');")" \
-    || die "could not query Postgres for live interviews — not deploying blind"
-else
-  # The file DATABASE_URL names (Prisma resolves it against server/prisma), not
-  # whichever .db happens to sort first in the data directory.
+# How long the server drains on SIGINT before it exits anyway, read from the
+# same file the server reads. pm2 must wait longer than that before SIGKILL, or
+# pm2's default 1.6 s kill timeout ends the drain — and every interview in it.
+DRAIN_MS="$(grep -E '^SHUTDOWN_DRAIN_MS=' server/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '" ' || true)"
+DRAIN_MS="${DRAIN_MS:-1200000}"
+[[ "$DRAIN_MS" =~ ^[0-9]+$ ]] || die "SHUTDOWN_DRAIN_MS in server/.env is not a whole number of milliseconds"
+KILL_TIMEOUT_MS=$(( DRAIN_MS + 60000 ))
+ok "server drain up to $(( DRAIN_MS / 1000 ))s; pm2 kill timeout $(( KILL_TIMEOUT_MS / 1000 ))s"
+
+# The file DATABASE_URL names (Prisma resolves it against server/prisma), not
+# whichever .db happens to sort first in the data directory.
+if [ "$DB_KIND" = sqlite ]; then
   DB_REL="${DB_URL#file:}"; DB_REL="${DB_REL%%\?*}"
   case "$DB_REL" in
     /*) DB="$DB_REL" ;;
     *)  DB="server/prisma/${DB_REL#./}" ;;
   esac
-  if [ -f "$DB" ]; then
-    ACTIVE="$(sqlite3 -cmd '.timeout 10000' "$DB" "
+fi
+
+# Interviews with a turn in the last 15 minutes. Prints nothing when there is
+# no SQLite database to ask. A failed query is fatal rather than read as
+# "nobody is interviewing": skipping this check silently is exactly how a live
+# interview gets cut off.
+count_active_interviews() {
+  if [ "$DB_KIND" = postgres ]; then
+    psql -X -tAc "
+      SELECT COUNT(*) FROM \"InterviewSession\" s
+      WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
+                            'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
+        AND EXISTS (SELECT 1 FROM \"Turn\" t WHERE t.\"sessionId\" = s.id
+                    AND t.\"createdAt\" > (now() AT TIME ZONE 'UTC') - interval '15 minutes');" \
+      || die "could not query Postgres for live interviews — not deploying blind"
+  elif [ -f "$DB" ]; then
+    # Prisma stores SQLite DateTimes as epoch milliseconds. This used to compare
+    # them with datetime('now', …) text, which an integer never exceeds, so the
+    # check found no live interview however many there were.
+    sqlite3 -cmd '.timeout 10000' "$DB" "
       SELECT COUNT(*) FROM InterviewSession s
       WHERE s.state NOT IN ('REVIEW_READY','HUMAN_REVIEWED','CLOSED','CANCELLED','NO_SHOW',
                             'TECHNICAL_FAILURE','POLICY_STOP','CANDIDATE_WITHDREW','INVITED','PROVISIONED')
         AND EXISTS (SELECT 1 FROM Turn t WHERE t.sessionId = s.id
-                    AND t.createdAt > (strftime('%s','now','-15 minutes') * 1000));")" \
+                    AND t.createdAt > (strftime('%s','now','-15 minutes') * 1000));" \
       || die "could not query SQLite for live interviews — not deploying blind"
-    # Prisma stores SQLite DateTimes as epoch milliseconds. This used to compare
-    # them with datetime('now', …) text, which an integer never exceeds, so the
-    # check found no live interview however many there were.
   fi
-fi
-if [ -n "$ACTIVE" ]; then
-  if [ "${ACTIVE:-0}" -gt 0 ]; then
-    if [ "$FORCE" -eq 1 ]; then
-      warn "$ACTIVE interview(s) active in the last 15 min — deploying anyway (--force)"
-    else
-      die "$ACTIVE interview(s) active in the last 15 minutes. A restart would end them mid-answer. Wait, or pass --force."
-    fi
-  else
-    ok "no interview activity in the last 15 minutes"
-  fi
-else
+}
+
+# Do not restart out from under someone who is being interviewed. The server
+# now drains on SIGINT, but the drain is a backstop with a deadline: waiting
+# here first means the restart normally happens with nobody on a call at all.
+# A candidate mid-answer is a person, not a deployment window.
+ACTIVE="$(count_active_interviews)"
+if [ -z "$ACTIVE" ]; then
   warn "database not found — skipping the live-interview check"
+elif [ "$ACTIVE" -eq 0 ]; then
+  ok "no interview activity in the last 15 minutes"
+elif [ "$FORCE" -eq 1 ]; then
+  warn "$ACTIVE interview(s) active in the last 15 min — restarting anyway (--force); the server drains them for up to $(( DRAIN_MS / 60000 )) min"
+elif [ "$DRY_RUN" -eq 1 ]; then
+  warn "$ACTIVE interview(s) active in the last 15 min — a real run would wait up to ${WAIT_MAX_MIN} min for them"
+else
+  WAIT_DEADLINE=$(( $(date +%s) + WAIT_MAX_MIN * 60 ))
+  while [ "$ACTIVE" -gt 0 ]; do
+    if [ "$(date +%s)" -ge "$WAIT_DEADLINE" ]; then
+      die "$ACTIVE interview(s) still active after waiting ${WAIT_MAX_MIN} min. Try again later, or pass --force to restart now and let the server drain them for up to $(( DRAIN_MS / 60000 )) min."
+    fi
+    printf '    waiting: %s interview(s) active in the last 15 min (re-check in %ss, give up at %s)\n' \
+      "$ACTIVE" "$WAIT_POLL_SEC" "$(date -d "@$WAIT_DEADLINE" +%H:%M 2>/dev/null || echo "${WAIT_MAX_MIN} min")"
+    sleep "$WAIT_POLL_SEC"
+    ACTIVE="$(count_active_interviews)"
+  done
+  ok "no interview activity in the last 15 minutes — proceeding"
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -274,7 +309,13 @@ ok "published (previous kept at ${WEB_ROOT}.old)"
 # ---------------------------------------------------------------------------
 say "Restart"
 
-pm2 restart "$PM2_NAME" --update-env >"$LOG_DIR/pm2.log" 2>&1 || die "pm2 restart failed"
+# `restart`, not `reload`: this is a single fork-mode process, where pm2's
+# reload is a restart anyway. pm2 sends SIGINT, the server stops taking new
+# interviews and drains the ones in progress, then exits; pm2 starts the new
+# build once it has. --kill-timeout is applied to the process before it is
+# stopped, so the drain gets its full window instead of pm2's default 1.6 s.
+# This command therefore blocks for as long as the drain lasts.
+pm2 restart "$PM2_NAME" --update-env --kill-timeout "$KILL_TIMEOUT_MS" >"$LOG_DIR/pm2.log" 2>&1 || die "pm2 restart failed"
 sleep 6
 
 # ---------------------------------------------------------------------------
@@ -283,10 +324,14 @@ say "Verify"
 # The API, NOT the site root. A previous deploy was called a success on a 200
 # that was nginx serving static files from disk while the application behind it
 # had been 502 for three minutes. Static files prove nothing about the app.
+# A draining process also answers 200 — it is still serving the interviews in
+# progress — so "healthy" additionally means "not the old process on its way
+# out".
 verify_api() {
   local code
-  code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 20 "$APP_URL/api/health" || echo 000)"
-  [ "$code" = "200" ]
+  code="$(curl -sk -o "$LOG_DIR/health.json" -w '%{http_code}' --max-time 20 "$APP_URL/api/health" || echo 000)"
+  [ "$code" = "200" ] || return 1
+  ! grep -q '"draining":true' "$LOG_DIR/health.json"
 }
 
 API_OK=0
@@ -314,7 +359,7 @@ if [ "$API_OK" -ne 1 ]; then
   if [ -d "${WEB_ROOT}.old" ]; then
     rm -rf "$WEB_ROOT"; mv "${WEB_ROOT}.old" "$WEB_ROOT"
   fi
-  pm2 restart "$PM2_NAME" --update-env >/dev/null 2>&1 || true
+  pm2 restart "$PM2_NAME" --update-env --kill-timeout "$KILL_TIMEOUT_MS" >/dev/null 2>&1 || true
   sleep 6
   if verify_api; then
     die "deploy failed — ROLLED BACK code/assets to $PREV_COMMIT and the API is healthy again. Database migrations were not rolled back."
@@ -338,5 +383,5 @@ ok "app root serving ($code)"
 
 say "Deployed"
 printf '    %s\n' "$(git log --oneline -1)"
-printf '    rollback: git reset --hard %s && npm ci && pm2 restart %s\n' "$PREV_COMMIT" "$PM2_NAME"
+printf '    rollback: git reset --hard %s && npm ci && pm2 restart %s --kill-timeout %s\n' "$PREV_COMMIT" "$PM2_NAME" "$KILL_TIMEOUT_MS"
 printf '    backup:   %s\n\n' "${LATEST:-none}"

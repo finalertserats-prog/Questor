@@ -188,14 +188,20 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
       requestId: req.requestId,
     });
   }
+  if (err instanceof HttpError && err.retryAfterSeconds !== undefined) {
+    res.setHeader('Retry-After', String(err.retryAfterSeconds));
+  }
   const safe = err instanceof HttpError ? err.message : 'Internal server error';
   res.status(err instanceof HttpError ? status : 500).json({ error: safe, requestId: req.requestId });
 }
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Sent as Retry-After, for refusals the client should simply try again. */
+  retryAfterSeconds?: number;
+  constructor(status: number, message: string, retryAfterSeconds?: number) {
     super(message);
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }

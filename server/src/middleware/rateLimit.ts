@@ -2,60 +2,22 @@ import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { startJob } from '../services/jobs.js';
+import {
+  createMemoryRateLimitStore, databaseRateLimitStore, purgeExpiredRateLimits, type RateLimitStore,
+} from './rateLimitStores.js';
 
-// Fixed-window in-memory rate limiter. Questor is deployed as a single process
-// on one machine, so a shared store (Redis) would be complexity without
-// benefit; if this ever runs multi-instance this must be replaced, because
-// per-process counters would multiply the effective limit by the instance count.
+// Fixed-window rate limiter. Counters live in the database in production
+// (RATE_LIMIT_STORE=database) so every instance draws on one count; per-process
+// counters would multiply each limit by the instance count. The memory store
+// remains for tests and local development.
 
-// `max` is carried on the bucket so eviction can tell an exhausted key from a
-// quiet one without knowing which limiter created it.
-interface Bucket { count: number; resetAt: number; max: number }
+const memoryStore = createMemoryRateLimitStore();
+let storeOverride: RateLimitStore | null = null;
 
-const buckets = new Map<string, Bucket>();
-let lastSweep = Date.now();
-
-// Keys can be attacker-chosen (an invitation token in the path), so expiry-only
-// cleanup is not enough: a flood of random tokens creates a bucket each and the
-// map grows until the window rolls. The map is therefore capped — but WHAT gets
-// evicted is a security decision, not a housekeeping one.
-const MAX_BUCKETS = 50_000;
-
-function sweep(now: number) {
-  if (now - lastSweep >= 60_000) {
-    lastSweep = now;
-    for (const [k, b] of buckets) if (b.resetAt <= now) buckets.delete(k);
-  }
-  if (buckets.size <= MAX_BUCKETS) return;
-
-  // Evicting oldest-inserted first was exploitable: an attacker who exhausted
-  // their own limit could flood ~50k junk keys and push their own spent bucket
-  // out of the map, which resets their count to zero. That defeats every
-  // token-keyed limit in the app, including the ones bounding paid TTS and
-  // transcription spend.
-  //
-  // So evict in order of least security value: expired windows first, then
-  // keys still under their limit, and NEVER a key that is currently over it.
-  // A saturated bucket is the one piece of state actually holding an attacker
-  // back, so it is the last thing to go.
-  let excess = buckets.size - MAX_BUCKETS;
-
-  for (const [k, b] of buckets) {
-    if (excess <= 0) break;
-    if (b.resetAt <= now) { buckets.delete(k); excess--; }
-  }
-  for (const [k, b] of buckets) {
-    if (excess <= 0) break;
-    if (b.count < b.max) { buckets.delete(k); excess--; }
-  }
-  // If every remaining bucket is over its limit the map stays above the cap.
-  // That is the correct trade: memory is bounded by MAX_BUCKETS plus however
-  // many keys are genuinely rate-limited right now, and letting it grow beats
-  // handing out free resets.
-  if (excess > 0) {
-    logger.warn({ over: excess, size: buckets.size },
-      'Rate-limit table above cap and every candidate for eviction is over its limit — possible flood in progress');
-  }
+function activeStore(): RateLimitStore {
+  if (storeOverride) return storeOverride;
+  return config.rateLimitStore === 'database' ? databaseRateLimitStore : memoryStore;
 }
 
 export interface RateLimitOptions {
@@ -69,54 +31,100 @@ export interface RateLimitOptions {
   keyOf?: (req: Request) => string;
   /** Requests for which this limiter does not count or block. */
   skip?: (req: Request) => boolean;
+  /**
+   * Refuse the request when the store cannot be reached, instead of letting it
+   * through. For limits that stand between an attacker and an account (login,
+   * signup): an outage must not become an unmetered guessing window. Everything
+   * else fails open, because refusing candidates mid-interview over a counter
+   * is worse than a few uncounted requests.
+   */
+  failClosed?: boolean;
+}
+
+export type RateVerdict =
+  | { allowed: true }
+  | { allowed: false; retryAfter: number; reason: 'limit' | 'unavailable' };
+
+// A database outage would otherwise log once per request.
+const WARN_EVERY_MS = 60_000;
+const STORE_DOWN_RETRY_SECONDS = 30;
+const lastStoreWarning = new Map<string, number>();
+
+function warnStoreFailure(name: string, err: unknown, failClosed: boolean): void {
+  const now = Date.now();
+  if (now - (lastStoreWarning.get(name) ?? 0) < WARN_EVERY_MS) return;
+  lastStoreWarning.set(name, now);
+  logger.warn(
+    { limiter: name, failClosed, err: err instanceof Error ? err.message : String(err) },
+    failClosed ? 'Rate-limit store unavailable; refusing requests to this limiter' : 'Rate-limit store unavailable; letting requests through uncounted',
+  );
 }
 
 /**
  * Take one unit from a window, answering whether the caller is still inside
- * it. Shared by the Express middleware below and the socket transport, which
- * used to have no per-invitation limit at all while the equivalent HTTP
- * routes did. Returns the seconds until the window resets when refused.
+ * it. Shared by the Express middleware below and the socket transport. Returns
+ * the seconds until the window resets when refused. Never throws: a store
+ * failure is answered according to `failClosed`, with `retryAfter` of a few
+ * seconds when refused for that reason.
  */
-export function consume(name: string, key: string, windowMs: number, max: number): { allowed: true } | { allowed: false; retryAfter: number } {
+export async function consume(
+  name: string, key: string, windowMs: number, max: number, opts: { failClosed?: boolean } = {},
+): Promise<RateVerdict> {
   const now = Date.now();
-  sweep(now);
-  const bucketKey = `${name}:${key}`;
-  const bucket = buckets.get(bucketKey);
-  if (!bucket || bucket.resetAt <= now) {
-    buckets.set(bucketKey, { count: 1, resetAt: now + windowMs, max });
+  try {
+    const { count, resetAt } = await activeStore().hit(`${name}:${key}`, windowMs, max, now);
+    if (count > max) return { allowed: false, retryAfter: Math.max(1, Math.ceil((resetAt - now) / 1000)), reason: 'limit' };
     return { allowed: true };
+  } catch (err) {
+    const failClosed = opts.failClosed === true;
+    warnStoreFailure(name, err, failClosed);
+    return failClosed ? { allowed: false, retryAfter: STORE_DOWN_RETRY_SECONDS, reason: 'unavailable' } : { allowed: true };
   }
-  bucket.count += 1;
-  if (bucket.count > max) return { allowed: false, retryAfter: Math.ceil((bucket.resetAt - now) / 1000) };
-  return { allowed: true };
 }
 
 export function rateLimit(opts: RateLimitOptions) {
   const { windowMs, max, name } = opts;
   const keyOf = opts.keyOf ?? ((req: Request) => req.ip ?? 'unknown');
 
-  return function rateLimiter(req: Request, res: Response, next: NextFunction) {
+  return async function rateLimiter(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Tests drive endpoints in tight loops; limiting there would test the
     // limiter rather than the behaviour under test.
     if (config.nodeEnv === 'test') return next();
     if (opts.skip?.(req)) return next();
 
-    const verdict = consume(name, keyOf(req), windowMs, max);
-    if (!verdict.allowed) {
-      const retryAfter = verdict.retryAfter;
-      const bucket = { count: max + 1 };
-      res.setHeader('Retry-After', String(retryAfter));
-      // The key may be a live credential (the portal limiters key on the
-      // invitation token), and a log line is not where those belong.
-      logger.warn({ limiter: name, key: fingerprint(keyOf(req)), count: bucket.count }, 'Rate limit exceeded');
-      // Deliberately generic: do not confirm whether an account or token exists.
-      return res.status(429).json({
-        error: 'Too many requests. Please wait a moment and try again.',
-        retryAfterSeconds: retryAfter,
+    const verdict = await consume(name, keyOf(req), windowMs, max, { failClosed: opts.failClosed });
+    if (verdict.allowed) return next();
+    res.setHeader('Retry-After', String(verdict.retryAfter));
+    if (verdict.reason === 'unavailable') {
+      res.status(503).json({
+        error: 'This service is briefly unavailable. Please try again shortly.',
+        retryAfterSeconds: verdict.retryAfter,
       });
+      return;
     }
-    return next();
+    // The key may be a live credential (the portal limiters key on the
+    // invitation token), and a log line is not where those belong.
+    logger.warn({ limiter: name, key: fingerprint(keyOf(req)), max }, 'Rate limit exceeded');
+    // Deliberately generic: do not confirm whether an account or token exists.
+    res.status(429).json({
+      error: 'Too many requests. Please wait a moment and try again.',
+      retryAfterSeconds: verdict.retryAfter,
+    });
   };
+}
+
+/**
+ * Purge ended windows from the shared store, under a lease so one instance
+ * does it. A no-op schedule when counters live in memory.
+ */
+export function startRateLimitPurge(intervalMs = 10 * 60_000): () => void {
+  if (config.rateLimitStore !== 'database') return () => undefined;
+  return startJob({
+    name: 'rate-limit-purge',
+    intervalMs,
+    delayFirst: true,
+    fn: async () => `purged ${await purgeExpiredRateLimits()} expired rate-limit windows`,
+  });
 }
 
 /**
@@ -127,7 +135,13 @@ export function fingerprint(key: string): string {
   return crypto.createHash('sha256').update(key).digest('hex').slice(0, 12);
 }
 
-/** Test hook — clears all windows. */
-export function _resetRateLimits() {
-  buckets.clear();
+/** Test hook — use this store instead of the configured one (null restores). */
+export function _useRateLimitStore(store: RateLimitStore | null): void {
+  storeOverride = store;
+}
+
+/** Test hook — clears all in-memory windows. */
+export function _resetRateLimits(): void {
+  memoryStore.clear();
+  lastStoreWarning.clear();
 }

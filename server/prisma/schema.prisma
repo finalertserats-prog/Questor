@@ -533,6 +533,22 @@ model JobRun {
   @@index([name, startedAt])
 }
 
+// ---- Shared rate limits ----
+//
+// One fixed window per limiter key, shared by every instance. Counters used to
+// live in process memory, so two instances doubled every limit. `key` is
+// "<limiter>:<sha256 of the caller key>" — caller keys can be invitation
+// tokens, which must never be stored in the clear. Rows past `expiresAt` are
+// dead and purged by the rate-limit-purge job.
+model RateLimitBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+}
+
 // ---- Object-level access control ----
 //
 // Capabilities answer "may this user perform this kind of action?". These

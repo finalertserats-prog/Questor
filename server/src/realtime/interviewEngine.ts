@@ -11,6 +11,8 @@ import { emitEvent } from '../services/webhooks.js';
 import { logAudit } from '../services/audit.js';
 import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
+import { assertAcceptingNewInterviews } from '../services/drainState.js';
+import { noteSessionActivity } from './liveSessions.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -160,6 +162,7 @@ async function transitionIfInState(sessionId: string, from: string, to: string):
 
 /** Produce and persist the next agent turn given the current transcript. */
 async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
+  noteSessionActivity(sessionId);
   const { session, plan, profile, persona, turns } = await loadContext(sessionId);
   const signal = directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) });
   const disclosure = parseJson<any>(session.consentJson, {}).disclosureText ?? '';
@@ -269,7 +272,11 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   // two greetings — the interviewer introducing itself again mid-interview.
   if (LIVE_STATES.includes(session.state)) {
     const opening = await existingOpeningTurn(sessionId, session.state);
-    if (opening) return opening;
+    if (opening) {
+      // A candidate coming back mid-interview is live work for the drain.
+      noteSessionActivity(sessionId);
+      return opening;
+    }
   }
   // Pre-live states (invite/accept/consent/ready-check) are governed by the
   // portal + recruiter flows. "Start" converges every valid entry point to the
@@ -299,6 +306,10 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
         ? 'You asked to be interviewed by a person instead. Our team has your request and will be in touch — there is nothing more to do here. If you would rather continue with the AI interview after all, reply to your invitation email and we will reopen it.'
         : 'This interview is not open right now. If you think that is wrong, reply to your invitation email and we will look into it.');
     }
+    // Checked here, in the engine, so every transport refuses alike: a process
+    // that is shutting down must not begin an interview it will abandon. The
+    // session is left exactly as it was, so the retry after restart works.
+    assertAcceptingNewInterviews();
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: 'ASSESSING' } });
   }
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
