@@ -9,7 +9,7 @@
  * Run: npm run sim:report -w server -- sim-results/checkpoint-<stamp>.jsonl
  */
 import { readCheckpoint, renderReport, type CellResult } from './run.js';
-import { BANDS } from '../engines/experienceBands.js';
+import { BANDS } from '../src/engines/experienceBands.js';
 import type { JudgedTranscript } from './judge.js';
 
 function mean(xs: number[]): number {

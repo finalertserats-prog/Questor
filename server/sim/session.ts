@@ -13,15 +13,15 @@
  * alongside real ones in a recruiter's queue.
  */
 import { nanoid } from 'nanoid';
-import { config } from '../config.js';
-import { prisma } from '../db.js';
-import { hashPassword } from '../services/auth.js';
-import { assignRole, assignCandidate } from '../services/access.js';
-import { extractRole } from '../engines/roleIntelligence.js';
-import { normalizeProfile } from '../engines/resumeParser.js';
-import { computeFitScore } from '../engines/fitScoring.js';
-import { buildInterviewPlan } from '../engines/interviewPlanner.js';
-import { resolveCandidateBand } from '../engines/bandCalibration.js';
+import { config } from '../src/config.js';
+import { prisma } from '../src/db.js';
+import { hashPassword } from '../src/services/auth.js';
+import { assignRole, assignCandidate } from '../src/services/access.js';
+import { extractRole } from '../src/engines/roleIntelligence.js';
+import { normalizeProfile } from '../src/engines/resumeParser.js';
+import { computeFitScore } from '../src/engines/fitScoring.js';
+import { buildInterviewPlan } from '../src/engines/interviewPlanner.js';
+import { resolveCandidateBand } from '../src/engines/bandCalibration.js';
 import type { RoleSpec } from './roleFactory.js';
 import type { CandidateSpec } from './candidateFactory.js';
 

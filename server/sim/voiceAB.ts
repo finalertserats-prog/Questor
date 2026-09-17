@@ -14,8 +14,8 @@
  *   as skipped rather than failed — nothing here will ask for a credential.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { synthesizeElevenLabs, synthesizeOpenAI } from '../providers/speech.js';
-import { config } from '../config.js';
+import { synthesizeElevenLabs, synthesizeOpenAI } from '../src/providers/speech.js';
+import { config } from '../src/config.js';
 
 /**
  * Lines drawn from real simulated interviews rather than invented for the demo.

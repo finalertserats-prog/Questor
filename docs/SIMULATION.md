@@ -45,7 +45,7 @@ and candidate — it is the one seat with no interview to conduct.
 
 ## Experience bands
 
-Six non-overlapping bands, in `src/sim/bands.ts`. The brief asked for ~18
+Six non-overlapping bands, in `server/src/engines/experienceBands.ts`. The brief asked for ~18
 year-ranges; they overlap, and a new question per year is not what changes with
 experience. What changes is the **abstraction**: the craft, the system around it,
 or the organisation around that.
