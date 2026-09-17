@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
@@ -14,6 +14,7 @@ interface Role {
 
 export function CandidateCreate() {
   const nav = useNavigate();
+  const fieldId = useId();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -105,24 +106,24 @@ export function CandidateCreate() {
       )}
 
       <form className="card" onSubmit={submit}>
-        <label>Role</label>
-        <select value={roleId} onChange={(e) => setRoleId(e.target.value)} disabled={roles.length === 0} required>
+        <label htmlFor={`${fieldId}-role`}>Role</label>
+        <select id={`${fieldId}-role`} value={roleId} onChange={(e) => setRoleId(e.target.value)} disabled={roles.length === 0} required>
           {roles.map((r) => <option key={r.id} value={r.id}>{r.title} ({r.level})</option>)}
         </select>
 
         <div className="grid cols-2">
           <div>
-            <label>Full name</label>
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)} required />
+            <label htmlFor={`${fieldId}-name`}>Full name</label>
+            <input id={`${fieldId}-name`} value={fullName} onChange={(e) => setFullName(e.target.value)} required />
           </div>
           <div>
-            <label>Email</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <label htmlFor={`${fieldId}-email`}>Email</label>
+            <input id={`${fieldId}-email`} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
         </div>
 
-        <label>Phone (optional)</label>
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <label htmlFor={`${fieldId}-phone`}>Phone (optional)</label>
+        <input id={`${fieldId}-phone`} value={phone} onChange={(e) => setPhone(e.target.value)} />
 
         <label htmlFor="resume-file">Resume file (PDF, DOCX, or TXT)</label>
         <input
@@ -144,8 +145,9 @@ export function CandidateCreate() {
           )}
         </div>
 
-        <label>Or paste resume text</label>
+        <label htmlFor={`${fieldId}-resume-text`}>Or paste resume text</label>
         <textarea
+          id={`${fieldId}-resume-text`}
           value={resumeText}
           onChange={(e) => setResumeText(e.target.value)}
           placeholder="Paste the candidate's resume text here…"

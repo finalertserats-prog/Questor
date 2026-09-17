@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from '../components/ui';
@@ -15,6 +15,7 @@ interface CreateResp {
 
 export function RoleCreate() {
   const nav = useNavigate();
+  const fieldId = useId();
   const [sourceText, setSourceText] = useState('');
   const [title, setTitle] = useState('');
   const [useLlm, setUseLlm] = useState(true);
@@ -88,11 +89,12 @@ export function RoleCreate() {
       )}
 
       <form className="card" onSubmit={submit}>
-        <label>Role title (optional — inferred from the JD if left blank)</label>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
+        <label htmlFor={`${fieldId}-title`}>Role title (optional — inferred from the JD if left blank)</label>
+        <input id={`${fieldId}-title`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
 
-        <label>Job description</label>
+        <label htmlFor={`${fieldId}-jd`}>Job description</label>
         <textarea
+          id={`${fieldId}-jd`}
           value={sourceText}
           onChange={(e) => setSourceText(e.target.value)}
           placeholder="Paste the full job description here…"
