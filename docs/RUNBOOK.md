@@ -53,7 +53,7 @@ The drill restores into `questor_restore_drill_<timestamp>`, checks core row cou
 
 ### API down
 
-Check `/api/health`, `pm2 status questor`, pm2 logs, PostgreSQL reachability, and the last deploy output. Check environment variable names only in shared notes: `PORT`, `BIND_HOST`, `WEB_ORIGIN`, `DATABASE_URL`, `AUTH_SECRET`, `WEBHOOK_SIGNING_SECRET`, provider keys.
+Check `/api/health`, `pm2 status questor`, pm2 logs, PostgreSQL reachability, and the last deploy output. Check environment variable names only in shared notes: `PORT`, `BIND_HOST`, `WEB_ORIGIN`, `DATABASE_URL`, `AUTH_SECRET`, `WEBHOOK_SIGNING_SECRET`, `WEBHOOK_V1_SIGNATURE`, provider keys.
 
 ### Interview stuck
 
@@ -61,7 +61,14 @@ Check session state, `/api/admin/ops` incomplete-job runs, and Socket.IO logs. D
 
 ### Webhooks failing
 
-Check `/api/admin/ops`, then recent `WebhookDelivery` rows for `lastError`, `attempts`, and `nextAttemptAt`. Confirm the receiver URL is public and that the receiver verifies `x-questor-signature-v2` and timestamp. v1 remains only for compatibility.
+Check `/api/admin/ops`, then recent `WebhookDelivery` rows for `lastError`, `attempts`, and `nextAttemptAt`. Confirm the receiver URL is public.
+
+If the failures are `status 401`/`403` from the receiver, it is usually the signature:
+
+- The receiver must verify `x-questor-signature-v2`: lowercase hex HMAC-SHA256 with `WEBHOOK_SIGNING_SECRET` over `<x-questor-timestamp>.<raw body>`, where `x-questor-timestamp` is Unix time in **milliseconds**. It should refuse a timestamp more than **5 minutes** from its own clock, so a receiver with a drifting clock rejects everything; check its NTP. Full recipe and sample code: `docs/CONNECTORS.md` → "Verifying a delivery (v2)".
+- `x-questor-signature` (v1, body only) is legacy. Only webhooks with `sendLegacySignature` on get it, and none do while `WEBHOOK_V1_SIGNATURE=off`. `GET /api/admin/ops` → `webhooks.legacySignature` shows `killSwitch`, `flagged` and `sending`.
+- A receiver that broke right after v1 was switched off for it still checks v1. Quick fix: **Admin → Webhooks → Send v1 again** for that webhook (audited as `webhook.legacy_signature.changed`), then have the receiver move to v2. If the kill switch is what removed it, unset `WEBHOOK_V1_SIGNATURE` (or set it to `on`) and `pm2 restart questor --update-env`, which restores v1 for every flagged webhook.
+- Failed rows are not retried automatically after the last attempt; re-emit or ask the receiver to reconcile once it is fixed.
 
 ### Email not delivering
 

@@ -21,7 +21,11 @@ beforeEach(async () => {
   await prisma.tenant.deleteMany({ where: { name: 'Hook Org' } });
   const tenant = await prisma.tenant.create({ data: { name: 'Hook Org' } });
   tenantId = tenant.id;
-  const ep = await prisma.webhookEndpoint.create({ data: { tenantId, url: 'https://hooks.example.com/questor', events: '*' } });
+  // A webhook from before v2-only became the default, so it still gets both
+  // signatures. New webhooks are covered in webhookLegacySignature.test.ts.
+  const ep = await prisma.webhookEndpoint.create({
+    data: { tenantId, url: 'https://hooks.example.com/questor', events: '*', sendLegacySignature: true },
+  });
   endpointId = ep.id;
   vi.stubGlobal('fetch', vi.fn(async (url: string, init: { headers: Record<string, string>; body: string }) => {
     calls.push({ url, headers: init.headers, body: init.body });

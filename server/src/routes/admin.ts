@@ -21,7 +21,7 @@ import { decideSignupRequest, signupApplicant } from '../services/signup.js';
 import { webhookUrlProblem } from '../services/webhookUrl.js';
 import { resolveCommit } from '../services/build.js';
 import { INSTANCE_ID, latestJobRuns } from '../services/jobs.js';
-import { webhookHealth } from '../services/webhooks.js';
+import { legacySignatureStatus, webhookHealth } from '../services/webhooks.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -58,9 +58,12 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
 // quietly? Everything here used to be answerable only by reading logs.
 adminRouter.get('/ops', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const dayAgo = new Date(Date.now() - 24 * 60 * 60_000);
-  const [jobs, webhooks, modelCalls, modelFailures] = await Promise.all([
+  const [jobs, webhooks, legacySignature, modelCalls, modelFailures] = await Promise.all([
     latestJobRuns(),
     webhookHealth(),
+    // How many webhooks still get the retired v1 signature, so the owner can
+    // see when WEBHOOK_V1_SIGNATURE=off would break nobody.
+    legacySignatureStatus(),
     prisma.modelExecution.count({ where: { createdAt: { gte: dayAgo } } }),
     prisma.modelExecution.count({ where: { createdAt: { gte: dayAgo }, safetyJson: { contains: '"error"' } } }),
   ]);
@@ -70,7 +73,7 @@ adminRouter.get('/ops', requireCapability('admin:manage'), asyncHandler(async (r
     uptimeSeconds: Math.round(process.uptime()),
     retentionSweepEnabled: process.env.RETENTION_SWEEP_ENABLED === 'true',
     jobs,
-    webhooks,
+    webhooks: { ...webhooks, legacySignature },
     model: { last24h: { calls: modelCalls, failures: modelFailures } },
   });
 }));
@@ -327,7 +330,9 @@ adminRouter.patch('/org', requireCapability('admin:manage'), asyncHandler(async 
 // (or replay to) the tenant's outbound event stream.
 adminRouter.get('/webhooks', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const hooks = await prisma.webhookEndpoint.findMany({ where: { tenantId: req.auth!.tenantId } });
-  res.json({ webhooks: hooks });
+  // The console shows each webhook's v1 setting as moot while the operator's
+  // switch has v1 off everywhere.
+  res.json({ webhooks: hooks, legacySignatureDisabledEverywhere: config.webhookV1Signature === 'off' });
 }));
 adminRouter.post('/webhooks', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const body = z.object({ url: z.string().trim().max(2000), events: z.string().trim().max(500).default('*') }).parse(req.body);
@@ -340,6 +345,26 @@ adminRouter.post('/webhooks', requireCapability('admin:manage'), asyncHandler(as
   // Host only: a delivery URL routinely carries a shared secret in its path.
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'webhook.created', entityType: 'WebhookEndpoint', entityId: hook.id, after: { host: new URL(hook.url).host, events: hook.events } });
   res.status(201).json({ webhook: hook });
+}));
+// The only field that can change in place. Everything else about a webhook is
+// its destination, and a destination change goes through delete and create so
+// it passes the address checks and is audited as what it is.
+const webhookPatchSchema = z.object({ sendLegacySignature: z.boolean() }).strict();
+adminRouter.patch('/webhooks/:id', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const body = webhookPatchSchema.parse(req.body);
+  const tenantId = req.auth!.tenantId;
+  const before = await prisma.webhookEndpoint.findFirst({ where: { id: req.params.id, tenantId } });
+  if (!before) throw new HttpError(404, 'Webhook not found');
+  const hook = await prisma.webhookEndpoint.update({ where: { id: before.id }, data: { sendLegacySignature: body.sendLegacySignature } });
+  // Switching v1 off is what breaks a receiver that never moved to v2, so the
+  // record of who did it and when is what the first support call needs.
+  await logAudit({
+    tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'webhook.legacy_signature.changed',
+    entityType: 'WebhookEndpoint', entityId: hook.id,
+    before: { sendLegacySignature: before.sendLegacySignature },
+    after: { host: new URL(hook.url).host, sendLegacySignature: hook.sendLegacySignature },
+  });
+  res.json({ webhook: hook });
 }));
 adminRouter.delete('/webhooks/:id', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const { count } = await prisma.webhookEndpoint.deleteMany({ where: { id: req.params.id, tenantId: req.auth!.tenantId } });

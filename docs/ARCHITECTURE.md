@@ -95,7 +95,7 @@ Consent is captured on sessions and controls observation/transcript behavior. Re
 - API to webhook receivers: signed outbound requests, public URL checks, durable retries.
 - Operator shell to database: backups and drills contain candidate personal data.
 
-Invitation tokens are hashed for lookup and sealed for display/resend in `services/invitations.ts`. The seal key is derived from `AUTH_SECRET`, so rotation makes stored sealed links unopenable. Signup-decision and feedback/human-request tokens are hash-only. Webhooks include the original signature and timestamped v2 signature; v1 should be retired after receivers move.
+Invitation tokens are hashed for lookup and sealed for display/resend in `services/invitations.ts`. The seal key is derived from `AUTH_SECRET`, so rotation makes stored sealed links unopenable. Signup-decision and feedback/human-request tokens are hash-only. Webhooks always carry the timestamped v2 signature. The original v1 header goes only to webhooks with `sendLegacySignature` on (new webhooks default off; rows that predate the column were backfilled on) and to none while `WEBHOOK_V1_SIGNATURE=off`.
 
 ## Web client
 

@@ -108,6 +108,7 @@ model Candidate {
   pipelines     CandidatePipeline[]
   feedbackOptIns   CandidateFeedbackOptIn[]
   humanRequests    CandidateHumanRequest[]
+  feedbackOptInRequests CandidateFeedbackOptInRequest[]
 
   @@index([tenantId, createdAt])
 }
@@ -214,6 +215,7 @@ model InterviewSession {
   integrityEvents   IntegrityEvent[]
   feedbackOptIn     CandidateFeedbackOptIn?
   humanRequest      CandidateHumanRequest?
+  feedbackOptInRequest CandidateFeedbackOptInRequest?
 
   // The dashboard counts interviews per tenant by when they were created,
   // scheduled and completed, and groups them by state; the lists read newest
@@ -370,6 +372,33 @@ model CandidateFeedbackOptIn {
   @@index([candidateId])
 }
 
+// A recruiter's request that a candidate who was never asked about written
+// feedback answer the question now, by email.
+//
+// Feedback is sent only on an explicit yes, so a candidate with no answer on
+// file cannot be sent any. This is how the hiring team asks. The answer itself
+// is still recorded in CandidateFeedbackOptIn, through the same once-only path
+// the end-of-interview question uses; this row only carries the link.
+//
+// The link uses the same token scheme as CandidateHumanRequest (see
+// services/candidateFeedback.ts): 256 random bits, only the hash stored.
+// Re-sending replaces the hash, so only the newest link works.
+model CandidateFeedbackOptInRequest {
+  id                String   @id @default(cuid())
+  sessionId         String   @unique
+  session           InterviewSession @relation(fields: [sessionId], references: [id])
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  tenantId          String
+  tokenHash         String   @unique
+  requestedByUserId String
+  issuedAt          DateTime @default(now())
+  expiresAt         DateTime
+
+  @@index([tenantId])
+  @@index([candidateId])
+}
+
 // The single-purpose link in the feedback email: "would you like to speak to a
 // person?".
 //
@@ -487,6 +516,13 @@ model WebhookEndpoint {
   url         String
   events      String   @default("*")  // comma-separated event names or *
   active      Boolean  @default(true)
+  // Whether deliveries still carry the original, untimestamped
+  // `x-questor-signature` header beside v2. False for every webhook created
+  // from now on; the migration that adds the column sets it true on the rows
+  // that already existed, so no receiver stops verifying on deploy. An admin
+  // turns it off per webhook once that receiver checks v2, and
+  // WEBHOOK_V1_SIGNATURE=off turns it off everywhere.
+  sendLegacySignature Boolean @default(false)
   createdAt   DateTime @default(now())
   deliveries  WebhookDelivery[]
 }

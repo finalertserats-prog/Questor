@@ -28,6 +28,27 @@ export function parsePortSetting(variable: string, raw: string): number {
   return value;
 }
 
+export type V1SignatureSetting = 'on' | 'off';
+
+/**
+ * WEBHOOK_V1_SIGNATURE: the operator's switch for the original webhook
+ * signature. Unset or "on" leaves each webhook's own setting in charge; "off"
+ * drops the v1 header from every delivery.
+ *
+ * Anything else stops the process. "false", "0" or "disabled" could each mean
+ * either thing to whoever typed them, and guessing wrong either breaks every
+ * receiver still on v1 or quietly keeps v1 alive after the owner retired it.
+ */
+export function parseV1SignatureSetting(raw: string): V1SignatureSetting {
+  const value = raw.trim().toLowerCase();
+  if (value === '' || value === 'on') return 'on';
+  if (value === 'off') return 'off';
+  throw new Error(
+    `WEBHOOK_V1_SIGNATURE must be "on" or "off" (got "${raw}"). `
+    + 'Leave it unset to let each webhook decide; set it to "off" once every receiver verifies the v2 signature.',
+  );
+}
+
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: parsePortSetting('PORT', env('PORT', '4000')),
@@ -42,6 +63,7 @@ export const config = {
   webOrigin: env('WEB_ORIGIN', 'http://localhost:5173'),
   authSecret: env('AUTH_SECRET', 'dev-questor-secret-change-me-please-32chars'),
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
+  webhookV1Signature: parseV1SignatureSetting(env('WEBHOOK_V1_SIGNATURE')),
   signupApproverEmail: env('SIGNUP_APPROVER_EMAIL'),
 
   llm: {
