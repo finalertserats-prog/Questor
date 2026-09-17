@@ -377,7 +377,7 @@ describe('a candidate who declines is never emailed', () => {
     const send = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/send`).set(auth(ids.auth)).send({});
 
     expect(send.status).toBe(409);
-    expect(send.body.error).toMatch(/declined|did not want|asked not/i);
+    expect(send.body.error).toMatch(/^Candidate declined/);
     const delivery = await prisma.candidateFeedbackDelivery.findUniqueOrThrow({ where: { assessmentId: ids.assessmentId } });
     expect(delivery.status).toBe('APPROVED');
     expect(delivery.sentAt).toBeNull();
@@ -386,10 +386,10 @@ describe('a candidate who declines is never emailed', () => {
     expect(portal.status).toBe(404);
   });
 
-  it('still allows sending when the candidate was never asked — silence is not a decline', async () => {
+  it('refuses to send when the candidate was never asked — silence is not consent', async () => {
     // Recruiter-driven interviews and everything recorded before this feature
-    // existed have no answer on file. Treating that as a refusal would silently
-    // switch off feedback that a person deliberately approved.
+    // existed have no answer on file. That is not a yes, so nothing is sent;
+    // the recruiter is told why and can ask (candidateFeedbackConsent.test.ts).
     const ids = await finishedInterview();
     await enableFeedback(ids.tenantId);
     await completeHumanReview(ids.assessmentId, ids.userId);
@@ -400,7 +400,7 @@ describe('a candidate who declines is never emailed', () => {
 
     const send = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback/send`).set(auth(ids.auth)).send({});
 
-    expect(send.status).toBe(200);
+    expect([send.status, send.body.error]).toEqual([409, expect.stringMatching(/^Candidate was not asked/)]);
   });
 });
 

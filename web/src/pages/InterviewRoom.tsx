@@ -10,6 +10,9 @@ import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } fro
 import { Icon } from '../components/Icon';
 import { interviewerName } from '../components/candidateJourney';
 import { shouldCaptureAudio } from '../components/portalConsentModel';
+import {
+  FEEDBACK_EXPLANATION, FEEDBACK_NO_LABEL, FEEDBACK_QUESTION, FEEDBACK_YES_LABEL, answerConfirmation,
+} from '../components/feedbackOptInCopy';
 
 // The interview room is the only screen a candidate ever sees, and it is the
 // screen they judge the company by. It is deliberately built as a call surface
@@ -656,29 +659,19 @@ export function InterviewRoom() {
               <div style={{ marginTop: 16 }}>
                 {feedbackChoice === null ? (
                   <>
-                    <p><b>Would you like written feedback by email?</b></p>
-                    <p className="muted">
-                      If you say yes, someone on the hiring team writes it, reads it over and sends it to
-                      you. It is not automatic and it may take a few days. Saying no changes nothing about
-                      how your interview is considered.
-                    </p>
+                    <p><b>{FEEDBACK_QUESTION}</b></p>
+                    <p className="muted">{FEEDBACK_EXPLANATION}</p>
                     <div className="row">
                       <button type="button" className="btn" disabled={feedbackSaving} onClick={() => void answerFeedback(true)}>
-                        Yes, please
+                        {FEEDBACK_YES_LABEL}
                       </button>
                       <button type="button" className="btn secondary" disabled={feedbackSaving} onClick={() => void answerFeedback(false)}>
-                        No, thank you
+                        {FEEDBACK_NO_LABEL}
                       </button>
                     </div>
                   </>
                 ) : (
-                  <p className="muted">
-                    {feedbackChoice === 'YES'
-                      ? 'Thank you — we have noted that you would like written feedback. Someone on the hiring '
-                        + 'team will write it and send it on to you.'
-                      : 'Thank you — we have noted that you would rather not have written feedback, and we will '
-                        + 'not email you about it.'}
-                  </p>
+                  <p className="muted">{answerConfirmation(feedbackChoice)}</p>
                 )}
                 {feedbackError && <p className="muted">{feedbackError}</p>}
               </div>

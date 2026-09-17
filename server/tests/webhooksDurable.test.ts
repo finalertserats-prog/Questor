@@ -22,7 +22,11 @@ beforeEach(async () => {
   await prisma.tenant.deleteMany({ where: { name: 'Hook Org' } });
   const tenant = await prisma.tenant.create({ data: { name: 'Hook Org' } });
   tenantId = tenant.id;
-  const ep = await prisma.webhookEndpoint.create({ data: { tenantId, url: 'https://hooks.example.com/questor', events: '*' } });
+  // A webhook from before v2-only became the default, so it still gets both
+  // signatures. New webhooks are covered in webhookLegacySignature.test.ts.
+  const ep = await prisma.webhookEndpoint.create({
+    data: { tenantId, url: 'https://hooks.example.com/questor', events: '*', sendLegacySignature: true },
+  });
   endpointId = ep.id;
   restoreNetwork = setWebhookNetworkForTest(async () => [{ address: '93.184.216.34', family: 4 }], async (url, options, body) => {
     calls.push({ url: url.toString(), headers: options.headers as Record<string, string>, body });
@@ -36,7 +40,16 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const settle = () => new Promise((r) => setTimeout(r, 50));
+// The first attempt runs in the background after emitEvent returns. Wait until
+// every delivery has finished it (delivered, or a failure recorded) instead of a
+// fixed pause, which a loaded machine outran.
+const settle = async (timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (await prisma.webhookDelivery.count({ where: { status: 'pending', attempts: 0 } }) > 0) {
+    if (Date.now() > deadline) throw new Error('webhook deliveries did not settle');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+};
 
 describe('a delivery that succeeds', () => {
   it('is marked delivered', async () => {

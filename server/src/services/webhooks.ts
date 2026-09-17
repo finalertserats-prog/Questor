@@ -3,7 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import dns from 'node:dns';
 import { prisma } from '../db.js';
-import { config } from '../config.js';
+import { config, type V1SignatureSetting } from '../config.js';
 import { logger } from '../logger.js';
 import { isPrivateAddress } from './webhookUrl.js';
 import { startJob } from './jobs.js';
@@ -21,7 +21,13 @@ import { startJob } from './jobs.js';
  * `x-questor-signature-v2` covers `${timestamp}.${body}` with the timestamp in
  * `x-questor-timestamp`, so a receiver that checks it can refuse a replayed
  * delivery. New receivers should verify v2 and a timestamp within a few
- * minutes; v1 is deprecated and will go once the known receivers have moved.
+ * minutes.
+ *
+ * v1 is being retired per webhook. `WebhookEndpoint.sendLegacySignature` says
+ * whether a webhook still gets it: false for new webhooks, true for the ones
+ * that existed before the column did. WEBHOOK_V1_SIGNATURE=off drops it
+ * everywhere. The flag is read when each attempt is made, not when the event
+ * was emitted, so a retry after an admin switched v1 off goes without it.
  */
 
 const MAX_ATTEMPTS = 4;
@@ -56,6 +62,31 @@ export function signPayloadV2(timestampMs: number, body: string): string {
   return crypto.createHmac('sha256', config.webhookSigningSecret).update(`${timestampMs}.${body}`).digest('hex');
 }
 
+/** Whether a delivery to this webhook carries the v1 header right now. */
+export function sendsLegacySignature(
+  endpoint: { sendLegacySignature: boolean },
+  setting: V1SignatureSetting = config.webhookV1Signature,
+): boolean {
+  return setting !== 'off' && endpoint.sendLegacySignature;
+}
+
+export function deliveryHeaders(opts: {
+  body: string;
+  deliveryId: string;
+  timestampMs: number;
+  legacy: boolean;
+}): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-questor-signature-v2': signPayloadV2(opts.timestampMs, opts.body),
+    'x-questor-timestamp': String(opts.timestampMs),
+    'x-questor-delivery': opts.deliveryId,
+  };
+  // Absent, not empty. A receiver that still checks v1 should fail loudly on a
+  // missing header rather than compare against an empty string.
+  return opts.legacy ? { ...headers, 'x-questor-signature': signPayload(opts.body) } : headers;
+}
+
 export async function emitEvent(tenantId: string, event: string, payload: unknown): Promise<void> {
   const endpoints = await prisma.webhookEndpoint.findMany({ where: { tenantId, active: true } });
   const body = JSON.stringify({ event, data: payload, ts: new Date().toISOString() });
@@ -68,7 +99,7 @@ export async function emitEvent(tenantId: string, event: string, payload: unknow
       data: { endpointId: ep.id, event, payloadJson: body, status: 'pending', nextAttemptAt: new Date() },
     });
     // Try at once for latency; the job is the safety net, not the first attempt.
-    attempt(delivery.id, ep.url, body).catch((err: unknown) => {
+    attempt(delivery.id, ep.url, body, sendsLegacySignature(ep)).catch((err: unknown) => {
       logger.error({ deliveryId: delivery.id, err: err instanceof Error ? err.message : String(err) }, 'Webhook delivery bookkeeping failed');
     });
   }
@@ -78,12 +109,12 @@ export async function emitEvent(tenantId: string, event: string, payload: unknow
 export async function deliverDueWebhooks(now = new Date()): Promise<string> {
   const due = await prisma.webhookDelivery.findMany({
     where: { status: 'pending', nextAttemptAt: { lte: now }, endpoint: { active: true } },
-    include: { endpoint: { select: { url: true } } },
+    include: { endpoint: { select: { url: true, sendLegacySignature: true } } },
     orderBy: { nextAttemptAt: 'asc' },
     take: BATCH,
   });
   for (const d of due) {
-    await attempt(d.id, d.endpoint.url, d.payloadJson);
+    await attempt(d.id, d.endpoint.url, d.payloadJson, sendsLegacySignature(d.endpoint));
   }
   return `${due.length} due`;
 }
@@ -96,7 +127,7 @@ export function startWebhookDelivery(intervalMs = DELIVER_EVERY_MS): () => void 
  * One attempt. Claims the row first with a conditional update so two instances
  * (or the immediate try and the job) cannot both send the same delivery.
  */
-async function attempt(deliveryId: string, url: string, body: string): Promise<void> {
+async function attempt(deliveryId: string, url: string, body: string, legacy: boolean): Promise<void> {
   const now = new Date();
   const claimed = await prisma.webhookDelivery.updateMany({
     where: { id: deliveryId, status: 'pending', nextAttemptAt: { lte: now } },
@@ -110,16 +141,9 @@ async function attempt(deliveryId: string, url: string, body: string): Promise<v
 
   try {
     const destination = await resolveWebhookDestination(new URL(url), lookupWebhookHost);
-    const timestamp = Date.now();
     const res = await requestWebhook(destination.url, {
       ...destination.options,
-      headers: {
-        'content-type': 'application/json',
-        'x-questor-signature': signPayload(body),
-        'x-questor-signature-v2': signPayloadV2(timestamp, body),
-        'x-questor-timestamp': String(timestamp),
-        'x-questor-delivery': deliveryId,
-      },
+      headers: deliveryHeaders({ body, deliveryId, timestampMs: Date.now(), legacy }),
     }, body);
     if (!res.ok) throw new Error(`status ${res.status}`);
     await prisma.webhookDelivery.update({ where: { id: deliveryId }, data: { status: 'delivered', attempts: attemptNumber, nextAttemptAt: null } });
@@ -184,4 +208,23 @@ export async function webhookHealth(now = new Date()): Promise<{ pending: number
     prisma.webhookDelivery.count({ where: { status: 'failed', createdAt: { gte: dayAgo } } }),
   ]);
   return { pending, due, failed24h };
+}
+
+export interface LegacySignatureStatus {
+  killSwitch: V1SignatureSetting;
+  /** Active webhooks whose own setting still asks for v1. */
+  flagged: number;
+  /** How many of those actually get it, once the kill switch is applied. */
+  sending: number;
+}
+
+/**
+ * For the operations view: how close v1 is to being gone. Both numbers are
+ * shown because the kill switch hides the flags, and switching it back on
+ * would bring every flagged webhook's v1 header back with it.
+ */
+export async function legacySignatureStatus(): Promise<LegacySignatureStatus> {
+  const flagged = await prisma.webhookEndpoint.count({ where: { active: true, sendLegacySignature: true } });
+  const killSwitch = config.webhookV1Signature;
+  return { killSwitch, flagged, sending: killSwitch === 'off' ? 0 : flagged };
 }

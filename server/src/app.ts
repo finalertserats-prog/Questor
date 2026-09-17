@@ -17,6 +17,7 @@ import { candidatesRouter } from './routes/candidates.js';
 import { interviewsRouter } from './routes/interviews.js';
 import { portalRouter } from './routes/portal.js';
 import { feedbackRequestRouter } from './routes/feedbackRequest.js';
+import { feedbackConsentRouter } from './routes/feedbackConsent.js';
 import { signupRouter, signupDecisionRouter } from './routes/signup.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
@@ -130,6 +131,9 @@ export function createApp() {
   // own fresh allowance — which is no limit at all. The token is 256 bits, so
   // this is a bound on scanning rather than the thing standing in the way.
   app.use('/api/feedback-request', rateLimit({ name: 'feedback-request', windowMs: 15 * 60_000, max: 60 }), feedbackRequestRouter);
+  // "Would you like written feedback?", followed from a recruiter's request.
+  // Same token scheme and the same reasoning for an IP-keyed budget.
+  app.use('/api/feedback-consent', rateLimit({ name: 'feedback-consent', windowMs: 15 * 60_000, max: 60 }), feedbackConsentRouter);
 
   // Signup is public, but approval links carry their own high-entropy token.
   // Mount decisions first so they get the 60-request token-scanning budget, not

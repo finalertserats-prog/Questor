@@ -247,6 +247,55 @@ A ready `docker-compose.yml` provides a local Postgres + the app.
 
 Register endpoints in **Admin → Webhooks** (or `POST /api/admin/webhooks`). Questor emits
 `candidate.parsed`, `invitation.sent`, `invitation.accepted`, `interview.started`,
-`assessment.ready`, `review.completed`. Each delivery is signed with HMAC-SHA256 in the
-`x-questor-signature` header (verify with `WEBHOOK_SIGNING_SECRET`) and retried with exponential
-backoff.
+`assessment.ready`, `review.completed`. Each delivery is signed with HMAC-SHA256 (keyed with
+`WEBHOOK_SIGNING_SECRET`) and retried with exponential backoff.
+
+#### Verifying a delivery (v2)
+
+Every delivery carries:
+
+| Header | Value |
+|---|---|
+| `x-questor-timestamp` | When this attempt was sent, as Unix time in **milliseconds** (e.g. `1789660800000`). A retry gets a new one. |
+| `x-questor-signature-v2` | Lowercase hex HMAC-SHA256, keyed with `WEBHOOK_SIGNING_SECRET`, of the string `<x-questor-timestamp>.<raw body>`. |
+| `x-questor-delivery` | The delivery id. The same id is re-sent on retries, so use it to ignore duplicates. |
+| `x-questor-signature` | **Legacy v1**: HMAC-SHA256 of the raw body alone. Only sent to webhooks that still have it switched on (see below). Do not build new receivers on it. |
+
+To verify:
+
+1. Read the raw request body as bytes, before any JSON parsing.
+2. Refuse the delivery if `x-questor-timestamp` is missing, is not a whole number, or is more than
+   **5 minutes (300 000 ms)** away from your clock in either direction. This is what stops a
+   captured delivery being replayed later. Keep your clock in sync with NTP.
+3. Compute `HMAC_SHA256(secret, timestamp + "." + rawBody)` as hex, and compare it with
+   `x-questor-signature-v2` using a constant-time comparison.
+4. Optionally, keep delivery ids for the 5-minute window and refuse a repeat.
+
+```js
+import crypto from 'node:crypto';
+
+const TOLERANCE_MS = 5 * 60 * 1000;
+
+export function verifyQuestorWebhook(rawBody, headers, secret, now = Date.now()) {
+  const timestamp = headers['x-questor-timestamp'];
+  const signature = headers['x-questor-signature-v2'];
+  if (!/^\d+$/.test(timestamp ?? '') || !/^[0-9a-f]{64}$/.test(signature ?? '')) return false;
+  if (Math.abs(now - Number(timestamp)) > TOLERANCE_MS) return false;
+  const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');
+  return crypto.timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(signature, 'hex'));
+}
+```
+
+#### Retiring v1
+
+- New webhooks get v2 only.
+- Webhooks that existed before v2-only became the default still also get the v1 header, so nothing
+  broke when the change shipped. Once a receiver verifies v2, an admin switches v1 off for it in
+  **Admin → Webhooks → Stop sending v1** (`PATCH /api/admin/webhooks/:id` with
+  `{"sendLegacySignature": false}`; audited as `webhook.legacy_signature.changed`). It can be
+  switched back on the same way if that receiver turns out not to be ready.
+- `GET /api/admin/ops` → `webhooks.legacySignature` shows `flagged` (active webhooks still set to
+  send v1) and `sending` (how many actually get it after the switch below).
+- When `flagged` is 0, or the owner decides the rest can go, set `WEBHOOK_V1_SIGNATURE=off` and
+  restart. v1 then leaves every delivery whatever each webhook says. Unset or `on` leaves each
+  webhook's setting in charge; any other value stops the server at startup.

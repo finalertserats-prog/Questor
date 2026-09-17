@@ -163,6 +163,11 @@ describe('the feedback email', () => {
       data: { assessmentId: assessment.id, reviewerId: ids.userId, status: 'COMPLETED', disposition: 'CONSIDER', reason: 'r', completedAt: new Date() },
     });
 
+    // Feedback only goes to a candidate who opted in.
+    await prisma.candidateFeedbackOptIn.create({
+      data: { sessionId: ids.sessionId, candidateId: ids.candidateId, tenantId: ids.tenantId, choice: 'YES' },
+    });
+
     const nasty = 'Thanks for your time. <img src=x onerror=alert(1)> We enjoyed it.';
     await request(app).post(`/api/assessments/${assessment.id}/feedback/draft`).set(auth(token)).send({ draftText: nasty });
     await request(app).post(`/api/assessments/${assessment.id}/feedback/approve`).set(auth(token)).send({ approvedText: nasty });

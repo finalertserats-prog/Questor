@@ -13,9 +13,9 @@ import { getEmail } from '../providers/email/index.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { candidateFeedbackEnabledForTenant } from '../services/candidateFeedbackPolicy.js';
-import {
-  candidateFeedbackState, getOptIn, issueHumanRequestToken, OPT_IN_NO,
-} from '../services/candidateFeedback.js';
+import { candidateFeedbackState, getOptIn, issueHumanRequestToken } from '../services/candidateFeedback.js';
+import { feedbackConsentStatus, feedbackSendBlockReason } from '../services/candidateFeedbackPolicy.js';
+import { feedbackConsentView, requestFeedbackOptIn } from '../services/candidateFeedbackOptInRequest.js';
 import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedbackEmail.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import {
@@ -248,19 +248,15 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
     throw new HttpError(409, 'Candidate feedback delivery is disabled for this tenant.');
   }
 
-  // A candidate who was asked and said no is never emailed. Checked at the last
-  // gate before anything leaves rather than only at draft time: the answer can
-  // be recorded after a draft was written, and this is the only place that
-  // actually sends.
+  // Only a candidate who said yes is emailed. Checked at the last gate before
+  // anything leaves rather than only at draft time: the answer can be recorded
+  // after a draft was written, and this is the only place that actually sends.
   //
-  // Note the asymmetry, which is deliberate. A recorded NO blocks. NO RECORD AT
-  // ALL does not: recruiter-driven interviews and everything from before this
-  // existed have no answer on file, and reading silence as refusal would
-  // quietly switch off feedback a person had deliberately approved.
-  const optIn = await getOptIn(a.sessionId);
-  if (optIn?.choice === OPT_IN_NO) {
-    throw new HttpError(409, 'This candidate declined written feedback, so it cannot be sent to them.');
-  }
+  // No answer on file blocks as firmly as a no. It covers recruiter-driven
+  // interviews and everything from before the question existed; the recruiter
+  // is told which of the two it is, and can ask (POST .../opt-in-request).
+  const blockReason = feedbackSendBlockReason(feedbackConsentStatus(await getOptIn(a.sessionId)));
+  if (blockReason) throw new HttpError(409, blockReason);
 
   const session = await prisma.interviewSession.findUnique({
     where: { id: a.sessionId },
@@ -328,12 +324,30 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
 assessmentsRouter.get('/:id/feedback', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const feedback = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
-  const state = await candidateFeedbackState([a.sessionId]);
+  const session = await prisma.interviewSession.findUniqueOrThrow({
+    where: { id: a.sessionId },
+    select: { id: true, tenantId: true, completedAt: true },
+  });
+  const [state, consent] = await Promise.all([candidateFeedbackState([a.sessionId]), feedbackConsentView(session)]);
   res.json({
     feedback: feedback ? presentFeedback(feedback) : null,
     optIn: state.optIn,
     humanRequest: state.humanRequest,
+    // Whether this can be sent and, if not, why — so the send button can say so
+    // before anyone presses it.
+    consent,
   });
+}));
+
+// Ask a candidate with no answer on file whether they want written feedback.
+// Same capability as sending: it is the step that makes sending possible.
+assessmentsRouter.post('/:id/feedback/opt-in-request', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  z.object({}).strict().parse(req.body ?? {});
+  const a = await getAssessment(req.auth!, req.params.id);
+  const request = await requestFeedbackOptIn({
+    sessionId: a.sessionId, tenantId: req.auth!.tenantId, requestedByUserId: req.auth!.userId,
+  });
+  res.json({ request });
 }));
 
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {

@@ -6,6 +6,9 @@ import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/Roun
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
+import {
+  LEGACY_OFF_CONFIRMATION, eventsForApi, eventsLabel, signatureView,
+} from '../components/webhookSignatureModel';
 import type { Tenant } from '../auth';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
@@ -26,7 +29,9 @@ interface Analytics {
   quality: { avgEvidenceCoverage: number | null };
 }
 interface ModelExecution { id: string; provider: string; model: string; function: string; latencyMs: number; inputTokens: number; outputTokens: number; createdAt: string; }
-interface Webhook { id: string; url: string; events: string[]; active: boolean; }
+// `events` is the comma-separated string the server stores, not an array.
+interface Webhook { id: string; url: string; events: string; active: boolean; sendLegacySignature: boolean; }
+interface WebhookList { webhooks: Webhook[]; legacySignatureDisabledEverywhere?: boolean; }
 
 function activeBadge(c: ProviderComponent) {
   if (c.enabled || c.configured) return <Badge kind="green">Active</Badge>;
@@ -38,6 +43,10 @@ export function Admin() {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [executions, setExecutions] = useState<ModelExecution[]>([]);
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
+  const [v1OffEverywhere, setV1OffEverywhere] = useState(false);
+  // The webhook whose v1 switch-off is waiting for the admin to confirm it.
+  const [confirmV1Off, setConfirmV1Off] = useState<string | null>(null);
+  const [savingHook, setSavingHook] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // Keyed by panel, so each section can say whether ITS data arrived.
@@ -56,8 +65,11 @@ export function Admin() {
   const [savingSlug, setSavingSlug] = useState(false);
   const [slugNotice, setSlugNotice] = useState('');
 
-  const loadWebhooks = () =>
-    api.get<{ webhooks: Webhook[] }>('/admin/webhooks').then((d) => setWebhooks(d.webhooks ?? []));
+  const applyWebhooks = (d: WebhookList) => {
+    setWebhooks(d.webhooks ?? []);
+    setV1OffEverywhere(Boolean(d.legacySignatureDisabledEverywhere));
+  };
+  const loadWebhooks = () => api.get<WebhookList>('/admin/webhooks').then(applyWebhooks);
 
   // Four independent panels, four independent loads. One Promise.all meant a
   // single failing endpoint — analytics on a permission this account lacks, say
@@ -76,8 +88,7 @@ export function Admin() {
       api.get<Analytics>('/admin/analytics').then(set(setAnalytics), note('analytics')),
       api.get<{ executions: ModelExecution[] }>('/admin/model-executions')
         .then(set((ex: { executions: ModelExecution[] }) => setExecutions(ex.executions ?? [])), note('executions')),
-      api.get<{ webhooks: Webhook[] }>('/admin/webhooks')
-        .then(set((wh: { webhooks: Webhook[] }) => setWebhooks(wh.webhooks ?? [])), note('webhooks')),
+      api.get<WebhookList>('/admin/webhooks').then(set(applyWebhooks), note('webhooks')),
     ]).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
@@ -104,7 +115,7 @@ export function Admin() {
     try {
       await api.post('/admin/webhooks', {
         url: hookUrl,
-        events: hookEvents.split(',').map((s) => s.trim()).filter(Boolean),
+        events: eventsForApi(hookEvents),
       });
       setHookUrl('');
       setHookEvents('*');
@@ -114,6 +125,24 @@ export function Admin() {
       setError(err instanceof Error ? err.message : 'Could not add the webhook.');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const setLegacySignature = async (hook: Webhook, sendLegacySignature: boolean) => {
+    setError('');
+    setHookNotice('');
+    setConfirmV1Off(null);
+    setSavingHook(hook.id);
+    try {
+      await api.patch(`/admin/webhooks/${hook.id}`, { sendLegacySignature });
+      await loadWebhooks();
+      setHookNotice(sendLegacySignature
+        ? 'The legacy v1 signature is back on for that webhook.'
+        : 'That webhook now receives the v2 signature only.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not change the webhook signature setting.');
+    } finally {
+      setSavingHook(null);
     }
   };
 
@@ -315,17 +344,60 @@ export function Admin() {
         {hookNotice && <Banner kind="ok">{hookNotice}</Banner>}
         {webhooks.length === 0 ? <div className="muted small">No webhooks configured.</div> : (
           <table>
-            <thead><tr><th>URL</th><th>Events</th><th>Active</th></tr></thead>
+            <thead><tr><th>URL</th><th>Events</th><th>Active</th><th>Signature</th></tr></thead>
             <tbody>
-              {webhooks.map((w) => (
-                <tr key={w.id}>
-                  <td className="small">{w.url}</td>
-                  <td className="muted small">{(w.events ?? []).join(', ')}</td>
-                  <td>{w.active ? <Badge kind="green">Yes</Badge> : <Badge kind="gray">No</Badge>}</td>
-                </tr>
-              ))}
+              {webhooks.map((w) => {
+                const sig = signatureView(w, v1OffEverywhere);
+                return (
+                  <tr key={w.id}>
+                    <td className="small">{w.url}</td>
+                    <td className="muted small">{eventsLabel(w.events ?? '')}</td>
+                    <td>{w.active ? <Badge kind="green">Yes</Badge> : <Badge kind="gray">No</Badge>}</td>
+                    <td className="small">
+                      <div>{sig.label}</div>
+                      {sig.canSwitchOff && (
+                        <button
+                          type="button"
+                          className="btn secondary sm"
+                          disabled={savingHook === w.id}
+                          onClick={() => setConfirmV1Off(w.id)}
+                        >
+                          Stop sending v1
+                        </button>
+                      )}
+                      {sig.canSwitchOn && (
+                        <button
+                          type="button"
+                          className="btn ghost sm"
+                          disabled={savingHook === w.id}
+                          onClick={() => void setLegacySignature(w, true)}
+                        >
+                          Send v1 again
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+        )}
+        {confirmV1Off && (
+          <Banner kind="info">
+            <p>{LEGACY_OFF_CONFIRMATION}</p>
+            <button
+              type="button"
+              className="btn sm"
+              disabled={savingHook !== null}
+              onClick={() => {
+                const hook = webhooks.find((w) => w.id === confirmV1Off);
+                if (hook) void setLegacySignature(hook, false);
+              }}
+            >
+              Confirm: stop sending v1
+            </button>{' '}
+            <button type="button" className="btn ghost sm" onClick={() => setConfirmV1Off(null)}>Keep v1 for now</button>
+          </Banner>
         )}
         <form className="row" style={{ marginTop: 12, alignItems: 'flex-end' }} onSubmit={createWebhook}>
           <div style={{ flex: 2 }}>
