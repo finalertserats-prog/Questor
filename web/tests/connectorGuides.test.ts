@@ -16,7 +16,7 @@ const SERVER_ENV: Record<string, string[]> = {
   meet: ['GOOGLE_SERVICE_ACCOUNT_EMAIL', 'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY', 'GOOGLE_IMPERSONATED_USER'],
   'email-sendgrid': ['EMAIL_PROVIDER', 'SENDGRID_API_KEY', 'EMAIL_FROM'],
   'email-smtp': ['EMAIL_PROVIDER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM'],
-  ats: ['ATS_PROVIDER', 'ATS_BASE_URL', 'ATS_API_KEY'],
+  ats: ['ATS_PROVIDER', 'ATS_BASE_URL', 'ATS_API_KEY', 'ATS_TENANT_ID'],
 };
 
 describe('connector guides', () => {

@@ -18,7 +18,7 @@ export interface RawResponse {
 
 export type Interpreted =
   | { readonly kind: 'data'; readonly data: unknown }
-  | { readonly kind: 'error'; readonly status: number; readonly message: string };
+  | { readonly kind: 'error'; readonly status: number; readonly message: string; readonly code?: string };
 
 function parseJson(text: string): { parsed: true; value: unknown } | { parsed: false } {
   try {
@@ -26,6 +26,13 @@ function parseJson(text: string): { parsed: true; value: unknown } | { parsed: f
   } catch {
     return { parsed: false };
   }
+}
+
+/** A machine-readable refusal code, when the server attached one. */
+function statedCode(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const code = (value as { code?: unknown }).code;
+  return typeof code === 'string' && code ? code : null;
 }
 
 function statedError(value: unknown): string | null {
@@ -51,7 +58,8 @@ export function interpretResponse(res: RawResponse): Interpreted {
 
   if (!res.ok) {
     const stated = body.parsed ? statedError(body.value) : null;
-    return { kind: 'error', status: res.status, message: stated ?? (res.statusText || UNREADABLE_MESSAGE) };
+    const code = body.parsed ? statedCode(body.value) : null;
+    return { kind: 'error', status: res.status, message: stated ?? (res.statusText || UNREADABLE_MESSAGE), ...(code ? { code } : {}) };
   }
   if (!body.parsed) return { kind: 'error', status: res.status, message: UNREADABLE_MESSAGE };
   return { kind: 'data', data: body.value };

@@ -4,6 +4,8 @@ import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
 import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
+import { CandidateAtsLink } from '../components/CandidateAtsLink';
+import { useAuth } from '../auth';
 import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
 import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
 import { Icon } from '../components/Icon';
@@ -116,6 +118,7 @@ interface ProfileAnalysisResp {
 export function CandidateDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const { user } = useAuth();
   const [data, setData] = useState<CandidateResp | null>(null);
   const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysisResp | null>(null);
   const [profileAnalysisError, setProfileAnalysisError] = useState('');
@@ -391,6 +394,9 @@ export function CandidateDetail() {
           interviews={(interviews ?? []).map((iv) => ({ ...iv, personaName: sessions[iv.id]?.personaName ?? null }))}
           onChanged={refresh}
         />
+
+        {/* Where exports for this candidate land; the server allows admins only. */}
+        {user?.role === 'admin' && <CandidateAtsLink candidateId={candidate.id} />}
 
       <div className="card">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>

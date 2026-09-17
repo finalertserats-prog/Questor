@@ -16,6 +16,11 @@ describe('exportStatusSentence', () => {
     expect(exportStatusSentence('FAILED')).toContain('Try again');
   });
 
+  // The token the server's ATS export actually returns.
+  it('says an exported assessment reached the ATS', () => {
+    expect(exportStatusSentence('exported')).toBe('Sent to your ATS.');
+  });
+
   it('reads the status whatever case it arrives in', () => {
     expect(exportStatusSentence(' sent ')).toBe('Sent to your ATS.');
   });

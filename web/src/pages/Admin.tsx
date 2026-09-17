@@ -11,6 +11,8 @@ interface ProviderComponent { provider: string; enabled?: boolean; configured?: 
 interface Providers {
   llm: ProviderComponent; stt: ProviderComponent; tts: ProviderComponent;
   email: ProviderComponent; ats: ProviderComponent; meeting: MeetingAdapter[];
+  /** Only the deployment operator may test the shared meeting apps. */
+  canTestMeetingConnectors?: boolean;
 }
 interface Analytics {
   funnel: { roles: number; candidates: number; interviews: number; completed: number };
@@ -149,7 +151,8 @@ export function Admin() {
     { label: 'Speech-to-text', c: providers?.stt },
     { label: 'Text-to-speech', c: providers?.tts },
     { label: 'Email', c: providers?.email },
-    { label: 'ATS', c: providers?.ats },
+    // This organisation's own ATS; it is connected in Settings.
+    { label: 'ATS', c: providers?.ats ? { ...providers.ats, notes: 'Your organisation’s own connection. Manage it in Settings.' } : undefined },
   ];
 
   return (
@@ -212,13 +215,18 @@ export function Admin() {
           </tbody>
         </table>
 
-        <OtherConnectorGuides ids={['email-sendgrid', 'email-smtp', 'ats']} />
+        <OtherConnectorGuides ids={['email-sendgrid', 'email-smtp']} />
 
         <h3 style={{ marginTop: 18 }}>Meeting adapters</h3>
         <div className="muted small" style={{ marginBottom: 10 }}>
           Open "How to set up" for what to create at each vendor and which variables to add to server/.env. Keys are set on the server and take effect after a restart; they are never stored or shown here.
         </div>
-        <MeetingAdapterSetup adapters={providers?.meeting ?? []} />
+        {providers && !providers.canTestMeetingConnectors && (
+          <div className="muted small" style={{ marginBottom: 10 }}>
+            Meeting connectors belong to the whole deployment, so only its operator can test them.
+          </div>
+        )}
+        <MeetingAdapterSetup adapters={providers?.meeting ?? []} canTest={providers?.canTestMeetingConnectors === true} />
       </div>
 
       <div className="card">

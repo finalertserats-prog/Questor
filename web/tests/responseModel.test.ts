@@ -67,3 +67,15 @@ describe('the timeout message', () => {
     expect(TIMEOUT_MESSAGE).toBe('The server took too long to answer.');
   });
 });
+
+describe('interpretResponse keeps the refusal code', () => {
+  it('carries a code the server attached, so a page can react to one refusal', () => {
+    expect(interpretResponse({ ok: false, status: 409, statusText: 'Conflict', text: '{"error":"No ATS.","code":"ATS_NOT_CONNECTED"}' }))
+      .toEqual({ kind: 'error', status: 409, message: 'No ATS.', code: 'ATS_NOT_CONNECTED' });
+  });
+
+  it('leaves the code out when the server sent none', () => {
+    const out = interpretResponse({ ok: false, status: 400, statusText: 'Bad Request', text: '{"error":"Nope."}' });
+    expect('code' in out).toBe(false);
+  });
+});
