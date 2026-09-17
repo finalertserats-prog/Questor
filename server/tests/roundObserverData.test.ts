@@ -39,6 +39,14 @@ describe('who may read an observed round', () => {
     expect(res.body.observation.transcript[0].text).toBe(SPOKEN);
   });
 
+  it('names the candidate the round belongs to, so the room can link back', async () => {
+    const { ids, roundId } = await endedRound();
+
+    const res = await request(app).get(`/api/observer/rounds/${roundId}`).set('Authorization', ids.auth);
+
+    expect(res.body.round.candidateId).toBe(ids.candidateId);
+  });
+
   it('is not readable from another organisation', async () => {
     const { roundId } = await endedRound();
     const other = await request(app).post('/api/auth/register')

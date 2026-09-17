@@ -70,7 +70,10 @@ async function view(req: Request, round: RoundWithPipeline) {
   const observation = await observationForRound(round.id);
   const stt = sttCapability();
   return {
-    round: { id: round.id, stageKey: round.stageKey, status: round.status, aiObserver: observerApplies(round), scheduledAt: round.scheduledAt },
+    round: {
+      id: round.id, candidateId: round.pipeline.candidateId, stageKey: round.stageKey, status: round.status,
+      aiObserver: observerApplies(round), scheduledAt: round.scheduledAt,
+    },
     notice: OBSERVER_CAPTURE_NOTICE,
     capture: { mode: serverSttReady() ? 'server' : 'browser', provider: stt.provider },
     observation: observation ? presentObservation(observation, req.auth!.userId) : null,
