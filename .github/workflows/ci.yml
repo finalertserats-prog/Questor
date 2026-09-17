@@ -33,3 +33,35 @@ jobs:
         run: npm run test:e2e -w server
       - name: Build web
         run: npm run build -w web
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Prisma generate + db seed
+        run: |
+          npm run db:generate -w server
+          npm run db:push -w server
+          npm run db:seed -w server
+        env:
+          DATABASE_URL: 'file:./data/questor.db'
+      - name: Browser smoke E2E
+        run: npm run test:e2e -w e2e
+        env:
+          DATABASE_URL: 'file:./data/questor.db'
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          if-no-files-found: ignore

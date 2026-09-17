@@ -43,3 +43,6 @@ docs/Questor-v1-hr-guide-20260719.pdf.bak
 server/prisma/postgres/*
 !server/prisma/postgres/migrations/
 !server/prisma/postgres/migrations/**
+
+# Playwright signed-in session written by e2e global setup; holds a live cookie.
+e2e/.auth/

@@ -1,0 +1,52 @@
+import { expect, test } from '@playwright/test';
+import { createRoleAndCandidate, instrumentCandidateBrowser, runId } from './helpers';
+
+test('portal consent without voice capture starts typed mode and never asks for microphone', async ({ browser, page }) => {
+  const id = runId();
+  const { name } = await createRoleAndCandidate(page, id);
+
+  await page.getByRole('tab', { name: 'Candidate Journey' }).click();
+  await page.getByRole('button', { name: 'Approve & create interview' }).click();
+  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+
+  const invitationCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Invitation', exact: true }) });
+  const sendInvitation = invitationCard.getByRole('button', { name: 'Send invitation' });
+  if (await sendInvitation.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await sendInvitation.click();
+    await expect(page.getByText('Invitation created.')).toBeVisible();
+  }
+
+  // The read-only portal link comes before the schedule field in this card.
+  const portalInput = invitationCard.getByRole('textbox').first();
+  await expect(portalInput).toHaveValue(/\/portal\//);
+  const portalUrl = await portalInput.inputValue();
+
+  // A fresh context: no recruiter cookies, no permissions granted.
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const portalPage = await context.newPage();
+  await instrumentCandidateBrowser(context, portalPage);
+  await portalPage.goto(portalUrl);
+  await expect(portalPage.getByText(`Hello ${name}.`, { exact: false })).toBeVisible();
+  await portalPage.getByRole('button', { name: 'Continue' }).click();
+
+  // Leave the voice-capture consent unticked, and accept only the AI/human-review consent.
+  await portalPage.getByLabel(/I understand this first round/).check();
+  await expect(portalPage.getByLabel(/I consent to my voice being captured/)).not.toBeChecked();
+  await portalPage.getByRole('button', { name: /I consent/ }).click();
+  await expect(portalPage.getByRole('heading', { name: 'Quick audio check' })).toBeVisible();
+  await portalPage.getByRole('button', { name: /Continue anyway/ }).click();
+  await portalPage.getByRole('button', { name: 'Join interview' }).click();
+
+  await expect(portalPage.getByPlaceholder(/Type your answer/)).toBeVisible({ timeout: 20_000 });
+  await expect(portalPage.getByText('Typing', { exact: true })).toBeVisible();
+  // No listening controls: those only render while the room is capturing voice.
+  await expect(portalPage.getByRole('button', { name: 'Done answering' })).toHaveCount(0);
+  await expect(portalPage.getByRole('button', { name: 'Voice' })).toHaveCount(0);
+  await expect(portalPage.getByText('MIC OPEN')).toHaveCount(0);
+  await expect(portalPage.getByText('LIVE TRANSCRIPTION')).toHaveCount(0);
+  const micRequests = await portalPage.evaluate(
+    () => (window as unknown as { __e2eGetUserMediaCalls?: number }).__e2eGetUserMediaCalls ?? 0,
+  );
+  expect(micRequests).toBe(0);
+  await context.close();
+});
