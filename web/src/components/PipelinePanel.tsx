@@ -10,6 +10,11 @@ import { nextStage, stageCaption, stageStates, type PipelineStageView, type Stag
 import { decisionStatus } from './statusModel';
 import { interviewerName } from './candidateJourney';
 import { formatDate, formatDateTime } from './dateFormat';
+import { RoundActions, RoundMeeting } from './RoundMeeting';
+import {
+  meetingLinkProblem, safeMeetingUrl, scheduleHint,
+  type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
+} from './roundMeetingModel';
 
 interface Round {
   id: string;
@@ -21,6 +26,8 @@ interface Round {
   interviewers: string[];
   scheduledAt: string;
   status: string;
+  /** Absent on an older server; null for AI rounds. */
+  meeting?: RoundMeetingView | null;
 }
 
 interface Pipeline {
@@ -64,6 +71,8 @@ interface SchedulingNotice {
   link: string;
   deliveryNote: string;
 }
+
+const DURATIONS = [30, 45, 60, 90] as const;
 
 const STATE_TEXT: Record<StageState, string> = {
   done: 'Completed',
@@ -111,6 +120,10 @@ export function PipelinePanel(
   const [roundToComplete, setRoundToComplete] = useState('');
   const [roundNotes, setRoundNotes] = useState('');
   const [schedulingNotice, setSchedulingNotice] = useState<SchedulingNotice | null>(null);
+  const [meetingLink, setMeetingLink] = useState('');
+  const [durationMinutes, setDurationMinutes] = useState<number>(60);
+  const [meetingNotice, setMeetingNotice] = useState<MeetingOutcome | null>(null);
+  const [meetingProvider, setMeetingProvider] = useState<MeetingProviderInfo | null>(null);
   // Set while a candidacy-ending outcome waits to be confirmed.
   const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
   // The stage a move is waiting to be confirmed for.
@@ -139,6 +152,16 @@ export function PipelinePanel(
       .catch((e: unknown) => { if (latestLoad.current === loadId) setError(errorMessage(e)); })
       .finally(() => { if (latestLoad.current === loadId) setLoading(false); });
   }, [load]);
+
+  // Which provider will create links for human rounds. Only read by people who
+  // can schedule; without it the form simply asks for a link.
+  useEffect(() => {
+    let cancelled = false;
+    api.get<{ meetingProvider: MeetingProviderInfo }>('/pipelines/meeting-provider')
+      .then((resp) => { if (!cancelled) setMeetingProvider(resp.meetingProvider); })
+      .catch(() => { if (!cancelled) setMeetingProvider(null); });
+    return () => { cancelled = true; };
+  }, []);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -201,16 +224,27 @@ export function PipelinePanel(
       return;
     }
     const names = interviewers.split(',').map((n) => n.trim()).filter(Boolean);
-    void run(() => api.post<{ notification?: SchedulingNotice }>(`/pipelines/${pipeline.id}/rounds`, {
+    const human = current.kind === 'human_interview';
+    const link = meetingLink.trim();
+    const linkProblem = human && link ? meetingLinkProblem(link) : null;
+    if (linkProblem) {
+      setError(linkProblem);
+      return;
+    }
+    void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
       scheduledAt: new Date(scheduledAt).toISOString(),
       ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
-      ...(current.kind === 'human_interview' && names.length > 0 ? { interviewers: names } : {}),
+      ...(human && names.length > 0 ? { interviewers: names } : {}),
+      ...(human ? { durationMinutes } : {}),
+      ...(human && link ? { meetingUrl: link } : {}),
     }).then((resp) => {
       setSchedulingNotice(resp.notification ?? null);
+      setMeetingNotice(resp.meeting ?? null);
       setScheduledAt('');
       setInterviewers('');
       setSessionId('');
+      setMeetingLink('');
     }));
   };
 
@@ -262,6 +296,16 @@ export function PipelinePanel(
         <StatusBadge kind="pipeline" value={pipeline.status} />
       </div>
       {error && <Banner kind="error">{error}</Banner>}
+
+      {meetingNotice && (
+        <Banner kind={meetingNotice.ok ? 'ok' : 'error'}>
+          {meetingNotice.message}{' '}
+          {safeMeetingUrl(meetingNotice.url) && (
+            <a href={safeMeetingUrl(meetingNotice.url) ?? undefined} target="_blank" rel="noopener noreferrer">Join link</a>
+          )}
+          {!meetingNotice.ok && meetingNotice.status === 'NEEDS_LINK' && ' Use "Try again" or "Add link manually" in the rounds table below.'}
+        </Banner>
+      )}
 
       {schedulingNotice && (
         <Banner kind={schedulingNotice.delivered ? 'ok' : 'info'}>
@@ -328,6 +372,13 @@ export function PipelinePanel(
                   <>
                     <label htmlFor="round-people">Interviewers</label>
                     <input id="round-people" value={interviewers} onChange={(e) => setInterviewers(e.target.value)} placeholder="Hiring manager, Team lead" />
+                    <label htmlFor="round-length">Length</label>
+                    <select id="round-length" value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))}>
+                      {DURATIONS.map((d) => <option key={d} value={d}>{d} minutes</option>)}
+                    </select>
+                    <p className="muted small" data-testid="meeting-provider-hint">{scheduleHint(meetingProvider)}</p>
+                    <label htmlFor="round-link">Meeting link (optional)</label>
+                    <input id="round-link" type="url" inputMode="url" value={meetingLink} onChange={(e) => setMeetingLink(e.target.value)} placeholder="https://…" />
                   </>
                 )}
                 <button className="btn secondary" style={{ marginTop: 10 }} disabled={busy}><Icon name="schedule" size={16} />Schedule</button>
@@ -376,7 +427,7 @@ export function PipelinePanel(
           <div className="table-scroll" tabIndex={0} role="region" aria-label="Interview rounds">
           <table>
             <thead>
-              <tr><th>Stage</th><th>Led by</th><th>Observers</th><th>Scheduled</th><th>Status</th></tr>
+              <tr><th>Stage</th><th>Led by</th><th>Observers</th><th>Scheduled</th><th>Status</th><th>Meeting</th><th scope="col" aria-label="Manage round" /></tr>
             </thead>
             <tbody>
               {pipeline.rounds.map((round) => (
@@ -403,6 +454,20 @@ export function PipelinePanel(
                         </Link>
                       )}
                     </span>
+                  </td>
+                  <td>
+                    <RoundMeeting
+                      pipelineId={pipeline.id} round={round} busy={busy} run={run}
+                      onOutcome={setMeetingNotice} onError={setError}
+                      vendorReady={meetingProvider !== null && meetingProvider.provider !== 'manual' && meetingProvider.configured}
+                    />
+                  </td>
+                  <td>
+                    <RoundActions
+                      pipelineId={pipeline.id} round={round} busy={busy} run={run}
+                      onOutcome={setMeetingNotice} onError={setError}
+                      canReschedule={pipeline.status === 'ACTIVE'}
+                    />
                   </td>
                 </tr>
               ))}

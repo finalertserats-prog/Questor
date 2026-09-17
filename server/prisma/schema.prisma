@@ -649,6 +649,20 @@ model InterviewRound {
   createdAt        DateTime @default(now())
   observation      RoundObservation?
 
+  // Length of the meeting booked for the round.
+  durationMinutes   Int      @default(60)
+  // The online meeting for a human round (services/roundMeeting.ts). The
+  // provider and the vendor's id are kept so reschedule and cancel reach the
+  // same meeting even if the tenant later switches provider.
+  meetingProvider   String?   // manual | teams | zoom | meet
+  meetingExternalId String?
+  meetingUrl        String?
+  // LINKED | MANUAL | NEEDS_LINK | CREATING | OUT_OF_SYNC | CANCELLED | CANCEL_FAILED
+  meetingStatus     String?
+  // A recruiter-facing sentence explaining the last failure; never vendor text.
+  meetingError      String?
+  meetingUpdatedAt  DateTime?
+
   @@index([pipelineId])
   @@index([tenantId])
 }

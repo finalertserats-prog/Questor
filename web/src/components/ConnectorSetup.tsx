@@ -85,11 +85,25 @@ export function GuidePanel({ guide, env }: { guide: ConnectorGuide; env?: readon
   );
 }
 
+/** Credential presence plus the organiser variables meeting creation also needs, by name. */
+function mergedEnv(adapter: MeetingAdapter, extra: readonly { provider: string; env?: EnvPresence[] }[] | undefined): EnvPresence[] | undefined {
+  const more = extra?.find((o) => o.provider === adapter.provider)?.env ?? [];
+  if (!adapter.env) return undefined;
+  const known = new Set(adapter.env.map((v) => v.name));
+  return [...adapter.env, ...more.filter((v) => !known.has(v.name))];
+}
+
 /**
  * `canTest` is false for everyone but the deployment operator: the vendor apps
  * are the deployment's, and the server refuses anyone else's test.
  */
-export function MeetingAdapterSetup({ adapters, canTest }: { adapters: readonly MeetingAdapter[]; canTest: boolean }) {
+export function MeetingAdapterSetup(
+  { adapters, canTest, extraEnv }: {
+    adapters: readonly MeetingAdapter[];
+    canTest: boolean;
+    extraEnv?: readonly { provider: string; env?: EnvPresence[] }[];
+  },
+) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [tests, setTests] = useState<Readonly<Record<string, TestState>>>({});
 
@@ -169,7 +183,7 @@ export function MeetingAdapterSetup({ adapters, canTest }: { adapters: readonly 
               )}
               {isOpen && guide && (
                 <tr id={`connector-guide-${m.provider}`}>
-                  <td colSpan={ADAPTER_COLUMNS}><GuidePanel guide={guide} env={m.env} /></td>
+                  <td colSpan={ADAPTER_COLUMNS}><GuidePanel guide={guide} env={mergedEnv(m, extraEnv)} /></td>
                 </tr>
               )}
             </Fragment>

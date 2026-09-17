@@ -4,9 +4,9 @@ import { envPresence, isConfigured, type EnvPresence, type MeetingAdapterId } fr
 // Meeting adapters (BRD FR-041, Section 13). Each adapter publishes its
 // capabilities and graceful-fallback behavior. `hosted` (Questor browser room)
 // is the MVP default and fully implemented via the realtime socket layer.
-// Teams / Zoom / Meet adapters are capability-declared connector seams: their
-// credentials can be set and verified (Admin → Connectors → Test connection),
-// but meeting creation through them is not built yet.
+// Teams / Zoom / Meet do not host the AI interview; their credentials can be
+// verified here (Admin → Connectors → Test connection), and they create the
+// meeting links for human interview rounds (see roundMeetings.ts).
 
 export interface MeetingCapability {
   provider: string;

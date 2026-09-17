@@ -45,3 +45,24 @@ export function missingEnv(id: MeetingAdapterId): string[] {
 export function isConfigured(id: MeetingAdapterId): boolean {
   return missingEnv(id).length === 0;
 }
+
+// Creating meetings for human rounds needs one more thing than proving the
+// credentials: whose calendar or account the meeting belongs to. App-only
+// tokens have no "me". Kept apart from MEETING_ENV so "Test connection" still
+// works before an organiser is chosen.
+export const ROUND_ORGANISER_ENV: Readonly<Record<Exclude<MeetingAdapterId, 'hosted'>, readonly string[]>> = {
+  teams: ['MS_GRAPH_ORGANIZER_USER_ID'],
+  zoom: ['ZOOM_HOST_USER_ID'],
+  // The impersonated Workspace user (already in MEETING_ENV) owns the event.
+  meet: [],
+};
+
+/** Every variable a vendor needs to create round meetings, with presence only. */
+export function roundEnvPresence(id: Exclude<MeetingAdapterId, 'hosted'>): EnvPresence[] {
+  const names = [...MEETING_ENV[id], ...ROUND_ORGANISER_ENV[id]];
+  return names.map((name) => ({ name, present: readEnv(name) !== '' }));
+}
+
+export function isVendorConfigured(id: Exclude<MeetingAdapterId, 'hosted'>): boolean {
+  return roundEnvPresence(id).every((v) => v.present);
+}

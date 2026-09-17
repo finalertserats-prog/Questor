@@ -7,12 +7,13 @@ import { CONNECTOR_GUIDES, guideFor, callbackUrlsFor, statusLabel } from '../src
  * guide may look like a real credential.
  */
 
-// Mirrors server/src/providers/meeting/connectors.ts, email/index.ts and
+// Mirrors server/src/providers/meeting/connectorEnv.ts (MEETING_ENV plus
+// ROUND_ORGANISER_ENV), email/index.ts and
 // ats/index.ts + config.ts. If a name changes on the server, this must change too.
 const SERVER_ENV: Record<string, string[]> = {
   hosted: [],
-  zoom: ['ZOOM_ACCOUNT_ID', 'ZOOM_CLIENT_ID', 'ZOOM_CLIENT_SECRET'],
-  teams: ['MS_GRAPH_TENANT_ID', 'MS_GRAPH_CLIENT_ID', 'MS_GRAPH_CLIENT_SECRET'],
+  zoom: ['ZOOM_ACCOUNT_ID', 'ZOOM_CLIENT_ID', 'ZOOM_CLIENT_SECRET', 'ZOOM_HOST_USER_ID'],
+  teams: ['MS_GRAPH_TENANT_ID', 'MS_GRAPH_CLIENT_ID', 'MS_GRAPH_CLIENT_SECRET', 'MS_GRAPH_ORGANIZER_USER_ID'],
   meet: ['GOOGLE_SERVICE_ACCOUNT_EMAIL', 'GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY', 'GOOGLE_IMPERSONATED_USER'],
   'email-sendgrid': ['EMAIL_PROVIDER', 'SENDGRID_API_KEY', 'EMAIL_FROM'],
   'email-smtp': ['EMAIL_PROVIDER', 'SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'EMAIL_FROM'],

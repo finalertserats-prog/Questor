@@ -33,7 +33,7 @@ Production uses PostgreSQL. Local development defaults to SQLite. The Postgres P
 
 ## Provider adapters
 
-The zero-key path uses the heuristic LLM, browser speech, hosted interview rooms, generic connectors, and console email. Paid or external adapters are selected by environment. Variable names include `LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `STT_PROVIDER`, `DEEPGRAM_API_KEY`, `AZURE_SPEECH_KEY`, `TTS_PROVIDER`, `ELEVENLABS_API_KEY`, `EMAIL_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SENDGRID_API_KEY`, `ATS_PROVIDER`, `ATS_BASE_URL`, `ATS_API_KEY`, `ATS_TENANT_ID` (the ATS variables apply only to that one organisation; every other organisation connects its own ATS in Settings, stored sealed in `AtsConnection`), and `MEETING_PROVIDER`.
+The zero-key path uses the heuristic LLM, browser speech, hosted interview rooms, generic connectors, and console email. Paid or external adapters are selected by environment. Variable names include `LLM_PROVIDER`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `STT_PROVIDER`, `DEEPGRAM_API_KEY`, `AZURE_SPEECH_KEY`, `TTS_PROVIDER`, `ELEVENLABS_API_KEY`, `EMAIL_PROVIDER`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SENDGRID_API_KEY`, `ATS_PROVIDER`, `ATS_BASE_URL`, `ATS_API_KEY`, `ATS_TENANT_ID` (the ATS variables apply only to that one organisation; every other organisation connects its own ATS in Settings, stored sealed in `AtsConnection`), `MEETING_PROVIDER` (the AI interview room) and `ROUND_MEETING_PROVIDER` (meeting links for human rounds; see docs/CONNECTORS.md).
 
 ## Multi-tenancy and authorization
 

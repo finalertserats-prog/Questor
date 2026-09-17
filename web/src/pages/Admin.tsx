@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
+import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/RoundMeetingSetting';
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
@@ -13,6 +14,8 @@ interface Providers {
   email: ProviderComponent; ats: ProviderComponent; meeting: MeetingAdapter[];
   /** Only the deployment operator may test the shared meeting apps. */
   canTestMeetingConnectors?: boolean;
+  /** Absent on an older server. */
+  roundMeeting?: RoundMeetingStatus;
 }
 interface Analytics {
   funnel: { roles: number; candidates: number; interviews: number; completed: number };
@@ -226,7 +229,23 @@ export function Admin() {
             Meeting connectors belong to the whole deployment, so only its operator can test them.
           </div>
         )}
-        <MeetingAdapterSetup adapters={providers?.meeting ?? []} canTest={providers?.canTestMeetingConnectors === true} />
+        <MeetingAdapterSetup
+          adapters={providers?.meeting ?? []}
+          canTest={providers?.canTestMeetingConnectors === true}
+          extraEnv={providers?.roundMeeting?.options}
+        />
+
+        <h3 style={{ marginTop: 18 }}>Meeting links for human rounds</h3>
+        <div className="muted small">
+          When a recruiter schedules a human interview round, the provider chosen here creates the meeting and its join link.
+          With "Manual link", recruiters paste a link themselves. AI interviews always use the hosted Questor room.
+        </div>
+        <RoundMeetingSetting
+          status={providers?.roundMeeting}
+          // The save itself already reported its outcome; a failed refresh only
+          // leaves the "Now:" line stale until the next page load.
+          onSaved={() => { void api.get<Providers>('/admin/providers').then(setProviders).catch(() => undefined); }}
+        />
       </div>
 
       <div className="card">

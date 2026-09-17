@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { Prisma } from '@prisma/client';
-import { prisma, parseJsonStrict } from '../db.js';
+import { prisma, parseJsonStrict, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
@@ -13,6 +13,8 @@ import { getEmail } from '../providers/email/index.js';
 import { findConnection, tenantAtsReady } from '../services/atsConnections.js';
 import { isOperator, requireOperator as operatorOnly } from '../middleware/operator.js';
 import { allMeetingCapabilities } from '../providers/meeting/index.js';
+import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
+import { ROUND_MEETING_PROVIDERS } from '../providers/meeting/types.js';
 import { findSessionsDueForPurge, retentionDays, DEFAULT_RETENTION_DAYS } from '../services/dataRights.js';
 import { logAudit } from '../services/audit.js';
 import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
@@ -43,6 +45,9 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
   const llm = getLlm();
   const showEnv = capabilitiesOf(req.auth!.role).includes('admin:manage');
   const meeting = allMeetingCapabilities().map(({ env, ...rest }) => (showEnv ? { ...rest, env } : rest));
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId }, select: { policyJson: true } });
+  // Who creates links for human rounds in this organisation, and whether it can.
+  const roundMeeting = roundMeetingStatus(parseJsonOptional<Record<string, unknown>>(tenant?.policyJson, {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' }), { includeEnv: showEnv });
   res.json({
     llm: { provider: llm.name, enabled: llm.enabled, configured: llm.enabled, mode: llm.enabled ? 'remote' : 'built-in heuristic' },
     stt: sttCapability(),
@@ -54,6 +59,7 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
     // Meeting connection tests use the deployment's shared vendor apps, so only
     // the operator may run them; the console greys the button for everyone else.
     canTestMeetingConnectors: isOperator(req.auth),
+    roundMeeting,
     build: { commit: resolveCommit() },
   });
 }));
@@ -481,6 +487,9 @@ const policySchema = z.object({
   candidateFeedbackEnabled: z.boolean().optional(),
   proctoringEnabled: z.boolean().optional(),
   recordingDefault: z.boolean().optional(),
+  // Which provider creates meeting links for human rounds. Credentials stay
+  // deployment-wide in server/.env; this only chooses among them.
+  roundMeetingProvider: z.enum(ROUND_MEETING_PROVIDERS).optional(),
 }).strict();
 
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
