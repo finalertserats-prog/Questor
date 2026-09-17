@@ -3,7 +3,7 @@ import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJson, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { scorecardForFit } from '../services/scorecards.js';
 import { rateLimit } from '../middleware/rateLimit.js';
@@ -17,7 +17,7 @@ import {
 } from '../services/access.js';
 import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
-import type { RoleSuccessProfile } from '../domain/types.js';
+import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
@@ -254,8 +254,8 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
     return;
   }
 
-  const profile = parseJson<any>(profileVersion.profileJson, null);
-  const currentStoredFit = publicFit(parseJson<any>(profileVersion.fitScoreJson, null));
+  const profile = parseJsonStrict<NormalizedProfile>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' });
+  const currentStoredFit = publicFit(parseJsonStrict<Record<string, unknown>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' }));
   const fitText = fitTextFromProfile(profile);
 
   const scopedRoles = await prisma.role.findMany({
@@ -328,8 +328,8 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   const candidateFeedback = await candidateFeedbackState(interviews.map((i) => i.id));
   res.json({
     candidate: shape(candidate),
-    profile: profileVersion ? parseJson(profileVersion.profileJson, {}) : null,
-    fit: profileVersion ? parseJson(profileVersion.fitScoreJson, null) : null,
+    profile: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' }) : null,
+    fit: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' }) : null,
     rawText: profileVersion?.rawText ?? '',
     interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, createdAt: i.createdAt })),
     candidateFeedback,
@@ -365,3 +365,4 @@ function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email
 function emptyProfile(): RoleSuccessProfile {
   return { roleContext: '', outcomes: [], responsibilities: [], competencies: [], scoringRules: { mustPassCompetencyIds: [], notEnoughEvidencePolicy: 'exclude', passThreshold: 65 }, policyRules: { prohibitedTopics: [], requiredDisclosures: [], accommodationsEnabled: true, jurisdiction: 'IN' }, redFlags: [], seniority: '' };
 }
+

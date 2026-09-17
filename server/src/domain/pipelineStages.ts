@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CorruptRecordError, type CorruptRecordRef } from '../db.js';
 
 /**
  * The medallion pipeline's stage vocabulary.
@@ -49,6 +50,15 @@ export function parseStages(json: string): PipelineStage[] {
     // Unparseable JSON is treated the same as no configuration.
   }
   return DEFAULT_STAGES.map((stage) => ({ ...stage }));
+}
+
+/** Parse a snapshotted stage plan whose corruption would change routing/decisions. */
+export function parseStagesStrict(json: string, record: CorruptRecordRef): PipelineStage[] {
+  try {
+    return stagesSchema.parse(JSON.parse(json));
+  } catch (err) {
+    throw new CorruptRecordError(record, err);
+  }
 }
 
 /** The key of the stage after `current`, or null at the last stage. */

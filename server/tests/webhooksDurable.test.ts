@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { prisma } from '../src/db.js';
-import { deliverDueWebhooks, emitEvent, signPayload, signPayloadV2, webhookHealth } from '../src/services/webhooks.js';
+import { deliverDueWebhooks, emitEvent, setWebhookNetworkForTest, signPayload, signPayloadV2, webhookHealth } from '../src/services/webhooks.js';
 import { webhookHostResolvesPrivate } from '../src/services/webhookUrl.js';
 
 /**
@@ -12,6 +12,7 @@ let tenantId = '';
 let endpointId = '';
 const calls: Array<{ url: string; headers: Record<string, string>; body: string }> = [];
 let respondWith = 200;
+let restoreNetwork: (() => void) | null = null;
 
 beforeEach(async () => {
   calls.length = 0;
@@ -23,13 +24,15 @@ beforeEach(async () => {
   tenantId = tenant.id;
   const ep = await prisma.webhookEndpoint.create({ data: { tenantId, url: 'https://hooks.example.com/questor', events: '*' } });
   endpointId = ep.id;
-  vi.stubGlobal('fetch', vi.fn(async (url: string, init: { headers: Record<string, string>; body: string }) => {
-    calls.push({ url, headers: init.headers, body: init.body });
-    return { ok: respondWith < 400, status: respondWith } as Response;
-  }));
+  restoreNetwork = setWebhookNetworkForTest(async () => [{ address: '93.184.216.34', family: 4 }], async (url, options, body) => {
+    calls.push({ url: url.toString(), headers: options.headers as Record<string, string>, body });
+    return { ok: respondWith < 400, status: respondWith };
+  });
 });
 
 afterEach(() => {
+  restoreNetwork?.();
+  restoreNetwork = null;
   vi.unstubAllGlobals();
 });
 
@@ -118,4 +121,37 @@ describe('a destination that resolves inward', () => {
 
     expect(await webhookHostResolvesPrivate('hooks.example.com', lookup)).toBe(false);
   });
+
+  it('pins delivery to the checked DNS answer instead of resolving again in the request', async () => {
+    const lookedUp: string[] = [];
+    const connected: string[] = [];
+    restoreNetwork?.();
+    restoreNetwork = setWebhookNetworkForTest(
+      async () => {
+        lookedUp.push(lookedUp.length === 0 ? 'public' : 'private');
+        return lookedUp.length === 1 ? [{ address: '93.184.216.34', family: 4 }] : [{ address: '10.0.0.7', family: 4 }];
+      },
+      async (_url, options) => {
+        await new Promise<void>((resolve, reject) => {
+          options.lookup('hooks.example.com', {}, (err, address) => {
+            if (err) reject(err);
+            else {
+              connected.push(String(address));
+              resolve();
+            }
+          });
+        });
+        return { ok: true, status: 200 };
+      },
+    );
+    await prisma.webhookDelivery.create({
+      data: { endpointId, event: 'assessment.ready', payloadJson: '{}', status: 'pending', nextAttemptAt: new Date(Date.now() - 1000) },
+    });
+
+    await deliverDueWebhooks();
+
+    expect(lookedUp).toEqual(['public']);
+    expect(connected).toEqual(['93.184.216.34']);
+  });
 });
+

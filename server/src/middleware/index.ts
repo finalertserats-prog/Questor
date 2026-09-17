@@ -12,7 +12,7 @@ import {
   type AuthClaims,
 } from '../services/auth.js';
 import { logger } from '../logger.js';
-import { prisma } from '../db.js';
+import { CorruptRecordError, prisma } from '../db.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -188,6 +188,10 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
       requestId: req.requestId,
     });
   }
+  if (err instanceof CorruptRecordError) {
+    logger.error({ ...err.record, requestId: req.requestId, path: req.path }, 'Corrupt stored JSON');
+    return res.status(500).json({ error: 'Stored data is corrupted. Contact support with this request ID.', requestId: req.requestId });
+  }
   const safe = err instanceof HttpError ? err.message : 'Internal server error';
   res.status(err instanceof HttpError ? status : 500).json({ error: safe, requestId: req.requestId });
 }
@@ -199,3 +203,4 @@ export class HttpError extends Error {
     this.status = status;
   }
 }
+

@@ -111,6 +111,17 @@ describe('moving through stages', () => {
 
     expect(res.body.pipeline.stages).toHaveLength(6);
   });
+
+  it('fails loudly when the snapshotted stage plan is corrupt', async () => {
+    const ids = await seeded();
+    const created = await createPipeline(ids);
+    await prisma.candidatePipeline.update({ where: { id: created.body.pipeline.id }, data: { stagesJson: '{not-json' } });
+
+    const res = await request(app).get(`/api/pipelines/${created.body.pipeline.id}`).set('Authorization', ids.auth);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/stored data is corrupted/i);
+  });
 });
 
 describe('deciding', () => {
