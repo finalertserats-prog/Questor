@@ -177,7 +177,10 @@ creates the meeting with the selected provider and stores its join link on the r
 - **Reschedule / cancel.** `POST …/rounds/:roundId/reschedule` and `POST …/rounds/:roundId/cancel` move or
   remove the vendor meeting through the provider that created it (stored on the round), even if the
   organisation has since switched provider. A vendor failure leaves the round's change in place and
-  marks the meeting `OUT_OF_SYNC` or `CANCEL_FAILED`, which *Try again* resolves.
+  marks the meeting `OUT_OF_SYNC` or `CANCEL_FAILED`, which *Try again* resolves. Cancelling marks the
+  round `CANCELLED` and the meeting `CANCEL_PENDING` in one write, before the vendor is called, so a
+  crash in between never loses the meeting id. These routes take human rounds only; the AI interview
+  is moved or cancelled through its interview session (409 otherwise).
 - **Calls.** 10 s timeout; redirects refused; OAuth tokens cached per credential set until 60 s before
   expiry and dropped on a 401. Only idempotent calls (token requests, reads, `PATCH` with absolute
   times, `DELETE`) are retried — twice, on network errors, 429 and 5xx. Creation is never retried
@@ -188,9 +191,12 @@ creates the meeting with the selected provider and stores its join link on the r
   the provider name and readiness.
 - **Data rights.** The vendor meeting id, join URL and error are stored on the round
   (`meetingProvider`, `meetingExternalId`, `meetingUrl`, `meetingStatus`, `meetingError`). Erasing a
-  candidate removes their still-booked vendor meetings (best effort, after the rows are deleted;
+  candidate removes every vendor meeting not confirmed removed on a round that was not completed —
+  scheduled, `CANCEL_PENDING`, `CANCEL_FAILED` alike (best effort, collected in the erasure transaction;
   reported as `deleted.externalMeetings`). The retention sweep clears the link, id and error from
-  completed or cancelled rounds past the window (`deleted.roundMeetingLinks`), honouring legal holds.
+  completed rounds, and from cancelled rounds whose meeting is confirmed removed, past the window
+  (`deleted.roundMeetingLinks`), honouring legal holds. Any other cancelled round keeps its id until
+  *Try again* or erasure removes the meeting.
 
 ---
 

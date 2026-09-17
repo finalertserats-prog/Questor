@@ -98,7 +98,8 @@ export function RoundActions(
   const [when, setWhen] = useState('');
   const [confirmCancel, setConfirmCancel] = useState(false);
 
-  if (round.status !== 'SCHEDULED') return null;
+  // AI rounds are moved or cancelled with their interview session, not here.
+  if (round.status !== 'SCHEDULED' || round.conductedBy !== 'HUMAN') return null;
 
   const reschedule = (e: React.FormEvent) => {
     e.preventDefault();

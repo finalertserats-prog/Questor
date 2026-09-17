@@ -553,3 +553,113 @@ describe('erasure and retention', () => {
     expect((await storedRound(roundId)).meetingUrl).toBe(JOIN_URL);
   });
 });
+
+describe('a cancellation interrupted before the vendor call', () => {
+  // The crash window: the round is marked cancelled and the process dies before
+  // the vendor delete. Simulated by writing what the cancel route commits in
+  // its first step and never calling the vendor.
+  async function interruptedCancel(f: Fixture) {
+    const roundId = await zoomRound(f);
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { status: 'CANCELLED', meetingStatus: 'CANCEL_PENDING' } });
+    return roundId;
+  }
+
+  it('records the pending removal before the vendor is called', async () => {
+    const f = await atGoldStage();
+    const roundId = await zoomRound(f);
+    let atDelete = '';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).startsWith('https://zoom.us/oauth/token')) return json(200, { access_token: ZOOM_TOKEN, expires_in: 3600 });
+      if (init?.method === 'DELETE') {
+        const stored = await storedRound(roundId);
+        atDelete = `${stored.status}/${stored.meetingStatus}/${stored.meetingExternalId}`;
+      }
+      return empty(204);
+    }));
+    await request(app).post(roundPath(f, roundId, 'cancel')).set('Authorization', f.auth).send({});
+    expect(atDelete).toBe('CANCELLED/CANCEL_PENDING/987654321');
+  });
+
+  it('is collected by erasure, which removes the vendor meeting', async () => {
+    const f = await atGoldStage();
+    await interruptedCancel(f);
+    const fetchMock = zoomVendor();
+    const res = await request(app).delete(`/api/candidates/${f.candidateId}`).set('Authorization', f.auth).send({ reason: 'Candidate asked to be forgotten' });
+    expect({ deleted: callsTo(fetchMock, 'DELETE').length, meetings: res.body.deleted.externalMeetings }).toEqual({ deleted: 1, meetings: 1 });
+  });
+
+  it('keeps its vendor id through the retention sweep', async () => {
+    const f = await atGoldStage();
+    const roundId = await interruptedCancel(f);
+    const longAgo = new Date(Date.now() - (retentionDays() + 1) * DAY_MS);
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { scheduledAt: longAgo } });
+    await runRetentionSweep(new Date());
+    expect((await storedRound(roundId)).meetingExternalId).toBe('987654321');
+  });
+
+  it('keeps the vendor id of a cancelled round whose meeting was never marked removed', async () => {
+    const f = await atGoldStage();
+    const roundId = await zoomRound(f);
+    const longAgo = new Date(Date.now() - (retentionDays() + 1) * DAY_MS);
+    // The shape an interrupted cancel left before this fix: meeting still LINKED.
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { status: 'CANCELLED', scheduledAt: longAgo } });
+    await runRetentionSweep(new Date());
+    expect((await storedRound(roundId)).meetingExternalId).toBe('987654321');
+  });
+
+  it('is collected by erasure in that older shape too', async () => {
+    const f = await atGoldStage();
+    const roundId = await zoomRound(f);
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { status: 'CANCELLED' } });
+    const fetchMock = zoomVendor();
+    await request(app).delete(`/api/candidates/${f.candidateId}`).set('Authorization', f.auth).send({ reason: 'Candidate asked to be forgotten' });
+    expect(callsTo(fetchMock, 'DELETE')).toHaveLength(1);
+  });
+
+  it('is resolved by retry', async () => {
+    const f = await atGoldStage();
+    const roundId = await interruptedCancel(f);
+    const fetchMock = zoomVendor();
+    const res = await request(app).post(roundPath(f, roundId, 'meeting/retry')).set('Authorization', f.auth);
+    expect({ status: res.body.round.meeting.status, deleted: callsTo(fetchMock, 'DELETE').length }).toEqual({ status: 'CANCELLED', deleted: 1 });
+  });
+});
+
+describe('AI interview rounds are not managed by these routes', () => {
+  async function aiRound() {
+    await wipe();
+    const ids = await createDemoData();
+    const login = await request(app).post('/api/auth/login').send({ email: ids.email, password: ids.password });
+    const auth = `Bearer ${login.body.token as string}`;
+    const id = (await request(app).post('/api/pipelines').set('Authorization', auth).send({ candidateId: ids.candidateId })).body.pipeline.id as string;
+    for (const key of ['bronze', 'silver']) await request(app).post(`/api/pipelines/${id}/advance`).set('Authorization', auth).send({ toStageKey: key });
+    const res = await request(app).post(`/api/pipelines/${id}/rounds`).set('Authorization', auth)
+      .send({ stageKey: 'silver', scheduledAt: '2026-10-01T09:00:00.000Z', sessionId: ids.sessionId });
+    const roundId = res.body.round.id as string;
+    return { auth, base: `/api/pipelines/${id}/rounds/${roundId}`, roundId };
+  }
+
+  it('refuses to reschedule an AI round', async () => {
+    const r = await aiRound();
+    const res = await request(app).post(`${r.base}/reschedule`).set('Authorization', r.auth).send({ scheduledAt: '2026-10-09T10:30:00.000Z' });
+    expect(res.status).toBe(409);
+  });
+
+  it('leaves the AI round time unchanged when refused', async () => {
+    const r = await aiRound();
+    await request(app).post(`${r.base}/reschedule`).set('Authorization', r.auth).send({ scheduledAt: '2026-10-09T10:30:00.000Z' });
+    expect((await storedRound(r.roundId)).scheduledAt.toISOString()).toBe('2026-10-01T09:00:00.000Z');
+  });
+
+  it('refuses to cancel an AI round and leaves it scheduled', async () => {
+    const r = await aiRound();
+    const res = await request(app).post(`${r.base}/cancel`).set('Authorization', r.auth).send({});
+    expect({ status: res.status, stored: (await storedRound(r.roundId)).status }).toEqual({ status: 409, stored: 'SCHEDULED' });
+  });
+
+  it('refuses a meeting retry on an AI round', async () => {
+    const r = await aiRound();
+    const res = await request(app).post(`${r.base}/meeting/retry`).set('Authorization', r.auth);
+    expect(res.status).toBe(409);
+  });
+});
