@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { permutations, renderReport, readCheckpoint, type CellResult } from '../src/sim/run.js';
+import { permutations, renderReport, readCheckpoint, type CellResult } from '../sim/run.js';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PEER_IDS } from '../src/sim/peers.js';
+import { PEER_IDS } from '../sim/peers.js';
 
 describe('permutations', () => {
   const perms = permutations();

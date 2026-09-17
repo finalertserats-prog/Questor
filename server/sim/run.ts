@@ -17,7 +17,7 @@
  *   SIM_GENERATE=true             have a peer invent roles/candidates instead of templates
  */
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { BANDS, type BandId } from '../engines/experienceBands.js';
+import { BANDS, type BandId } from '../src/engines/experienceBands.js';
 import { PEER_IDS, otherPeers, type PeerId } from './peers.js';
 import { ROLE_FAMILIES, templateRole, generateRole, type RoleFamily, type RoleSpec } from './roleFactory.js';
 import {

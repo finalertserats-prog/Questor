@@ -132,7 +132,7 @@ Still to finish:
 - Gemini (agy) was unavailable all evening: daemon/token issue.
 - Four files are at or over the 800-line house limit
   (`candidateJourney.ts`, `shadowMode.ts`, `interviews.ts`, `dataRights.ts`).
-  Split when next touched. `server/src/sim` belongs outside the production tree.
+  Split when next touched. (`server/src/sim` has moved to `server/sim`.)
 
 ---
 

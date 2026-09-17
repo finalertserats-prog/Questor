@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cleanAnswer } from '../src/sim/candidateAgent.js';
+import { cleanAnswer } from '../sim/candidateAgent.js';
 
 describe('cleanAnswer', () => {
   it('takes plain prose as spoken words', () => {

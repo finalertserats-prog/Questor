@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { anonymiseTranscript, calibrationFromDistance, validateVerdict, MAX_ANSWER_EXCERPT_CHARS, MAX_BODY_CHARS } from '../src/sim/judge.js';
-import { MAX_PROMPT_CHARS } from '../src/sim/peers.js';
-import { templateRole } from '../src/sim/roleFactory.js';
-import { templateCandidate } from '../src/sim/candidateFactory.js';
-import type { SimTranscript, SimTurn } from '../src/sim/types.js';
+import { anonymiseTranscript, calibrationFromDistance, validateVerdict, MAX_ANSWER_EXCERPT_CHARS, MAX_BODY_CHARS } from '../sim/judge.js';
+import { MAX_PROMPT_CHARS } from '../sim/peers.js';
+import { templateRole } from '../sim/roleFactory.js';
+import { templateCandidate } from '../sim/candidateFactory.js';
+import type { SimTranscript, SimTurn } from '../sim/types.js';
 
 const role = templateRole({ family: 'data_engineering', band: 'senior' });
 const candidate = templateCandidate({ role, band: 'senior', strength: 'strong' });

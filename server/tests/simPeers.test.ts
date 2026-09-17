@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { extractJson, peerCommand, PEER_IDS, otherPeers, callPeer, MAX_PROMPT_CHARS } from '../src/sim/peers.js';
+import { extractJson, peerCommand, PEER_IDS, otherPeers, callPeer, MAX_PROMPT_CHARS } from '../sim/peers.js';
 
 describe('extractJson', () => {
   it('reads a bare object', () => {

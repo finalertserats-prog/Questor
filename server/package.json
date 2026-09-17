@@ -17,11 +17,11 @@
     "test:watch": "vitest",
     "test:pg": "node ../scripts/test-migrations.mjs && node ../scripts/test-postgres.mjs",
     "test:e2e": "tsx src/seed/simulateInterview.ts",
-    "sim": "tsx src/sim/run.ts",
-    "sim:smoke": "tsx src/sim/smoke.ts",
-    "sim:voice": "tsx src/sim/voiceAB.ts",
-    "sim:report": "tsx src/sim/report.ts",
-    "lint": "tsc --noEmit -p tsconfig.json"
+    "sim": "tsx sim/run.ts",
+    "sim:smoke": "tsx sim/smoke.ts",
+    "sim:voice": "tsx sim/voiceAB.ts",
+    "sim:report": "tsx sim/report.ts",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

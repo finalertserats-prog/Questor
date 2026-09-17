@@ -6,13 +6,13 @@
  * whatever it produces is what a real candidate would have got. Nothing here
  * simulates the interviewer; the only synthetic party is the person answering.
  */
-import { prisma } from '../db.js';
+import { prisma } from '../src/db.js';
 import {
   startInterview,
   submitCandidateTurn,
   finalizeInterview,
   withdrawInterview,
-} from '../realtime/interviewEngine.js';
+} from '../src/realtime/interviewEngine.js';
 import { createSimSession } from './session.js';
 import { answerAsCandidate } from './candidateAgent.js';
 import type { PeerId } from './peers.js';

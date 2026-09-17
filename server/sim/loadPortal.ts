@@ -11,17 +11,17 @@
  * does, against a server the caller has already started. Point that server at a
  * throwaway database: this creates tenants and never deletes them.
  *
- *   LOAD_BASE=http://127.0.0.1:4300 npx tsx src/sim/loadPortal.ts --concurrency 20 --turns 3
+ *   LOAD_BASE=http://127.0.0.1:4300 npx tsx sim/loadPortal.ts --concurrency 20 --turns 3
  */
 import { nanoid } from 'nanoid';
-import { prisma } from '../db.js';
-import { invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
-import { hashPassword } from '../services/auth.js';
-import { extractRoleHeuristic } from '../engines/roleIntelligence.js';
-import { normalizeProfile } from '../engines/resumeParser.js';
-import { computeFitScore } from '../engines/fitScoring.js';
-import { buildInterviewPlan } from '../engines/interviewPlanner.js';
-import { DEMO_JD, DEMO_RESUME } from '../seed/demoData.js';
+import { prisma } from '../src/db.js';
+import { invitationSecretColumns, mintInvitationToken } from '../src/services/invitations.js';
+import { hashPassword } from '../src/services/auth.js';
+import { extractRoleHeuristic } from '../src/engines/roleIntelligence.js';
+import { normalizeProfile } from '../src/engines/resumeParser.js';
+import { computeFitScore } from '../src/engines/fitScoring.js';
+import { buildInterviewPlan } from '../src/engines/interviewPlanner.js';
+import { DEMO_JD, DEMO_RESUME } from '../src/seed/demoData.js';
 
 const BASE = process.env.LOAD_BASE ?? 'http://127.0.0.1:4300';
 const DISCLOSURE =
