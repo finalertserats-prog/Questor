@@ -10,7 +10,8 @@ import { assignRole, assignCandidate, candidateScope } from '../services/access.
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { getLlm } from '../providers/llm/index.js';
 import { getEmail } from '../providers/email/index.js';
-import { getAts } from '../providers/ats/index.js';
+import { findConnection, tenantAtsReady } from '../services/atsConnections.js';
+import { isOperator, requireOperator as operatorOnly } from '../middleware/operator.js';
 import { allMeetingCapabilities } from '../providers/meeting/index.js';
 import { findSessionsDueForPurge, retentionDays, DEFAULT_RETENTION_DAYS } from '../services/dataRights.js';
 import { logAudit } from '../services/audit.js';
@@ -47,8 +48,12 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
     stt: sttCapability(),
     tts: ttsCapability(),
     email: { provider: getEmail().name, configured: getEmail().configured },
-    ats: { provider: getAts().name, configured: getAts().configured },
+    // This organisation's own ATS, not a deployment-wide one.
+    ats: { provider: (await findConnection(req.auth!.tenantId))?.provider ?? 'none', configured: await tenantAtsReady(req.auth!.tenantId) },
     meeting,
+    // Meeting connection tests use the deployment's shared vendor apps, so only
+    // the operator may run them; the console greys the button for everyone else.
+    canTestMeetingConnectors: isOperator(req.auth),
     build: { commit: resolveCommit() },
   });
 }));
@@ -89,14 +94,10 @@ const signupStatusSchema = z.object({
  * else's applicants. The operator is whoever the decision emails go to; with no
  * approver configured the queue, like signup itself, fails closed.
  */
-function requireOperator(req: Parameters<typeof authenticate>[0], _res: Parameters<typeof authenticate>[1], next: Parameters<typeof authenticate>[2]) {
-  const approver = config.signupApproverEmail.trim().toLowerCase();
-  if (!approver) return next(new HttpError(503, 'Signup is temporarily unavailable.'));
-  if ((req.auth?.email ?? '').trim().toLowerCase() !== approver) {
-    return next(new HttpError(403, 'Only the deployment operator can review account requests.'));
-  }
-  return next();
-}
+const requireOperator = operatorOnly({
+  forbidden: 'Only the deployment operator can review account requests.',
+  unconfigured: 'Signup is temporarily unavailable.',
+});
 
 adminRouter.get('/signups', requireCapability('admin:manage'), requireOperator, asyncHandler(async (req, res) => {
   const query = signupStatusSchema.parse(req.query);

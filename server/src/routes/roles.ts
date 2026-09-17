@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { z } from 'zod';
 import { prisma, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
@@ -7,7 +7,8 @@ import type { RoleSuccessProfile } from '../domain/types.js';
 import { roleSuccessProfileSchema } from '../domain/profileSchema.js';
 import { logAudit } from '../services/audit.js';
 import { assertCanAccessRole, assignRole, roleScope } from '../services/access.js';
-import { getAts } from '../providers/ats/index.js';
+import { ATS_EXTERNAL_ID } from '../providers/ats/index.js';
+import { existingImport, lookupRequisition, type RequisitionLookup } from '../services/atsRecords.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 
 export const rolesRouter = Router();
@@ -39,7 +40,7 @@ const createSchema = z.object({
   title: z.string().max(200)
     .refine((t) => [...t].every((ch) => (ch.codePointAt(0) ?? 0) >= 32 && ch.codePointAt(0) !== 127), 'A title is a single line.')
     .optional(),
-  atsRequisitionId: z.string().optional(),
+  atsRequisitionId: z.string().regex(ATS_EXTERNAL_ID, 'An ATS requisition id is letters, numbers, dashes or underscores.').optional(),
   useLlm: z.boolean().default(true),
 });
 
@@ -49,37 +50,84 @@ const roleCreateLimit = rateLimit({ name: 'role-create', windowMs: 15 * 60_000, 
 
 rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
+  const auth = req.auth!;
   let sourceText = body.sourceText;
   let titleHint = body.title ?? '';
 
-  if (body.sourceType === 'ats' && body.atsRequisitionId) {
-    const req0 = await getAts().fetchRequisition(body.atsRequisitionId);
-    sourceText = req0.description || sourceText;
-    titleHint = titleHint || req0.title;
+  // From the caller's own ATS only. This used to read any requisition id from
+  // one deployment-wide ATS before any tenant check.
+  let lookup: RequisitionLookup | null = null;
+  if (body.sourceType === 'ats') {
+    if (!body.atsRequisitionId) throw new HttpError(400, 'Enter the ATS requisition id to import.');
+    lookup = await lookupRequisition(auth, body.atsRequisitionId);
+    if (lookup.kind === 'existing') {
+      await respondWithExistingRole(lookup.roleId, res);
+      return;
+    }
+    sourceText = lookup.requisition.description || sourceText;
+    titleHint = titleHint || lookup.requisition.title;
   }
   if (!sourceText.trim()) throw new HttpError(400, 'sourceText (or ATS requisition) is required');
 
   const extraction = body.useLlm ? await extractRole(sourceText, titleHint) : extractRoleHeuristic(sourceText, titleHint);
+  const ats = lookup?.kind === 'new' ? lookup.ats : null;
 
-  const role = await prisma.role.create({
-    data: {
-      tenantId: req.auth!.tenantId, title: extraction.title, level: extraction.level,
-      location: extraction.location, employmentType: extraction.employmentType,
-      sourceType: body.sourceType, sourceText, status: 'draft', createdById: req.auth!.userId,
-    },
+  let created;
+  try {
+    // One transaction, so a requisition import that loses a race leaves no
+    // stray role behind, and the creator is never without access to their role.
+    created = await prisma.$transaction(async (tx) => {
+      const role = await tx.role.create({
+        data: {
+          tenantId: auth.tenantId, title: extraction.title, level: extraction.level,
+          location: extraction.location, employmentType: extraction.employmentType,
+          sourceType: body.sourceType, sourceText, status: 'draft', createdById: auth.userId,
+        },
+      });
+      // With scoping in force an unassigned role is admin-only, so without this
+      // the creator would immediately lose access to the role they just made.
+      await assignRole(role.id, auth.userId, 'owner', tx);
+      const scorecard = await tx.roleScorecardVersion.create({
+        data: { roleId: role.id, version: 1, status: 'draft', profileJson: JSON.stringify(extraction.profile) },
+      });
+      if (ats && body.atsRequisitionId) {
+        await tx.atsRequisitionImport.create({
+          data: {
+            tenantId: auth.tenantId, connectionId: ats.connection.id, atsKey: ats.connection.atsKey,
+            externalRequisitionId: body.atsRequisitionId, roleId: role.id, createdById: auth.userId,
+          },
+        });
+      }
+      return { role, scorecard };
+    });
+  } catch (err) {
+    if (!(ats && body.atsRequisitionId && (err as { code?: string } | null)?.code === 'P2002')) throw err;
+    // A concurrent import of the same requisition won; answer with its role.
+    const raced = await existingImport(auth, ats.connection.atsKey, body.atsRequisitionId);
+    if (!raced || raced.kind !== 'existing') throw err;
+    await respondWithExistingRole(raced.roleId, res);
+    return;
+  }
+  const { role, scorecard } = created;
+  await logAudit({
+    tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user', action: 'role.created', entityType: 'Role', entityId: role.id,
+    after: { title: role.title, ...(ats ? { source: 'ats' } : {}) },
   });
-  // Before the next query runs: with scoping in force an unassigned role is
-  // admin-only, so without this the creator would immediately lose access to
-  // the role they just made — including the scorecard step below.
-  await assignRole(role.id, req.auth!.userId, 'owner');
-
-  const scorecard = await prisma.roleScorecardVersion.create({
-    data: { roleId: role.id, version: 1, status: 'draft', profileJson: JSON.stringify(extraction.profile) },
-  });
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'role.created', entityType: 'Role', entityId: role.id, after: { title: role.title } });
 
   res.status(201).json({ role: shapeRole(role), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings });
 }));
+
+/** A repeat import is not an error: it answers with the role the first one made. */
+async function respondWithExistingRole(roleId: string, res: Response) {
+  const role = await prisma.role.findUniqueOrThrow({ where: { id: roleId } });
+  const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId }, orderBy: { version: 'desc' } });
+  res.status(200).json({
+    role: shapeRole(role),
+    scorecard: latest ? shapeScorecard(latest) : null,
+    jdWarnings: [],
+    alreadyImported: true,
+  });
+}
 
 // Get role + latest scorecard
 rolesRouter.get('/:id', asyncHandler(async (req, res) => {

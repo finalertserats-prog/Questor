@@ -28,6 +28,9 @@ model Tenant {
   interviews   InterviewSession[]
   auditEvents  AuditEvent[]
   webhooks     WebhookEndpoint[]
+  atsConnection   AtsConnection?
+  atsRequisitions AtsRequisitionImport[]
+  atsLinks        CandidateAtsLink[]
 }
 
 model User {
@@ -71,6 +74,7 @@ model Role {
   // Empty means the default medallion stages.
   pipelineStagesJson String @default("")
   pipelines     CandidatePipeline[]
+  atsImport     AtsRequisitionImport?
 
   // Every list and dashboard count starts from the tenant.
   @@index([tenantId, createdAt])
@@ -108,6 +112,7 @@ model Candidate {
   pipelines     CandidatePipeline[]
   feedbackOptIns   CandidateFeedbackOptIn[]
   humanRequests    CandidateHumanRequest[]
+  atsLinks         CandidateAtsLink[]
 
   @@index([tenantId, createdAt])
 }
@@ -629,4 +634,77 @@ model InterviewRound {
 
   @@index([pipelineId])
   @@index([tenantId])
+}
+
+// ---- ATS integration, owned by the tenant ----
+//
+// Each organisation connects its own ATS. There used to be one ATS for the
+// whole deployment, so any tenant could import any requisition from it and
+// export to any candidate id it typed. See docs/CONNECTORS.md.
+
+model AtsConnection {
+  id            String    @id @default(cuid())
+  // One connection per organisation.
+  tenantId      String    @unique
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  provider      String    @default("generic") // generic | greenhouse
+  baseUrl       String
+  // The account inside a multi-customer ATS (Greenhouse serves every customer
+  // from one URL); empty when the base URL already identifies the account.
+  accountId     String    @default("")
+  // provider|baseUrl|accountId, normalised. Unique: one ATS account belongs to
+  // one organisation, so two tenants cannot both read the same requisitions.
+  atsKey        String    @unique
+  // The API key, sealed under AUTH_SECRET. Never returned by the API.
+  apiKeySealed  String    @default("")
+  // tenant: configured by the organisation's admin. env: the deployment's
+  // ATS_* variables bound to this tenant by ATS_TENANT_ID; the key stays in env.
+  source        String    @default("tenant") // tenant | env
+  status        String    @default("untested") // untested | ok | failed | disconnected
+  lastTestedAt  DateTime?
+  disconnectedAt DateTime?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  requisitions  AtsRequisitionImport[]
+  candidateLinks CandidateAtsLink[]
+}
+
+// A requisition that became a role. Unique per ATS account, so a requisition
+// is imported once, by one organisation, and a re-import finds the same role.
+model AtsRequisitionImport {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  tenant                Tenant   @relation(fields: [tenantId], references: [id])
+  connectionId          String
+  connection            AtsConnection @relation(fields: [connectionId], references: [id])
+  atsKey                String
+  externalRequisitionId String
+  roleId                String   @unique
+  role                  Role     @relation(fields: [roleId], references: [id])
+  createdById           String?
+  createdAt             DateTime @default(now())
+
+  @@unique([atsKey, externalRequisitionId])
+  @@index([tenantId])
+}
+
+// Which ATS candidate a Questor candidate is. Exports go only to this id;
+// a caller can no longer name the target.
+model CandidateAtsLink {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  candidateId         String
+  candidate           Candidate @relation(fields: [candidateId], references: [id])
+  connectionId        String
+  connection          AtsConnection @relation(fields: [connectionId], references: [id])
+  externalCandidateId String
+  source              String    @default("manual") // manual | import
+  createdById         String?
+  createdAt           DateTime  @default(now())
+
+  @@unique([tenantId, candidateId, connectionId])
+  @@unique([tenantId, connectionId, externalCandidateId])
+  @@index([candidateId])
 }

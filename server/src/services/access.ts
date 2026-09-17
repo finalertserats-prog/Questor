@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/index.js';
 import { capabilitiesOf, type Capability } from '../domain/capabilities.js';
@@ -122,16 +123,16 @@ export async function assertCanAccessAssessment(auth: AuthClaims, assessmentId: 
 }
 
 /** Grant access. Used when a role or candidate is created, and by admins. */
-export async function assignRole(roleId: string, userId: string, relation = 'owner') {
-  return prisma.roleAssignment.upsert({
+export async function assignRole(roleId: string, userId: string, relation = 'owner', db: Pick<Prisma.TransactionClient, 'roleAssignment'> = prisma) {
+  return db.roleAssignment.upsert({
     where: { roleId_userId: { roleId, userId } },
     create: { roleId, userId, relation },
     update: { relation },
   });
 }
 
-export async function assignCandidate(candidateId: string, userId: string, relation = 'owner') {
-  return prisma.candidateAssignment.upsert({
+export async function assignCandidate(candidateId: string, userId: string, relation = 'owner', db: Pick<Prisma.TransactionClient, 'candidateAssignment'> = prisma) {
+  return db.candidateAssignment.upsert({
     where: { candidateId_userId: { candidateId, userId } },
     create: { candidateId, userId, relation },
     update: { relation },

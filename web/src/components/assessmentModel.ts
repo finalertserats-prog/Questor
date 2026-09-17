@@ -37,9 +37,10 @@ export function isScored(result: { overallScore?: unknown } | null | undefined):
 const EXPORT_SENTENCES: Readonly<Record<string, string>> = {
   QUEUED: 'Queued for export to your ATS.',
   SENT: 'Sent to your ATS.',
+  EXPORTED: 'Sent to your ATS.',
   DELIVERED: 'Delivered to your ATS.',
   SKIPPED: 'Not exported: no ATS is configured for this tenant.',
-  FAILED: 'The export did not go through. Try again, or check the ATS connector in Admin.',
+  FAILED: 'The export did not go through. Try again, or check the ATS connection in Settings.',
 };
 
 export function exportStatusSentence(status: string): string {

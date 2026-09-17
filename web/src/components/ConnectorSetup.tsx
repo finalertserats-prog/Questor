@@ -85,7 +85,11 @@ export function GuidePanel({ guide, env }: { guide: ConnectorGuide; env?: readon
   );
 }
 
-export function MeetingAdapterSetup({ adapters }: { adapters: readonly MeetingAdapter[] }) {
+/**
+ * `canTest` is false for everyone but the deployment operator: the vendor apps
+ * are the deployment's, and the server refuses anyone else's test.
+ */
+export function MeetingAdapterSetup({ adapters, canTest }: { adapters: readonly MeetingAdapter[]; canTest: boolean }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [tests, setTests] = useState<Readonly<Record<string, TestState>>>({});
 
@@ -144,8 +148,10 @@ export function MeetingAdapterSetup({ adapters }: { adapters: readonly MeetingAd
                       type="button"
                       className="btn sm"
                       data-testid={`test-connection-${m.provider}`}
-                      disabled={!m.configured || test === 'pending'}
-                      title={m.configured ? undefined : 'Set the variables in server/.env and restart the server first'}
+                      disabled={!canTest || !m.configured || test === 'pending'}
+                      title={!canTest
+                        ? 'Only the deployment operator can test meeting connectors'
+                        : m.configured ? undefined : 'Set the variables in server/.env and restart the server first'}
                       onClick={() => { void runTest(m.provider); }}
                     >
                       {test === 'pending' ? 'Testing…' : 'Test connection'}

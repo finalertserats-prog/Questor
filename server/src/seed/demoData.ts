@@ -103,6 +103,10 @@ export async function wipe(): Promise<void> {
   // must go before their targets or the deletes below fail on a constraint.
   await prisma.candidateAssignment.deleteMany();
   await prisma.roleAssignment.deleteMany();
+  // ATS records reference Candidate, Role and Tenant.
+  await prisma.candidateAtsLink.deleteMany();
+  await prisma.atsRequisitionImport.deleteMany();
+  await prisma.atsConnection.deleteMany();
   await prisma.candidate.deleteMany();
   await prisma.roleScorecardVersion.deleteMany();
   await prisma.role.deleteMany();

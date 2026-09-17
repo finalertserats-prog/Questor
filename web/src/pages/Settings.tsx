@@ -2,6 +2,7 @@ import { useAuth } from '../auth';
 import { ThemeToggle } from '../components/theme';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { AtsConnectionPanel } from '../components/AtsConnectionPanel';
 
 export function Settings() {
   const { user, tenant } = useAuth();
@@ -30,6 +31,8 @@ export function Settings() {
           <ThemeToggle />
         </div>
       </div>
+      {/* The server refuses everyone else; hiding it just spares them a 403. */}
+      {user?.role === 'admin' && <AtsConnectionPanel />}
     </div>
   );
 }

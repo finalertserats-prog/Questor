@@ -193,14 +193,19 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     return res.status(500).json({ error: 'Stored data is corrupted. Contact support with this request ID.', requestId: req.requestId });
   }
   const safe = err instanceof HttpError ? err.message : 'Internal server error';
-  res.status(err instanceof HttpError ? status : 500).json({ error: safe, requestId: req.requestId });
+  // A code is ours too, and lets a client react to one specific refusal (no
+  // ATS connected, say) without matching on the wording.
+  const code = err instanceof HttpError && err.code ? { code: err.code } : {};
+  res.status(err instanceof HttpError ? status : 500).json({ error: safe, ...code, requestId: req.requestId });
 }
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 

@@ -10,6 +10,8 @@ import {
   DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored, type Disposition,
 } from '../components/assessmentModel';
 import { recommendationStatus } from '../components/statusModel';
+import { atsErrorMessage } from '../components/atsModel';
+import { useAuth } from '../auth';
 import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
@@ -152,6 +154,7 @@ export function AssessmentView() {
   const [comments, setComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  const { user } = useAuth();
   const [exportStatus, setExportStatus] = useState('');
   const [exporting, setExporting] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -280,7 +283,9 @@ export function AssessmentView() {
       const r = await api.post<{ status: string }>(`/assessments/${id}/export`, {});
       setExportStatus(r.status);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not export this assessment.');
+      // A missing ATS or candidate link is fixable, and the message says by whom.
+      if (err instanceof ApiError) setError(atsErrorMessage(err, user?.role === 'admin'));
+      else setError(err instanceof Error ? err.message : 'Could not export this assessment.');
     } finally {
       setExporting(false);
     }

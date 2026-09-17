@@ -200,11 +200,11 @@ export const SHOWCASE_FEATURES: readonly ShowcaseFeature[] = [
   {
     key: 'connectors',
     icon: 'settings',
-    // server/src/routes/connectors.ts:9-14 — no endpoint accepts or stores a key.
-    title: 'Connectors without stored keys',
-    // The running server does read them from its own configuration; what the
-    // product never does is accept a key through the app or keep one in the
-    // database, where a backup or an injection would reach it.
-    detail: 'Email, ATS, speech and model providers are set in your server’s configuration — no key is typed into Questor or kept in its database.',
+    // server/src/routes/connectors.ts: shared providers are read from the
+    // server's configuration only. The one exception is each organisation's
+    // own ATS key (services/atsConnections.ts), which is sealed under the
+    // server secret and never sent back.
+    title: 'Connectors that keep keys out of reach',
+    detail: 'Email, speech and model providers are set in your server’s configuration. Your ATS key is entered once by your administrator, stored encrypted, and never shown again.',
   },
 ];

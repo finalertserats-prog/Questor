@@ -5,6 +5,7 @@ import { createApp } from '../src/app.js';
 import { wipe } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
 import { meetingCapability } from '../src/providers/meeting/index.js';
+import { config } from '../src/config.js';
 
 // Connection tests for meeting adapters. Every outbound call is a mocked fetch:
 // a test that reached Zoom or Microsoft would need real credentials and would
@@ -48,6 +49,9 @@ function configureZoom() {
 
 beforeAll(async () => {
   await wipe();
+  // The meeting apps are the deployment's, so only the operator (the signup
+  // approver) may test them. Admin A is the operator here; admin B is not.
+  config.signupApproverEmail = 'admin@conn-a.local';
   const a = await request(app).post('/api/auth/register').send({ email: 'admin@conn-a.local', password: PASS_A, name: 'Admin A', tenantName: 'Conn A' });
   expect(a.status).toBe(201);
   adminA = a.body.token;
@@ -83,6 +87,28 @@ describe('POST /api/admin/connectors/meeting/:adapterId/test — access', () => 
 
   it('denies a recruiter (no admin:manage)', async () => {
     expect((await testAs(recruiterA, 'hosted')).status).toBe(403);
+  });
+
+  it('denies a tenant admin who is not the deployment operator', async () => {
+    expect((await testAs(adminB, 'hosted')).status).toBe(403);
+  });
+
+  it('denies every admin when no operator is configured', async () => {
+    config.signupApproverEmail = '';
+    try {
+      expect((await testAs(adminA, 'hosted')).status).toBe(403);
+    } finally {
+      config.signupApproverEmail = 'admin@conn-a.local';
+    }
+  });
+
+  it('matches the operator address regardless of case', async () => {
+    config.signupApproverEmail = ' Admin@Conn-A.local ';
+    try {
+      expect((await testAs(adminA, 'hosted')).status).toBe(200);
+    } finally {
+      config.signupApproverEmail = 'admin@conn-a.local';
+    }
   });
 
   it('returns 404 for an unknown adapter id', async () => {
@@ -206,12 +232,11 @@ describe('connection tests are audited without secrets', () => {
     expect(JSON.stringify(rows)).not.toContain('MARKER');
   });
 
-  it("another tenant's test lands in its own audit trail, not this tenant's", async () => {
-    const before = await prisma.auditEvent.count({ where: { tenantId: tenantA, action: 'connector.tested' } });
+  it("a refused non-operator's attempt writes nothing to any tenant's trail", async () => {
+    const before = await prisma.auditEvent.count({ where: { action: 'connector.tested', tenantId: { in: [tenantA, tenantB] } } });
     await testAs(adminB, 'hosted');
-    const after = await prisma.auditEvent.count({ where: { tenantId: tenantA, action: 'connector.tested' } });
-    const inB = await prisma.auditEvent.count({ where: { tenantId: tenantB, action: 'connector.tested' } });
-    expect({ unchangedInA: after === before, recordedInB: inB > 0 }).toEqual({ unchangedInA: true, recordedInB: true });
+    const after = await prisma.auditEvent.count({ where: { action: 'connector.tested', tenantId: { in: [tenantA, tenantB] } } });
+    expect(after).toBe(before);
   });
 });
 
@@ -228,6 +253,16 @@ describe('GET /api/admin/providers — meeting status exposes variable names, ne
         { name: 'ZOOM_CLIENT_SECRET', present: true },
       ],
     });
+  });
+
+  it('tells the operator the test buttons are theirs', async () => {
+    const res = await request(app).get('/api/admin/providers').set('Authorization', `Bearer ${adminA}`);
+    expect(res.body.canTestMeetingConnectors).toBe(true);
+  });
+
+  it('tells any other admin they are not', async () => {
+    const res = await request(app).get('/api/admin/providers').set('Authorization', `Bearer ${adminB}`);
+    expect(res.body.canTestMeetingConnectors).toBe(false);
   });
 
   it('is not readable by a non-admin at all', async () => {

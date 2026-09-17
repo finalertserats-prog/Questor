@@ -75,6 +75,10 @@ export const config = {
     provider: env('ATS_PROVIDER', 'generic'),
     baseUrl: env('ATS_BASE_URL'),
     apiKey: env('ATS_API_KEY'),
+    // The ATS_* variables describe ONE organisation's ATS. They are used only
+    // for the tenant named here; without it they are ignored, because a
+    // deployment-wide ATS let every tenant read every requisition in it.
+    tenantId: env('ATS_TENANT_ID'),
   },
   meeting: {
     provider: env('MEETING_PROVIDER', 'hosted'),
