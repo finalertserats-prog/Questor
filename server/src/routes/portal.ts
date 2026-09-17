@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, HttpError } from '../middleware/index.js';
 import {
   sttCapability,
@@ -152,6 +152,13 @@ portalRouter.post('/:token/feedback-opt-in', asyncHandler(async (req, res) => {
   });
 }));
 
+/** The consent record as the portal reads and extends it. */
+interface StoredConsent {
+  disclosureText?: string;
+  recordingRequested?: unknown;
+  [key: string]: unknown;
+}
+
 portalRouter.get('/:token', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token);
   const s = inv.session;
@@ -168,7 +175,9 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     });
   }
 
-  const consent = parseJson<any>(s.consentJson, {});
+  // The disclosure shown here is what the candidate consents to; a blank one
+  // from a damaged row would be consent to nothing.
+  const consent = parseJsonStrict<StoredConsent>(s.consentJson, { model: 'InterviewSession', id: s.id, field: 'consentJson' });
   const proctoringEnabled = await proctoringEnabledForSession({ tenantId: s.tenantId, scorecardId: s.scorecardId });
   const englishDisclosure = await disclosureWithProctoringPolicy({ tenantId: s.tenantId, scorecardId: s.scorecardId }, consent.disclosureText ?? '');
 
@@ -206,7 +215,7 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     recordingConsented: s.recordingConsent === true,
     // The interviewer's name, as HR set it for this session. The pages used
     // to hardcode a default that stopped matching what the AI said aloud.
-    persona: { name: parseJson<{ name?: unknown }>(s.personaJson, {}).name ?? DEFAULT_PERSONA_NAME },
+    persona: { name: parseJsonOptional<{ name?: unknown }>(s.personaJson, {}, { model: 'InterviewSession', id: s.id, field: 'personaJson' }).name ?? DEFAULT_PERSONA_NAME },
     privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
     accommodationsEnabled: true,
     proctoringEnabled,
@@ -226,7 +235,7 @@ portalRouter.post('/:token/integrity-event', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
   const body = integrityEventSchema.parse(req.body);
   const enabled = await proctoringEnabledForSession({ tenantId: inv.session.tenantId, scorecardId: inv.session.scorecardId });
-  const consent = parseJson<Record<string, unknown>>(inv.session.consentJson, {});
+  const consent = parseJsonOptional<Record<string, unknown>>(inv.session.consentJson, {}, { model: 'InterviewSession', id: inv.sessionId, field: 'consentJson' });
 
   // Stored only when this candidate's own consent covered monitoring, and never
   // for a candidate who asked for an accommodation: screen readers and switch
@@ -295,7 +304,7 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
     // that "an accommodation was requested" while discarding the request itself,
     // so the human meant to follow up had nothing to follow up on — the one
     // thing the handoff exists to deliver.
-    const consent = parseJson<Record<string, unknown>>(inv.session.consentJson, {});
+    const consent = parseJsonStrict<Record<string, unknown>>(inv.session.consentJson, { model: 'InterviewSession', id: inv.sessionId, field: 'consentJson' });
     consent.accommodationRequest = accommodation;
     consent.accommodationRequestedAt = new Date().toISOString();
     await prisma.interviewSession.update({
@@ -313,7 +322,9 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
     });
   }
 
-  const consent = parseJson<any>(inv.session.consentJson, {});
+  // Strict because it is written back: a damaged record would be replaced by
+  // a consent to an empty disclosure, destroying the evidence of the original.
+  const consent = parseJsonStrict<StoredConsent>(inv.session.consentJson, { model: 'InterviewSession', id: inv.sessionId, field: 'consentJson' });
   // Record what the candidate was actually shown. Without this there is no
   // durable proof browser monitoring was disclosed, and switching monitoring on
   // later would silently extend to people who consented before it existed.
@@ -345,7 +356,7 @@ portalRouter.post('/:token/techcheck', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
   if (!PRE_INTERVIEW_STATES.includes(inv.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
   const body = z.object({ mic: z.boolean(), speaker: z.boolean() }).parse(req.body);
-  const quality = parseJson<any>(inv.session.qualityJson, {});
+  const quality = parseJsonOptional<Record<string, unknown>>(inv.session.qualityJson, {}, { model: 'InterviewSession', id: inv.sessionId, field: 'qualityJson' });
   quality.techCheck = { ...body, at: new Date().toISOString() };
   await prisma.interviewSession.update({ where: { id: inv.sessionId }, data: { qualityJson: JSON.stringify(quality) } });
   res.json({ ok: true, ready: body.mic && body.speaker });

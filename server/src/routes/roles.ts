@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { extractRole, extractRoleHeuristic } from '../engines/roleIntelligence.js';
 import type { RoleSuccessProfile } from '../domain/types.js';
@@ -118,7 +118,9 @@ rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), as
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to approve');
-  const profile = parseJson<RoleSuccessProfile>(latest.profileJson, {} as RoleSuccessProfile);
+  // Unreadable is not "no competencies": that message sends the author to edit
+  // a scorecard whose editor would show them nothing to fix.
+  const profile = parseJsonStrict<RoleSuccessProfile>(latest.profileJson, { model: 'RoleScorecardVersion', id: latest.id, field: 'profileJson' });
   if (!profile.competencies?.length) throw new HttpError(400, 'Scorecard has no competencies');
   // A scorecard stored before the edit schema existed can hold anything. The
   // approval is the gate that lets it drive interviews, so it is checked here
@@ -154,5 +156,5 @@ function shapeRole(r: any) {
   return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt };
 }
 function shapeScorecard(s: any) {
-  return { id: s.id, version: s.version, status: s.status, profile: parseJson(s.profileJson, {}), approvedAt: s.approvedAt };
+  return { id: s.id, version: s.version, status: s.status, profile: parseJsonStrict(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' }), approvedAt: s.approvedAt };
 }

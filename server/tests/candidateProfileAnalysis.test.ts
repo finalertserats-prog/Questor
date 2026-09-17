@@ -181,4 +181,16 @@ describe('candidate profile analysis endpoint', () => {
     const res = await request(app).get(`/api/candidates/${candidateId}/profile-analysis`).set(auth(otherTenantToken));
     expect(res.status).toBe(404);
   });
+
+  it('fails loudly instead of comparing roles against a corrupt stored profile', async () => {
+    const stored = await prisma.candidateProfileVersion.findFirstOrThrow({ where: { candidateId } });
+    const original = stored.profileJson;
+    await prisma.candidateProfileVersion.update({ where: { id: stored.id }, data: { profileJson: '{not-json' } });
+
+    const res = await request(app).get(`/api/candidates/${candidateId}/profile-analysis`).set(auth(recruiterAToken));
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/stored data is corrupted/i);
+    await prisma.candidateProfileVersion.update({ where: { id: stored.id }, data: { profileJson: original } });
+  });
 });

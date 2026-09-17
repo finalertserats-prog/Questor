@@ -1,8 +1,11 @@
 import crypto from 'node:crypto';
+import http from 'node:http';
+import https from 'node:https';
+import dns from 'node:dns';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { webhookHostResolvesPrivate } from './webhookUrl.js';
+import { isPrivateAddress } from './webhookUrl.js';
 import { startJob } from './jobs.js';
 
 /**
@@ -24,6 +27,26 @@ import { startJob } from './jobs.js';
 const MAX_ATTEMPTS = 4;
 const DELIVER_EVERY_MS = 15_000;
 const BATCH = 50;
+const WEBHOOK_TIMEOUT_MS = 8000;
+
+type LookupAnswer = { address: string; family?: number };
+type LookupFn = (host: string) => Promise<LookupAnswer[]>;
+type RequestOptions = https.RequestOptions & { lookup: NonNullable<https.RequestOptions['lookup']> };
+type RequestImpl = (url: URL, options: RequestOptions, body: string) => Promise<{ ok: boolean; status: number }>;
+
+let lookupWebhookHost: LookupFn = (host) => dns.promises.lookup(host, { all: true });
+let requestWebhook: RequestImpl = postWithPinnedLookup;
+
+export function setWebhookNetworkForTest(lookup: LookupFn, request: RequestImpl): () => void {
+  const previousLookup = lookupWebhookHost;
+  const previousRequest = requestWebhook;
+  lookupWebhookHost = lookup;
+  requestWebhook = request;
+  return () => {
+    lookupWebhookHost = previousLookup;
+    requestWebhook = previousRequest;
+  };
+}
 
 export function signPayload(body: string): string {
   return crypto.createHmac('sha256', config.webhookSigningSecret).update(body).digest('hex');
@@ -86,14 +109,10 @@ async function attempt(deliveryId: string, url: string, body: string): Promise<v
   const attemptNumber = (row?.attempts ?? 0) + 1;
 
   try {
-    // Checked at delivery time as well as at creation: DNS can change between
-    // the two, and this is the moment the request actually leaves.
-    if (config.nodeEnv !== 'test' && await webhookHostResolvesPrivate(new URL(url).hostname)) {
-      throw new Error('destination resolves to a private address');
-    }
+    const destination = await resolveWebhookDestination(new URL(url), lookupWebhookHost);
     const timestamp = Date.now();
-    const res = await fetch(url, {
-      method: 'POST',
+    const res = await requestWebhook(destination.url, {
+      ...destination.options,
       headers: {
         'content-type': 'application/json',
         'x-questor-signature': signPayload(body),
@@ -101,9 +120,7 @@ async function attempt(deliveryId: string, url: string, body: string): Promise<v
         'x-questor-timestamp': String(timestamp),
         'x-questor-delivery': deliveryId,
       },
-      body,
-      signal: AbortSignal.timeout(8000),
-    });
+    }, body);
     if (!res.ok) throw new Error(`status ${res.status}`);
     await prisma.webhookDelivery.update({ where: { id: deliveryId }, data: { status: 'delivered', attempts: attemptNumber, nextAttemptAt: null } });
   } catch (err) {
@@ -122,6 +139,40 @@ async function attempt(deliveryId: string, url: string, body: string): Promise<v
       logger.warn({ deliveryId, err: message }, 'Webhook delivery failed after retries');
     }
   }
+}
+
+async function resolveWebhookDestination(url: URL, lookup: LookupFn): Promise<{ url: URL; options: RequestOptions }> {
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  const answers = isPrivateAddress(host) ? [{ address: host }] : await lookup(host);
+  if (answers.length === 0) throw new Error('destination did not resolve');
+  for (const answer of answers) {
+    if (isPrivateAddress(answer.address)) throw new Error('destination resolves to a private address');
+  }
+  const pinned = answers[0];
+  return {
+    url,
+    options: {
+      method: 'POST',
+      timeout: WEBHOOK_TIMEOUT_MS,
+      servername: url.hostname,
+      lookup: (_hostname, _options, callback) => {
+        callback(null, pinned.address, pinned.family ?? (pinned.address.includes(':') ? 6 : 4));
+      },
+    },
+  };
+}
+
+async function postWithPinnedLookup(url: URL, options: RequestOptions, body: string): Promise<{ ok: boolean; status: number }> {
+  const client = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = client.request(url, options, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300, status: res.statusCode ?? 0 }));
+    });
+    req.setTimeout(WEBHOOK_TIMEOUT_MS, () => req.destroy(new Error('webhook request timed out')));
+    req.on('error', reject);
+    req.end(body);
+  });
 }
 
 /** Counts for the operations view. */

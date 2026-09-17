@@ -1,7 +1,7 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
 import type { CandidatePipeline, InterviewRound } from '@prisma/client';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessRole } from '../services/access.js';
 import { logAudit } from '../services/audit.js';
@@ -11,7 +11,7 @@ import { brandedEmail, headerSafe } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import {
-  DEFAULT_STAGES, nextStageKey, parseStages, roundRolesFor, stagesSchema, type PipelineStage,
+  DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
 
 /**
@@ -32,7 +32,7 @@ function presentRound(round: InterviewRound) {
     aiObserver: round.aiObserver,
     hrMayObserve: round.hrMayObserve,
     sessionId: round.sessionId,
-    interviewers: parseJson<string[]>(round.interviewersJson, []),
+    interviewers: parseJsonOptional<string[]>(round.interviewersJson, [], { model: 'InterviewRound', id: round.id, field: 'interviewersJson' }),
     scheduledAt: round.scheduledAt,
     status: round.status,
     // What the interviewers wrote IS the evidence for a human stage — nothing
@@ -53,7 +53,7 @@ function presentPipeline(pipeline: PipelineWithRounds) {
     id: pipeline.id,
     candidateId: pipeline.candidateId,
     roleId: pipeline.roleId,
-    stages: parseStages(pipeline.stagesJson),
+    stages: parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }),
     currentStageKey: pipeline.currentStageKey,
     status: pipeline.status,
     decision: pipeline.decision,
@@ -140,7 +140,7 @@ pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyn
   const pipeline = await loadPipeline(req, req.params.id);
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, DECIDED);
 
-  const stages = parseStages(pipeline.stagesJson);
+  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
   const next = nextStageKey(stages, pipeline.currentStageKey);
   if (!next) throw new HttpError(409, 'This candidate is already at the final stage.');
   if (toStageKey !== next) throw new HttpError(409, `Stages run in order; the next stage is ${labelOf(stages, next)}.`);
@@ -218,7 +218,7 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     throw new HttpError(409, 'Rounds are scheduled for the stage the candidate is currently at.');
   }
 
-  const stage = parseStages(pipeline.stagesJson).find((s) => s.key === body.stageKey);
+  const stage = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }).find((s) => s.key === body.stageKey);
   const roles = stage ? roundRolesFor(stage.kind) : null;
   if (!stage || !roles) throw new HttpError(409, `${stage?.label ?? 'This stage'} is not an interview stage.`);
 
@@ -245,7 +245,9 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     // retroactively; observation of that session then stays unavailable.
     if (roles.hrMayObserve && body.sessionId) {
       const session = await tx.interviewSession.findUniqueOrThrow({ where: { id: body.sessionId }, select: { consentJson: true } });
-      const consent = parseJson<Record<string, unknown>>(session.consentJson, {});
+      // Read strictly: this block writes the record back, and a damaged one
+      // would be replaced by a disclosure holding only the observer notice.
+      const consent = parseJsonStrict<Record<string, unknown>>(session.consentJson, { model: 'InterviewSession', id: body.sessionId, field: 'consentJson' });
       if (!consent.consentedAt) {
         const disclosureText = withObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : '');
         if (disclosureText !== consent.disclosureText) {
@@ -369,12 +371,14 @@ interface StageSummary extends PipelineStage {
 // Reports only the evidence Questor actually holds, and names what is missing.
 pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const pipeline = await loadPipeline(req, req.params.id);
-  const stages = parseStages(pipeline.stagesJson);
+  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
 
   const profile = await prisma.candidateProfileVersion.findFirst({
-    where: { candidateId: pipeline.candidateId }, orderBy: { version: 'desc' }, select: { fitScoreJson: true },
+    where: { candidateId: pipeline.candidateId }, orderBy: { version: 'desc' }, select: { id: true, fitScoreJson: true },
   });
-  const fit = profile ? parseJson<{ overall?: unknown }>(profile.fitScoreJson, {}) : {};
+  const fit = profile
+    ? parseJsonStrict<{ overall?: unknown }>(profile.fitScoreJson, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' })
+    : {};
   const aiSessionIds = pipeline.rounds.filter((r) => r.conductedBy === 'AI' && r.sessionId).map((r) => r.sessionId as string);
   const assessments = aiSessionIds.length > 0
     ? await prisma.assessmentVersion.findMany({ where: { sessionId: { in: aiSessionIds } }, orderBy: { version: 'desc' }, select: { sessionId: true, recommendation: true } })
@@ -433,3 +437,4 @@ rolePipelineRouter.put('/:id/pipeline-stages', requireCapability('role:edit_scor
   });
   res.json({ stages });
 }));
+

@@ -61,6 +61,8 @@ function isPrivateAddress(host: string): boolean {
   return false;
 }
 
+export { isPrivateAddress };
+
 function isPrivateV4(ip: string): boolean {
   const [a, b] = ip.split('.').map((part) => Number(part));
   if (a === 0 || a === 10 || a === 127) return true;

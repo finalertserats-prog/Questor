@@ -3,7 +3,7 @@ import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
 import { z } from 'zod';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { scorecardForFit } from '../services/scorecards.js';
 import { rateLimit } from '../middleware/rateLimit.js';
@@ -17,7 +17,7 @@ import {
 } from '../services/access.js';
 import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
-import type { RoleSuccessProfile } from '../domain/types.js';
+import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
@@ -81,7 +81,7 @@ candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   });
   res.json({ candidates: candidates.map((c) => ({
     id: c.id, fullName: c.fullName, email: c.email, roleId: c.roleId, roleTitle: c.role?.title ?? null,
-    fit: c.profiles[0] ? parseJson<any>(c.profiles[0].fitScoreJson, null) : null,
+    fit: c.profiles[0] ? parseJsonOptional<Record<string, unknown> | null>(c.profiles[0].fitScoreJson, null, { model: 'CandidateProfileVersion', id: c.profiles[0].id, field: 'fitScoreJson' }) : null,
     latestInterview: c.interviews[0] ? { id: c.interviews[0].id, state: c.interviews[0].state } : null,
     createdAt: c.createdAt,
   })) });
@@ -141,7 +141,7 @@ candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resu
   const profile = normalizeProfile(rawText);
 
   const scorecard = await scorecardForFit(candidate.roleId);
-  const role = scorecard ? parseJson<RoleSuccessProfile>(scorecard.profileJson, emptyProfile()) : emptyProfile();
+  const role = scorecard ? parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' }) : emptyProfile();
   const { fit, perCompetency } = computeFitScore(profile, rawText, role);
 
   const version = (await prisma.candidateProfileVersion.count({ where: { candidateId: candidate.id } })) + 1;
@@ -254,8 +254,8 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
     return;
   }
 
-  const profile = parseJson<any>(profileVersion.profileJson, null);
-  const currentStoredFit = publicFit(parseJson<any>(profileVersion.fitScoreJson, null));
+  const profile = parseJsonStrict<NormalizedProfile>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' });
+  const currentStoredFit = publicFit(parseJsonStrict<Record<string, unknown>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' }));
   const fitText = fitTextFromProfile(profile);
 
   const scopedRoles = await prisma.role.findMany({
@@ -274,14 +274,14 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
   const currentRoleWithScorecard = scopedRoles.find((r) => r.id === candidate.roleId) ?? null;
   const currentScorecard = currentRoleWithScorecard?.scorecards[0] ?? null;
   const currentFit = currentScorecard
-    ? publicFit(computeFitScore(profile ?? {}, fitText, parseJson<RoleSuccessProfile>(currentScorecard.profileJson, emptyProfile())).fit)
+    ? publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(currentScorecard.profileJson, { model: 'RoleScorecardVersion', id: currentScorecard.id, field: 'profileJson' })).fit)
     : currentStoredFit;
   const currentOverall: number | null = typeof currentFit?.overall === 'number' ? currentFit.overall : null;
 
   const alternatives = scopedRoles
     .filter((r) => r.id !== candidate.roleId && r.scorecards[0])
     .map((r) => {
-      const fit = publicFit(computeFitScore(profile ?? {}, fitText, parseJson<RoleSuccessProfile>(r.scorecards[0].profileJson, emptyProfile())).fit)!;
+      const fit = publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' })).fit)!;
       return {
         roleId: r.id,
         title: r.title,
@@ -328,8 +328,8 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   const candidateFeedback = await candidateFeedbackState(interviews.map((i) => i.id));
   res.json({
     candidate: shape(candidate),
-    profile: profileVersion ? parseJson(profileVersion.profileJson, {}) : null,
-    fit: profileVersion ? parseJson(profileVersion.fitScoreJson, null) : null,
+    profile: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' }) : null,
+    fit: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' }) : null,
     rawText: profileVersion?.rawText ?? '',
     interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, createdAt: i.createdAt })),
     candidateFeedback,
@@ -365,3 +365,4 @@ function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email
 function emptyProfile(): RoleSuccessProfile {
   return { roleContext: '', outcomes: [], responsibilities: [], competencies: [], scoringRules: { mustPassCompetencyIds: [], notEnoughEvidencePolicy: 'exclude', passThreshold: 65 }, policyRules: { prohibitedTopics: [], requiredDisclosures: [], accommodationsEnabled: true, jurisdiction: 'IN' }, redFlags: [], seniority: '' };
 }
+

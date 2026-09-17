@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { prisma, parseJson } from '../db.js';
+import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import type { InterviewPlan, RoleSuccessProfile, TurnRecord } from '../domain/types.js';
 import { assertTransition } from '../domain/stateMachine.js';
 import { directorDecide } from '../engines/interviewDirector.js';
@@ -75,9 +75,13 @@ async function loadContext(sessionId: string) {
   });
   if (!session) throw new Error('Session not found');
   if (!session.plan) throw new Error('Session has no interview plan');
-  const plan = parseJson<InterviewPlan>(session.plan.planJson, {} as InterviewPlan);
-  const profile = parseJson<RoleSuccessProfile>(session.scorecard.profileJson, {} as RoleSuccessProfile);
-  const persona = parseJson<Persona>(session.personaJson, { name: 'Schranders', tone: 'warm' });
+  // Plan and rubric are what the interviewer asks from and the evaluator scores
+  // against. Defaulting either to {} ran an interview with nothing to ask and
+  // nothing to score, so an unreadable row stops here — before any state
+  // transition, so nothing is left half-moved.
+  const plan = parseJsonStrict<InterviewPlan>(session.plan.planJson, { model: 'InterviewPlanVersion', id: session.plan.id, field: 'planJson' });
+  const profile = parseJsonStrict<RoleSuccessProfile>(session.scorecard.profileJson, { model: 'RoleScorecardVersion', id: session.scorecard.id, field: 'profileJson' });
+  const persona = parseJsonOptional<Persona>(session.personaJson, { name: 'Schranders', tone: 'warm' }, { model: 'InterviewSession', id: session.id, field: 'personaJson' });
   const turns: TurnRecord[] = session.turns.map((t) => ({
     id: t.id, index: t.index, speaker: t.speaker as TurnRecord['speaker'], text: t.text,
     startMs: t.startMs, endMs: t.endMs, confidence: t.confidence, competencyId: t.competencyId,
@@ -180,7 +184,10 @@ async function transitionIfInState(sessionId: string, from: string, to: string):
 async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
   const { session, plan, profile, persona, turns } = await loadContext(sessionId);
   const signal = directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) });
-  const disclosure = parseJson<any>(session.consentJson, {}).disclosureText ?? '';
+  // The disclosure is the required opening; a damaged consent record must not
+  // quietly become an interview that never says it is AI-run.
+  const consent = parseJsonStrict<{ disclosureText?: string }>(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
+  const disclosure = consent.disclosureText ?? '';
   const utter = await nextUtterance({ plan, signal, turns, role: profile, persona, disclosureText: disclosure, sessionId });
 
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
@@ -252,7 +259,7 @@ async function existingOpeningTurn(sessionId: string, state: string): Promise<Ag
     orderBy: { index: 'asc' },
   });
   if (!first) return null;
-  const kind = parseJson<{ kind?: unknown }>(first.metaJson, {}).kind;
+  const kind = parseJsonOptional<{ kind?: unknown }>(first.metaJson, {}, { model: 'Turn', id: first.id, field: 'metaJson' }).kind;
   return {
     turnId: first.id, index: first.index, text: first.text, competencyId: first.competencyId,
     kind: typeof kind === 'string' ? kind : 'question',
@@ -272,8 +279,11 @@ async function existingOpeningTurn(sessionId: string, state: string): Promise<Ag
  * was drafted for them". A session created by the recruiter routes carries the
  * disclosure text but no `consentedAt` until the candidate accepts it.
  */
-function hasRecordedConsent(consentJson: string): boolean {
-  const consent = parseJson<{ consentedAt?: unknown }>(consentJson, {});
+function hasRecordedConsent(session: { id: string; consentJson: string }): boolean {
+  // Unreadable is corruption, not "no consent": the candidate may well have
+  // agreed, and sending them back to agree again would write over the only
+  // record of what they agreed to.
+  const consent = parseJsonStrict<{ consentedAt?: unknown }>(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
   return typeof consent.consentedAt === 'string' && consent.consentedAt.length > 0;
 }
 
@@ -306,7 +316,7 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
     // would exist with nothing on the session saying the person agreed to
     // either. That record is the first thing a GDPR Art. 22 or LL144 enquiry
     // asks for, and it cannot be reconstructed afterwards.
-    if (!hasRecordedConsent(session.consentJson)) {
+    if (!hasRecordedConsent(session)) {
       throw new HttpError(409, 'This interview cannot start until the disclosure has been read and consent recorded. Please go back to your invitation link and accept the disclosure first.');
     }
     if (!STARTABLE_STATES.includes(session.state)) {
