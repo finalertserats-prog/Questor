@@ -93,7 +93,7 @@ the entire harness depends on.
 
 ## Statistics
 
-All computed in `server/src/services/shadowMode.ts`. Cohen's kappa is implemented in-repo
+All computed in `server/src/services/shadowModeKappa.ts` and `shadowModeAgreement.ts`. Cohen's kappa is implemented in-repo
 rather than pulled from a package: it is ~20 lines, and a statistic that gates a hiring launch
 should be auditable by whoever is being asked to trust it.
 
