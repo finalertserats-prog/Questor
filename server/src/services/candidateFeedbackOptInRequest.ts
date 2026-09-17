@@ -102,9 +102,7 @@ export async function requestFeedbackOptIn(opts: {
   if (refusal) throw new HttpError(409, refusal);
 
   const issuedAt = opts.now ?? new Date();
-  const previous = await prisma.candidateFeedbackOptInRequest.findUnique({
-    where: { sessionId: session.id }, select: { issuedAt: true },
-  });
+  const previous = await prisma.candidateFeedbackOptInRequest.findUnique({ where: { sessionId: session.id } });
   if (previous && issuedAt.getTime() - previous.issuedAt.getTime() < OPT_IN_REQUEST_COOLDOWN_MS) {
     throw new HttpError(429, 'A request was sent to this candidate less than an hour ago. Please give them time to answer.');
   }
@@ -116,14 +114,17 @@ export async function requestFeedbackOptIn(opts: {
 
   const expiresAt = new Date(issuedAt.getTime() + OPT_IN_REQUEST_TTL_DAYS * DAY_MS);
   const token = mintCandidateLinkToken();
+  const tokenHash = hashCandidateLinkToken(token);
   // Replacing the hash retires any earlier link: only the newest email works.
+  // Written before sending so the link already resolves when it arrives; undone
+  // below if the email never goes.
   await prisma.candidateFeedbackOptInRequest.upsert({
     where: { sessionId: session.id },
     create: {
       sessionId: session.id, candidateId: session.candidateId, tenantId: session.tenantId,
-      tokenHash: hashCandidateLinkToken(token), requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt,
+      tokenHash, requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt,
     },
-    update: { tokenHash: hashCandidateLinkToken(token), requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt },
+    update: { tokenHash, requestedByUserId: opts.requestedByUserId, issuedAt, expiresAt },
   });
 
   try {
@@ -135,6 +136,7 @@ export async function requestFeedbackOptIn(opts: {
     }));
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Feedback opt-in request email failed');
+    await undoUnsentRequest(session.id, tokenHash, previous);
     throw new HttpError(502, 'The request email could not be sent. Please try again.');
   }
 
@@ -148,6 +150,37 @@ export async function requestFeedbackOptIn(opts: {
     after: { issuedAt, expiresAt },
   });
   return { issuedAt, expiresAt };
+}
+
+type StoredRequest = NonNullable<Awaited<ReturnType<typeof prisma.candidateFeedbackOptInRequest.findUnique>>>;
+
+/**
+ * Put back what was there before an email that never went. Otherwise a failed
+ * resend kills the link the candidate already has, and starts a cooldown that
+ * blocks the recruiter's retry. Conditional on the hash this attempt wrote, so
+ * a request that succeeded in the meantime is not overwritten.
+ */
+async function undoUnsentRequest(sessionId: string, tokenHash: string, previous: StoredRequest | null): Promise<void> {
+  try {
+    if (previous) {
+      await prisma.candidateFeedbackOptInRequest.updateMany({
+        where: { sessionId, tokenHash },
+        data: {
+          tokenHash: previous.tokenHash,
+          requestedByUserId: previous.requestedByUserId,
+          issuedAt: previous.issuedAt,
+          expiresAt: previous.expiresAt,
+        },
+      });
+    } else {
+      await prisma.candidateFeedbackOptInRequest.deleteMany({ where: { sessionId, tokenHash } });
+    }
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), sessionId },
+      'Could not undo an unsent feedback opt-in request; the earlier link may no longer work',
+    );
+  }
 }
 
 async function resolveOptInRequest(token: string, now?: Date) {

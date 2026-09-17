@@ -19,6 +19,7 @@ import { signToken } from '../src/services/auth.js';
 const sent = vi.hoisted(() => ({
   messages: [] as Array<{ to: string; subject: string; text: string; html: string }>,
   delivers: true,
+  fails: false,
 }));
 
 vi.mock('../src/providers/email/index.js', async (importOriginal) => {
@@ -30,6 +31,7 @@ vi.mock('../src/providers/email/index.js', async (importOriginal) => {
       configured: true,
       delivers: sent.delivers,
       async send(msg: { to: string; subject: string; text: string; html: string }) {
+        if (sent.fails) throw new Error('smtp down');
         sent.messages.push(msg);
         return { status: 'sent', id: `test-${sent.messages.length}` };
       },
@@ -101,6 +103,7 @@ beforeEach(async () => {
   await wipe();
   sent.messages.length = 0;
   sent.delivers = true;
+  sent.fails = false;
 });
 
 describe('a candidate who was never asked', () => {
@@ -294,6 +297,63 @@ describe('asking a candidate to opt in', () => {
     const again = await askToOptIn(f);
 
     expect([again.status, sent.messages.length]).toEqual([429, 1]);
+  });
+
+  it('leaves no request behind when the first email fails', async () => {
+    const f = await approvedFeedback();
+    sent.fails = true;
+
+    const res = await askToOptIn(f);
+
+    expect([res.status, await prisma.candidateFeedbackOptInRequest.count()]).toEqual([502, 0]);
+  });
+
+  it('keeps the earlier link working when a resend fails', async () => {
+    const f = await approvedFeedback();
+    const first = await requestLink(f);
+    await prisma.candidateFeedbackOptInRequest.updateMany({ data: { issuedAt: new Date(Date.now() - 2 * 60 * 60_000) } });
+    sent.fails = true;
+
+    const failed = await askToOptIn(f);
+
+    const link = await request(app).get(`/api/feedback-consent/${first}`);
+    expect([failed.status, link.status, link.body.state]).toEqual([502, 200, 'open']);
+  });
+
+  it('restores the earlier request exactly when a resend fails', async () => {
+    const f = await approvedFeedback();
+    await requestLink(f);
+    await prisma.candidateFeedbackOptInRequest.updateMany({ data: { issuedAt: new Date(Date.now() - 2 * 60 * 60_000) } });
+    const before = await prisma.candidateFeedbackOptInRequest.findUniqueOrThrow({ where: { sessionId: f.sessionId } });
+    sent.fails = true;
+
+    await askToOptIn(f);
+
+    expect(await prisma.candidateFeedbackOptInRequest.findUniqueOrThrow({ where: { sessionId: f.sessionId } })).toEqual(before);
+  });
+
+  it('does not start the cooldown for a failed send, so the recruiter can retry at once', async () => {
+    const f = await approvedFeedback();
+    sent.fails = true;
+    await askToOptIn(f);
+    sent.fails = false;
+
+    const retry = await askToOptIn(f);
+
+    expect([retry.status, sent.messages.length]).toEqual([200, 1]);
+  });
+
+  it('allows an immediate retry after a failed resend', async () => {
+    const f = await approvedFeedback();
+    await requestLink(f);
+    await prisma.candidateFeedbackOptInRequest.updateMany({ data: { issuedAt: new Date(Date.now() - 2 * 60 * 60_000) } });
+    sent.fails = true;
+    await askToOptIn(f);
+    sent.fails = false;
+
+    const retry = await askToOptIn(f);
+
+    expect(retry.status).toBe(200);
   });
 
   it('replaces the link when sent again, so only the newest one works', async () => {
