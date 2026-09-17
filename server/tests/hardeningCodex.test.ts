@@ -171,11 +171,11 @@ describe('bounds on what an interview setup and a candidate may carry', () => {
 });
 
 describe('the shared rate-limit bucket', () => {
-  it('refuses once the window is spent', () => {
+  it('refuses once the window is spent', async () => {
     const key = `unit-${Date.now()}`;
-    consume('unit', key, 60_000, 2);
-    consume('unit', key, 60_000, 2);
+    await consume('unit', key, 60_000, 2);
+    await consume('unit', key, 60_000, 2);
 
-    expect(consume('unit', key, 60_000, 2).allowed).toBe(false);
+    expect((await consume('unit', key, 60_000, 2)).allowed).toBe(false);
   });
 });

@@ -6,6 +6,8 @@ import { config } from './config.js';
 import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
+import { isDraining } from './services/drainState.js';
+import { beginRequest } from './realtime/liveSessions.js';
 import { orgsRouter } from './routes/orgs.js';
 import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
 import { authRouter } from './routes/auth.js';
@@ -39,6 +41,14 @@ export function createApp() {
   app.use(cors({ origin: config.webOrigin, credentials: true }));
   app.use(express.json({ limit: '2mb' }));
   app.use(requestId);
+  // The shutdown drain waits for these: a candidate's answer whose model call
+  // is still running must get its reply before the process exits.
+  app.use((_req, res, next) => {
+    const done = beginRequest();
+    res.once('finish', done);
+    res.once('close', done);
+    next();
+  });
 
   // Before every router: cookie auth is ambient, so without a CSRF gate any
   // page a logged-in recruiter visits could drive state-changing calls into
@@ -63,11 +73,14 @@ export function createApp() {
     service: 'questor',
     commit: resolveCommit(),
   };
-  app.get('/api/health', (_req, res) => res.json({ ...health, ts: new Date().toISOString() }));
+  // `draining` lets a deploy tell the old process, finishing its interviews,
+  // from the new one. Status stays "ok" while draining: the process is still
+  // serving the interviews in progress, and it is not down.
+  app.get('/api/health', (_req, res) => res.json({ ...health, draining: isDraining(), ts: new Date().toISOString() }));
 
   // Credential stuffing / brute force on the recruiter login.
-  app.use('/api/auth/login', rateLimit({ name: 'login', windowMs: 15 * 60_000, max: 10 }));
-  app.use('/api/auth', rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60 }));
+  app.use('/api/auth/login', rateLimit({ name: 'login', windowMs: 15 * 60_000, max: 10, failClosed: true }));
+  app.use('/api/auth', rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true }));
 
   // The candidate portal is unauthenticated and every answer triggers a paid
   // LLM call, so it is both the abuse surface and the cost-amplification path.
@@ -120,8 +133,8 @@ export function createApp() {
   // Signup is public, but approval links carry their own high-entropy token.
   // Mount decisions first so they get the 60-request token-scanning budget, not
   // the stricter submission budget.
-  app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60 }), signupDecisionRouter);
-  app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10 }), signupRouter);
+  app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), signupDecisionRouter);
+  app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10, failClosed: true }), signupRouter);
 
   // The candidate's consent link for an AI observer on a human round. Public
   // and token-gated like the feedback link, and keyed on IP for the same

@@ -28,6 +28,44 @@ export function parsePortSetting(variable: string, raw: string): number {
   return value;
 }
 
+/**
+ * Read a non-negative whole number of milliseconds, or refuse to start.
+ *
+ * Same reasoning as the port: `Number("")` is 0 and `parseInt("20m")` is 20, so
+ * a typo would silently turn a twenty-minute shutdown drain into none at all —
+ * and the next deploy would end every interview in progress.
+ */
+export function parseDurationMsSetting(variable: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed === '' || !Number.isInteger(value) || value < 0) {
+    throw new Error(
+      `${variable} must be a whole number of milliseconds, 0 or more (got "${raw}"). `
+      + 'Fix the environment variable; the server will not start with an unusable duration.',
+    );
+  }
+  return value;
+}
+
+export type RateLimitStoreKind = 'database' | 'memory';
+
+/**
+ * Where rate-limit counters live. Production shares them through the database
+ * so that a second instance does not double every limit; tests and local
+ * development keep them in memory unless they opt in. An unknown value stops
+ * the process rather than quietly falling back to per-process counters.
+ */
+export function parseRateLimitStore(raw: string | undefined, nodeEnv: string): RateLimitStoreKind {
+  const value = raw?.trim();
+  if (!value) return nodeEnv === 'production' ? 'database' : 'memory';
+  if (value === 'database' || value === 'memory') return value;
+  throw new Error(`RATE_LIMIT_STORE must be "database" or "memory" (got "${raw}").`);
+}
+
+/** Twenty minutes: long enough for most interviews in progress to finish. */
+export const DEFAULT_SHUTDOWN_DRAIN_MS = 20 * 60_000;
+
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: parsePortSetting('PORT', env('PORT', '4000')),
@@ -43,6 +81,13 @@ export const config = {
   authSecret: env('AUTH_SECRET', 'dev-questor-secret-change-me-please-32chars'),
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
   signupApproverEmail: env('SIGNUP_APPROVER_EMAIL'),
+  /**
+   * How long a stopping process waits for interviews it is serving to end
+   * before it exits anyway. pm2's kill timeout must be longer than this, or
+   * pm2 SIGKILLs the process mid-drain (scripts/deploy.sh passes it).
+   */
+  shutdownDrainMs: parseDurationMsSetting('SHUTDOWN_DRAIN_MS', process.env.SHUTDOWN_DRAIN_MS, DEFAULT_SHUTDOWN_DRAIN_MS),
+  rateLimitStore: parseRateLimitStore(process.env.RATE_LIMIT_STORE, env('NODE_ENV', 'development')),
 
   llm: {
     provider: env('LLM_PROVIDER', 'heuristic'),

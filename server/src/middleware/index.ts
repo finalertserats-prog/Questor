@@ -195,6 +195,9 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
     logger.error({ ...err.record, requestId: req.requestId, path: req.path }, 'Corrupt stored JSON');
     return res.status(500).json({ error: 'Stored data is corrupted. Contact support with this request ID.', requestId: req.requestId });
   }
+  if (err instanceof HttpError && err.retryAfterSeconds !== undefined) {
+    res.setHeader('Retry-After', String(err.retryAfterSeconds));
+  }
   const safe = err instanceof HttpError ? err.message : 'Internal server error';
   // A code is ours too, and lets a client react to one specific refusal (no
   // ATS connected, say) without matching on the wording.
@@ -202,13 +205,23 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
   res.status(err instanceof HttpError ? status : 500).json({ error: safe, ...code, requestId: req.requestId });
 }
 
+export interface HttpErrorOptions {
+  readonly code?: string;
+  readonly retryAfterSeconds?: number;
+}
+
 export class HttpError extends Error {
   status: number;
   code?: string;
-  constructor(status: number, message: string, code?: string) {
+  /** Sent as Retry-After, for refusals the client should simply try again. */
+  retryAfterSeconds?: number;
+  /** The third argument is a machine-readable code, or options carrying one. */
+  constructor(status: number, message: string, detail?: string | HttpErrorOptions) {
     super(message);
     this.status = status;
-    this.code = code;
+    const options = typeof detail === 'string' ? { code: detail } : detail ?? {};
+    this.code = options.code;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 

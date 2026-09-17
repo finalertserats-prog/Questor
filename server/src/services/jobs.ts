@@ -27,6 +27,18 @@ export type JobOutcome = 'ran' | 'skipped' | 'failed';
  * recorded and alerted, and the caller's interval keeps ticking.
  */
 export async function runExclusive(name: string, ttlMs: number, fn: () => Promise<string | void>): Promise<JobOutcome> {
+  // A process that is shutting down must not start work it may not finish;
+  // the next instance will take the lease on its own first tick.
+  if (stopped) return 'skipped';
+  running += 1;
+  try {
+    return await runUnderLease(name, ttlMs, fn);
+  } finally {
+    running -= 1;
+  }
+}
+
+async function runUnderLease(name: string, ttlMs: number, fn: () => Promise<string | void>): Promise<JobOutcome> {
   const held = await acquireLease(name, ttlMs);
   if (!held) return 'skipped';
 
@@ -69,7 +81,45 @@ export function startJob(opts: {
   if (!opts.delayFirst) tick();
   const timer = setInterval(tick, opts.intervalMs);
   timer.unref?.();
-  return () => clearInterval(timer);
+  timers.add(timer);
+  return () => {
+    clearInterval(timer);
+    timers.delete(timer);
+  };
+}
+
+// Shutdown bookkeeping. `stopped` is one-way: a draining process never resumes
+// scheduling work.
+const timers = new Set<ReturnType<typeof setInterval>>();
+let stopped = false;
+let running = 0;
+
+/** Stop every job's timer and refuse further runs in this process. */
+export function stopAllJobs(): void {
+  stopped = true;
+  for (const timer of timers) clearInterval(timer);
+  timers.clear();
+}
+
+/** Job runs still in progress, which a drain waits for. */
+export function runningJobCount(): number {
+  return running;
+}
+
+/**
+ * Hand back every lease this instance holds, as the last step before exit, so
+ * the next instance can run the job at once instead of waiting out the TTL.
+ * Scoped to this holder: another instance's lease is never touched.
+ */
+export async function releaseHeldLeases(): Promise<void> {
+  await prisma.jobLease.updateMany({ where: { holder: INSTANCE_ID }, data: { expiresAt: new Date(0) } });
+}
+
+/** Test hook: undo stopAllJobs and forget running counts. */
+export function _resetJobsForTest(): void {
+  stopAllJobs();
+  stopped = false;
+  running = 0;
 }
 
 async function acquireLease(name: string, ttlMs: number): Promise<boolean> {
