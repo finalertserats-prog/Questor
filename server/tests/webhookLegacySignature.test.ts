@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { config, parseV1SignatureSetting } from '../src/config.js';
 import { wipe } from '../src/seed/demoData.js';
 import {
-  deliverDueWebhooks, deliveryHeaders, emitEvent, legacySignatureStatus, sendsLegacySignature, signPayload, signPayloadV2,
+  deliverDueWebhooks, deliveryHeaders, emitEvent, legacySignatureStatus, sendsLegacySignature, setWebhookNetworkForTest, signPayload, signPayloadV2,
 } from '../src/services/webhooks.js';
 
 /**
@@ -22,6 +22,7 @@ let adminToken = '';
 let tenantId = '';
 const auth = () => ({ Authorization: `Bearer ${adminToken}` });
 const calls: Array<{ headers: Record<string, string>; body: string }> = [];
+let restoreNetwork: (() => void) | null = null;
 // The first attempt runs in the background after emitEvent returns. Wait until
 // every delivery has finished it (delivered, or a failure recorded) instead of a
 // fixed pause, which a loaded machine outran.
@@ -51,15 +52,18 @@ beforeEach(async () => {
   config.webhookV1Signature = 'on';
   await prisma.webhookDelivery.deleteMany();
   await prisma.webhookEndpoint.deleteMany();
-  vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { headers: Record<string, string>; body: string }) => {
-    calls.push({ headers: init.headers, body: init.body });
-    return { ok: true, status: 200 } as Response;
-  }));
+  // Delivery connects to the DNS answer it checked, through its own request
+  // function rather than fetch; record what that request would have sent.
+  restoreNetwork = setWebhookNetworkForTest(async () => [{ address: '93.184.216.34', family: 4 }], async (_url, options, body) => {
+    calls.push({ headers: options.headers as Record<string, string>, body });
+    return { ok: true, status: 200 };
+  });
 });
 
 afterEach(() => {
   config.webhookV1Signature = 'on';
-  vi.unstubAllGlobals();
+  restoreNetwork?.();
+  restoreNetwork = null;
 });
 
 const legacyHook = () => prisma.webhookEndpoint.create({
