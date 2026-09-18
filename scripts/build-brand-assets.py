@@ -21,7 +21,8 @@ as artwork even though it matches the background.
 Written to web/public/brand/:
     questor-logo-{light,dark}.{webp,png}     full lockup with tagline
     questor-logo.{webp,png}                  = light full lockup (older links)
-    questor-lockup-{light,dark}.{webp,png}   mark + wordmark, no tagline
+    questor-lockup-{light,dark}.{webp,png}   mark left of the word, no tagline,
+                                             mark 256 px tall, for headers
     questor-wordmark-{light,dark}.png        the word only, 96 px tall
     questor-wordmark.{png,webp}              = light wordmark (sent emails)
     questor-mark.{png,webp}                  the mark, 512x512, transparent
@@ -67,6 +68,13 @@ BRAND_NAVY = (11, 16, 32)
 # The app's own dark surface (--desk under data-theme="dark" in app.css).
 APP_DARK_DESK = "#121218"
 LOCKUP_PAD = 24
+# The horizontal lockup, for headers 22-34 px tall: the word's capitals are
+# 0.58 of the mark's height (the stacked source runs 0.43, too small once the
+# pair sits side by side), with 0.22 of it between them.
+HORIZONTAL_MARK_HEIGHT = 256
+HORIZONTAL_CAP_RATIO = 0.58
+HORIZONTAL_GAP_RATIO = 0.22
+HORIZONTAL_PAD = 12
 WEBP_QUALITY = 90
 
 
@@ -199,6 +207,38 @@ def maskable(mark, side, safe_radius=0.39):
     return on_square(shrunk, side, fill=BRAND_NAVY + (255,))
 
 
+def cap_height(word):
+    """Rows from the top of the capital Q to the baseline, in `word` pixels.
+
+    The baseline is the lowest inked row of most columns; only the Q's tail
+    and the letters' overshoot fall below it."""
+    ink = np.asarray(word.getchannel("A")) > 128
+    inked = np.nonzero(ink.any(0))[0]
+    bottoms = [np.nonzero(ink[:, x])[0][-1] for x in inked]
+    return int(np.median(bottoms)) + 1
+
+
+def horizontal_lockup(mark, word, mark_height=HORIZONTAL_MARK_HEIGHT):
+    """Mark on the left, word on the right, the word's cap height centred on
+    the mark. Both are reductions of the source pixels."""
+    mark = fit_height(mark, mark_height)
+    scale = HORIZONTAL_CAP_RATIO * mark_height / cap_height(word)
+    if scale > 1.0:
+        raise SystemExit("horizontal lockup would enlarge the wordmark past the source")
+    cap = cap_height(word) * scale
+    word = fit_height(word, round(word.height * scale))
+    gap = round(HORIZONTAL_GAP_RATIO * mark_height)
+    centre = mark.height / 2
+    word_top = round(centre - cap / 2)
+    top = min(0, word_top)
+    bottom = max(mark.height, word_top + word.height)
+    pad_px = HORIZONTAL_PAD
+    canvas = Image.new("RGBA", (mark.width + gap + word.width + 2 * pad_px, bottom - top + 2 * pad_px), (0, 0, 0, 0))
+    canvas.alpha_composite(mark, (pad_px, pad_px - top))
+    canvas.alpha_composite(word, (pad_px + mark.width + gap, pad_px + word_top - top))
+    return canvas
+
+
 def fit_width(image, max_width):
     if image.width <= max_width:
         return image
@@ -273,8 +313,8 @@ def main():
     ):
         full = pad(trim(image), LOCKUP_PAD)
         save_both(fit_width(full, 1200), f"questor-logo-{theme}")
-        lockup = pad(rows(image, mark_band[0], word_band[1]), LOCKUP_PAD)
-        save_both(fit_width(lockup, 1200), f"questor-lockup-{theme}")
+        lockup = horizontal_lockup(rows(image, *mark_band), rows(image, *word_band))
+        save_both(lockup, f"questor-lockup-{theme}")
         word = fit_height(rows(image, word_band[0], word_band[1]), 96)
         save(word, f"questor-wordmark-{theme}.png")
         if theme == "light":
