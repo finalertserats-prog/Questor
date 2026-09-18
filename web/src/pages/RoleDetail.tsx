@@ -245,9 +245,9 @@ export function RoleDetail() {
         </div>
         <div className="muted small" style={{ marginTop: 6 }}>
           {role.catalogRole ? `Domain: ${role.catalogRole.domain.name}` : 'Not linked to catalog'}
-          {role.experienceBand ? ` ? Experience: ${role.experienceBand}` : ''}
-          {role.regionCode ? ` ? Region: ${role.regionCode}` : ''}
-          {role.techStack.length ? ` ? Tech: ${role.techStack.join(', ')}` : ''}
+          {role.experienceBand ? ` · Experience: ${role.experienceBand}` : ''}
+          {role.regionCode ? ` · Region: ${role.regionCode}` : ''}
+          {role.techStack.length ? ` · Tech: ${role.techStack.join(', ')}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>
       </div>

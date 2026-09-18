@@ -175,7 +175,7 @@ export function RoleCreate() {
           <input id={`${fieldId}-tech`} value={techDraft} onChange={(e) => setTechDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); } }} placeholder="Type and press Enter" />
           <button type="button" className="btn secondary" onClick={() => { setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); }}>Add</button>
         </div>
-        <div>{techStack.map((t) => <button key={t} type="button" className="chip" onClick={() => setTechStack(techStack.filter((x) => x !== t))}>{t} ?</button>)}</div>
+        <div>{techStack.map((t) => <button key={t} type="button" className="chip" aria-label={`Remove ${t}`} onClick={() => setTechStack(techStack.filter((x) => x !== t))}>{t} <span aria-hidden="true">×</span></button>)}</div>
 
         <label htmlFor={`${fieldId}-legacy-title`} style={{ display: 'none' }}>Role title (optional — inferred from the {source === 'ats' ? 'requisition' : 'JD'} if left blank)</label>
         <input id={`${fieldId}-legacy-title`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" style={{ display: 'none' }} />

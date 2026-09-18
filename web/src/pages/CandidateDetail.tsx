@@ -566,7 +566,7 @@ function CandidateProfileTab({
         <h2 className="card-title"><Icon name="candidate-profile" />Candidate Profile</h2>
         <div className="grid cols-3">
           <Stat label="Email" value={candidate.email} />
-          <Stat label="Phone" value={candidate.phone || '?'} />
+          <Stat label="Phone" value={candidate.phone || '—'} />
           <Stat label="Applied role" value={role ? `${role.title}${role.level ? ` · ${role.level}` : ''}` : 'Role not available'} />
         </div>
         {analysis?.profileVersion && (
