@@ -258,7 +258,7 @@ export function RoleDetail() {
       </div>
 
       <div className="card">
-        <h3 className="card-title"><Icon name="evidence" size={16} />Competencies</h3>
+        <h3 className="card-title"><Icon name="skills-assessment" size={16} />Competencies</h3>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Competencies">
         <table>
           <thead>

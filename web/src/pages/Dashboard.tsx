@@ -132,7 +132,7 @@ export function Dashboard() {
           <section aria-labelledby="dash-kpis" data-tour="kpis">
             <h2 id="dash-kpis" className="dash-heading">Key metrics</h2>
             <ul className="kpi-grid">
-              <Kpi icon="role" label="Open roles" value={k.openRoles} hint="Draft or approved" />
+              <Kpi icon="jobs" label="Open roles" value={k.openRoles} hint="Draft or approved" />
               <Kpi icon="candidates" label="Candidates" value={k.candidates} to="/candidates" hint="You can access" />
               <Kpi icon="funnel" label="In pipeline" value={k.activePipelines} hint="Active, not yet decided" />
               {/* Both counts include the human rounds, not only the AI sessions
@@ -140,7 +140,7 @@ export function Dashboard() {
                   for someone to discover by counting rows. */}
               <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="AI interviews and human rounds, next 7 days" />
               <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="AI interviews and human rounds, last 30 days" />
-              <Kpi icon="eye" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
+              <Kpi icon="human-review" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
               <Kpi
                 icon="user-x"
                 label="Stopped"
@@ -152,7 +152,7 @@ export function Dashboard() {
                   longer thing than the old label described. */}
               <Kpi icon="clock" label="Invite to completed" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
               <Kpi
-                icon="scale"
+                icon="decision"
                 label="Approved"
                 value={k.decisions.APPROVED}
                 hint={`${k.decisions.REJECTED} rejected · ${k.decisions.WITHDRAWN} withdrawn`}

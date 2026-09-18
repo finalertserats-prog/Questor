@@ -251,8 +251,8 @@ function Layout({ children }: { children: React.ReactNode }) {
             <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
 
             <div className="nav-group">Set up</div>
-            <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
-            <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="role" /><span className="nav-label">New role</span></NavLink>
+            <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="resume-upload" /><span className="nav-label">Add candidate</span></NavLink>
+            <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="job-description" /><span className="nav-label">New role</span></NavLink>
           </nav>
           <ProfileMenu />
         </div>
