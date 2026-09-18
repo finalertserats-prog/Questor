@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
+import { BrandLogo } from '../components/BrandLogo';
 
 interface OrgSummary {
   name: string;
@@ -71,7 +72,7 @@ export function OrgLogin() {
 
       <section className="landing-panel">
         <div className="card auth-card">
-          <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div>
+          <BrandLogo variant="lockup" size={34} className="auth-logo" />
           <div className="brand-line" aria-hidden="true" />
 
           {lookup === 'loading' && <p className="muted small">Finding your organisation…</p>}

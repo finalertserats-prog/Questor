@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
+import { BrandLogo } from './components/BrandLogo';
 import { ProfileMenu } from './components/ProfileMenu';
 import { ProductTour } from './components/ProductTour';
 import { TourProvider } from './components/tourContext';
@@ -206,10 +207,13 @@ function Layout({ children }: { children: React.ReactNode }) {
                   name off the screen. In the rail the wordmark is simply set
                   smaller, above the icons it names. */}
               <div className={brand.className} title={brand.label}>
-                {/* The mark carries no meaning the name does not: it is decorative
-                    here, and the name beside it is the accessible label. */}
-                <img className="logo-mark" src="/brand/questor-mark.webp" alt="" width={26} height={27} />
-                <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>
+                {/* Expanded, the lockup draws the name and is its accessible
+                    label. In the rail the mark alone is decorative and the name
+                    beside it, set in text, is the label. */}
+                {brand.artwork === 'lockup'
+                  ? <BrandLogo variant="lockup" size={28} className="logo-lockup" />
+                  : <BrandLogo variant="mark" size={30} decorative className="logo-mark" />}
+                {brand.showText && <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>}
               </div>
               <button
                 ref={railToggleRef}
@@ -312,8 +316,8 @@ function PublicOrApp({ children }: { children: React.ReactNode }) {
     <div className="public-shell">
       <header className="public-bar">
         <Link to="/login" className="public-brand">
-          <img src="/brand/questor-mark.webp" alt="" width={26} height={27} />
-          <span>Questor</span>
+          {/* The lockup draws the name; its alt text is the link's name. */}
+          <BrandLogo variant="lockup" size={28} />
         </Link>
         <Link to="/login" className="btn sm">Sign in</Link>
       </header>

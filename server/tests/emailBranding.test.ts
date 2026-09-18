@@ -11,10 +11,22 @@ import { config } from '../src/config.js';
  */
 
 describe('branded email', () => {
-  it('puts the wordmark, served from this deployment, at the top of the HTML body', () => {
+  it('puts the light wordmark, served from this deployment, at the top of the HTML body', () => {
     const message = brandedEmail({ to: 'a@b.local', subject: 'Hello', html: '<p>Body</p>', text: 'Body' });
 
-    expect(message.html).toContain(`${config.webOrigin}/brand/questor-wordmark.png`);
+    expect(message.html).toContain(`src="${config.webOrigin}/brand/questor-wordmark-light.png"`);
+  });
+
+  it('draws the wordmark at a third of its 96 px source height, so it is sharp on 3x screens', () => {
+    const message = brandedEmail({ to: 'a@b.local', subject: 'Hello', html: '<p>x</p>', text: 'x' });
+
+    expect(message.html).toMatch(/<img [^>]*height="32"[^>]*style="[^"]*height:32px/);
+  });
+
+  it('names the product in the wordmark’s alt text, for clients that block images', () => {
+    const message = brandedEmail({ to: 'a@b.local', subject: 'Hello', html: '<p>x</p>', text: 'x' });
+
+    expect(message.html).toMatch(/<img [^>]*alt="Questor"/);
   });
 
   it('keeps the caller’s HTML inside the wrapper', () => {

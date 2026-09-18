@@ -8,6 +8,7 @@ import {
 } from '../speech';
 import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } from './Portal';
 import { Icon } from '../components/Icon';
+import { BrandLogo } from '../components/BrandLogo';
 import { interviewerName } from '../components/candidateJourney';
 import { shouldCaptureAudio } from '../components/portalConsentModel';
 import {
@@ -537,7 +538,8 @@ export function InterviewRoom() {
     <div className="room">
       <header className="room-bar">
         <div className="row" style={{ gap: 12, alignItems: 'center' }}>
-          <span className="logo">QUES<span style={{ color: 'var(--brand)' }}>TOR</span></span>
+          {/* The room is dark in both themes, so it always takes the dark cut. */}
+          <BrandLogo variant="lockup" size={22} surfaceTone="dark" className="candidate-logo" />
           <span className="room-role">{info.roleTitle}</span>
         </div>
         <div className="row" style={{ gap: 12, alignItems: 'center' }}>

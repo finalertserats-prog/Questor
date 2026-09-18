@@ -1,4 +1,5 @@
 import { Icon, type IconName } from './Icon';
+import { BrandLogo } from './BrandLogo';
 
 /**
  * The welcome beside the sign-in card.
@@ -33,13 +34,9 @@ export function LandingHero() {
   return (
     <section className="landing-hero">
       <div className="landing-hero-copy">
-        <img
-          className="landing-logo"
-          src="/brand/questor-logo.webp"
-          alt="Questor — the intelligence behind every hire"
-          width={210}
-          height={161}
-        />
+        {/* The full logo carries the product line; it is the first thing
+            painted on the sign-in pages, so it alone asks to load first. */}
+        <BrandLogo variant="full" size={166} priority className="landing-logo" />
         <h2 className="landing-headline">Hire through evidence, not impressions.</h2>
         <p className="landing-lede">
           A job description becomes an agreed scorecard. The first interview happens here. Every rating
