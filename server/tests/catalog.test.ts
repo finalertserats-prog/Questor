@@ -289,6 +289,15 @@ describe('catalog review fixes, round 2', () => {
     expect(linked.catalogRole?.normalizedTitle).toBe(normalizeTitle(linked.title));
   });
 
+  it('treats a whitespace-only title as blank and infers the title from the JD', async () => {
+    const { user } = await makeTenantUser('spaces@catalog.local');
+    const d = await prisma.catalogDomain.create({ data: { slug: 'cloud4', name: 'Cloud Four', sortOrder: 1 } });
+
+    const res = await postRole(user.token, { domainId: d.id, title: '   ' });
+
+    expect(res.body.role.title.trim()).not.toBe('');
+  });
+
   it('refuses an unknown domain before any extraction is spent', async () => {
     const { user } = await makeTenantUser('baddomain@catalog.local');
 

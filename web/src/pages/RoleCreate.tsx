@@ -80,8 +80,8 @@ export function RoleCreate() {
     try {
       const catalogFields = { ...catalogLinkFields({ catalogRoleId, domainId }), experienceBand: experienceBand || undefined, regionCode: regionCode || undefined, techStack: [...techStack] };
       const resp = await api.post<CreateResp>('/roles', source === 'ats'
-        ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title || undefined, useLlm, ...catalogFields }
-        : { sourceType: 'paste', sourceText, title: title || undefined, useLlm, ...catalogFields });
+        ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title.trim() || undefined, useLlm, ...catalogFields }
+        : { sourceType: 'paste', sourceText, title: title.trim() || undefined, useLlm, ...catalogFields });
       if (resp.jdWarnings && resp.jdWarnings.length) {
         // The warnings are about fairness in the wording someone is about to
         // interview against. 1200ms was never enough to read them, and the page

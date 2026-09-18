@@ -71,7 +71,8 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   const body = createSchema.parse(req.body);
   const auth = req.auth!;
   let sourceText = body.sourceText;
-  let titleHint = body.title ?? '';
+  // Spaces are not a title: blank means "infer it from the JD or requisition".
+  let titleHint = (body.title ?? '').trim();
   const catalogRole = body.catalogRoleId ? await prisma.catalogRole.findFirst({
     where: { id: body.catalogRoleId, status: 'active' },
     select: { id: true, title: true },
