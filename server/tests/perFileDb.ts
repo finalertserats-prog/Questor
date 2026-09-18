@@ -34,5 +34,10 @@ if (postgresUrl?.startsWith('postgresql://')) {
   // same result, a fraction of the time.
   copyFileSync(join(dataDir, 'template.db'), join(dataDir, dbFile));
 
-  process.env.DATABASE_URL = `file:./data/${dbFile}`;
+  // Absolute, not `file:./data/...`. Prisma resolves a relative SQLite path
+  // against the directory of the schema the CLIENT was generated from, not the
+  // one this suite runs under. With node_modules shared between git worktrees,
+  // that sent every worktree's worker 1 to the same file in the main checkout,
+  // where suites running side by side wiped each other's fixtures mid-test.
+  process.env.DATABASE_URL = `file:${join(dataDir, dbFile).replace(/\\/g, '/')}`;
 }
