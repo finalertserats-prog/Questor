@@ -61,6 +61,7 @@ const FINISHED_MESSAGE = 'This interview has already started or finished, so thi
 const MAX_TURN_MS = 24 * 60 * 60 * 1000;
 /** Shorter than this and a person cannot act on it; the candidate is told so. */
 export const ACCOMMODATION_MIN_LENGTH = 10;
+export const ACCOMMODATION_MAX_LENGTH = 2000;
 const INTEGRITY_EVENT_TYPES = ['TAB_BLUR', 'FOCUS_LOST', 'PASTE_DETECTED', 'MULTI_TAB', 'DEVTOOLS_OPENED'] as const;
 const INTEGRITY_EVENT_STATES = ['CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS', 'CLOSING', 'PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED'];
 
@@ -264,19 +265,28 @@ portalRouter.post('/:token/integrity-event', asyncHandler(async (req, res) => {
 
 portalRouter.post('/:token/accept', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
-  if (inv.session.state === 'INVITED') {
-    await prisma.interviewSession.update({ where: { id: inv.sessionId }, data: { state: 'ACCEPTED' } });
+  // Conditional, so a double-tap accepts (and emits the webhook) once.
+  const { count } = inv.session.state === 'INVITED'
+    ? await prisma.interviewSession.updateMany({ where: { id: inv.sessionId, state: 'INVITED' }, data: { state: 'ACCEPTED' } })
+    : { count: 0 };
+  if (count === 1) {
     await prisma.invitation.update({ where: { id: inv.id }, data: { status: 'accepted', acceptedAt: new Date() } });
     await emitEvent(inv.session.tenantId, 'invitation.accepted', { sessionId: inv.sessionId });
     await logAudit({ tenantId: inv.session.tenantId, actorType: 'user', actorId: 'candidate', action: 'invitation.accepted', entityType: 'InterviewSession', entityId: inv.sessionId });
   }
-  res.json({ ok: true, state: 'ACCEPTED' });
+  // The state the session is really in. This always said ACCEPTED, so a
+  // candidate who had asked for a person, or already finished, was shown a page
+  // that thought they were about to begin.
+  const current = count === 1 ? null : await prisma.interviewSession.findUnique({ where: { id: inv.sessionId }, select: { state: true } });
+  res.json({ ok: true, state: current?.state ?? 'ACCEPTED' });
 }));
 
 const consentSchema = z.object({
   recordingConsent: z.boolean(),
   accepted: z.boolean(),
-  accommodationRequest: z.string().optional(),
+  // Bounded: it is stored on the session and shown to a person, and nothing a
+  // human is meant to read and act on needs to be longer than this.
+  accommodationRequest: z.string().max(ACCOMMODATION_MAX_LENGTH).optional(),
   // Whether the portal page the candidate consented on displayed the browser
   // monitoring notice. Policy can change between page load and consent.
   monitoringNoticeShown: z.boolean().optional(),

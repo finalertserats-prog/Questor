@@ -1,5 +1,7 @@
 // Interview session state machine (BRD Section 14.3).
 
+import { HttpError } from '../middleware/index.js';
+
 export const SESSION_STATES = [
   'PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'WAITING', 'CONNECTING',
   'DISCLOSURE', 'CONSENTED', 'WARMUP', 'ASSESSING', 'CANDIDATE_QUESTIONS',
@@ -50,17 +52,26 @@ const FORWARD: Record<string, string[]> = {
   NO_SHOW: ['RESCHEDULE_REQUIRED', 'CLOSED'],
   CANDIDATE_WITHDREW: ['CLOSED'],
   // Re-invitable, and the invitation is deliberately NOT burned, so a candidate
-  // whose network dropped can return to the same link.
-  INCOMPLETE: ['RESCHEDULE_REQUIRED', 'CLOSED'],
+  // whose network dropped can return to the same link. CLOSING is the one way
+  // into scoring: a reviewer explicitly deciding the partial transcript is fair
+  // to assess (POST /interviews/:id/assess-partial). Without it that endpoint
+  // could only ever fail.
+  INCOMPLETE: ['RESCHEDULE_REQUIRED', 'CLOSED', 'CLOSING'],
 };
 
 export function canTransition(from: string, to: string): boolean {
   return (FORWARD[from] ?? []).includes(to);
 }
 
+/**
+ * A 409, not a plain Error. Every caller reaches this from a request about a
+ * session whose state someone else (the candidate, a sweep, another recruiter)
+ * may have just changed — that is a conflict the caller can act on, and as a
+ * bare Error it surfaced as an unexplained 500.
+ */
 export function assertTransition(from: string, to: string): void {
   if (!canTransition(from, to)) {
-    throw new Error(`Illegal interview state transition: ${from} -> ${to}`);
+    throw new HttpError(409, `This interview is ${from}, so it cannot be moved to ${to}.`, 'illegal_transition');
   }
 }
 

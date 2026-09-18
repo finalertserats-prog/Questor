@@ -18,7 +18,7 @@ import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, transitionIfInState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
@@ -273,8 +273,6 @@ interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyn
   res.json({ invitation });
 }));
 
-// Schedule (FR-013)
-//
 /**
  * Return a handed-off interview to the candidate.
  *
@@ -323,6 +321,19 @@ interviewsRouter.post('/:id/reopen', requireCapability('interview:invite'), asyn
  * interviewer, not an unbounded loop of retakes.
  */
 const MAX_INTERVIEW_ATTEMPTS = 2;
+
+/**
+ * Before the interview: states the candidate's link can still start from (see
+ * STARTABLE_STATES in realtime/interviewEngine.ts), minus the ones where they
+ * are already connecting. PROVISIONED has no invitation yet, and is refused
+ * later with a clearer message.
+ */
+const RESENDABLE_STATES: ReadonlySet<string> = new Set([
+  'PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'WAITING', 'DISCLOSURE', 'CONSENTED',
+]);
+
+/** Everything that has not happened yet, plus an interview awaiting a new date. */
+const SCHEDULABLE_STATES: ReadonlySet<string> = new Set([...RESENDABLE_STATES, 'RESCHEDULE_REQUIRED']);
 
 interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   await assertDemoCreationCap(req.auth!.tenantId, 'interviews');
@@ -420,6 +431,12 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
  */
 interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
+  // The link only starts an interview from these states. Resending it for one
+  // that is live, finished, cancelled or handed to a person emails the
+  // candidate a link that opens onto "this interview is not open".
+  if (!RESENDABLE_STATES.has(session.state)) {
+    throw new HttpError(409, `This interview is ${session.state}, so there is no invitation to resend. Only an interview the candidate has not started yet can be resent.`);
+  }
   const invitation = await prisma.invitation.findUnique({ where: { sessionId: session.id } });
   if (!invitation) throw new HttpError(404, 'This interview has no invitation yet — send one first.');
   if (invitation.status === 'consumed') throw new HttpError(409, 'This interview is already complete.');
@@ -456,21 +473,31 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
   res.json({ resent: true, to: candidate!.email, portalUrl, deliveryNote: `Sent again to ${candidate!.email}.` });
 }));
 
-// Gated on interview:invite as the nearest existing scheduling-lane capability
-// (recruiter, manager, admin — not reviewer or auditor). There is no
-// `interview:schedule` capability yet; when one is added this and /cancel
-// should move to it rather than borrowing the invite grant.
-interviewsRouter.post('/:id/schedule', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+// Schedule (FR-013).
+//
+// Gated on interview:schedule, which recruiter, manager and admin hold (not
+// reviewer or auditor) — the same people who held the invite grant these two
+// routes borrowed before the capability existed.
+interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
   // A bare string became `new Date('x')`, an Invalid Date, a Prisma throw and a 500.
   const at = z.object({ scheduledAt: z.string().datetime({ offset: true }) }).parse(req.body).scheduledAt;
-  await prisma.interviewSession.update({ where: { id: session.id }, data: { scheduledAt: new Date(at) } });
+  // A date on a closed, cancelled or already-held interview is a promise to the
+  // candidate that nothing will keep. Conditional, so a session that moves on
+  // between the read and the write is refused rather than overwritten.
+  const { count } = await prisma.interviewSession.updateMany({
+    where: { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
+    data: { scheduledAt: new Date(at) },
+  });
+  if (count !== 1) {
+    throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled.`);
+  }
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at } });
   res.json({ ok: true, scheduledAt: at });
 }));
 
 // Cancel / reschedule (FR-014)
-interviewsRouter.post('/:id/cancel', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+interviewsRouter.post('/:id/cancel', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
   assertTransition(session.state, 'CANCELLED');
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'CANCELLED' } });
@@ -537,15 +564,22 @@ interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'
     throw new HttpError(400, 'A reason is required (at least 10 characters) — it is recorded with the assessment.');
   }
 
+  // Back to a state finalizeInterview accepts, then score it. Conditional on
+  // the session still being INCOMPLETE: a double-click or two reviewers at once
+  // both passed the check above, and an update-by-id let both walk the session
+  // into finalisation. Exactly one request wins this claim.
+  if (!await transitionIfInState(session.id, 'INCOMPLETE', 'CLOSING')) {
+    throw new HttpError(409, 'This interview is already being assessed. Refresh to see the result.');
+  }
+  const { assessmentId } = await finalizeInterview(session.id);
+
+  // Recorded after the assessment exists, so the trail never claims a person
+  // assessed a partial interview when the request was refused or failed.
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user',
     action: 'interview.assess_partial', entityType: 'InterviewSession', entityId: session.id,
-    after: { reason },
+    after: { reason, assessmentId },
   });
-
-  // Back to a state finalizeInterview accepts, then score it.
-  await setState(session.id, 'INCOMPLETE', 'CLOSING');
-  const { assessmentId } = await finalizeInterview(session.id);
   res.json({ assessmentId, partial: true });
 }));
 

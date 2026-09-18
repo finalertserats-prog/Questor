@@ -173,7 +173,7 @@ export async function setState(sessionId: string, from: string, to: string) {
  * decision: at most one caller can move a session out of a given state, and the
  * loser is told so rather than quietly proceeding on a stale assumption.
  */
-async function transitionIfInState(sessionId: string, from: string, to: string): Promise<boolean> {
+export async function transitionIfInState(sessionId: string, from: string, to: string): Promise<boolean> {
   assertTransition(from, to);
   const { count } = await prisma.interviewSession.updateMany({
     where: { id: sessionId, state: from },
