@@ -7,6 +7,7 @@ import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
 import { isDraining } from './services/drainState.js';
+import { probeDatabase } from './services/databaseProbe.js';
 import { beginRequest } from './realtime/liveSessions.js';
 import { orgsRouter } from './routes/orgs.js';
 import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
@@ -79,7 +80,21 @@ export function createApp() {
   // `draining` lets a deploy tell the old process, finishing its interviews,
   // from the new one. Status stays "ok" while draining: the process is still
   // serving the interviews in progress, and it is not down.
-  app.get('/api/health', (_req, res) => res.json({ ...health, draining: isDraining(), ts: new Date().toISOString() }));
+  //
+  // `database` is what makes "ok" mean the app works: a process that cannot
+  // reach its database answers 503 "unavailable", so uptime checks and the
+  // deploy's verify step both see the outage (2026-09-18: 15 minutes of failed
+  // sign-ins behind a green health check).
+  app.get('/api/health', async (_req, res) => {
+    const databaseUp = await probeDatabase();
+    res.status(databaseUp ? 200 : 503).json({
+      ...health,
+      status: databaseUp ? 'ok' : 'unavailable',
+      database: databaseUp ? 'ok' : 'unreachable',
+      draining: isDraining(),
+      ts: new Date().toISOString(),
+    });
+  });
 
   // Credential stuffing / brute force on the recruiter login.
   app.use('/api/auth/login', rateLimit({ name: 'login', windowMs: 15 * 60_000, max: 10, failClosed: true }));

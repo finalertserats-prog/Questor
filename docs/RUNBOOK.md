@@ -12,7 +12,7 @@ Defaults from `scripts/deploy.sh`: repo `/root/Questor/repo`, branch `claude/ope
 
 - **Open Admin → System health** (profile menu → Admin console; it is the first tab). Signed in as the operator (the `SIGNUP_APPROVER_EMAIL` address) it answers most of the checks below without SSH: database reachability and latency, migration state, process memory and uptime, drain state, disk free, running commit, the newest backup and its age, every background job against its own interval, email/AI/speech/rate-limit/retention configuration, the webhook v1 switch, and account requests waiting. Signed in as any other admin it shows that organisation's own checks only. Green needs nothing; amber says what to watch; red says what to do. It re-checks itself every minute and caches each answer for 15 s (`GET /api/admin/health`).
 - Only if something is red or amber, or the panel itself could not be checked:
-  - `GET /api/health`; compare `commit` with `git rev-parse HEAD` and the intended release.
+  - `GET /api/health`; compare `commit` with `git rev-parse HEAD` and the intended release. It runs `SELECT 1` (2 s limit): `database: "ok"` with 200, or 503 with `status: "unavailable"`, `database: "unreachable"` when the process cannot reach PostgreSQL.
   - `GET /api/admin/ops`; review job runs, webhook pending/due/failed counts, and model failures.
   - `pm2 status questor`; if restarts increased, read `pm2 logs questor --nostream --lines 100`. Restart counts are the one daily check the app cannot see about itself.
   - `df -h`; confirm a fresh `/root/Questor/backups/questor-nightly-*.dump`.
@@ -41,7 +41,7 @@ bash /tmp/deploy.sh
 
 The dry run is required. The script checks tooling, then looks for interviews with a turn in the last 15 minutes. By default (`--wait`) it waits for them to finish, re-checking every `WAIT_POLL_SEC` seconds (default 30) for up to `WAIT_MAX_MIN` minutes (default 45). If they are still going at that point it stops without changing anything. `--force` skips the wait and restarts at once, and the server's own drain still protects the interviews (see below). The dry run reports active interviews but does not wait.
 
-After the wait, the script backs up and restore-verifies before pulling. It then resets to `origin/claude/open-source-app-build-lnrqia`, runs root `npm ci` and generates the active Prisma client. On Postgres it runs `prisma migrate deploy`; the first time, it records `0001_baseline` as already applied if `_prisma_migrations` does not exist. SQLite dev hosts still use `prisma db push`. Then it builds server and web, swaps the web root and restarts pm2 with `--kill-timeout` (see below). Finally it checks that `/api/health` answers 200 with `draining` not true, and that the co-hosted `insyght.org` sites are unaffected. Migrations are not rolled back automatically.
+After the wait, the script backs up and restore-verifies before pulling. It then resets to `origin/claude/open-source-app-build-lnrqia`, runs root `npm ci` and generates the active Prisma client. On Postgres it runs `prisma migrate deploy`; the first time, it records `0001_baseline` as already applied if `_prisma_migrations` does not exist. SQLite dev hosts still use `prisma db push`. Then it builds server and web, swaps the web root and restarts pm2 with `--kill-timeout` (see below). Finally it checks that `/api/health` answers 200 with `database: "ok"` and `draining` not true (otherwise it rolls back), and that the co-hosted `insyght.org` sites are unaffected. Migrations are not rolled back automatically.
 
 ### The shutdown drain
 

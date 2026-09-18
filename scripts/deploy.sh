@@ -326,11 +326,14 @@ say "Verify"
 # had been 502 for three minutes. Static files prove nothing about the app.
 # A draining process also answers 200 — it is still serving the interviews in
 # progress — so "healthy" additionally means "not the old process on its way
-# out".
+# out". And it must reach its database: on 2026-09-18 a deploy with the wrong
+# Prisma client passed this step while every sign-in failed, because the
+# health check did not touch the database. It now does, and says so.
 verify_api() {
   local code
   code="$(curl -sk -o "$LOG_DIR/health.json" -w '%{http_code}' --max-time 20 "$APP_URL/api/health" || echo 000)"
   [ "$code" = "200" ] || return 1
+  grep -q '"database":"ok"' "$LOG_DIR/health.json" || return 1
   ! grep -q '"draining":true' "$LOG_DIR/health.json"
 }
 
