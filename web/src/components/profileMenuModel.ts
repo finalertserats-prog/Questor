@@ -31,6 +31,8 @@ type MenuEntry = ProfileMenuItem & {
 
 // admin:manage
 const ADMIN_ROLES = ['admin'] as const;
+// role:approve_scorecard
+const APPROVER_ROLES = ['admin', 'manager'] as const;
 // audit:read
 const AUDIT_ROLES = ['admin', 'auditor'] as const;
 
@@ -70,4 +72,9 @@ export function initialsFor(name: string): string {
   const first = words[0][0];
   const last = words.length > 1 ? words[words.length - 1][0] : '';
   return `${first}${last}`.toUpperCase();
+}
+
+/** Whether this role may approve scorecards and archive roles (role:approve_scorecard). */
+export function canApproveRoles(role: string): boolean {
+  return (APPROVER_ROLES as readonly string[]).includes(role);
 }

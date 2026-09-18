@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
+import { useAuth } from '../auth';
 import { Badge, Banner } from '../components/ui';
+import { StatusBadge } from '../components/StatusBadge';
+import { humanise } from '../components/statusModel';
+import { canApproveRoles } from '../components/profileMenuModel';
+import { approvePayload, archiveAction, isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
@@ -46,14 +51,24 @@ function catKind(c: Category): 'blue' | 'gray' {
 }
 export function RoleDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [data, setData] = useState<RoleResp | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   // The profile exactly as it was loaded. "Dirty" is the difference from this,
   // not a flag someone has to remember to set on every edit path.
   const [saved, setSaved] = useState('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  // A failed load has nothing to show, so it replaces the page. A failed save
+  // or approve must not: the editor, with the person's edits, stays put and
+  // the error sits above the actions.
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  // Hidden once the server says the archive endpoint is missing or not for
+  // this user, rather than offering a button that always fails.
+  const [archiveUnavailable, setArchiveUnavailable] = useState(false);
   const [notice, setNotice] = useState('');
   const [newFlag, setNewFlag] = useState('');
   const [flagProblem, setFlagProblem] = useState('');
@@ -61,30 +76,50 @@ export function RoleDetail() {
   // profile so that "" never reaches the scorecard as 0%.
   const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
 
-  // `cancelled` so a response for a role the person has already left cannot
-  // overwrite what they are looking at now.
-  const cancelledRef = useRef(false);
+  // Every load takes a ticket; only the newest ticket for the role still on
+  // screen may write, so a slow response for the previous role (or an older
+  // reload of this one) cannot overwrite what the person is looking at now.
+  const latestLoad = useRef<LoadTicket>({ id: undefined, seq: 0 });
+  // A ref as well as state: two clicks inside one render both see `approving` false.
+  const approvingRef = useRef(false);
 
-  const load = () => {
-    setLoading(true);
+  const load = (showSkeleton: boolean) => {
+    const ticket: LoadTicket = { id, seq: latestLoad.current.seq + 1 };
+    latestLoad.current = ticket;
+    if (showSkeleton) setLoading(true);
     api.get<RoleResp>(`/roles/${id}`)
       .then((d) => {
-        if (cancelledRef.current) return;
+        if (!isCurrentResponse(ticket, latestLoad.current)) return;
         const next = d.scorecards?.[0]?.profile ?? null;
         setData(d);
         setProfile(next);
         setSaved(JSON.stringify(next));
+        setLoadError('');
       })
       .catch((err: unknown) => {
-        if (!cancelledRef.current) setError(err instanceof Error ? err.message : 'Could not load this role.');
+        if (!isCurrentResponse(ticket, latestLoad.current)) return;
+        const message = err instanceof Error ? err.message : 'Could not load this role.';
+        // A refresh after a successful action that fails leaves the editor as it was.
+        if (showSkeleton) setLoadError(message);
+        else setActionError(`Done, but the page could not refresh: ${message}`);
       })
-      .finally(() => { if (!cancelledRef.current) setLoading(false); });
+      .finally(() => { if (isCurrentResponse(ticket, latestLoad.current)) setLoading(false); });
   };
 
   useEffect(() => {
-    cancelledRef.current = false;
-    load();
-    return () => { cancelledRef.current = true; };
+    // A different role: nothing of the previous one may stay on screen.
+    setData(null);
+    setProfile(null);
+    setSaved('');
+    setLoadError('');
+    setActionError('');
+    setNotice('');
+    setWeightDrafts({});
+    setNewFlag('');
+    setFlagProblem('');
+    setArchiveUnavailable(false);
+    load(true);
+    return () => { latestLoad.current = { id: undefined, seq: latestLoad.current.seq + 1 }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -101,7 +136,7 @@ export function RoleDetail() {
   }, [dirty]);
 
   if (loading) return <PageSkeleton label="Loading role…" cards={3} />;
-  if (error) return <Banner kind="error">{error}</Banner>;
+  if (loadError) return <Banner kind="error">{loadError}</Banner>;
   if (!data || !profile) {
     return (
       <EmptyState
@@ -116,6 +151,8 @@ export function RoleDetail() {
   const role = data.role;
   const scorecard = data.scorecards[0];
   const approved = scorecard?.status === 'approved';
+  const mayApprove = user ? canApproveRoles(user.role) : false;
+  const archive = archiveAction(role.status);
 
   const clearWeightDraft = (competencyId: string) =>
     setWeightDrafts((drafts) => Object.fromEntries(Object.entries(drafts).filter(([key]) => key !== competencyId)));
@@ -162,26 +199,57 @@ export function RoleDetail() {
   const save = async () => {
     if (weightsError || !dirty) return;
     setSaving(true);
-    setError('');
+    setActionError('');
     setNotice('');
     try {
       await api.put<{ scorecard: Scorecard }>(`/roles/${id}/scorecard`, { profile });
       setNotice('Changes saved.');
-      load();
+      load(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not save the scorecard.');
+      setActionError(err instanceof Error ? err.message : 'Could not save the scorecard.');
     } finally {
       setSaving(false);
     }
   };
 
   const approve = async () => {
-    setError('');
+    if (approvingRef.current || !scorecard) return;
+    approvingRef.current = true;
+    setApproving(true);
+    setActionError('');
+    setNotice('');
     try {
-      await api.post<{ scorecard: Scorecard }>(`/roles/${id}/approve`, {});
-      load();
+      // Names the version on screen, so a colleague's newer save is not what gets approved.
+      await api.post<{ scorecard: Scorecard }>(`/roles/${id}/approve`, approvePayload(scorecard));
+      load(false);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not approve the scorecard.');
+      setActionError(err instanceof Error ? err.message : 'Could not approve the scorecard.');
+    } finally {
+      approvingRef.current = false;
+      setApproving(false);
+    }
+  };
+
+  const changeStatus = async () => {
+    if (archiving) return;
+    setArchiving(true);
+    setActionError('');
+    setNotice('');
+    try {
+      await api.patch(`/roles/${id}/status`, { status: archive.next });
+      setNotice(archive.next === 'archived'
+        ? 'Role archived. It no longer shows in the active roles list.'
+        : 'Role restored to the active roles list.');
+      load(false);
+    } catch (err: unknown) {
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+        setArchiveUnavailable(true);
+        setActionError('Archiving is not available for this role.');
+      } else {
+        setActionError(err instanceof Error ? err.message : 'Could not change the role status.');
+      }
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -190,11 +258,7 @@ export function RoleDetail() {
       <PageHeader
         icon="role"
         title={role.title}
-        badge={
-          <span className={`badge ${approved ? 'green' : 'amber'} status-badge`}>
-            <Icon name={approved ? 'check-circle' : 'draft'} size={13} />{role.status}
-          </span>
-        }
+        badge={<StatusBadge kind="role" value={role.status} />}
         actions={
           <>
             {/* Marked with words rather than a colour: nothing to save, and a
@@ -216,17 +280,23 @@ export function RoleDetail() {
             <button
               className="btn"
               onClick={approve}
-              disabled={approved || dirty}
+              disabled={approved || dirty || approving}
               title={dirty ? 'Save your changes first — approving would approve the saved version, not these edits.' : undefined}
             >
-              <Icon name="check-circle" size={16} />
-              {approved ? 'Approved' : 'Approve scorecard'}
+              <Icon name={approving ? 'hourglass' : 'check-circle'} size={16} />
+              {approved ? 'Approved' : approving ? 'Approving…' : 'Approve scorecard'}
             </button>
+            {mayApprove && !archiveUnavailable && (
+              <button type="button" className="btn ghost" onClick={() => void changeStatus()} disabled={archiving}>
+                <Icon name={archiving ? 'hourglass' : role.status === 'archived' ? 'refresh' : 'lock'} size={16} />
+                {archiving ? 'Saving…' : archive.label}
+              </button>
+            )}
           </>
         }
       />
 
-      {error && <Banner kind="error">{error}</Banner>}
+      {actionError && <Banner kind="error">{actionError}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
       {dirty && <p className="muted small">Unsaved changes — they are lost if you leave this page.</p>}
       {approved && (
@@ -276,9 +346,10 @@ export function RoleDetail() {
             {(profile.competencies ?? []).map((c, i) => (
               <tr key={c.id}>
                 <td>{c.name}</td>
-                <td><Badge kind={catKind(c.category)}>{c.category}</Badge></td>
+                <td><Badge kind={catKind(c.category)}>{humanise(c.category)}</Badge></td>
                 <td>
                   <select
+                    aria-label={`Classification for ${c.name}`}
                     value={c.classification}
                     onChange={(e) => {
                       // A non-scoring competency has its weight zeroed, so any
@@ -287,7 +358,7 @@ export function RoleDetail() {
                       updateComp(i, { classification: e.target.value as Classification });
                     }}
                   >
-                    {CLASSIFICATIONS.map((k) => <option key={k} value={k}>{k}</option>)}
+                    {CLASSIFICATIONS.map((k) => <option key={k} value={k}>{humanise(k)}</option>)}
                   </select>
                 </td>
                 <td style={{ minWidth: 120 }}>
