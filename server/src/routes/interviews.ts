@@ -134,7 +134,7 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   });
   res.json({ sessions: sessions.map((s) => ({
     id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt,
-    candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title },
+    candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
     recommendation: s.assessments[0]?.recommendation ?? null, assessmentId: s.assessments[0]?.id ?? null,
     invited: !!s.invitation, createdAt: s.createdAt,
   })) });

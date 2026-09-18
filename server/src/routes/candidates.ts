@@ -82,6 +82,7 @@ candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   });
   res.json({ candidates: candidates.map((c) => ({
     id: c.id, fullName: c.fullName, email: c.email, roleId: c.roleId, roleTitle: c.role?.title ?? null,
+    roleLevel: c.role?.level ?? null, roleRegionCode: c.role?.regionCode ?? null, roleExperienceBand: c.role?.experienceBand ?? null, roleCreatedAt: c.role?.createdAt ?? null,
     fit: c.profiles[0] ? parseJsonOptional<Record<string, unknown> | null>(c.profiles[0].fitScoreJson, null, { model: 'CandidateProfileVersion', id: c.profiles[0].id, field: 'fitScoreJson' }) : null,
     latestInterview: c.interviews[0] ? { id: c.interviews[0].id, state: c.interviews[0].state } : null,
     createdAt: c.createdAt,
