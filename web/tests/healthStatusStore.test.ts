@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  claimHealth, verdictFor, isStale, navHealthLabel, navHealthWord, publishHealth, readHealth, resetHealth, showsNavHealthWord, subscribeHealth,
+  claimHealth, verdictFor, navHealthWord, publishHealth, readHealth, resetHealth, showsNavHealthWord, subscribeHealth,
 } from '../src/components/healthStatusStore';
 
 /**
- * The sidebar's System health marker: the verdict it shows, the words that
- * carry it, and when it asks again.
+ * The verdict the System health tab shows: whose it is and the words that
+ * carry it.
  */
 
 beforeEach(() => resetHealth());
@@ -36,25 +36,7 @@ describe('the shared verdict', () => {
   });
 });
 
-describe('isStale', () => {
-  it('asks when there has never been an answer', () => {
-    expect(isStale({ status: 'unchecked', checkedAt: 0 }, 5_000, 60_000)).toBe(true);
-  });
-
-  it('keeps a fresh answer', () => {
-    expect(isStale({ status: 'ok', checkedAt: 10_000 }, 30_000, 60_000)).toBe(false);
-  });
-
-  it('asks again once the answer is as old as the limit', () => {
-    expect(isStale({ status: 'ok', checkedAt: 10_000 }, 70_000, 60_000)).toBe(true);
-  });
-});
-
 describe('the words', () => {
-  it('names a healthy system', () => {
-    expect(navHealthLabel('ok')).toBe('System health: Healthy');
-  });
-
   it('names a problem', () => {
     expect(navHealthWord('fail')).toBe('Problem');
   });
@@ -67,15 +49,15 @@ describe('the words', () => {
     expect(navHealthWord('unavailable')).toBe('Unknown');
   });
 
-  it('keeps a healthy system to a dot', () => {
+  it('keeps a healthy system quiet', () => {
     expect(showsNavHealthWord('ok')).toBe(false);
   });
 
-  it('spells out a problem beside the link', () => {
+  it('spells out a problem on the tab', () => {
     expect(showsNavHealthWord('fail')).toBe(true);
   });
 
-  it('spells out a failed check beside the link', () => {
+  it('spells out a failed check on the tab', () => {
     expect(showsNavHealthWord('unavailable')).toBe(true);
   });
 });

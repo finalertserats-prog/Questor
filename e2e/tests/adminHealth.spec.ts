@@ -37,16 +37,16 @@ test('the admin page leads with system health', async ({ page }) => {
 });
 
 /**
- * The console is reached from the sidebar, where its health marker is seen from
- * every page, and is split into tabs so no section is found by scrolling.
+ * The console is reached from the profile menu, not the sidebar, and is split
+ * into tabs so no section is found by scrolling.
  */
-test('the sidebar leads to the console, and each section is its own tab', async ({ page }) => {
+test('the profile menu leads to the console, and each section is its own tab', async ({ page }) => {
   await page.goto('/');
   await dismissTour(page);
 
-  const adminLink = page.getByRole('navigation').getByRole('link', { name: /Admin console, System health: (Healthy|Watch|Problem|Unknown|Checking)/ });
-  await expect(adminLink).toBeVisible();
-  await adminLink.click();
+  await expect(page.getByRole('navigation').getByRole('link', { name: /Admin console/ })).toHaveCount(0);
+  await page.getByRole('button', { name: /Demo Recruiter/ }).click();
+  await page.getByRole('menuitem', { name: 'Admin console' }).click();
   await expect(page).toHaveURL(/\/admin$/);
 
   const tabs = page.getByRole('tablist', { name: 'Admin console sections' });

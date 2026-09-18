@@ -114,7 +114,7 @@ The React/Vite client lives under `web/src`:
 - `api/*` for API client and response modeling.
 - Pure model modules include score/status/tour/dashboard/journey/pipeline/system-health helpers and are testable without a browser.
 - `components/SystemHealthPanel.tsx` is the Admin console's first tab (`/admin`), re-checks every 60 s while the tab is visible and cancels its request on unmount; its wording and ordering are in `components/systemHealthModel.ts`.
-- The Admin console is split into sub-tabs, one section each, each at its own address (`/admin/connectors`, `/admin/webhooks`, …; `components/adminTabsModel.ts`). Admins reach it from the sidebar's Admin group, whose icon carries the overall health verdict (`components/useNavHealth.ts`, re-checked every 5 min, or reused from the open panel's last answer through `components/healthStatusStore.ts`, which only ever shows a verdict to the user it was checked for).
+- The Admin console (profile menu → Admin console) is split into sub-tabs, one section each, each at its own address (`/admin/connectors`, `/admin/webhooks`, …; `components/adminTabsModel.ts`). The System health tab's label carries the panel's verdict ("Problem", "Watch") from whichever tab is open, through `components/healthStatusStore.ts`, which only ever shows a verdict to the user it was checked for.
 
 The interview room uses browser speech in the zero-key path and the server for session state and turns.
 

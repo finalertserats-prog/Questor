@@ -1,6 +1,5 @@
 /* ==========================================================================
-   System health: the Admin console's first tab, the console's tab strip, and
-   the health marker on the sidebar's Admin entry.
+   System health: the Admin console's first tab, and the console's tab strip.
    --------------------------------------------------------------------------
    A check's state is marked three ways, none of which is a tinted block: the
    word ("Problem" / "Watch" / "Healthy" / "Note"), the badge's own shape from
@@ -233,8 +232,7 @@
 
 /* "Problem" / "Watch" / "Unknown" beside the System health tab: a word in the
    status colour with a rule before it, readable from any tab. */
-.admin-tab-flag,
-.nav-health-word {
+.admin-tab-flag {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -249,63 +247,12 @@
   outline-offset: 4px;
 }
 
-/* --------------------------------------------------------------------------
-   The sidebar marker: a dot on the Admin icon, so it survives the rail.
-   Its colour is never the only signal — the word sits beside the label, and
-   the link's accessible name says the status.
-   -------------------------------------------------------------------------- */
-.nav-icon-health {
-  position: relative;
-  display: inline-flex;
-}
-
-.nav-health-dot {
-  position: absolute;
-  top: -3px;
-  right: -4px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid var(--sheet);
-  box-sizing: content-box;
-}
-
-.nav-health-dot[data-status='unchecked'] {
-  display: none;
-}
-.nav-health-dot[data-status='ok'] {
-  background: var(--pass);
-}
-.nav-health-dot[data-status='warn'] {
-  background: var(--hold);
-}
-.nav-health-dot[data-status='fail'] {
-  background: var(--stop);
-}
-/* Unknown is hollow: not a colour of its own, the absence of an answer. */
-.nav-health-dot[data-status='unavailable'] {
-  background: var(--sheet);
-  box-shadow: inset 0 0 0 1.5px var(--ink-3);
-}
-
-/* The word sits under the name rather than beside it, so "Admin console"
-   never wraps to make room for it. */
-.nav-label-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-}
-.nav-health-word[data-status='fail'],
 .admin-tab-flag[data-status='fail'] {
   color: var(--stop);
 }
-.nav-health-word[data-status='warn'],
 .admin-tab-flag[data-status='warn'] {
   color: var(--hold);
 }
-.nav-health-word[data-status='unavailable'],
 .admin-tab-flag[data-status='unavailable'] {
   color: var(--ink-3);
 }
-

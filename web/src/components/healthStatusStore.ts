@@ -1,9 +1,9 @@
 import { STATUS_WORD, type OverallStatus } from './systemHealthModel';
 
 /**
- * The one overall health verdict the sidebar shows on every page, shared with
- * the System health panel so the two can never disagree: whichever of them
- * checks last publishes here, and the other reads it.
+ * The System health panel's overall verdict, shared with the Admin console's
+ * tab strip so the System health tab can say "Problem" from whichever tab is
+ * open. The panel publishes; the tab reads.
  *
  * Kept free of React so the wording is tested on its own
  * (web/tests/healthStatusStore.test.ts).
@@ -47,10 +47,6 @@ export function resetHealth(): void {
   publishHealth(INITIAL);
 }
 
-export function healthOwner(): string | null {
-  return owner;
-}
-
 /** Hands the store to this session; a different user starts from no answer. */
 export function claimHealth(userId: string | null): void {
   if (userId === owner) return;
@@ -66,11 +62,6 @@ export function verdictFor(health: NavHealth, userId: string | null): NavHealth 
   return userId !== null && userId === owner ? health : INITIAL;
 }
 
-/** Whether an answer this old should be asked again. */
-export function isStale(health: NavHealth, now: number, maxAgeMs: number): boolean {
-  return health.checkedAt === 0 || now - health.checkedAt >= maxAgeMs;
-}
-
 /** The status in words, so the marker never depends on its colour. */
 export function navHealthWord(status: NavHealthStatus): string {
   if (status === 'unchecked') return 'Checking';
@@ -78,15 +69,7 @@ export function navHealthWord(status: NavHealthStatus): string {
   return STATUS_WORD[status === 'ok' ? 'ok' : status];
 }
 
-/** The link's accessible name and tooltip: what it is, then how it is. */
-export function navHealthLabel(status: NavHealthStatus): string {
-  return `System health: ${navHealthWord(status)}`;
-}
-
-/**
- * A healthy system reads calm — only a dot. Anything that needs a look also
- * says so in words beside the link, so it is seen without hovering.
- */
+/** A healthy system reads calm; anything that needs a look says so on the tab. */
 export function showsNavHealthWord(status: NavHealthStatus): boolean {
   return status === 'warn' || status === 'fail' || status === 'unavailable';
 }

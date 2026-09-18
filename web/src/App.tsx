@@ -3,9 +3,6 @@ import { Link, Navigate, Route, Routes, NavLink, useLocation } from 'react-route
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
 import { ProfileMenu } from './components/ProfileMenu';
-import { canManageAdmin } from './components/profileMenuModel';
-import { navHealthLabel, navHealthWord, showsNavHealthWord } from './components/healthStatusStore';
-import { useNavHealth } from './components/useNavHealth';
 import { ProductTour } from './components/ProductTour';
 import { TourProvider } from './components/tourContext';
 import {
@@ -98,10 +95,6 @@ function Layout({ children }: { children: React.ReactNode }) {
   // toggle — but only after the toggle stops being inert.
   const restoreFocusRef = useRef(false);
   const location = useLocation();
-  const { user } = useAuth();
-  const isAdmin = user ? canManageAdmin(user.role) : false;
-  // Admins see the system's health from every page, not only inside the console.
-  const health = useNavHealth(isAdmin && user ? user.id : null);
 
   // Only the drawer overlays anything. Docked, the sidebar sits beside the
   // content, so there is no backdrop and nothing is made inert.
@@ -260,31 +253,6 @@ function Layout({ children }: { children: React.ReactNode }) {
             <div className="nav-group">Set up</div>
             <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
             <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="role" /><span className="nav-label">New role</span></NavLink>
-
-            {isAdmin && (
-              <>
-                <div className="nav-group">Admin</div>
-                {/* The marker on the icon is the system's health, so it is seen
-                    from every page and in the rail; anything short of healthy is
-                    also said in words beside the label. */}
-                <NavLink
-                  to="/admin"
-                  aria-label={`Admin console, ${navHealthLabel(health.status)}`}
-                  data-tip={tip(`Admin console · ${navHealthLabel(health.status)}`)}
-                >
-                  <span className="nav-icon-health">
-                    <Icon name="admin" />
-                    <span className="nav-health-dot" data-status={health.status} aria-hidden="true" />
-                  </span>
-                  <span className="nav-label nav-label-stack">
-                    Admin console
-                    {showsNavHealthWord(health.status) && (
-                      <span className="nav-health-word" data-status={health.status} aria-hidden="true">{navHealthWord(health.status)}</span>
-                    )}
-                  </span>
-                </NavLink>
-              </>
-            )}
           </nav>
           <ProfileMenu />
         </div>

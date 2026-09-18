@@ -1,4 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
+import { claimHealth } from '../components/healthStatusStore';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
@@ -49,6 +50,8 @@ export function Admin() {
   const navigate = useNavigate();
   const activeTab = adminTabFromParam(tab);
   const { user } = useAuth();
+  // The health verdict on the tab strip belongs to this user's session only.
+  useEffect(() => { claimHealth(user?.id ?? null); }, [user?.id]);
   const [providers, setProviders] = useState<Providers | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [executions, setExecutions] = useState<ModelExecution[]>([]);
