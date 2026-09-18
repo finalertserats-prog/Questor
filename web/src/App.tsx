@@ -24,6 +24,7 @@ import { SignupQueue } from './pages/SignupQueue';
 import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
 import { RoleDetail } from './pages/RoleDetail';
+import { RolesList } from './pages/RolesList';
 import { CandidateCreate } from './pages/CandidateCreate';
 import { CandidatesList } from './pages/CandidatesList';
 import { CandidateDetail } from './pages/CandidateDetail';
@@ -248,6 +249,7 @@ function Layout({ children }: { children: React.ReactNode }) {
                 one is the far more frequent errand — and for a long time it was
                 the impossible one: creation had a nav entry, retrieval had none. */}
             <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
+            <NavLink to="/roles" end data-tip={tip('Roles')} data-tour="nav-roles"><Icon name="role" /><span className="nav-label">Roles</span></NavLink>
             <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
 
             <div className="nav-group">Set up</div>
@@ -343,6 +345,7 @@ export function App() {
           must not require an account. */}
       <Route path="/feedback-consent/:token" element={<FeedbackConsent />} />
       <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/roles" element={<Protected><RolesList /></Protected>} />
       <Route path="/roles/new" element={<Protected><RoleCreate /></Protected>} />
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />
       <Route path="/candidates" element={<Protected><CandidatesList /></Protected>} />

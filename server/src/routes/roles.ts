@@ -10,6 +10,7 @@ import { assertCanAccessRole, assignRole, roleScope } from '../services/access.j
 import { ATS_EXTERNAL_ID } from '../providers/ats/index.js';
 import { existingImport, lookupRequisition, type RequisitionLookup } from '../services/atsRecords.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { getRoleMetrics } from '../services/roleMetrics.js';
 
 export const rolesRouter = Router();
 rolesRouter.use(authenticate);
@@ -30,6 +31,13 @@ rolesRouter.get('/', asyncHandler(async (req, res) => {
     latestScorecard: r.scorecards[0] ? { id: r.scorecards[0].id, version: r.scorecards[0].version, status: r.scorecards[0].status } : null,
     candidates: r._count.candidates, updatedAt: r.updatedAt,
   })) });
+}));
+
+const metricsQuerySchema = z.object({}).strict();
+
+rolesRouter.get('/metrics', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  metricsQuerySchema.parse(req.query);
+  res.json(await getRoleMetrics(req.auth!));
 }));
 
 const createSchema = z.object({

@@ -46,6 +46,7 @@ describe('TOUR_STEPS', () => {
       'welcome',
       'nav-dashboard',
       'nav-candidates',
+      'nav-roles',
       'nav-interviews',
       'nav-add-candidate',
       'nav-new-role',
@@ -69,7 +70,7 @@ describe('TOUR_STEPS', () => {
 
   it('marks every sidebar step so the phone drawer can be opened for it', () => {
     const sidebarIds = TOUR_STEPS.filter((step) => step.inSidebar).map((step) => step.id);
-    expect(sidebarIds).toEqual(['nav-dashboard', 'nav-candidates', 'nav-interviews', 'nav-add-candidate', 'nav-new-role', 'profile-menu', 'finish']);
+    expect(sidebarIds).toEqual(['nav-dashboard', 'nav-candidates', 'nav-roles', 'nav-interviews', 'nav-add-candidate', 'nav-new-role', 'profile-menu', 'finish']);
   });
 
   it('explains the medallion stages including the AI-run Silver round', () => {

@@ -40,6 +40,13 @@ export const TOUR_STEPS: readonly TourStep[] = [
     body: 'Everyone you are hiring, with their role, fit score and latest interview state. Open a candidate to see their profile, résumé, interviews and their place in the hiring pipeline.',
   },
   {
+    id: 'nav-roles',
+    anchor: 'nav-roles',
+    inSidebar: true,
+    title: 'Roles',
+    body: 'Every role you can see, with its hiring funnel and the counts behind candidate movement.',
+  },
+  {
     id: 'nav-interviews',
     anchor: 'nav-interviews',
     inSidebar: true,

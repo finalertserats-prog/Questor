@@ -31,6 +31,12 @@ interface Metrics {
     id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
     candidate: { id: string; name: string }; role: { id: string; title: string };
   }[];
+  roles?: {
+    kpis: { activeRoles: number; rolesWithoutCandidates: number; rolesWithReviewBacklog: number };
+    topByApplied: { id: string; title: string; count: number }[];
+    topByInterviewed: { id: string; title: string; count: number }[];
+    minSample: number;
+  };
 }
 
 interface KpiProps {
@@ -93,6 +99,8 @@ export function Dashboard() {
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
   const stopped = stateItems.find((g) => g.key === 'stopped')?.count ?? 0;
   const weeklyData = trimSparseWeeks(metrics?.interviewsPerWeek ?? []);
+  const topRoleApplied: BarItem[] = (metrics?.roles?.topByApplied ?? []).map((r) => ({ key: r.id, label: r.title, count: r.count, tone: 'tone-accent' }));
+  const topRoleInterviewed: BarItem[] = (metrics?.roles?.topByInterviewed ?? []).map((r) => ({ key: r.id, label: r.title, count: r.count, tone: 'tone-pass' }));
   const truncation = truncationNote(metrics?.truncated);
 
   return (
@@ -157,6 +165,13 @@ export function Dashboard() {
                 value={k.decisions.APPROVED}
                 hint={`${k.decisions.REJECTED} rejected · ${k.decisions.WITHDRAWN} withdrawn`}
               />
+              {metrics.roles && (
+                <>
+                  <Kpi icon="role" label="Active roles" value={metrics.roles.kpis.activeRoles} to="/roles" hint="Draft or approved" />
+                  <Kpi icon="inbox" label="Roles with no candidates" value={metrics.roles.kpis.rolesWithoutCandidates} to="/roles" hint="Active roles" />
+                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles" hint="At least one review-ready interview" />
+                </>
+              )}
             </ul>
           </section>
 
@@ -206,6 +221,32 @@ export function Dashboard() {
                 )}
               </div>
             </div>
+            {metrics.roles && (
+              <div className="grid cols-2">
+                <div className="card">
+                  <div className="spread row" style={{ marginBottom: 8 }}>
+                    <h3 style={{ margin: 0 }}>Top roles by candidates</h3>
+                    <Link className="btn sm secondary" to="/roles">View all roles</Link>
+                  </div>
+                  {topRoleApplied.length === 0 ? (
+                    <EmptyState compact icon="role" title="No role candidates yet" message="Add candidates to roles and the busiest roles will appear here." />
+                  ) : (
+                    <HorizontalBarChart items={topRoleApplied} title="Top roles by candidates" summary="Candidates attached to roles." />
+                  )}
+                </div>
+                <div className="card">
+                  <div className="spread row" style={{ marginBottom: 8 }}>
+                    <h3 style={{ margin: 0 }}>Top roles by completed interviews</h3>
+                    <Link className="btn sm secondary" to="/roles">View all roles</Link>
+                  </div>
+                  {topRoleInterviewed.length === 0 ? (
+                    <EmptyState compact icon="interviews" title="No completed interviews yet" message="Completed interviews will rank roles here." />
+                  ) : (
+                    <HorizontalBarChart items={topRoleInterviewed} title="Top roles by completed interviews" summary="Distinct candidates with completed interviews." />
+                  )}
+                </div>
+              </div>
+            )}
             {/* Said once, under everything it applies to: these charts and the
                 averages above them are not a picture of the whole tenant. */}
             {truncation && <p className="muted small">{truncation}</p>}

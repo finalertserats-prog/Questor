@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
 import { getDashboardMetrics } from '../services/dashboardMetrics.js';
+import { getRoleMetrics } from '../services/roleMetrics.js';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(authenticate);
@@ -18,5 +19,18 @@ const metricsQuerySchema = z.object({
 // away from candidate detail. Counts are object-scoped in the service.
 dashboardRouter.get('/metrics', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const query = metricsQuerySchema.parse(req.query);
-  res.json(await getDashboardMetrics(req.auth!, query));
+  const [metrics, roleMetrics] = await Promise.all([
+    getDashboardMetrics(req.auth!, query),
+    getRoleMetrics(req.auth!),
+  ]);
+  res.json({
+    ...metrics,
+    truncated: metrics.truncated || roleMetrics.truncated,
+    roles: {
+      kpis: roleMetrics.kpis,
+      topByApplied: roleMetrics.topByApplied,
+      topByInterviewed: roleMetrics.topByInterviewed,
+      minSample: roleMetrics.minSample,
+    },
+  });
 }));

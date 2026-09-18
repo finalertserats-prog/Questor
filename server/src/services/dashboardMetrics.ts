@@ -16,7 +16,7 @@ const COMPLETED_WINDOW_DAYS = 30;
 const TURNAROUND_WINDOW_DAYS = 90;
 
 /** States that mean the AI interview actually ran to its end. */
-const COMPLETED_STATES = ['PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED'];
+export const COMPLETED_STATES = ['PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED'];
 /** A scheduled time on a session in one of these states is not an upcoming interview. */
 const NOT_UPCOMING_STATES = [...EXCEPTION_STATES, ...COMPLETED_STATES];
 const DECISIONS = ['APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
@@ -51,6 +51,17 @@ export interface DashboardMetrics {
     id: string; state: string; createdAt: Date; scheduledAt: Date | null; completedAt: Date | null;
     candidate: { id: string; name: string }; role: { id: string; title: string };
   }>;
+  /** Added by the dashboard route from the role metrics service. */
+  readonly roles?: {
+    readonly kpis: {
+      readonly activeRoles: number;
+      readonly rolesWithoutCandidates: number;
+      readonly rolesWithReviewBacklog: number;
+    };
+    readonly topByApplied: ReadonlyArray<{ readonly id: string; readonly title: string; readonly count: number }>;
+    readonly topByInterviewed: ReadonlyArray<{ readonly id: string; readonly title: string; readonly count: number }>;
+    readonly minSample: number;
+  };
 }
 
 /** Index of the rolling 7-day bucket a time falls in, newest = weeks - 1; -1 when outside. */

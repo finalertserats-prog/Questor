@@ -29,15 +29,13 @@ import { prisma } from '../src/db.js';
 import { hashPassword, signToken } from '../src/services/auth.js';
 import { hashSignupDecisionToken, mintSignupDecisionToken } from '../src/services/signup.js';
 import { runRetentionSweep } from '../src/services/dataRights.js';
+import { wipe as wipeAll } from '../src/seed/demoData.js';
 
 const app = createApp();
 const PASSWORD = 'correct-horse-battery-staple';
 
 async function wipe() {
-  await prisma.auditEvent.deleteMany();
-  await prisma.signupRequest.deleteMany();
-  await prisma.user.deleteMany();
-  await prisma.tenant.deleteMany();
+  await wipeAll();
 }
 
 async function counts() {
