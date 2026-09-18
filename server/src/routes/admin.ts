@@ -6,6 +6,7 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
+import { isKnownTimeZone } from '../services/roundTime.js';
 import { capabilitiesOf, isRoleName, ROLES } from '../domain/capabilities.js';
 import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
@@ -516,6 +517,9 @@ const policySchema = z.object({
   // Which provider creates meeting links for human rounds. Credentials stay
   // deployment-wide in server/.env; this only chooses among them.
   roundMeetingProvider: z.enum(ROUND_MEETING_PROVIDERS).optional(),
+  // IANA zone the organisation works in (e.g. "Asia/Kolkata"); times in
+  // scheduling emails are stated in it.
+  timeZone: z.string().trim().max(64).refine(isKnownTimeZone, 'Use an IANA time zone such as "Asia/Kolkata".').optional(),
 }).strict();
 
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {

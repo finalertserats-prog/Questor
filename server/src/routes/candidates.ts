@@ -70,8 +70,12 @@ function sanitizeFilename(original: string): string {
 // candidate:read is asked for here as it is on /api/interviews and the
 // dashboard: names, addresses and resume text are candidate detail, and an
 // auditor holds no capability to see them.
+// A repeated `?roleId=a&roleId=b` arrives as an array; cast to string it
+// reached Prisma as one and failed there as a 500.
+const listQuerySchema = z.object({ roleId: z.string().min(1).max(64).optional() });
+
 candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
-  const roleId = req.query.roleId as string | undefined;
+  const { roleId } = listQuerySchema.parse(req.query);
   // `roleId` is ANDed with the caller's scope, so it can only ever NARROW the
   // result set. Previously it was the whole filter beside tenantId, which turned
   // a display convenience into "enumerate any requisition's pipeline by id".

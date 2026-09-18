@@ -12,6 +12,7 @@ import { getEmail } from '../providers/email/index.js';
 import { brandedEmail, headerSafe } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { formatRoundTime } from '../services/roundTime.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
@@ -191,12 +192,14 @@ const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.char
  * was actually delivered — the console provider delivers nothing, and saying
  * "sent" regardless is how links silently go unseen.
  */
-async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
+async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; timeZone: string | undefined; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
   const email = getEmail();
   if (!email.delivers) {
     return { delivered: false, link: o.link, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Use the link here.` };
   }
-  const when = o.scheduledAt.toUTCString();
+  // In the tenant's zone when it has set one: a bare GMT time is converted in
+  // the reader's head, and wrongly whenever they forget to.
+  const when = formatRoundTime(o.scheduledAt, o.timeZone);
   // Stage labels are configurable, so strip control characters before they
   // reach a subject line or plain-text body, where a line break could forge
   // headers or text. HTML escaping below does not cover these.
@@ -344,8 +347,12 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   const link = aiRound
     ? `${config.webOrigin}/interviews/${round.sessionId}/observe`
     : `${config.webOrigin}/candidates/${pipeline.candidateId}`;
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { policyJson: true } });
+  const { timeZone } = parseJsonOptional<{ timeZone?: unknown }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: tenantId, field: 'policyJson' });
   const notification = await notifyScheduler({
-    to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt, link, aiRound, meetingUrl: meeting?.url ?? null,
+    to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt,
+    timeZone: typeof timeZone === 'string' ? timeZone : undefined,
+    link, aiRound, meetingUrl: meeting?.url ?? null,
   });
 
   const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });

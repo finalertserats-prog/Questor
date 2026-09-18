@@ -150,3 +150,17 @@ describe('session tokens', () => {
     expect(verifyToken(unsigned)).toBeNull();
   });
 });
+
+describe('filtering the candidate list', () => {
+  it('answers 400, not 500, when roleId is given more than once', async () => {
+    const res = await request(app).get(`/api/candidates?roleId=${roleId}&roleId=${roleId}`).set(auth(adminToken));
+
+    expect(res.status).toBe(400);
+  });
+
+  it('still filters by a single roleId', async () => {
+    const res = await request(app).get(`/api/candidates?roleId=${roleId}`).set(auth(adminToken));
+
+    expect(res.status).toBe(200);
+  });
+});
