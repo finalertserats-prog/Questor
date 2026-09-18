@@ -100,18 +100,29 @@ export async function callPeer(peer: PeerId, prompt: string, opts: PeerCallOptio
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const { command, args } = peerCommand(peer, prompt);
+      const limitMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const out = await new Promise<string>((resolve, reject) => {
-        execFile(
+        const child = execFile(
           command,
           args,
-          { timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true },
+          { timeout: limitMs, maxBuffer: MAX_BUFFER, windowsHide: true },
           (err, stdout, stderr) => {
+            clearTimeout(hardStop);
             // A non-zero exit with usable stdout still counts: these wrappers
             // sometimes exit non-zero after printing a perfectly good answer.
             if (err && !String(stdout).trim()) return reject(new Error(`${peer} failed: ${err.message} ${String(stderr).slice(0, 400)}`));
             resolve(String(stdout));
           },
         );
+        // execFile's own timeout kills the process it started — the wrapper
+        // script — while the CLI that wrapper launched keeps the pipe open, so
+        // the callback never fires and the sweep stops for good. A sweep sat on
+        // its first cell for four hours that way. This deadline gives up on the
+        // call and takes the whole tree down with it.
+        const hardStop = setTimeout(() => {
+          killTree(child.pid);
+          reject(new Error(`${peer} did not answer within ${Math.round(limitMs / 1000)}s`));
+        }, limitMs + HARD_STOP_GRACE_MS);
       });
       const text = stripAnsi(out).trim();
       if (!text) throw new Error(`${peer} returned nothing`);
@@ -130,6 +141,27 @@ export async function callPeer(peer: PeerId, prompt: string, opts: PeerCallOptio
 }
 
 const RETRY_BACKOFF_MS = 5_000;
+
+/** Time past the peer's own limit before the call is abandoned and its tree killed. */
+const HARD_STOP_GRACE_MS = 15_000;
+
+/**
+ * Kill a peer process and everything it started.
+ *
+ * A bare `child.kill()` leaves the CLI the wrapper launched running, still
+ * holding the pipe this call is waiting on. Windows kills the tree through
+ * taskkill; elsewhere SIGKILL on the wrapper is enough, because the harness
+ * runs the peers through short shell wrappers that do not outlive it.
+ */
+function killTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => undefined);
+    else process.kill(pid, 'SIGKILL');
+  } catch {
+    // Already gone, or never ours to kill. Either way the call is abandoned.
+  }
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

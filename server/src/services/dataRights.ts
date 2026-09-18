@@ -45,10 +45,29 @@ import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredO
  */
 export const DEFAULT_RETENTION_DAYS = 180;
 
-/** Effective default window, env-overridable. Invalid values fall back. */
+/**
+ * Effective default window, env-overridable. A value that is not a whole number
+ * of days is ignored and said out loud.
+ *
+ * The round-trip check is the point: parseInt reads "2w" as 2, so a typo in a
+ * deploy variable shortened the window from 180 days to two and the next sweep
+ * deleted interviews nowhere near the end of their life — deletion being the one
+ * thing no later fix can undo. Same reasoning as INCOMPLETE_AFTER_MINUTES in
+ * services/incompleteInterviews.ts.
+ */
 export function retentionDays(): number {
-  const raw = Number.parseInt(process.env.RETENTION_DEFAULT_DAYS ?? '', 10);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_RETENTION_DAYS;
+  const configured = process.env.RETENTION_DEFAULT_DAYS;
+  if (configured === undefined) return DEFAULT_RETENTION_DAYS;
+  const trimmed = configured.trim();
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== trimmed) {
+    logger.warn(
+      { value: configured, usingDays: DEFAULT_RETENTION_DAYS },
+      'RETENTION_DEFAULT_DAYS is not a positive whole number of days; ignoring it and using the default',
+    );
+    return DEFAULT_RETENTION_DAYS;
+  }
+  return parsed;
 }
 
 const DAY_MS = 86_400_000;
