@@ -65,7 +65,7 @@ describe('form labels', () => {
     const html = renderRoleCreate();
     const targets = [...html.matchAll(/<label[^>]*\bfor="([^"]+)"/g)].map((m) => m[1]);
     const missing = targets.filter((id) => !html.includes(`id="${id}"`));
-    expect({ labels: targets.length, missing }).toEqual({ labels: 2, missing: [] });
+    expect({ labels: targets.length, missing }).toEqual({ labels: 7, missing: [] });
   });
 
   it('names the new-role fields by their visible captions', () => {
@@ -74,3 +74,4 @@ describe('form labels', () => {
     expect(jd && new RegExp(`<textarea[^>]*id="${jd[1]}"`).test(html)).toBe(true);
   });
 });
+

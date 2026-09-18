@@ -35,6 +35,9 @@ export interface RoleFunnel {
   readonly title: string;
   readonly level: string;
   readonly status: string;
+  readonly domain: string | null;
+  readonly regionCode: string | null;
+  readonly experienceBand: string | null;
   readonly applied: number;
   readonly interviewInvited: number;
   readonly interviewed: number;
@@ -112,7 +115,7 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
 
   const roles = await prisma.role.findMany({
     where: role,
-    select: { id: true, title: true, level: true, status: true, updatedAt: true },
+    select: { id: true, title: true, level: true, status: true, updatedAt: true, regionCode: true, experienceBand: true, catalogRole: { select: { domain: { select: { name: true } } } } },
     orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     take: rowLimit,
   });
@@ -198,6 +201,9 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
       title: r.title,
       level: r.level,
       status: r.status,
+      domain: r.catalogRole?.domain.name ?? null,
+      regionCode: r.regionCode,
+      experienceBand: r.experienceBand,
       applied: applied.get(r.id) ?? 0,
       interviewInvited: invited.get(r.id) ?? 0,
       interviewed: interviewed.get(r.id) ?? 0,

@@ -9,6 +9,9 @@ export interface RoleFunnel {
   readonly title: string;
   readonly level: string;
   readonly status: string;
+  readonly domain: string | null;
+  readonly regionCode: string | null;
+  readonly experienceBand: string | null;
   readonly applied: number;
   readonly interviewInvited: number;
   readonly interviewed: number;
@@ -36,13 +39,14 @@ export interface RoleMetricsPayload {
 
 export function filterRoles(
   roles: readonly RoleFunnel[],
-  options: { readonly query?: string; readonly status?: RoleStatusFilter },
+  options: { readonly query?: string; readonly status?: RoleStatusFilter; readonly domain?: string },
 ): RoleFunnel[] {
   const status = options.status ?? 'all';
   const q = (options.query ?? '').trim().toLowerCase();
   return roles.filter((role) => {
     const statusMatches = status === 'all' ? role.status !== 'archived' : role.status === status;
     if (!statusMatches) return false;
+    if (options.domain && role.domain !== options.domain) return false;
     if (!q) return true;
     return role.title.toLowerCase().includes(q) || role.level.toLowerCase().includes(q);
   });
@@ -85,4 +89,12 @@ export function formatAdvanceRate(rate: number | null): string {
 
 export function formatTurnaround(hours: number | null): string {
   return hours === null ? 'Too few to rate' : formatHours(hours);
+}
+
+export function domainsFromRoles(roles: readonly RoleFunnel[]): readonly string[] {
+  return [...new Set(roles.flatMap((r) => (r.domain ? [r.domain] : [])))].sort((a, b) => a.localeCompare(b));
+}
+
+export function roleCatalogLine(role: RoleFunnel): string {
+  return role.domain ? [role.domain, role.regionCode, role.experienceBand].filter(Boolean).join(' ? ') : 'Not linked to catalog';
 }

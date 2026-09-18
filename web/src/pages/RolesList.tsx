@@ -8,6 +8,7 @@ import { PageHeader } from '../components/PageHeader';
 import { PageSkeleton } from '../components/Skeleton';
 import { Badge, Banner } from '../components/ui';
 import {
+  domainsFromRoles,
   filterRoles,
   formatAdvanceRate,
   formatTurnaround,
@@ -16,6 +17,7 @@ import {
   type RoleMetricsPayload,
   type RoleSortKey,
   type RoleStatusFilter,
+  roleCatalogLine,
   type SortDirection,
 } from '../components/rolesListModel';
 
@@ -42,6 +44,7 @@ export function RolesList() {
   const [roles, setRoles] = useState<readonly RoleFunnel[]>([]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<RoleStatusFilter>('all');
+  const [domain, setDomain] = useState('');
   const [sortKey, setSortKey] = useState<RoleSortKey>('title');
   const [direction, setDirection] = useState<SortDirection>('asc');
   const [loading, setLoading] = useState(true);
@@ -60,9 +63,10 @@ export function RolesList() {
     return () => { cancelled = true; };
   }, []);
 
+  const domains = useMemo(() => domainsFromRoles(roles), [roles]);
   const visible = useMemo(
-    () => sortRoles(filterRoles(roles, { query, status }), sortKey, direction),
-    [roles, query, status, sortKey, direction],
+    () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined }), sortKey, direction),
+    [roles, query, status, domain, sortKey, direction],
   );
 
   const setSort = (key: RoleSortKey) => {
@@ -98,6 +102,10 @@ export function RolesList() {
             <option value="approved">Approved</option>
             <option value="archived">Archived</option>
           </select>
+          <select value={domain} onChange={(e) => setDomain(e.target.value)} aria-label="Filter domain">
+            <option value="">All domains</option>
+            {domains.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
           <span className="muted small">
             {visible.length === roles.length ? `${roles.length} role${roles.length === 1 ? '' : 's'}` : `${visible.length} of ${roles.length}`}
           </span>
@@ -117,7 +125,7 @@ export function RolesList() {
             icon="search"
             title="No matches"
             message="No role matches the current filters."
-            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); }}><Icon name="close" size={14} />Clear filters</button>}
+            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); setDomain(''); }}><Icon name="close" size={14} />Clear filters</button>}
           />
         ) : (
           <>
@@ -149,7 +157,7 @@ export function RolesList() {
                     <tr key={role.id} data-testid="role-row">
                       <td>
                         <Link to={`/roles/${role.id}`}>{role.title}</Link>
-                        <div className="muted small">{role.level || 'No level set'}</div>
+                        <div className="muted small">{roleCatalogLine(role)}</div>
                       </td>
                       <td>{statusBadge(role.status)}</td>
                       <td>{role.applied}</td>

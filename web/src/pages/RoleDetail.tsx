@@ -35,7 +35,7 @@ interface Profile {
 }
 interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; }
 interface RoleResp {
-  role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string };
+  role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; techStack: readonly string[] };
   scorecards: Scorecard[];
 }
 
@@ -242,6 +242,12 @@ export function RoleDetail() {
               own reads as a truncated one. */}
           {role.level} · {role.location} · {role.employmentType}
           {scorecard && hasScore(scorecard.version) ? ` · scorecard v${scorecard.version}` : ''}
+        </div>
+        <div className="muted small" style={{ marginTop: 6 }}>
+          {role.catalogRole ? `Domain: ${role.catalogRole.domain.name}` : 'Not linked to catalog'}
+          {role.experienceBand ? ` ? Experience: ${role.experienceBand}` : ''}
+          {role.regionCode ? ` ? Region: ${role.regionCode}` : ''}
+          {role.techStack.length ? ` ? Tech: ${role.techStack.join(', ')}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>
       </div>

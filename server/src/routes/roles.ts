@@ -11,6 +11,7 @@ import { ATS_EXTERNAL_ID } from '../providers/ats/index.js';
 import { existingImport, lookupRequisition, type RequisitionLookup } from '../services/atsRecords.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
+import { BANDS } from '../engines/experienceBands.js';
 
 export const rolesRouter = Router();
 rolesRouter.use(authenticate);
@@ -24,12 +25,12 @@ rolesRouter.get('/', asyncHandler(async (req, res) => {
   const roles = await prisma.role.findMany({
     where: await roleScope(req.auth!),
     orderBy: { updatedAt: 'desc' },
-    include: { scorecards: { orderBy: { version: 'desc' }, take: 1 }, _count: { select: { candidates: true } } },
+    include: { ...roleShapeInclude, scorecards: { orderBy: { version: 'desc' }, take: 1 }, _count: { select: { candidates: true } } },
   });
   res.json({ roles: roles.map((r) => ({
     id: r.id, title: r.title, level: r.level, status: r.status,
     latestScorecard: r.scorecards[0] ? { id: r.scorecards[0].id, version: r.scorecards[0].version, status: r.scorecards[0].status } : null,
-    candidates: r._count.candidates, updatedAt: r.updatedAt,
+    candidates: r._count.candidates, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }),
   })) });
 }));
 
@@ -50,6 +51,10 @@ const createSchema = z.object({
     .optional(),
   atsRequisitionId: z.string().regex(ATS_EXTERNAL_ID, 'An ATS requisition id is letters, numbers, dashes or underscores.').optional(),
   useLlm: z.boolean().default(true),
+  catalogRoleId: z.string().cuid().optional(),
+  experienceBand: z.enum(BANDS.map((b) => b.id) as [string, ...string[]]).optional(),
+  regionCode: z.string().optional(),
+  techStack: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
 });
 
 // Create a role from JD / ATS + auto-extract a draft scorecard (FR-001..004)
@@ -61,6 +66,16 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   const auth = req.auth!;
   let sourceText = body.sourceText;
   let titleHint = body.title ?? '';
+  const catalogRole = body.catalogRoleId ? await prisma.catalogRole.findFirst({
+    where: { id: body.catalogRoleId, status: 'active' },
+    select: { id: true, title: true },
+  }) : null;
+  if (body.catalogRoleId && !catalogRole) throw new HttpError(400, 'Unknown or inactive catalog role.');
+  if (catalogRole && !titleHint.trim()) titleHint = catalogRole.title;
+  if (body.regionCode) {
+    const region = await prisma.catalogRegion.findFirst({ where: { code: body.regionCode, status: 'active' }, select: { code: true } });
+    if (!region) throw new HttpError(400, 'Unknown or inactive catalog region.');
+  }
 
   // From the caller's own ATS only. This used to read any requisition id from
   // one deployment-wide ATS before any tenant check.
@@ -90,6 +105,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
           tenantId: auth.tenantId, title: extraction.title, level: extraction.level,
           location: extraction.location, employmentType: extraction.employmentType,
           sourceType: body.sourceType, sourceText, status: 'draft', createdById: auth.userId,
+          catalogRoleId: body.catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, techStackJson: JSON.stringify(body.techStack),
         },
       });
       // With scoping in force an unassigned role is admin-only, so without this
@@ -117,17 +133,18 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
     return;
   }
   const { role, scorecard } = created;
+  const fullCreatedRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   await logAudit({
     tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user', action: 'role.created', entityType: 'Role', entityId: role.id,
     after: { title: role.title, ...(ats ? { source: 'ats' } : {}) },
   });
 
-  res.status(201).json({ role: shapeRole(role), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings });
+  res.status(201).json({ role: shapeRole(fullCreatedRole), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings });
 }));
 
 /** A repeat import is not an error: it answers with the role the first one made. */
 async function respondWithExistingRole(roleId: string, res: Response) {
-  const role = await prisma.role.findUniqueOrThrow({ where: { id: roleId } });
+  const role = await prisma.role.findUniqueOrThrow({ where: { id: roleId }, include: roleShapeInclude });
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId }, orderBy: { version: 'desc' } });
   res.status(200).json({
     role: shapeRole(role),
@@ -140,8 +157,9 @@ async function respondWithExistingRole(roleId: string, res: Response) {
 // Get role + latest scorecard
 rolesRouter.get('/:id', asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
+  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const scorecards = await prisma.roleScorecardVersion.findMany({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
-  res.json({ role: shapeRole(role), scorecards: scorecards.map(shapeScorecard) });
+  res.json({ role: shapeRole(fullRole), scorecards: scorecards.map(shapeScorecard) });
 }));
 
 // Bounded on purpose. This used to be `z.any()`, and one Save could store a
@@ -151,6 +169,7 @@ const updateScorecardSchema = z.object({ profile: roleSuccessProfileSchema });
 // Edit the draft scorecard (calibrate competencies/weights) — creates a new version if approved one exists
 rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
+  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const { profile } = updateScorecardSchema.parse(req.body);
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to update');
@@ -172,6 +191,7 @@ rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyn
 // the separation-of-duties gap this gate exists to close.
 rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
+  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to approve');
   // Unreadable is not "no competencies": that message sends the author to edit
@@ -198,6 +218,7 @@ rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), as
 // Validate: JD language warnings without mutating the role (FR-005)
 rolesRouter.get('/:id/validate', asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
+  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const extraction = extractRoleHeuristic(role.sourceText, role.title);
   res.json({ jdWarnings: extraction.jdWarnings });
 }));
@@ -208,9 +229,22 @@ rolesRouter.get('/:id/validate', asyncHandler(async (req, res) => {
 // `assertCanAccessRole` is the only way in, and it already answers 404 (not 403)
 // so an out-of-scope id is never confirmed to exist.
 
-function shapeRole(r: any) {
-  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt };
+const roleShapeInclude = { catalogRole: { include: { domain: true } } } as const;
+
+type ShapedRole = {
+  readonly id: string; readonly title: string; readonly level: string; readonly location: string; readonly employmentType: string;
+  readonly status: string; readonly sourceType: string; readonly updatedAt: Date; readonly experienceBand: string | null;
+  readonly regionCode: string | null; readonly techStackJson: string;
+  readonly catalogRole: { readonly id: string; readonly title: string; readonly domain: { readonly id: string; readonly name: string } } | null;
+};
+
+function shapeCatalogRole(role: ShapedRole['catalogRole']) {
+  return role ? { id: role.id, title: role.title, domain: { id: role.domain.id, name: role.domain.name } } : null;
 }
-function shapeScorecard(s: any) {
+
+function shapeRole(r: ShapedRole) {
+  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }) };
+}
+function shapeScorecard(s: { readonly id: string; readonly version: number; readonly status: string; readonly profileJson: string; readonly approvedAt: Date | null }) {
   return { id: s.id, version: s.version, status: s.status, profile: parseJsonStrict(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' }), approvedAt: s.approvedAt };
 }

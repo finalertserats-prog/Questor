@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
@@ -7,8 +7,13 @@ import { Banner } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
+import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
+import { canCreateRoleFromCatalog, parseTechStackInput } from '../components/catalogModel';
 
 type Source = 'paste' | 'ats';
+interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
+interface Region { readonly code: string; readonly name: string }
+interface Band { readonly id: string; readonly display: string }
 
 interface CreateResp {
   /** True when the requisition had been imported before; the role is that one. */
@@ -28,12 +33,34 @@ export function RoleCreate() {
   const [sourceText, setSourceText] = useState('');
   const [title, setTitle] = useState('');
   const [useLlm, setUseLlm] = useState(true);
+  const [domains, setDomains] = useState<readonly Domain[]>([]);
+  const [regions, setRegions] = useState<readonly Region[]>([]);
+  const [bands, setBands] = useState<readonly Band[]>([]);
+  const [domainId, setDomainId] = useState('');
+  const [experienceBand, setExperienceBand] = useState('');
+  const [regionCode, setRegionCode] = useState('');
+  const [catalogRoleId, setCatalogRoleId] = useState('');
+  const [techStack, setTechStack] = useState<readonly string[]>([]);
+  const [techDraft, setTechDraft] = useState('');
+  const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [warnings, setWarnings] = useState<{ term: string; suggestion: string }[]>([]);
   // Set once the role exists: the warnings are shown against it, and the way on
   // is a button rather than a timer.
   const [createdRoleId, setCreatedRoleId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.get<readonly Domain[]>('/catalog/domains'), api.get<readonly Region[]>('/catalog/regions'), api.get<readonly Band[]>('/catalog/experience-bands')])
+      .then(([d, r, b]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); } })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load catalog fields.'); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectedDomain = domains.find((d) => d.id === domainId);
+  const sourceReady = source === 'ats' ? isAtsId(requisitionId.trim()) : Boolean(sourceText.trim());
+  const canSubmit = canCreateRoleFromCatalog({ catalogRoleId, title, source, sourceReady, domainId, experienceBand, regionCode });
 
   // The sample loads only into an empty form, and fills the title as well as
   // the description: loading one without the other produced a role named for
@@ -51,9 +78,10 @@ export function RoleCreate() {
     setError('');
     setSubmitting(true);
     try {
+      const catalogFields = { catalogRoleId: catalogRoleId || undefined, experienceBand: experienceBand || undefined, regionCode: regionCode || undefined, techStack: [...techStack] };
       const resp = await api.post<CreateResp>('/roles', source === 'ats'
-        ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title || undefined, useLlm }
-        : { sourceType: 'paste', sourceText, title: title || undefined, useLlm });
+        ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title || undefined, useLlm, ...catalogFields }
+        : { sourceType: 'paste', sourceText, title: title || undefined, useLlm, ...catalogFields });
       if (resp.jdWarnings && resp.jdWarnings.length) {
         // The warnings are about fairness in the wording someone is about to
         // interview against. 1200ms was never enough to read them, and the page
@@ -78,6 +106,7 @@ export function RoleCreate() {
       <PageHeader icon="role" title="New Role" subtitle="Paste a job description, or import a requisition from your ATS, and Questor drafts a scorecard for you to review." />
 
       {error && <Banner kind="error">{error}</Banner>}
+      {notice && <Banner kind="info">{notice}</Banner>}
       {warnings.length > 0 && (
         <Banner kind="info">
           <div>Job description warnings (fixing before you interview improves fairness):</div>
@@ -109,8 +138,47 @@ export function RoleCreate() {
           </label>
         </fieldset>
 
-        <label htmlFor={`${fieldId}-title`}>Role title (optional — inferred from the {source === 'ats' ? 'requisition' : 'JD'} if left blank)</label>
-        <input id={`${fieldId}-title`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" />
+        <label htmlFor={`${fieldId}-domain`}>Domain</label>
+        <select id={`${fieldId}-domain`} value={domainId} onChange={(e) => { setDomainId(e.target.value); setCatalogRoleId(''); }}>
+          <option value="">Choose a domain</option>
+          {domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+
+        <label htmlFor={`${fieldId}-experience`}>Experience</label>
+        <select id={`${fieldId}-experience`} value={experienceBand} onChange={(e) => setExperienceBand(e.target.value)}>
+          <option value="">Choose an experience band</option>
+          {bands.map((b) => <option key={b.id} value={b.id}>{b.display}</option>)}
+        </select>
+
+        <label htmlFor={`${fieldId}-region`}>Region</label>
+        <select id={`${fieldId}-region`} value={regionCode} onChange={(e) => setRegionCode(e.target.value)}>
+          <option value="">Choose a region</option>
+          {regions.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
+        </select>
+
+        <label htmlFor={`${fieldId}-title`}>Role title (choose from catalog or add a new shared title)</label>
+        <RoleTitleCombobox
+          inputId={`${fieldId}-title`}
+          domainId={domainId}
+          domainName={selectedDomain?.name ?? 'this domain'}
+          value={title}
+          techStack={techStack}
+          disabled={!domainId}
+          onTitleChange={(value) => { setTitle(value); setCatalogRoleId(''); }}
+          onSelect={(role: CatalogRoleOption) => { setCatalogRoleId(role.id); setTitle(role.title); }}
+          onNotice={setNotice}
+        />
+        <div className="muted small">Required for the new catalog path. Paste JD can still infer a title only when you do not select a catalog role.</div>
+
+        <label htmlFor={`${fieldId}-tech`}>Tech stack (optional)</label>
+        <div className="row" style={{ gap: 8 }}>
+          <input id={`${fieldId}-tech`} value={techDraft} onChange={(e) => setTechDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); } }} placeholder="Type and press Enter" />
+          <button type="button" className="btn secondary" onClick={() => { setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); }}>Add</button>
+        </div>
+        <div>{techStack.map((t) => <button key={t} type="button" className="chip" onClick={() => setTechStack(techStack.filter((x) => x !== t))}>{t} ?</button>)}</div>
+
+        <label htmlFor={`${fieldId}-legacy-title`} style={{ display: 'none' }}>Role title (optional — inferred from the {source === 'ats' ? 'requisition' : 'JD'} if left blank)</label>
+        <input id={`${fieldId}-legacy-title`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" style={{ display: 'none' }} />
 
         {source === 'ats' ? (
           <>
@@ -151,7 +219,7 @@ export function RoleCreate() {
         </label>
 
         <div className="row" style={{ marginTop: 16 }}>
-          <button className="btn" type="submit" disabled={submitting || (source === 'ats' ? !isAtsId(requisitionId.trim()) : !sourceText.trim())}>
+          <button className="btn" type="submit" disabled={submitting || !canSubmit}>
             <Icon name={submitting ? 'hourglass' : 'sparkle'} size={16} />
             {submitting ? (source === 'ats' ? 'Importing…' : 'Creating…') : (source === 'ats' ? 'Import role' : 'Create role')}
           </button>

@@ -52,10 +52,86 @@ model User {
   candidateAssignments CandidateAssignment[]
 }
 
+model CatalogDomain {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  summary   String   @default("")
+  sortOrder Int
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  roles     CatalogRole[]
+}
+
+model CatalogJobFamily {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  roles     CatalogRole[]
+}
+
+model CatalogRegion {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  sortOrder Int
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CatalogRole {
+  id                String   @id @default(cuid())
+  domainId          String
+  domain            CatalogDomain @relation(fields: [domainId], references: [id])
+  familyId          String?
+  family            CatalogJobFamily? @relation(fields: [familyId], references: [id])
+  title             String
+  normalizedTitle   String
+  summary           String   @default("")
+  marketSignal      String   @default("")
+  techStackJson     String   @default("[]")
+  source            String
+  status            String   @default("active")
+  createdByTenantId String?
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  roles             Role[]
+  aliases           CatalogRoleAlias[]
+
+  @@unique([domainId, normalizedTitle])
+  @@index([normalizedTitle])
+}
+
+model CatalogRoleAlias {
+  id              String   @id @default(cuid())
+  roleId          String
+  role            CatalogRole @relation(fields: [roleId], references: [id])
+  alias           String
+  normalizedAlias String
+  locale          String   @default("en")
+  source          String
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([roleId, normalizedAlias])
+  @@index([normalizedAlias])
+}
+
 model Role {
   id            String   @id @default(cuid())
   tenantId      String
   tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  catalogRoleId String?
+  catalogRole   CatalogRole? @relation(fields: [catalogRoleId], references: [id])
+  experienceBand String?
+  regionCode    String?
+  techStackJson String @default("[]")
   title         String
   level         String   @default("")
   location      String   @default("")
@@ -78,6 +154,7 @@ model Role {
 
   // Every list and dashboard count starts from the tenant.
   @@index([tenantId, createdAt])
+  @@index([catalogRoleId])
 }
 
 model RoleScorecardVersion {
@@ -229,6 +306,7 @@ model InterviewSession {
   @@index([tenantId, scheduledAt])
   @@index([tenantId, completedAt])
   @@index([tenantId, state])
+  @@index([tenantId, roleId, candidateId])
 }
 
 model IntegrityEvent {

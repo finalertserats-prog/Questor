@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_JD, SAMPLE_ROLE_TITLE, canLoadSample, sampleDraft } from '../src/components/roleCreateModel';
+import { canCreateRoleFromCatalog } from '../src/components/catalogModel';
 
 /**
  * HR typed a title and a job description, pressed "Load sample JD" to see what
@@ -36,5 +37,14 @@ describe('sampleDraft', () => {
 
   it('uses a title that actually appears in the sample description', () => {
     expect(SAMPLE_JD).toContain(SAMPLE_ROLE_TITLE);
+  });
+});
+
+describe('catalog role create readiness', () => {
+  it('does not allow catalog-backed creation until band and region are selected', () => {
+    const base = { domainId: 'd1', catalogRoleId: 'r1', title: '', source: 'paste' as const, sourceReady: true };
+    expect(canCreateRoleFromCatalog({ ...base, experienceBand: 'senior', regionCode: 'IN' })).toBe(true);
+    expect(canCreateRoleFromCatalog({ ...base, experienceBand: undefined, regionCode: 'IN' })).toBe(false);
+    expect(canCreateRoleFromCatalog({ ...base, experienceBand: 'senior', regionCode: '' })).toBe(false);
   });
 });
