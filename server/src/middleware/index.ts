@@ -105,7 +105,9 @@ const CSRF_EXEMPT_PATHS = [
   // Account requests and operator email decisions are public links, not
   // cookie-authenticated recruiter actions.
   /^\/api\/signup(?:\/|$)/,
-  /^\/api\/demo(?:\/|$)/,
+  // Only the demo routes that run without a session. /api/demo/end and
+  // /api/demo/interview are cookie-authenticated and keep CSRF protection.
+  /^\/api\/demo\/(?:request|redeem|reaccess|decision)(?:\/|$)/,
   // A candidate agreeing to (or stopping) the AI observer on a human round,
   // from a link the interviewer shared. No account, no cookies of ours.
   /^\/api\/observer-consent(?:\/|$)/,

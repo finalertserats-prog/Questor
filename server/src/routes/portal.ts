@@ -25,6 +25,7 @@ import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
 import { findInvitationByToken } from '../services/invitations.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
+import { serverSpeechAllowed } from '../services/demoPolicy.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
 export const portalRouter = Router();
@@ -461,7 +462,7 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
   }
 
   // Nothing configured to speak with: tell the client to use browser speech.
-  if (!serverTtsReady()) return res.status(204).end();
+  if (!(await serverSpeechAllowed(inv.sessionId, serverTtsReady))) return res.status(204).end();
 
   // Answer conditional requests BEFORE synthesizing. The ETag is a pure
   // function of (provider, model, voice, text), so it can be computed without
@@ -518,7 +519,7 @@ portalRouter.post('/:token/nudge', asyncHandler(async (req, res) => {
   res.setHeader('X-Nudge-Text', encodeURIComponent(text));
   res.setHeader('Access-Control-Expose-Headers', 'X-Nudge-Text');
 
-  if (!serverTtsReady()) return res.status(204).end();
+  if (!(await serverSpeechAllowed(inv.sessionId, serverTtsReady))) return res.status(204).end();
 
   const etag = speechEtag(text);
   res.setHeader('ETag', etag);
@@ -600,7 +601,7 @@ portalRouter.post('/:token/transcribe', receiveAudio, asyncHandler(async (req, r
 
   // Nothing configured to transcribe with: tell the client to use browser
   // SpeechRecognition.
-  if (!serverSttReady()) return res.status(204).end();
+  if (!(await serverSpeechAllowed(inv.sessionId, serverSttReady))) return res.status(204).end();
 
   let text: string | null;
   try {

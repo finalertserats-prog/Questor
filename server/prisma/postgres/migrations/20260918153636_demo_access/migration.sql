@@ -31,7 +31,7 @@ CREATE UNIQUE INDEX "DemoGrant_linkTokenHash_key" ON "DemoGrant"("linkTokenHash"
 CREATE UNIQUE INDEX "DemoGrant_decisionTokenHash_key" ON "DemoGrant"("decisionTokenHash");
 
 -- CreateIndex
-CREATE INDEX "DemoGrant_email_idx" ON "DemoGrant"("email");
+CREATE UNIQUE INDEX "DemoGrant_email_key" ON "DemoGrant"("email");
 
 -- AddForeignKey
 ALTER TABLE "DemoGrant" ADD CONSTRAINT "DemoGrant_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "Tenant"("id") ON DELETE SET NULL ON UPDATE CASCADE;

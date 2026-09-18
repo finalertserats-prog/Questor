@@ -582,7 +582,9 @@ model DemoGrant {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  @@index([email])
+  // One grant per address: the second demo is the owner's decision, and a
+  // unique key is what holds that when two requests race.
+  @@unique([email])
 }
 
 model AuditEvent {

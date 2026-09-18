@@ -106,7 +106,16 @@ export async function requestDemoAccess(input: { name: string; email: string; co
     tenantId = existing.tenantId;
   } else {
     const provisioned = await provisionDemoTenant({ name: input.name, email, company: input.company, now });
-    const grant = await prisma.demoGrant.create({ data: { name: input.name, email, company: input.company, ...linkFields, tenantId: provisioned.tenantId, userId: provisioned.userId, requestIpHash: hashRequestIp(input.ip) } });
+    let grant;
+    try {
+      grant = await prisma.demoGrant.create({ data: { name: input.name, email, company: input.company, ...linkFields, tenantId: provisioned.tenantId, userId: provisioned.userId, requestIpHash: hashRequestIp(input.ip) } });
+    } catch (err) {
+      // Two requests for one address raced and the other won: this sandbox is
+      // surplus, so hand it to the purge job and send nothing.
+      if ((err as { code?: string } | null)?.code !== 'P2002') throw err;
+      await prisma.tenant.update({ where: { id: provisioned.tenantId }, data: { demoExpiresAt: now } });
+      return;
+    }
     grantId = grant.id;
     tenantId = provisioned.tenantId;
     if (config.signupApproverEmail.trim()) {
@@ -127,6 +136,9 @@ export async function redeemDemoAccess(token: string, res: import('express').Res
   const grant = await prisma.demoGrant.findUnique({ where: { linkTokenHash: tokenHash }, include: { tenant: true, user: true } });
   if (!grant?.tenant || !grant.user || !grant.sessionEndsAt || !matchHash(grant.linkTokenHash, tokenHash)) throw new HttpError(410, 'This demo link cannot be used.', 'unknown');
   await prisma.user.update({ where: { id: grant.user.id }, data: { tourCompletedAt: null } });
+  // The sample interview's candidate link lives exactly as long as the demo:
+  // a copied link must not keep a sandbox interview (and its speech) running.
+  await expireDemoInterviewLinks(grant.tenant.id, grant.sessionEndsAt);
   const claims: AuthClaims = { userId: grant.user.id, tenantId: grant.tenant.id, role: grant.user.role, email: grant.user.email, demo: true, demoGrantId: grant.id };
   const sessionToken = issueSession(res, claims, { ttlSeconds: SESSION_TTL_SECONDS });
   await logAudit({ tenantId: grant.tenant.id, actorType: 'system', actorId: grant.user.id, action: 'demo.redeemed', entityType: 'DemoGrant', entityId: grant.id });
@@ -199,6 +211,11 @@ export async function decideDemoAccess(opts: { token: string; decision: Decision
   await getEmail().send(renderDemoAccessEmail({ to: row.email, name: row.name, linkUrl: webUrl(`/demo/${linkToken}`) }));
   if (tenantId) await logAudit({ tenantId, actorType: 'system', actorId: 'demo-decision', action: 'demo.approved', entityType: 'DemoGrant', entityId: row.id });
   return true;
+}
+
+/** Candidate links in a sandbox stop working at `at`. */
+export async function expireDemoInterviewLinks(tenantId: string, at: Date): Promise<void> {
+  await prisma.invitation.updateMany({ where: { session: { tenantId, tenant: { isDemo: true } } }, data: { expiresAt: at } });
 }
 
 export async function assertNotDemoTenant(tenantId: string, message = 'Not available in the demo'): Promise<void> {

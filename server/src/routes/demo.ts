@@ -6,7 +6,7 @@ import { invitationLink } from '../services/invitations.js';
 import { clearSession } from '../services/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { logger } from '../logger.js';
-import { decideDemoAccess, redeemDemoAccess, requestDemoAccess, requestDemoReaccess, resolveDemoDecision } from '../services/demoAccess.js';
+import { decideDemoAccess, expireDemoInterviewLinks, redeemDemoAccess, requestDemoAccess, requestDemoReaccess, resolveDemoDecision } from '../services/demoAccess.js';
 
 export const demoRouter = Router();
 export const demoDecisionRouter = Router();
@@ -61,7 +61,9 @@ demoRouter.get('/interview', authenticate, asyncHandler(async (req, res) => {
 // working at once instead of at the 45-minute mark.
 demoRouter.post('/end', authenticate, asyncHandler(async (req, res) => {
   if (req.auth?.demo !== true || !req.auth.demoGrantId) throw new HttpError(403, 'Only available in a demo.');
-  await prisma.demoGrant.updateMany({ where: { id: req.auth.demoGrantId }, data: { sessionEndsAt: new Date() } });
+  const endedAt = new Date();
+  await prisma.demoGrant.updateMany({ where: { id: req.auth.demoGrantId }, data: { sessionEndsAt: endedAt } });
+  await expireDemoInterviewLinks(req.auth.tenantId, endedAt);
   clearSession(res);
   res.json({ ended: true });
 }));

@@ -143,6 +143,9 @@ observerRouter.post('/rounds/:roundId/segments', requireCapability('interview:sc
   // Consent, identity and state are checked before a byte is sent to a vendor.
   const observation = await assertCapturing(req.auth!, round);
 
+  // Audio goes to a paid transcription vendor; a demo may send typed or
+  // browser-captioned text only.
+  if (req.file && req.auth!.demo === true) throw new HttpError(403, 'In the demo, observer notes use browser captions or typed text.');
   if (!req.file) {
     const body = textSegmentSchema.parse(req.body);
     const text = body.text.trim();

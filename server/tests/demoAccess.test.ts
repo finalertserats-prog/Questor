@@ -291,3 +291,42 @@ describe('POST /api/demo/end', () => {
     expect(me.status).toBe(401);
   });
 });
+
+describe('demo security review fixes', () => {
+  async function redeemed() {
+    const token = await requestAndGetLink();
+    const res = await request(app).post('/api/demo/redeem').send({ token });
+    return res;
+  }
+
+  it('stops the sample interview link working once the demo ends', async () => {
+    const res = await redeemed();
+    const auth = `Bearer ${res.body.token}`;
+    const { portalUrl } = (await request(app).get('/api/demo/interview').set('Authorization', auth)).body as { portalUrl: string };
+    const portalToken = portalUrl.split('/portal/')[1];
+
+    await request(app).post('/api/demo/end').set('Authorization', auth);
+
+    const portal = await request(app).get(`/api/portal/${portalToken}`);
+    expect(portal.status).toBe(410);
+  });
+
+  it('does not let a demo interview use paid server speech', async () => {
+    const { serverSpeechAllowed } = await import('../src/services/demoPolicy.js');
+    const p = await provisionDemoTenant({ ...VISITOR, email: 'speech@acme.test' });
+    expect([await serverSpeechAllowed(p.sessionId, () => true), await serverSpeechAllowed('ordinary-session', () => true), await serverSpeechAllowed('ordinary-session', () => false)]).toEqual([false, true, false]);
+  });
+
+  it('requires the CSRF header to end a demo from a cookie session', async () => {
+    const res = await redeemed();
+    const cookies = (res.headers['set-cookie'] as unknown as string[]).map((c) => c.split(';')[0]).join('; ');
+    const end = await request(app).post('/api/demo/end').set('Cookie', cookies).send({});
+    expect(end.status).toBe(403);
+  });
+
+  it('creates one sandbox when two requests for the same address race', async () => {
+    await Promise.all([requestDemo(), requestDemo()]);
+    const live = await prisma.tenant.count({ where: { isDemo: true, demoExpiresAt: { gt: new Date() } } });
+    expect({ grants: await prisma.demoGrant.count(), live }).toEqual({ grants: 1, live: 1 });
+  });
+});

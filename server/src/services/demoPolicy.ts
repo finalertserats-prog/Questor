@@ -49,3 +49,14 @@ export async function demoRecipientBlocked(tenantId: string, to: string): Promis
   const visitor = await prisma.user.findFirst({ where: { tenantId, email: to.trim().toLowerCase() }, select: { id: true } });
   return !visitor;
 }
+
+/**
+ * Whether server speech (paid TTS/STT) may run for this interview. A demo
+ * interview answers "no" and the client falls back to the browser's own voice
+ * and recognition, which is what it already does when no server speech is
+ * configured.
+ */
+export async function serverSpeechAllowed(sessionId: string, ready: () => boolean): Promise<boolean> {
+  if (!ready()) return false;
+  return !(await isHeuristicOnlySession(sessionId));
+}
