@@ -181,3 +181,99 @@ export function trimSparseWeeks<T extends { created: number; completed: number }
   while (last > first && !active(series[last])) last -= 1;
   return series.slice(first, last + 1);
 }
+
+/** Width of a string as drawn, in CSS pixels. */
+export type MeasureText = (text: string) => number;
+
+// An average advance of a proportional UI face, as a share of its size. Used
+// only where no canvas is available to measure with (the node tests, SSR).
+const AVERAGE_CHAR_WIDTH = 0.58;
+
+/** A rough width for `text` at `fontSize` px when nothing can measure it. */
+export function estimateTextWidth(text: string, fontSize: number): number {
+  return text.length * fontSize * AVERAGE_CHAR_WIDTH;
+}
+
+const ELLIPSIS = '\u2026';
+
+/**
+ * `text` shortened with a trailing ellipsis until it measures no wider than
+ * `maxWidth`. A label that fits is returned unchanged; with no room for even
+ * one character the ellipsis alone is returned, so the row still says
+ * "something is here" and the full text lives in the tooltip.
+ */
+export function truncateToWidth(text: string, maxWidth: number, measure: MeasureText): string {
+  if (measure(text) <= maxWidth) return text;
+  let lo = 0;
+  let hi = text.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(text.slice(0, mid).trimEnd() + ELLIPSIS) <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo === 0 ? ELLIPSIS : text.slice(0, lo).trimEnd() + ELLIPSIS;
+}
+
+export const BAR_LAYOUT = {
+  /** Space between the end of a label and the start of its bar. */
+  labelGap: 10,
+  /** Space between the end of a bar and its printed value. */
+  valueGap: 6,
+  /** The label column never takes more than this share of the chart. */
+  maxLabelShare: 0.4,
+  /** Least space kept between two axis labels. */
+  axisLabelGap: 8,
+} as const;
+
+export interface HorizontalBarLayout {
+  /** Width of the label column, gap included. Bars start here. */
+  readonly labelW: number;
+  /** Length of a full-scale bar. */
+  readonly plotW: number;
+  /** Room reserved to the right of the plot for the widest value. */
+  readonly valueW: number;
+  /** Each label as drawn: whole when it fits, ellipsised when it does not. */
+  readonly labels: readonly string[];
+}
+
+/**
+ * Geometry for a horizontal bar chart `width` px wide.
+ *
+ * The label column is as wide as the longest label needs, up to 40% of the
+ * chart, so short labels do not waste the plot and long ones cannot push the
+ * bars off the card. The value column is sized from the widest printed value,
+ * so a full-scale bar's number still ends inside the svg.
+ */
+export function horizontalBarLayout(
+  labels: readonly string[],
+  values: readonly number[],
+  width: number,
+  measureLabel: MeasureText,
+  measureValue: MeasureText,
+): HorizontalBarLayout {
+  const longest = Math.max(0, ...labels.map(measureLabel));
+  const widestValue = Math.max(0, ...values.map((v) => measureValue(String(v))));
+  const valueW = Math.ceil(widestValue + BAR_LAYOUT.valueGap);
+  const cap = Math.floor(Math.max(0, width) * BAR_LAYOUT.maxLabelShare);
+  const labelW = Math.min(Math.ceil(longest + BAR_LAYOUT.labelGap), cap);
+  const plotW = Math.max(0, width - labelW - valueW);
+  const room = Math.max(0, labelW - BAR_LAYOUT.labelGap);
+  return { labelW, plotW, valueW, labels: labels.map((l) => truncateToWidth(l, room, measureLabel)) };
+}
+
+/**
+ * Label every n-th slot of a column chart so that labels `labelWidth` px wide
+ * never overlap. Measured, not guessed from the slot alone: a phone fits far
+ * fewer "12 Sep"s across than a desktop does.
+ */
+export function axisLabelStride(slotWidth: number, labelWidth: number): number {
+  if (labelWidth <= 0) return 1;
+  if (slotWidth <= 0) return Number.MAX_SAFE_INTEGER;
+  return Math.max(1, Math.ceil((labelWidth + BAR_LAYOUT.axisLabelGap) / slotWidth));
+}
+
+/** A centred label's x, moved in so a `labelWidth` label stays inside [0, width]. */
+export function clampLabelCenter(center: number, labelWidth: number, width: number): number {
+  const half = labelWidth / 2;
+  return Math.min(Math.max(center, half), Math.max(half, width - half));
+}

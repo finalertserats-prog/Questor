@@ -1,5 +1,16 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { barRadius, countAxis, niceCeiling, scaleLength, shortDate } from './dashboardModel';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import {
+  axisLabelStride,
+  barRadius,
+  clampLabelCenter,
+  countAxis,
+  estimateTextWidth,
+  horizontalBarLayout,
+  niceCeiling,
+  scaleLength,
+  shortDate,
+  type MeasureText,
+} from './dashboardModel';
 
 /**
  * Small in-house SVG charts for the dashboard. No chart dependency: three
@@ -36,6 +47,31 @@ function useMeasuredWidth(fallback: number) {
   }, []);
 
   return { ref, width };
+}
+
+let measureCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * A text measurer for the chart face named by `fontVar` at `size` px. Uses the
+ * canvas's measureText where there is a document, and a per-character estimate
+ * everywhere else, so layout never depends on a DOM being present.
+ */
+function textMeasurer(fontVar: string, size: number, weight = 400): MeasureText {
+  const estimate: MeasureText = (text) => estimateTextWidth(text, size);
+  if (typeof document === 'undefined') return estimate;
+  try {
+    measureCanvas ??= document.createElement('canvas');
+    const ctx = measureCanvas.getContext('2d');
+    if (!ctx) return estimate;
+    const family = getComputedStyle(document.documentElement).getPropertyValue(fontVar).trim() || 'sans-serif';
+    const font = `${weight} ${size}px ${family}`;
+    return (text) => {
+      ctx.font = font;
+      return ctx.measureText(text).width;
+    };
+  } catch {
+    return estimate;
+  }
 }
 
 /**
@@ -89,7 +125,10 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
   // Floor of 6, not 3: the ruled fill repeats every 5px, so a 3px bar holds
   // barely one stripe and reads as a solid tone rather than as ruled.
   const barW = Math.max(6, Math.min(18, slot * 0.28));
-  const labelEvery = slot < 60 ? 2 : 1;
+  const weekLabels = data.map((d) => shortDate(d.weekStart));
+  const measureAxis = useMemo(() => textMeasurer('--font-data', 11), []);
+  const widestLabel = Math.max(0, ...weekLabels.map(measureAxis));
+  const labelEvery = axisLabelStride(slot, widestLabel);
   const totals = data.reduce((acc, d) => ({ created: acc.created + d.created, completed: acc.completed + d.completed }), { created: 0, completed: 0 });
 
   return (
@@ -166,8 +205,11 @@ export function WeeklyColumnChart({ data }: { data: readonly WeekPoint[] }) {
                 />
               )}
               {i % labelEvery === (data.length - 1) % labelEvery && (
-                <text x={COL.left + i * slot + slot / 2} y={COL.height - 10} textAnchor="middle" className="chart-axis">
-                  {shortDate(d.weekStart)}
+                <text
+                  x={clampLabelCenter(COL.left + i * slot + slot / 2, measureAxis(weekLabels[i]), width)}
+                  y={COL.height - 10} textAnchor="middle" className="chart-axis"
+                >
+                  {weekLabels[i]}
                 </text>
               )}
             </g>
@@ -202,7 +244,6 @@ export interface BarItem {
 }
 
 const ROW_H = 30;
-const BAR = { labelW: 120, valueW: 40 } as const;
 const BAR_FALLBACK_WIDTH = 480;
 
 /** Horizontal bars with the label and value printed on each row. */
@@ -211,7 +252,11 @@ export function HorizontalBarChart({ items, title, summary }: { items: readonly 
   const { ref, width } = useMeasuredWidth(BAR_FALLBACK_WIDTH);
   const patternId = `ruled-${id.replace(/:/g, '')}`;
   const max = niceCeiling(Math.max(0, ...items.map((i) => i.count)));
-  const plotW = Math.max(60, width - BAR.labelW - BAR.valueW);
+  const measureLabel = useMemo(() => textMeasurer('--font-ui', 12.5), []);
+  const measureValue = useMemo(() => textMeasurer('--font-data', 11, 600), []);
+  const { labelW, plotW, labels } = horizontalBarLayout(
+    items.map((i) => i.label), items.map((i) => i.count), width, measureLabel, measureValue,
+  );
   const height = Math.max(ROW_H, items.length * ROW_H);
 
   return (
@@ -232,29 +277,34 @@ export function HorizontalBarChart({ items, title, summary }: { items: readonly 
           const w = scaleLength(item.count, max, plotW);
           return (
             <g key={item.key}>
-              <text x={BAR.labelW - 10} y={y + ROW_H / 2 + 4} textAnchor="end" className="chart-label">{item.label}</text>
+              {/* Long titles are cut to the column with an ellipsis; the full
+                  title stays in the tooltip and in the chart's description. */}
+              <text x={labelW - 10} y={y + ROW_H / 2 + 4} textAnchor="end" className="chart-label">
+                <title>{item.label}</title>
+                {labels[index]}
+              </text>
               {/* No channel behind the bar. A full-width track is what makes a
                   bar chart read as a progress meter, and at 1px it was also
                   bleeding into the card on dark. The end tick marks where the
                   scale finishes; every row prints its own number. */}
               <line
-                x1={BAR.labelW + plotW} x2={BAR.labelW + plotW}
+                x1={labelW + plotW} x2={labelW + plotW}
                 y1={y + 8} y2={y + ROW_H - 8}
                 className="chart-tick" shapeRendering="crispEdges"
               />
               <rect
-                x={BAR.labelW} y={y + 7} width={w} height={ROW_H - 14}
+                x={labelW} y={y + 7} width={w} height={ROW_H - 14}
                 rx={barRadius(w, ROW_H - 14)} ry={barRadius(w, ROW_H - 14)}
                 className={`chart-bar chart-grow ${item.tone ?? 'tone-accent'}`}
               />
               {item.count === 0 && (
                 <line
-                  x1={BAR.labelW} x2={BAR.labelW}
+                  x1={labelW} x2={labelW}
                   y1={y + 8} y2={y + ROW_H - 8}
                   className="chart-witness" shapeRendering="crispEdges"
                 />
               )}
-              <text x={BAR.labelW + w + 6} y={y + ROW_H / 2 + 4} className="chart-value">{item.count}</text>
+              <text x={labelW + w + 6} y={y + ROW_H / 2 + 4} className="chart-value">{item.count}</text>
             </g>
           );
         })}
