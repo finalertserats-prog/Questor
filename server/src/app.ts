@@ -101,7 +101,14 @@ export function createApp() {
 
   // Credential stuffing / brute force on the recruiter login.
   app.use('/api/auth/login', rateLimit({ name: 'login', windowMs: 15 * 60_000, max: 10, failClosed: true }));
-  app.use('/api/auth', rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true }));
+  // Only the routes that take a credential. Mounted on all of /api/auth this
+  // also counted GET /me, which the web calls on every page load, so a few HR
+  // users behind one office address exhausted it in minutes and every page
+  // answered "Too many requests". /me and /tour/complete are authenticated;
+  // /logout only clears cookies the caller already holds.
+  const credentialLimit = rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true });
+  app.use('/api/auth/login', credentialLimit);
+  app.use('/api/auth/register', credentialLimit);
 
   // The candidate portal is unauthenticated and every answer triggers a paid
   // LLM call, so it is both the abuse surface and the cost-amplification path.
