@@ -13,6 +13,7 @@ import {
 } from '../services/auth.js';
 import { logger } from '../logger.js';
 import { CorruptRecordError, prisma } from '../db.js';
+import { runAsDemo } from '../services/demoPolicy.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -64,6 +65,19 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
         res.status(401).json({ error: 'Invalid or expired token' });
         return;
       }
+      if (claims.demo === true) {
+        prisma.demoGrant.findUnique({ where: { id: claims.demoGrantId ?? '' }, select: { sessionEndsAt: true, userId: true, tenantId: true } })
+          .then((grant) => {
+            if (!grant || grant.userId !== user.id || grant.tenantId !== user.tenantId || !grant.sessionEndsAt || grant.sessionEndsAt.getTime() <= Date.now()) {
+              res.status(401).json({ error: 'Invalid or expired token' });
+              return;
+            }
+            req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, demo: true, demoGrantId: claims.demoGrantId };
+            runAsDemo(() => next());
+          })
+          .catch(next);
+        return;
+      }
       req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
       next();
     })
@@ -91,6 +105,7 @@ const CSRF_EXEMPT_PATHS = [
   // Account requests and operator email decisions are public links, not
   // cookie-authenticated recruiter actions.
   /^\/api\/signup(?:\/|$)/,
+  /^\/api\/demo(?:\/|$)/,
   // A candidate agreeing to (or stopping) the AI observer on a human round,
   // from a link the interviewer shared. No account, no cookies of ours.
   /^\/api\/observer-consent(?:\/|$)/,

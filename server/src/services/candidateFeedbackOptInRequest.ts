@@ -10,6 +10,7 @@ import {
   candidateFeedbackEnabledForTenant, feedbackConsentStatus, feedbackSendBlockReason, type FeedbackConsentStatus,
 } from './candidateFeedbackPolicy.js';
 import { DAY_MS, hashCandidateLinkToken, mintCandidateLinkToken, resolveCandidateLink } from './candidateLinkToken.js';
+import { demoRecipientBlocked } from './demoPolicy.js';
 
 /**
  * Asking a candidate who was never asked whether they want written feedback.
@@ -107,6 +108,7 @@ export async function requestFeedbackOptIn(opts: {
     throw new HttpError(429, 'A request was sent to this candidate less than an hour ago. Please give them time to answer.');
   }
 
+  if (await demoRecipientBlocked(session.tenantId, session.candidate.email)) throw new HttpError(403, 'In the demo, email goes only to you. Use your own address for the candidate, or copy the interview link.');
   const email = getEmail();
   if (!email.delivers) {
     throw new HttpError(409, `Email is not configured to deliver (provider "${email.name}"), so the request could not reach the candidate.`);

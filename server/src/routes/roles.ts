@@ -6,11 +6,12 @@ import { extractRole, extractRoleHeuristic } from '../engines/roleIntelligence.j
 import type { RoleSuccessProfile } from '../domain/types.js';
 import { roleSuccessProfileSchema } from '../domain/profileSchema.js';
 import { logAudit } from '../services/audit.js';
+import { assertDemoCreationCap } from '../services/demoAccess.js';
 import { assertCanAccessRole, assignRole, roleScope } from '../services/access.js';
 import { ATS_EXTERNAL_ID } from '../providers/ats/index.js';
 import { existingImport, lookupRequisition, type RequisitionLookup } from '../services/atsRecords.js';
 import { rateLimit } from '../middleware/rateLimit.js';
-import { addCatalogRole, catalogTitleProblem } from '../services/catalogRoles.js';
+import { addCatalogRole, catalogTitleProblem, findCatalogMatch } from '../services/catalogRoles.js';
 import type { AuthClaims } from '../services/auth.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
 import { BANDS } from '../engines/experienceBands.js';
@@ -69,6 +70,7 @@ const roleCreateLimit = rateLimit({ name: 'role-create', windowMs: 15 * 60_000, 
 
 rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
+  await assertDemoCreationCap(req.auth!.tenantId, 'roles');
   const auth = req.auth!;
   let sourceText = body.sourceText;
   // Spaces are not a title: blank means "infer it from the JD or requisition".
@@ -163,6 +165,11 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
  */
 async function linkCatalogRole(auth: AuthClaims, domainId: string, title: string, techStack: readonly string[]): Promise<string | undefined> {
   if (catalogTitleProblem(title)) return undefined;
+  // A demo may use the shared catalog but never add to it.
+  if (auth.demo === true) {
+    const match = await findCatalogMatch(domainId, title);
+    return match?.status === 'active' ? match.id : undefined;
+  }
   const result = await addCatalogRole({ auth, domainId, title, techStack });
   if (result.kind === 'created') return result.id;
   return result.role.status === 'active' ? result.role.id : undefined;

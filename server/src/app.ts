@@ -3,7 +3,8 @@ import type { Request } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config.js';
-import { requestId, errorHandler, csrfProtection } from './middleware/index.js';
+import { prisma } from './db.js';
+import { requestId, errorHandler, csrfProtection, authenticate, HttpError } from './middleware/index.js';
 import { rateLimit } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
 import { isDraining } from './services/drainState.js';
@@ -21,6 +22,7 @@ import { portalRouter } from './routes/portal.js';
 import { feedbackRequestRouter } from './routes/feedbackRequest.js';
 import { feedbackConsentRouter } from './routes/feedbackConsent.js';
 import { signupRouter, signupDecisionRouter } from './routes/signup.js';
+import { demoRouter, demoDecisionRouter } from './routes/demo.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { systemHealthRouter } from './routes/systemHealth.js';
@@ -157,6 +159,8 @@ export function createApp() {
   // the stricter submission budget.
   app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), signupDecisionRouter);
   app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10, failClosed: true }), signupRouter);
+  app.use('/api/demo/decision', rateLimit({ name: 'demo-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), demoDecisionRouter);
+  app.use('/api/demo', rateLimit({ name: 'demo', windowMs: 60 * 60_000, max: 5, failClosed: true }), demoRouter);
 
   // The candidate's consent link for an AI observer on a human round. Public
   // and token-gated like the feedback link, and keyed on IP for the same
@@ -197,6 +201,15 @@ export function createApp() {
   app.use('/api/observer', observerRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);
+  const blockDemoTenant = async (req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    try {
+      if (!req.auth) { next(); return; }
+      const tenant = await prisma.tenant.findUnique({ where: { id: req.auth.tenantId }, select: { isDemo: true } });
+      if (tenant?.isDemo) throw new HttpError(403, 'Not available in the demo');
+      next();
+    } catch (err) { next(err); }
+  };
+  app.use('/api/admin', authenticate, blockDemoTenant);
   app.use('/api/admin/connectors', connectorsRouter);
   app.use('/api/admin/ats', atsConnectionRouter);
   // The console polls this every minute per open tab; the report is cached for

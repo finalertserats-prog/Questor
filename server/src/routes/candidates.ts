@@ -19,6 +19,7 @@ import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizePr
 import { computeFitScore } from '../engines/fitScoring.js';
 import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
+import { assertDemoCreationCap } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
 
@@ -97,6 +98,7 @@ const createSchema = z.object({
 // Create a candidate under a role
 candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
+  await assertDemoCreationCap(req.auth!.tenantId, 'candidates');
   // The target role is scoped, not merely tenant-matched: attaching a candidate
   // to someone else's requisition would otherwise plant a record inside a
   // pipeline the caller cannot see but the role's owners can.

@@ -18,6 +18,7 @@ import { feedbackConsentStatus, feedbackSendBlockReason } from '../services/cand
 import { feedbackConsentView, requestFeedbackOptIn } from '../services/candidateFeedbackOptInRequest.js';
 import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedbackEmail.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
+import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
@@ -277,6 +278,8 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
   let deliveryNote: string;
   if (!session) {
     deliveryNote = 'This interview no longer exists, so nothing could be sent. Contact the candidate directly.';
+  } else if (await demoRecipientBlocked(req.auth!.tenantId, session.candidate.email)) {
+    deliveryNote = 'In the demo, email goes only to you, so this feedback was not sent to the candidate address.';
   } else if (!email.delivers) {
     deliveryNote = `Email is not configured to deliver (provider "${email.name}"). Share the candidate's link yourself.`;
   } else {

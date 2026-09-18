@@ -16,6 +16,8 @@ export interface Tenant {
   name: string;
   /** The org's own sign-in link, when one has been created. */
   slug?: string | null;
+  isDemo?: boolean;
+  sessionEndsAt?: string | null;
 }
 
 /** What creating an account needs. */

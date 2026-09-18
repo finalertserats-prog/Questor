@@ -22,6 +22,8 @@ model Tenant {
   // JSON: disclosure text, retention days, recording default, allowed modules, languages
   policyJson   String   @default("{}")
   createdAt    DateTime @default(now())
+  isDemo       Boolean  @default(false)
+  demoExpiresAt DateTime?
   users        User[]
   roles        Role[]
   candidates   Candidate[]
@@ -31,6 +33,7 @@ model Tenant {
   atsConnection   AtsConnection?
   atsRequisitions AtsRequisitionImport[]
   atsLinks        CandidateAtsLink[]
+  demoGrants     DemoGrant[]
 }
 
 model User {
@@ -50,6 +53,7 @@ model User {
   approvedFeedbackDeliveries CandidateFeedbackDelivery[]
   roleAssignments      RoleAssignment[]
   candidateAssignments CandidateAssignment[]
+  demoGrants   DemoGrant[]
 }
 
 model CatalogDomain {
@@ -555,6 +559,30 @@ model SignupRequest {
   // for one address without scanning every pending request.
   @@index([email])
   @@index([status, createdAt])
+}
+
+
+model DemoGrant {
+  id                String   @id @default(cuid())
+  name              String
+  email             String
+  company           String
+  status            String   @default("sent") // sent | consumed | reaccess_requested | declined
+  linkTokenHash     String?  @unique
+  linkExpiresAt     DateTime?
+  tenantId          String?
+  tenant            Tenant?  @relation(fields: [tenantId], references: [id])
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id])
+  consumedAt        DateTime?
+  sessionEndsAt     DateTime?
+  decisionTokenHash String?  @unique
+  decisionExpiresAt DateTime?
+  requestIpHash     String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([email])
 }
 
 model AuditEvent {

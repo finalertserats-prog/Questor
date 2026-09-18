@@ -7,6 +7,7 @@ import { asyncHandler, authenticate, HttpError, requireCapability } from '../mid
 import { rateLimit } from '../middleware/rateLimit.js';
 import { normalizeTitle } from '../domain/catalogText.js';
 import { addCatalogRole, catalogTitleProblem } from '../services/catalogRoles.js';
+import { assertNotDemoTenant } from '../services/demoAccess.js';
 
 export const catalogRouter = Router();
 catalogRouter.use(authenticate);
@@ -134,6 +135,7 @@ catalogRouter.get('/roles', asyncHandler(async (req, res) => {
 
 catalogRouter.post('/roles', requireCapability('role:create'), catalogCreateLimit, asyncHandler(async (req, res) => {
   const body = createRoleSchema.parse(req.body);
+  await assertNotDemoTenant(req.auth!.tenantId);
   const domain = await prisma.catalogDomain.findFirst({ where: { id: body.domainId, status: 'active' } });
   if (!domain) throw new HttpError(400, 'Unknown catalog domain.');
   if (body.familyId) {

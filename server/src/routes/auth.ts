@@ -92,7 +92,8 @@ authRouter.get('/me', authenticate, asyncHandler(async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.auth!.userId } });
   if (!user) throw new HttpError(404, 'User not found');
   const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
-  res.json({ user: publicUser(user), tenant: { id: tenant?.id, name: tenant?.name, region: tenant?.region, slug: tenant?.slug ?? null } });
+  const grant = tenant?.isDemo ? await prisma.demoGrant.findFirst({ where: { tenantId: tenant.id, userId: user.id, status: 'consumed' }, orderBy: { consumedAt: 'desc' }, select: { sessionEndsAt: true } }) : null;
+  res.json({ user: publicUser(user), tenant: { id: tenant?.id, name: tenant?.name, region: tenant?.region, slug: tenant?.slug ?? null, ...(tenant?.isDemo ? { isDemo: true, sessionEndsAt: grant?.sessionEndsAt?.toISOString() ?? null } : {}) } });
 }));
 
 // Marks the guided tour finished (or skipped) for the caller — and only the

@@ -5,6 +5,7 @@ import { Icon, type IconName } from './Icon';
 import { ThemeToggle } from './theme';
 import { useTour } from './tourContext';
 import { initialsFor, profileMenuItems } from './profileMenuModel';
+import { demoHidesNavItem } from './demoModel';
 
 const MENU_ICONS: Record<string, IconName> = {
   settings: 'settings',
@@ -22,7 +23,7 @@ const MENU_ICONS: Record<string, IconName> = {
  * from profileMenuModel so that rule is unit tested rather than trusted.
  */
 export function ProfileMenu() {
-  const { user, logout } = useAuth();
+  const { user, tenant, logout } = useAuth();
   const { startTour } = useTour();
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -79,7 +80,7 @@ export function ProfileMenu() {
     <div className="profile-container" ref={containerRef}>
       {isOpen && (
         <div ref={menuRef} className="profile-menu-popover" role="menu" aria-label="Profile menu" onKeyDown={handleMenuKeyDown}>
-          {profileMenuItems(user.role).map((item) => (
+          {profileMenuItems(user.role).filter((item) => !(tenant?.isDemo && 'to' in item && demoHidesNavItem(item.to))).map((item) => (
             item.kind === 'link' ? (
               <Link key={item.key} to={item.to} role="menuitem" className="profile-menu-item" onClick={() => setIsOpen(false)}>
                 <Icon name={MENU_ICONS[item.key] ?? 'about'} size={16} />

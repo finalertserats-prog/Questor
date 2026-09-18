@@ -5,6 +5,7 @@ import type { LlmProvider, LlmMessage } from './types.js';
 import { HeuristicLlmProvider } from './heuristic.js';
 import { AnthropicLlmProvider } from './anthropic.js';
 import { OpenAiLlmProvider } from './openai.js';
+import { inDemoContext, isHeuristicOnlySession } from '../../services/demoPolicy.js';
 
 export type { LlmProvider, LlmMessage } from './types.js';
 
@@ -46,6 +47,9 @@ export async function generateJson<T>(opts: {
 }): Promise<T | null> {
   const llm = getLlm();
   if (!llm.enabled) return null;
+  // A demo never spends on a paid model: null is what every caller already
+  // treats as "use the built-in heuristic engine".
+  if (inDemoContext() || (await isHeuristicOnlySession(opts.sessionId))) return null;
   const messages: LlmMessage[] = [
     { role: 'system', content: opts.system + '\n\nRespond ONLY with valid minified JSON. No prose, no code fences.' },
     { role: 'user', content: opts.user },

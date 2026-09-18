@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api } from './api/client';
 import { Link, Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
 import { ProfileMenu } from './components/ProfileMenu';
 import { ProductTour } from './components/ProductTour';
 import { TourProvider } from './components/tourContext';
+import { demoHasEnded, formatDemoCountdown } from './components/demoModel';
 import {
   brandDisplay,
   navItemTooltip,
@@ -20,6 +22,9 @@ import { Login } from './pages/Login';
 import { OrgLogin } from './pages/OrgLogin';
 import { Signup } from './pages/Signup';
 import { SignupDecision } from './pages/SignupDecision';
+import { DemoRequest } from './pages/DemoRequest';
+import { DemoEnded, DemoRedeem } from './pages/DemoRedeem';
+import { DemoDecision } from './pages/DemoDecision';
 import { SignupQueue } from './pages/SignupQueue';
 import { Dashboard } from './pages/Dashboard';
 import { RoleCreate } from './pages/RoleCreate';
@@ -75,11 +80,47 @@ function useIsNarrowViewport(): boolean {
   return isNarrow;
 }
 
+/**
+ * The demo's own bar: time left, the way into the sample interview as its
+ * candidate, and an end that ends it on the server, not only in this tab.
+ */
+function DemoBanner({ endsAt }: { endsAt: string }) {
+  const [now, setNow] = useState(Date.now());
+  const [interviewError, setInterviewError] = useState('');
+  useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(id); }, []);
+  const endDemo = useCallback(async () => {
+    try { await api.post('/demo/end', {}); } catch { /* the session is ending either way */ }
+    window.location.assign('/demo/ended');
+  }, []);
+  useEffect(() => { if (demoHasEnded(endsAt, now)) void endDemo(); }, [endsAt, now, endDemo]);
+  const openInterview = async () => {
+    setInterviewError('');
+    // Opened before the request so the browser treats it as a click, not a pop-up.
+    const tab = window.open('', '_blank');
+    try {
+      const { portalUrl } = await api.get<{ portalUrl: string }>('/demo/interview');
+      if (tab) tab.location.href = portalUrl; else window.location.assign(portalUrl);
+    } catch (err: unknown) {
+      tab?.close();
+      setInterviewError(err instanceof Error ? err.message : 'The sample interview could not be opened.');
+    }
+  };
+  return (
+    <div className="banner" role="status" style={{ borderRadius: 0, margin: 0, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+      <span>Demo · ends in {formatDemoCountdown(Date.parse(endsAt) - now)}</span>
+      <button type="button" className="btn sm" onClick={() => void openInterview()}>Try the interview as the candidate</button>
+      <button type="button" className="btn sm secondary" onClick={() => void endDemo()}>End demo</button>
+      {interviewError && <span className="small">{interviewError}</span>}
+    </div>
+  );
+}
+
 function Layout({ children }: { children: React.ReactNode }) {
   // Two separate ideas. On a desktop the sidebar is docked beside the page and
   // open by default; the collapse control narrows it to an icon rail. On a
   // phone it is still a drawer, closed until asked for. Collapsible was never
   // meant to mean collapsed.
+  const { tenant } = useAuth();
   const isNarrow = useIsNarrowViewport();
   const [navOpen, setNavOpen] = useState(false);
   const [mode, setMode] = useState<SidebarMode>(() => readSidebarMode());
@@ -260,7 +301,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main ref={mainRef} className="main">{children}</main>
+      <main ref={mainRef} className="main">{tenant?.isDemo && tenant.sessionEndsAt && <DemoBanner endsAt={tenant.sessionEndsAt} />}{children}</main>
 
       {/* Outside <main>, which is inert while the drawer is open: a tour step
           that opens the drawer to point into it must stay reachable itself. */}
@@ -289,7 +330,7 @@ function SessionRetry({ message, onRetry }: { message: string; onRetry: () => vo
 }
 
 function Protected({ children }: { children: React.ReactNode }) {
-  const { user, loading, loadError, retrySession } = useAuth();
+  const { user, tenant, loading, loadError, retrySession } = useAuth();
   if (loading) return <div className="center-screen muted">Loading…</div>;
   if (!user && loadError) return <SessionRetry message={loadError} onRetry={retrySession} />;
   if (!user) return <Navigate to="/login" replace />;
@@ -334,6 +375,10 @@ export function App() {
           decision behind a session would gate granting access on having it. */}
       <Route path="/signup" element={<Signup />} />
       <Route path="/signup/decision/:token" element={<SignupDecision />} />
+      <Route path="/demo" element={<DemoRequest />} />
+      <Route path="/demo/ended" element={<DemoEnded />} />
+      <Route path="/demo/:token" element={<DemoRedeem />} />
+      <Route path="/demo/decision/:token" element={<DemoDecision />} />
       <Route path="/portal/:token" element={<Portal />} />
       <Route path="/room/:token" element={<InterviewRoom />} />
       {/* Followed from a feedback email. Unauthenticated by design: asking to

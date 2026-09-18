@@ -135,7 +135,7 @@ export function Login() {
               the dev-only block below: asking is open in production, which is
               the point — it is self-registration that is closed. */}
           <div className="small muted" style={{ marginTop: 14, textAlign: 'center' }}>
-            No account yet? <Link to="/signup">Ask for one</Link>
+            No account yet? <Link to="/signup">Ask for one</Link><br /><Link to="/demo">Ask for a demo</Link>
           </div>
 
           {/* Self-registration is closed in production, so offering it there

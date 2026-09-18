@@ -16,6 +16,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
+import { assertDemoCreationCap } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, setState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
@@ -23,6 +24,7 @@ import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolic
 import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
 import { invitationLink, invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
+import { demoRecipientBlocked } from '../services/demoPolicy.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -58,6 +60,7 @@ const createSchema = z.object({
 // Approve interview + build plan (FR-011, FR-016)
 interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
+  await assertDemoCreationCap(req.auth!.tenantId, 'interviews');
   if (!body.approve) throw new HttpError(400, 'HR approval is required before an interview can be created');
 
   // Object scope, not just tenant: creating a session is how a candidate enters
@@ -322,6 +325,7 @@ interviewsRouter.post('/:id/reopen', requireCapability('interview:invite'), asyn
 const MAX_INTERVIEW_ATTEMPTS = 2;
 
 interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  await assertDemoCreationCap(req.auth!.tenantId, 'interviews');
   const original = await getSession(req, req.params.id);
   const { reason } = z.object({ reason: z.string().min(10, 'Say why this candidate is being offered a retake.') }).parse(req.body);
 
@@ -427,6 +431,7 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
   const role = await prisma.role.findUnique({ where: { id: session.roleId } });
   const portalUrl = invitationLink(invitation);
   if (!portalUrl) throw new HttpError(409, 'This invitation link can no longer be reconstructed. Create a new interview for this candidate.');
+  if (await demoRecipientBlocked(req.auth!.tenantId, candidate!.email)) throw new HttpError(403, 'In the demo, email goes only to you. Use your own address for the candidate, or copy the interview link.');
   const email = getEmail();
 
   if (!email.delivers) {
@@ -626,6 +631,8 @@ async function inviteSession(req: Request, session: InvitableSession) {
   const previous = await prisma.invitation.findUnique({ where: { sessionId: session.id }, select: { id: true, eventsJson: true } });
   const priorEvents = previous ? parseJsonOptional<unknown[]>(previous.eventsJson, [], { model: 'Invitation', id: previous.id, field: 'eventsJson' }) : [];
 
+  // Before the link exists: a demo sandbox may only invite its own visitor.
+  if (await demoRecipientBlocked(req.auth!.tenantId, candidate.email)) throw new HttpError(403, 'In the demo, email goes only to you. Use your own address for the candidate, or copy the interview link.');
   const token = mintInvitationToken();
   const secret = invitationSecretColumns(token);
   const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);

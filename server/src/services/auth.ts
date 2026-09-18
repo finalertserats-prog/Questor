@@ -9,6 +9,8 @@ export interface AuthClaims {
   tenantId: string;
   role: string;
   email: string;
+  demo?: boolean;
+  demoGrantId?: string;
 }
 
 /**
@@ -33,8 +35,8 @@ export function verifyPassword(pw: string, hash: string): boolean {
   return bcrypt.compareSync(pw, hash);
 }
 
-export function signToken(claims: AuthClaims): string {
-  return jwt.sign(claims, config.authSecret, { expiresIn: SESSION_TTL_SECONDS });
+export function signToken(claims: AuthClaims, opts: { ttlSeconds?: number } = {}): string {
+  return jwt.sign(claims, config.authSecret, { expiresIn: opts.ttlSeconds ?? SESSION_TTL_SECONDS });
 }
 
 export function verifyToken(token: string): AuthClaims | null {
@@ -84,9 +86,10 @@ export function parseCookies(header: string | undefined): Record<string, string>
  * authenticate with `Authorization: Bearer`. Browsers ignore the returned value
  * and rely on the httpOnly cookie, so no JWT is ever written to localStorage.
  */
-export function issueSession(res: Response, claims: AuthClaims): string {
-  const token = signToken(claims);
-  const maxAge = SESSION_TTL_SECONDS * 1000;
+export function issueSession(res: Response, claims: AuthClaims, opts: { ttlSeconds?: number } = {}): string {
+  const ttlSeconds = opts.ttlSeconds ?? SESSION_TTL_SECONDS;
+  const token = signToken(claims, { ttlSeconds });
+  const maxAge = ttlSeconds * 1000;
   // `secure` only in production: dev and the test suite run over plain HTTP,
   // where a Secure cookie would be set but never sent back.
   const secure = config.nodeEnv === 'production';
