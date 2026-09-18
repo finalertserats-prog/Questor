@@ -141,13 +141,30 @@ export function AtsConnectionPanel() {
         />
 
         <label htmlFor="ats-account">Account (only if your ATS serves many companies from one address)</label>
-        <input id="ats-account" value={form.accountId} onChange={(e) => update({ accountId: e.target.value })} placeholder="yourco" />
+        {/* The browser takes an address, a text box and a password box for a
+            sign-in form, and fills in the admin's own Questor email and
+            password; saving that would send their password to the ATS. So the
+            key is marked as a new secret (browsers never fill a saved one into
+            it) and neither field is offered to password managers. */}
+        <input
+          id="ats-account"
+          name="ats-account"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          value={form.accountId}
+          onChange={(e) => update({ accountId: e.target.value })}
+          placeholder="yourco"
+        />
 
         <label htmlFor="ats-api-key">API key</label>
         <input
           id="ats-api-key"
+          name="ats-api-key"
           type="password"
-          autoComplete="off"
+          autoComplete="new-password"
+          data-1p-ignore
+          data-lpignore="true"
           value={form.apiKey}
           onChange={(e) => update({ apiKey: e.target.value })}
           placeholder={keyStored ? 'A key is saved. Leave blank to keep it.' : 'Paste the key your ATS issued'}
