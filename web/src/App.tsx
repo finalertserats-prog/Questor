@@ -3,6 +3,7 @@ import { api } from './api/client';
 import { Link, Navigate, Route, Routes, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from './auth';
 import { Icon } from './components/Icon';
+import { BrandLogo } from './components/BrandLogo';
 import { ProfileMenu } from './components/ProfileMenu';
 import { ProductTour } from './components/ProductTour';
 import { TourProvider } from './components/tourContext';
@@ -247,10 +248,13 @@ function Layout({ children }: { children: React.ReactNode }) {
                   name off the screen. In the rail the wordmark is simply set
                   smaller, above the icons it names. */}
               <div className={brand.className} title={brand.label}>
-                {/* The mark carries no meaning the name does not: it is decorative
-                    here, and the name beside it is the accessible label. */}
-                <img className="logo-mark" src="/brand/questor-mark.webp" alt="" width={26} height={27} />
-                <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>
+                {/* Expanded, the lockup draws the name and is its accessible
+                    label. In the rail the mark alone is decorative and the name
+                    beside it, set in text, is the label. */}
+                {brand.artwork === 'lockup'
+                  ? <BrandLogo variant="lockup" size={28} className="logo-lockup" />
+                  : <BrandLogo variant="mark" size={30} decorative className="logo-mark" />}
+                {brand.showText && <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>}
               </div>
               <button
                 ref={railToggleRef}
@@ -294,8 +298,8 @@ function Layout({ children }: { children: React.ReactNode }) {
             <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
 
             <div className="nav-group">Set up</div>
-            <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="add-candidate" /><span className="nav-label">Add candidate</span></NavLink>
-            <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="role" /><span className="nav-label">New role</span></NavLink>
+            <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="resume-upload" /><span className="nav-label">Add candidate</span></NavLink>
+            <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="job-description" /><span className="nav-label">New role</span></NavLink>
           </nav>
           <ProfileMenu />
         </div>
@@ -353,8 +357,8 @@ function PublicOrApp({ children }: { children: React.ReactNode }) {
     <div className="public-shell">
       <header className="public-bar">
         <Link to="/login" className="public-brand">
-          <img src="/brand/questor-mark.webp" alt="" width={26} height={27} />
-          <span>Questor</span>
+          {/* The lockup draws the name; its alt text is the link's name. */}
+          <BrandLogo variant="lockup" size={28} />
         </Link>
         <Link to="/login" className="btn sm">Sign in</Link>
       </header>

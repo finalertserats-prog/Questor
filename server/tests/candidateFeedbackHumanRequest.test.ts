@@ -134,7 +134,7 @@ describe('the feedback email', () => {
     expect(email.subject).toMatch(/feedback/i);
     // brandedEmail() decorates only the HTML — the plain-text body is the one a
     // stripped-down mail client shows, so it has to stand on its own.
-    expect(email.html).toContain('questor-wordmark.png');
+    expect(email.html).toContain('questor-wordmark-light.png');
     expect(email.text).toContain('What you did well');
     expect(email.html).toContain('What you did well');
     expect(email.text).toContain(SQL_QUOTE);

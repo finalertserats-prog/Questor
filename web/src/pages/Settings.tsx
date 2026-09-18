@@ -8,10 +8,10 @@ export function Settings() {
   const { user, tenant } = useAuth();
 
   const rows: Array<[string, string, IconName]> = [
-    ['Name', user?.name ?? '—', 'candidates'],
+    ['Name', user?.name ?? '—', 'candidate-profile'],
     ['Email', user?.email ?? '—', 'mail'],
     ['Role', user?.role ?? '—', 'admin'],
-    ['Organisation', tenant?.name ?? '—', 'role'],
+    ['Organisation', tenant?.name ?? '—', 'team'],
   ];
 
   return (

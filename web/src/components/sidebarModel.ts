@@ -75,15 +75,25 @@ export interface BrandDisplay {
   readonly tail: string;
   readonly label: string;
   readonly className: string;
+  /**
+   * Expanded, the lockup draws the mark and the name together. The rail is too
+   * narrow for it and draws the mark alone — which does not spell the name, so
+   * there the name is also set in text (`showText`).
+   */
+  readonly artwork: 'lockup' | 'mark';
+  readonly showText: boolean;
 }
 
 export function brandDisplay(mode: SidebarMode): BrandDisplay {
+  const collapsed = mode === 'collapsed';
   return {
     hidden: false,
     lead: 'QUES',
     tail: 'TOR',
     label: 'Questor',
-    className: mode === 'collapsed' ? 'logo logo-rail' : 'logo',
+    className: collapsed ? 'logo logo-rail' : 'logo',
+    artwork: collapsed ? 'mark' : 'lockup',
+    showText: collapsed,
   };
 }
 

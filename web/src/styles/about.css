@@ -7,6 +7,14 @@
    them rather than being copied, so there is still one definition of each.
    ========================================================================== */
 
+.about-logo {
+  display: block;
+  width: 180px;
+  max-width: 60%;
+  height: auto;
+  margin: 0 0 16px;
+}
+
 .about-lede {
   max-width: 68ch;
   margin: 0 0 18px;
@@ -243,8 +251,8 @@
 }
 
 .public-brand img {
-  width: 26px;
-  height: auto;
+  height: 28px;
+  width: auto;
 }
 
 .public-body {

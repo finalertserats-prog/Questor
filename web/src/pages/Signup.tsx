@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
+import { BrandLogo } from '../components/BrandLogo';
 import { OrgPicker } from '../components/OrgPicker';
 import { type Org } from '../components/orgSearchModel';
 import {
@@ -93,7 +94,7 @@ export function Signup() {
 
       <section className="landing-panel">
         <div className="card auth-card">
-          <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div>
+          <BrandLogo variant="lockup" size={34} className="auth-logo" />
           <div className="brand-line" aria-hidden="true" />
 
           {sent ? (

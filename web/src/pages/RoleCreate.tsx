@@ -103,7 +103,7 @@ export function RoleCreate() {
 
   return (
     <div>
-      <PageHeader icon="role" title="New Role" subtitle="Paste a job description, or import a requisition from your ATS, and Questor drafts a scorecard for you to review." />
+      <PageHeader icon="job-description" title="New Role" subtitle="Paste a job description, or import a requisition from your ATS, and Questor drafts a scorecard for you to review." />
 
       {error && <Banner kind="error">{error}</Banner>}
       {notice && <Banner kind="info">{notice}</Banner>}

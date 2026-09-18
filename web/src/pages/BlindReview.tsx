@@ -174,7 +174,7 @@ function Comparison({ view, levels, disposition, ai }: {
       </div>
 
       <div className="card">
-        <h3 className="card-title"><Icon name="evidence" size={16} />Competency comparison</h3>
+        <h3 className="card-title"><Icon name="scorecard" size={16} />Competency comparison</h3>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency comparison">
         <table className="table">
           <thead>
@@ -200,7 +200,7 @@ function Comparison({ view, levels, disposition, ai }: {
       </div>
 
       <div className="card">
-        <h3 className="card-title"><Icon name="sparkle" size={16} />AI summary</h3>
+        <h3 className="card-title"><Icon name="insights" size={16} />AI summary</h3>
         <p style={{ whiteSpace: 'pre-wrap' }}>{ai.summary}</p>
       </div>
     </>
@@ -384,7 +384,7 @@ export default function BlindReview() {
 
             <div className="card">
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <h3 className="card-title"><Icon name="interviews" size={16} />Full transcript</h3>
+                <h3 className="card-title"><Icon name="captions" size={16} />Full transcript</h3>
                 <button type="button" className="btn ghost" onClick={() => setShowTranscript((s) => !s)}>
                   <Icon name={showTranscript ? 'eye-off' : 'eye'} size={16} />
                   {showTranscript ? 'Hide' : 'Show'}
@@ -398,7 +398,7 @@ export default function BlindReview() {
             </div>
 
             <div className="card">
-              <h3 className="card-title"><Icon name="check-circle" size={16} />Your recommendation</h3>
+              <h3 className="card-title"><Icon name="decision" size={16} />Your recommendation</h3>
               <div
                 className="row"
                 style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}

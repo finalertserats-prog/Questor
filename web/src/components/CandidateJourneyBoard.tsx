@@ -213,7 +213,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
                 <Link to={aiInterview.assessmentHref}><Icon name="evidence" size={15} />Assessment</Link>
               )}
               {!aiInterview.observeHref && !aiInterview.transcriptHref && aiInterview.interviewHref && (
-                <Link to={aiInterview.interviewHref}><Icon name="interviews" size={15} />Interview</Link>
+                <Link to={aiInterview.interviewHref}><Icon name="ai-interview" size={15} />Interview</Link>
               )}
             </div>
             <p className="journey-note">{aiInterview.observeNote}</p>
@@ -274,7 +274,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
                 <p className="journey-note">{decision.assessment.note}</p>
                 {decision.assessment.blocked && decision.assessment.href && (
                   <div className="journey-links">
-                    <Link to={`${decision.assessment.href}/review`}><Icon name="scale" size={15} />Record your verdict</Link>
+                    <Link to={`${decision.assessment.href}/review`}><Icon name="decision" size={15} />Record your verdict</Link>
                   </div>
                 )}
               </>

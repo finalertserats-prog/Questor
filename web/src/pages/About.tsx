@@ -1,5 +1,6 @@
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { BrandLogo } from '../components/BrandLogo';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { SHOWCASE_FEATURES, SHOWCASE_STEPS } from '../components/landingShowcase';
 
@@ -58,6 +59,8 @@ export function About() {
       <PageHeader icon="about" title="About Questor" />
 
       <div className="card">
+        {/* The page that introduces the product carries the full logo, tagline and all. */}
+        <BrandLogo variant="full" size={138} className="about-logo" />
         <p className="about-lede">
           Questor is one place to take a candidate from job description to decision: agree what the role
           needs, onboard the profile, run a structured first interview, schedule the human rounds around

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { browserThemeColor } from './brandLogoModel';
 
 export type Theme = 'light' | 'dark';
 
@@ -42,6 +43,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    // The browser chrome follows the chosen theme, not the OS guess in the
+    // theme-color media queries of index.html.
+    document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => {
+      meta.setAttribute('content', browserThemeColor(theme));
+    });
     try {
       window.localStorage.setItem(STORAGE_KEY, theme);
     } catch {
@@ -60,6 +66,18 @@ export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   if (!ctx) throw new Error('useTheme must be used within a ThemeProvider');
   return ctx;
+}
+
+/**
+ * The theme on screen, for components that only need to read it (the logo
+ * picks its light or dark cut from this). Unlike useTheme it does not throw
+ * outside a provider: it falls back to the stamp on <html>, then to light.
+ */
+export function useActiveTheme(): Theme {
+  const ctx = useContext(ThemeContext);
+  if (ctx) return ctx.theme;
+  const stamped = typeof document === 'undefined' ? null : document.documentElement.getAttribute('data-theme');
+  return stamped === 'dark' ? 'dark' : 'light';
 }
 
 /**
