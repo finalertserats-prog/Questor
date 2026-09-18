@@ -31,8 +31,10 @@ const BRAND_DIR = '/brand';
  */
 const ASPECT_RATIO: Readonly<Record<BrandLogoVariant, number>> = {
   mark: 1,
-  lockup: 3.6,
-  full: 1.3,
+  // The generated files' own proportions (scripts/build-brand-assets.py):
+  // lockup 1049x280, full logo 1049x818.
+  lockup: 1049 / 280,
+  full: 1049 / 818,
 };
 
 /**
