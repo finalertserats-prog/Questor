@@ -8,6 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { isInFlight } from './CandidatesList';
 import { formatDateTime } from '../components/dateFormat';
+import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null; }
@@ -22,6 +23,9 @@ interface InterviewResp {
   turns: Turn[];
   assessment: { id: string; recommendation: string; result: unknown } | null;
   invitation: Invitation | null;
+  /** Who and what the interview is for. Optional: older servers do not send them. */
+  candidate?: { id: string; name: string } | null;
+  role?: { id: string; title: string } | null;
 }
 
 /** The things this page can do, one at a time. */
@@ -40,23 +44,32 @@ export function InterviewDetail() {
 
   // Returns its promise: an action that re-enables its button before the fresh
   // data lands invites a second press against the state it just changed.
-  // `cancelled` so a response for an interview the person has already left
-  // cannot overwrite the one they are looking at.
-  const cancelledRef = useRef(false);
+  // Each load takes a ticket; only the newest one for the interview still on
+  // screen may write, so a slow response for the previous interview (or an
+  // older reload of this one) cannot overwrite the one being looked at.
+  const latestLoad = useRef<LoadTicket>({ id: undefined, seq: 0 });
 
-  const load = () =>
-    api.get<InterviewResp>(`/interviews/${id}`)
-      .then((d) => { if (!cancelledRef.current) setData(d); })
+  const load = () => {
+    const ticket: LoadTicket = { id, seq: latestLoad.current.seq + 1 };
+    latestLoad.current = ticket;
+    return api.get<InterviewResp>(`/interviews/${id}`)
+      .then((d) => { if (isCurrentResponse(ticket, latestLoad.current)) setData(d); })
       .catch((err: unknown) => {
-        if (!cancelledRef.current) setError(err instanceof Error ? err.message : 'Could not load this interview.');
+        if (isCurrentResponse(ticket, latestLoad.current)) setError(err instanceof Error ? err.message : 'Could not load this interview.');
       })
-      .finally(() => { if (!cancelledRef.current) setLoading(false); });
+      .finally(() => { if (isCurrentResponse(ticket, latestLoad.current)) setLoading(false); });
+  };
 
   useEffect(() => {
-    cancelledRef.current = false;
+    // A different interview: drop everything shown for the previous one.
+    setData(null);
+    setError('');
+    setNotice('');
+    setScheduleAt('');
+    setConfirmCancel(false);
     setLoading(true);
     void load();
-    return () => { cancelledRef.current = true; };
+    return () => { latestLoad.current = { id: undefined, seq: latestLoad.current.seq + 1 }; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -124,7 +137,8 @@ export function InterviewDetail() {
     <div>
       <PageHeader
         icon="interviews"
-        title="Interview"
+        title={data.candidate?.name && data.role?.title ? `${data.candidate.name} · ${data.role.title}` : data.candidate?.name ?? 'Interview'}
+        subtitle={data.candidate?.name ? 'Interview' : undefined}
         badge={stateBadge(session.state)}
         actions={
           // Nothing to cancel once the interview has reached a state it will
