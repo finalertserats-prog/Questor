@@ -128,12 +128,12 @@ export function RoleCreate() {
       <form className="card" onSubmit={submit}>
         <fieldset className="row" style={{ border: 0, padding: 0, gap: 16 }}>
           <legend className="small muted">Start from</legend>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="role-source" style={{ width: 'auto' }} checked={source === 'paste'} onChange={() => { setSource('paste'); setError(''); }} />
+          <label className="check-row">
+            <input type="radio" name="role-source" checked={source === 'paste'} onChange={() => { setSource('paste'); setError(''); }} />
             A job description
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="role-source" style={{ width: 'auto' }} checked={source === 'ats'} onChange={() => { setSource('ats'); setError(''); }} />
+          <label className="check-row">
+            <input type="radio" name="role-source" checked={source === 'ats'} onChange={() => { setSource('ats'); setError(''); }} />
             A requisition in your ATS
           </label>
         </fieldset>
@@ -208,12 +208,11 @@ export function RoleCreate() {
           </>
         )}
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+        <label className="check-row" style={{ marginTop: 12 }}>
           <input
             type="checkbox"
             checked={useLlm}
             onChange={(e) => setUseLlm(e.target.checked)}
-            style={{ width: 'auto' }}
           />
           Use AI extraction (falls back to built-in extractor)
         </label>

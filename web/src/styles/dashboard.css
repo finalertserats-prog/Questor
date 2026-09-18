@@ -27,14 +27,6 @@
   color: var(--ink);
 }
 
-.dash-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
 
 /* --- KPI cards ------------------------------------------------------------ */
 
@@ -196,7 +188,9 @@ a.kpi-link:hover .kpi-icon::after {
   display: block;
   width: 100%;
   height: auto;
-  overflow: visible;
+  /* Layout keeps every label and value inside the viewBox; anything that
+     still escapes is clipped rather than pushing the card sideways. */
+  overflow: hidden;
 }
 
 /* Grid lines are a ruler held behind the data, not part of it. */

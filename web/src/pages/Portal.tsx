@@ -186,8 +186,8 @@ export function Portal() {
                 branch is gone with it: whether the employer ticked "recording" does
                 not change any of the four facts below, so offering the candidate two
                 different sentences only implied a difference that does not exist. */}
-            <label className="row" style={{ alignItems: 'flex-start' }}>
-              <input type="checkbox" style={{ width: 'auto', marginTop: 4 }} checked={recordingConsent} onChange={(e) => setRecordingConsent(e.target.checked)} />
+            <label className="check-row">
+              <input type="checkbox" checked={recordingConsent} onChange={(e) => setRecordingConsent(e.target.checked)} />
               <span>
                 I consent to my voice being captured while I answer and sent to a speech-to-text service
                 to be transcribed, and to the resulting written transcript being kept and reviewed.
@@ -202,8 +202,8 @@ export function Portal() {
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
               <VoiceHandling stt={info.speech.stt} />
             </div>
-            <label className="row" style={{ alignItems: 'flex-start' }}>
-              <input type="checkbox" style={{ width: 'auto', marginTop: 4 }} checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
+            <label className="check-row">
+              <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
               <span>I understand this first round is conducted by an AI interviewer and reviewed by a human, and I agree to proceed.</span>
             </label>
             {info.accommodationsEnabled && (

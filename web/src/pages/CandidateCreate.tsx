@@ -156,12 +156,12 @@ export function CandidateCreate() {
       <form className="card" onSubmit={submit}>
         <fieldset className="row" style={{ border: 0, padding: 0, gap: 16 }} disabled={!!created}>
           <legend className="small muted">Start from</legend>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="candidate-source" style={{ width: 'auto' }} checked={source === 'manual'} onChange={() => switchSource('manual')} />
+          <label className="check-row">
+            <input type="radio" name="candidate-source" checked={source === 'manual'} onChange={() => switchSource('manual')} />
             Details I enter
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="candidate-source" style={{ width: 'auto' }} checked={source === 'ats'} onChange={() => switchSource('ats')} />
+          <label className="check-row">
+            <input type="radio" name="candidate-source" checked={source === 'ats'} onChange={() => switchSource('ats')} />
             A candidate in your ATS
           </label>
         </fieldset>
