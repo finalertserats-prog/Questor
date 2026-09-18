@@ -119,11 +119,11 @@ describe('initialsOf', () => {
 
 describe('journeyTitle', () => {
   it('names the role the candidate applied for', () => {
-    expect(journeyTitle('Senior Platform Engineer')).toBe('Candidate Journey: Senior Platform Engineer');
+    expect(journeyTitle('Senior Platform Engineer')).toBe('Candidate journey: Senior Platform Engineer');
   });
 
   it('omits the colon when the role is not known', () => {
-    expect(journeyTitle(null)).toBe('Candidate Journey');
+    expect(journeyTitle(null)).toBe('Candidate journey');
   });
 });
 

@@ -49,7 +49,7 @@ const LIMITS: readonly string[] = [
   'Questor’s scores have not been validated against human hiring judgement. Treat a score as a reason to read the evidence, not as a measurement that settles the question.',
   'No audio is kept. The voice is transcribed as it is spoken and the written transcript is what the hiring team reads.',
   'Human rounds are scheduled and recorded here, not hosted here — you hold those interviews wherever you normally do.',
-  'Connector tests prove credentials work; Questor does not create Teams, Zoom or Meet meetings. The AI round runs in Questor’s own browser room.',
+  'The AI round always runs in Questor’s own browser room. For human rounds, the meeting provider your admin chooses (Teams, Zoom or Meet) creates the join link, or a recruiter pastes one by hand.',
   'Automatic deletion at the end of a retention window only happens when the retention sweep is switched on for the deployment.',
 ];
 
