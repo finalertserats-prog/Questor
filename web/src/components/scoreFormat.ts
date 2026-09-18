@@ -42,3 +42,15 @@ export function formatScoreOutOf100(value: unknown): string {
 export function formatPercent(value: unknown): string {
   return hasScore(value) ? `${Math.round(value * 100)}%` : NO_SCORE;
 }
+
+// A figure: digits and the punctuation of a formatted number, a unit or two.
+const FIGURE = /^[\d\s.,:%<>+\-—–]*[a-z]{0,2}$/i;
+
+/**
+ * Whether a stat tile's value is prose (an email, a role name) rather than a
+ * figure. Prose is set smaller and allowed to wrap: at the 30px figure size an
+ * email address runs straight out of its tile.
+ */
+export function isTextStatValue(value: unknown): boolean {
+  return typeof value === 'string' && !FIGURE.test(value.trim());
+}

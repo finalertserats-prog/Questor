@@ -246,7 +246,7 @@ export function Admin() {
         {copyNotice && <Banner kind="info">{copyNotice}</Banner>}
         {orgLink && (
           <div className="row" style={{ gap: 10, marginBottom: 12 }}>
-            <code>{orgLink}</code>
+            <code className="break-anywhere">{orgLink}</code>
             <button type="button" className="btn sm secondary" onClick={() => void copyOrgLink()}>Copy link</button>
           </div>
         )}
@@ -277,6 +277,7 @@ export function Admin() {
         <div className="muted small" style={{ marginBottom: 10 }}>
           Open-source defaults are active. Paid connectors activate automatically when their API keys are set in the server .env.
         </div>
+        <div className="table-scroll" tabIndex={0} role="region" aria-label="Connectors">
         <table>
           <thead><tr><th>Component</th><th>Provider</th><th>Status</th><th>Notes</th></tr></thead>
           <tbody>
@@ -290,6 +291,7 @@ export function Admin() {
             ))}
           </tbody>
         </table>
+        </div>
 
         <OtherConnectorGuides ids={['email-sendgrid', 'email-smtp']} />
       </div>
@@ -343,6 +345,7 @@ export function Admin() {
         <div className="grid cols-2">
           <div>
             <h3>Recommendations</h3>
+            <div className="table-scroll" tabIndex={0} role="region" aria-label="Recommendations">
             <table>
               <tbody>
                 {/* Through the same table the badges use, so a recommendation
@@ -356,6 +359,7 @@ export function Admin() {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
           <div>
             <h3>Quality</h3>
@@ -374,6 +378,7 @@ export function Admin() {
         <h2>Model executions</h2>
         {panelErrors.executions && <Banner kind="error">Model executions did not load. {panelErrors.executions}</Banner>}
         {executions.length === 0 ? <div className="muted small">No executions.</div> : (
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Model executions">
           <table>
             <thead><tr><th>Time</th><th>Function</th><th>Provider</th><th>Model</th><th>Latency</th><th>Tokens</th></tr></thead>
             <tbody>
@@ -389,6 +394,7 @@ export function Admin() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       ))}
@@ -399,6 +405,7 @@ export function Admin() {
         {panelErrors.webhooks && <Banner kind="error">Webhooks did not load. {panelErrors.webhooks}</Banner>}
         {hookNotice && <Banner kind="ok">{hookNotice}</Banner>}
         {webhooks.length === 0 ? <div className="muted small">No webhooks configured.</div> : (
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Webhooks">
           <table>
             <thead><tr><th>URL</th><th>Events</th><th>Active</th><th>Signature</th></tr></thead>
             <tbody>
@@ -406,7 +413,7 @@ export function Admin() {
                 const sig = signatureView(w, v1OffEverywhere);
                 return (
                   <tr key={w.id}>
-                    <td className="small">{w.url}</td>
+                    <td className="small break-anywhere">{w.url}</td>
                     <td className="muted small">{eventsLabel(w.events ?? '')}</td>
                     <td>{w.active ? <Badge kind="green">Yes</Badge> : <Badge kind="gray">No</Badge>}</td>
                     <td className="small">
@@ -437,6 +444,7 @@ export function Admin() {
               })}
             </tbody>
           </table>
+          </div>
         )}
         {confirmV1Off && (
           <Banner kind="info">

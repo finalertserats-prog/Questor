@@ -712,6 +712,34 @@ label,
   margin: 14px 0 5px;
 }
 
+/* A label that wraps a checkbox or radio is a sentence the person agrees to,
+   not a caption over a field: normal type, normal case, full ink. */
+label.check-row,
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.45;
+  text-transform: none;
+  color: var(--ink);
+}
+.check-row input[type='checkbox'],
+.check-row input[type='radio'] {
+  width: auto;
+  flex: none;
+  margin-top: 3px;
+}
+
+/* Long unbroken strings (URLs, slugs, tokens) wrap instead of widening the page. */
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 input,
 textarea,
 select {
@@ -918,6 +946,7 @@ tr.in-flight td:first-child {
    ========================================================================== */
 
 .stat {
+  min-width: 0;
   background: var(--sheet);
   border: var(--hair) solid var(--rule);
   border-radius: var(--radius-sheet);
@@ -925,12 +954,21 @@ tr.in-flight td:first-child {
   box-shadow: var(--shadow-sheet);
 }
 .stat .value {
+  /* An email or a long role name must wrap inside the tile, not run out of it. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-display);
   font-size: 30px;
   font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.015em;
   color: var(--ink);
+}
+.stat .value-text {
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.35;
+  letter-spacing: 0;
 }
 .stat .label {
   font-family: var(--font-data);
@@ -1555,6 +1593,10 @@ tr.in-flight td:first-child {
 .flag-item:last-child {
   border-bottom: 0;
 }
-.field-problem {
-  color: var(--danger, #a12d2d);
+/* Doubled with .field-hint so a hint that turns into a problem takes the
+   problem's colour whichever stylesheet loads last. --stop carries contrast in
+   both themes; the old #a12d2d fallback failed it on dark. */
+.field-problem,
+.field-hint.field-problem {
+  color: var(--stop);
 }
