@@ -118,9 +118,9 @@ export function Dashboard() {
       <div className="topbar">
         <h1>Dashboard</h1>
         <div className="row">
-          <Link className="btn" to="/roles/new">New Role</Link>
+          <Link className="btn" to="/roles/new">New role</Link>
           <Link className="btn secondary" to="/candidates">Candidates</Link>
-          <Link className="btn secondary" to="/candidates/new">Add Candidate</Link>
+          <Link className="btn secondary" to="/candidates/new">Add candidate</Link>
         </div>
       </div>
 
@@ -150,7 +150,10 @@ export function Dashboard() {
           <section aria-labelledby="dash-kpis" data-tour="kpis">
             <h2 id="dash-kpis" className="dash-heading">Key metrics</h2>
             <ul className="kpi-grid">
-              <Kpi icon="jobs" label="Open roles" value={k.openRoles} hint="Draft or approved" />
+              {/* One roles count, not two: "Open roles" and "Active roles" were
+                  the same number under two names. The role metrics' version
+                  links to the list; an older server only has this one. */}
+              {!metrics.roles && <Kpi icon="jobs" label="Open roles" value={k.openRoles} to="/roles" hint="Draft or approved" />}
               <Kpi icon="candidates" label="Candidates" value={k.candidates} to="/candidates" hint="You can access" />
               <Kpi icon="funnel" label="In pipeline" value={k.activePipelines} hint="Active, not yet decided" />
               {/* Both counts include the human rounds, not only the AI sessions
@@ -178,8 +181,8 @@ export function Dashboard() {
               {metrics.roles && (
                 <>
                   <Kpi icon="role" label="Active roles" value={metrics.roles.kpis.activeRoles} to="/roles" hint="Draft or approved" />
-                  <Kpi icon="inbox" label="Roles with no candidates" value={metrics.roles.kpis.rolesWithoutCandidates} to="/roles" hint="Active roles" />
-                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles" hint="At least one review-ready interview" />
+                  <Kpi icon="inbox" label="Roles with no candidates" value={metrics.roles.kpis.rolesWithoutCandidates} to="/roles?filter=no-candidates" hint="Active roles" />
+                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles?filter=awaiting-review" hint="At least one review-ready interview" />
                 </>
               )}
             </ul>

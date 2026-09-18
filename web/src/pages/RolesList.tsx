@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { formatDate } from '../components/dateFormat';
 import { EmptyState } from '../components/EmptyState';
@@ -7,12 +7,15 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { roleDetailLine, roleDisplayLabels } from '../components/roleLabelModel';
 import { PageSkeleton } from '../components/Skeleton';
-import { Badge, Banner } from '../components/ui';
+import { Banner } from '../components/ui';
+import { StatusBadge } from '../components/StatusBadge';
 import {
   domainsFromRoles,
   filterRoles,
   formatAdvanceRate,
   formatTurnaround,
+  METRIC_FILTER_LABELS,
+  metricFilterFromParam,
   sortRoles,
   type RoleFunnel,
   type RoleMetricsPayload,
@@ -35,11 +38,6 @@ function nextDirection(active: boolean, current: SortDirection): SortDirection {
   return active && current === 'asc' ? 'desc' : 'asc';
 }
 
-function statusBadge(status: string) {
-  const kind = status === 'approved' ? 'green' : status === 'draft' ? 'amber' : 'gray';
-  return <Badge kind={kind}>{status}</Badge>;
-}
-
 export function RolesList() {
   const [roles, setRoles] = useState<readonly RoleFunnel[]>([]);
   const [query, setQuery] = useState('');
@@ -49,6 +47,10 @@ export function RolesList() {
   const [direction, setDirection] = useState<SortDirection>('asc');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // The dashboard's role KPIs link here with ?filter=no-candidates or
+  // ?filter=awaiting-review; the rows are narrowed by the same rule as the count.
+  const [params, setParams] = useSearchParams();
+  const metric = metricFilterFromParam(params.get('filter'));
 
   // Metrics are the list's source of truth: the endpoint already scopes roles
   // and candidate counts the same way the sidebar pages do.
@@ -69,9 +71,14 @@ export function RolesList() {
     return new Map(roles.map((role, index) => [role.id, labels[index]]));
   }, [roles]);
   const visible = useMemo(
-    () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined }), sortKey, direction),
-    [roles, query, status, domain, sortKey, direction],
+    () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined, metric }), sortKey, direction),
+    [roles, query, status, domain, metric, sortKey, direction],
   );
+  const clearMetric = () => {
+    const next = new URLSearchParams(params);
+    next.delete('filter');
+    setParams(next);
+  };
 
   const setSort = (key: RoleSortKey) => {
     const active = key === sortKey;
@@ -90,6 +97,13 @@ export function RolesList() {
       />
 
       {error && <Banner kind="error">{error}</Banner>}
+
+      {metric && (
+        <p className="row small" style={{ gap: 8 }}>
+          <span>Showing: <strong>{METRIC_FILTER_LABELS[metric]}</strong></span>
+          <button type="button" className="btn ghost sm" onClick={clearMetric}><Icon name="close" size={14} />Show all roles</button>
+        </p>
+      )}
 
       <div className="card">
         <div className="row spread" style={{ marginBottom: 12 }}>
@@ -129,7 +143,7 @@ export function RolesList() {
             icon="search"
             title="No matches"
             message="No role matches the current filters."
-            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); setDomain(''); }}><Icon name="close" size={14} />Clear filters</button>}
+            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); setDomain(''); if (metric) clearMetric(); }}><Icon name="close" size={14} />Clear filters</button>}
           />
         ) : (
           <>
@@ -163,7 +177,7 @@ export function RolesList() {
                         <Link to={`/roles/${role.id}`}>{labelById.get(role.id) ?? role.title}</Link>
                         <div className="muted small">{roleDetailLine(role)}</div>
                       </td>
-                      <td>{statusBadge(role.status)}</td>
+                      <td><StatusBadge kind="role" value={role.status} /></td>
                       <td>{role.applied}</td>
                       <td>{role.interviewInvited}</td>
                       <td>{role.interviewed}</td>
