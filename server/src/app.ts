@@ -15,6 +15,7 @@ import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
 import { roundMeetingsRouter } from './routes/roundMeetings.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
+import { roleStatusRouter } from './routes/roleStatus.js';
 import { catalogRouter } from './routes/catalog.js';
 import { candidatesRouter } from './routes/candidates.js';
 import { interviewsRouter } from './routes/interviews.js';
@@ -194,6 +195,7 @@ export function createApp() {
   );
   app.use('/api/auth', authRouter);
   app.use('/api/catalog', catalogRouter);
+  app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidateAtsRouter);
