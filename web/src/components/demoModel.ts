@@ -18,3 +18,21 @@ export function demoHidesNavItem(path: string): boolean {
 export function demoHasEnded(endsAtIso: string, nowMs: number): boolean {
   return Date.parse(endsAtIso) <= nowMs;
 }
+
+/** Mirrors the server's canRequestAgain: only a used or expired link is worth asking again for. */
+export function canRequestDemoAgain(reason: string): boolean {
+  return reason === 'used' || reason === 'expired';
+}
+
+export function demoReasonText(reason: string): string {
+  if (reason === 'expired') return 'This demo link has expired.';
+  if (reason === 'used') return 'This demo link has already been used.';
+  return 'This demo link is not valid.';
+}
+
+const FINAL_MINUTE_MS = 60_000;
+
+/** The countdown is announced to a screen reader only in its last minute, not on every tick. */
+export function isFinalDemoMinute(remainingMs: number): boolean {
+  return remainingMs > 0 && remainingMs <= FINAL_MINUTE_MS;
+}

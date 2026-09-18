@@ -106,6 +106,10 @@ export function Admin() {
     return () => { cancelled = true; };
   }, []);
 
+  // Unread, the saved link is unknown: offering "Create link" then would let
+  // an admin overwrite a link their team already uses without seeing it.
+  const [orgLoadError, setOrgLoadError] = useState('');
+  const [orgAttempt, setOrgAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
     api.get<{ tenant: Tenant | null }>('/auth/me')
@@ -114,10 +118,13 @@ export function Admin() {
         setOrgName(d.tenant?.name ?? '');
         setSlug(d.tenant?.slug ?? '');
         setSavedSlug(d.tenant?.slug ?? null);
+        setOrgLoadError('');
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        if (!cancelled) setOrgLoadError(err instanceof Error ? err.message : 'Could not read your organisation.');
+      });
     return () => { cancelled = true; };
-  }, []);
+  }, [orgAttempt]);
 
   // After every hook. The server refuses every request here without
   // admin:manage; the page does not render an empty console for it either.
@@ -242,6 +249,12 @@ export function Admin() {
         <p className="muted small">
           Share this link with your HR team so they sign in to {orgName || 'your organisation'} directly. Anyone who guesses the link can see your organisation's name, so avoid putting anything sensitive in it.
         </p>
+        {orgLoadError && (
+          <Banner kind="error">
+            Your organisation&rsquo;s current sign-in link could not be read. {orgLoadError}{' '}
+            <button type="button" className="btn secondary sm" onClick={() => setOrgAttempt((n) => n + 1)}>Try again</button>
+          </Banner>
+        )}
         {slugNotice && <Banner kind="ok">{slugNotice}</Banner>}
         {copyNotice && <Banner kind="info">{copyNotice}</Banner>}
         {orgLink && (
@@ -250,7 +263,7 @@ export function Admin() {
             <button type="button" className="btn sm secondary" onClick={() => void copyOrgLink()}>Copy link</button>
           </div>
         )}
-        <form className="row" style={{ alignItems: 'flex-end' }} onSubmit={saveSlug}>
+        <form className="row" style={{ alignItems: 'flex-end' }} onSubmit={saveSlug} hidden={orgLoadError !== ''}>
           <div style={{ flex: 1 }}>
             <label htmlFor="org-slug">Link name</label>
             <input

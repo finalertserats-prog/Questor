@@ -7,7 +7,7 @@ import { BrandLogo } from './components/BrandLogo';
 import { ProfileMenu } from './components/ProfileMenu';
 import { ProductTour } from './components/ProductTour';
 import { TourProvider } from './components/tourContext';
-import { demoHasEnded, formatDemoCountdown } from './components/demoModel';
+import { demoHasEnded, formatDemoCountdown, isFinalDemoMinute } from './components/demoModel';
 import {
   brandDisplay,
   navItemTooltip,
@@ -88,16 +88,25 @@ function useIsNarrowViewport(): boolean {
 function DemoBanner({ endsAt }: { endsAt: string }) {
   const [now, setNow] = useState(Date.now());
   const [interviewError, setInterviewError] = useState('');
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  // The clock ticks every second; without this the expiry effect posted
+  // /demo/end on every tick until the page finally navigated away.
+  const endingRef = useRef(false);
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(id); }, []);
   const endDemo = useCallback(async () => {
+    if (endingRef.current) return;
+    endingRef.current = true;
     try { await api.post('/demo/end', {}); } catch { /* the session is ending either way */ }
     window.location.assign('/demo/ended');
   }, []);
   useEffect(() => { if (demoHasEnded(endsAt, now)) void endDemo(); }, [endsAt, now, endDemo]);
+  const remainingMs = Date.parse(endsAt) - now;
   const openInterview = async () => {
     setInterviewError('');
     // Opened before the request so the browser treats it as a click, not a pop-up.
     const tab = window.open('', '_blank');
+    // The portal must not be able to reach back into this console.
+    if (tab) tab.opener = null;
     try {
       const { portalUrl } = await api.get<{ portalUrl: string }>('/demo/interview');
       if (tab) tab.location.href = portalUrl; else window.location.assign(portalUrl);
@@ -107,11 +116,23 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
     }
   };
   return (
-    <div className="banner" role="status" style={{ borderRadius: 0, margin: 0, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
-      <span>Demo · ends in {formatDemoCountdown(Date.parse(endsAt) - now)}</span>
+    // Not a live region itself: a countdown announced every second drowns out
+    // everything else a screen reader has to say. Only the final minute and
+    // errors are announced.
+    <div className="banner" style={{ borderRadius: 0, margin: 0, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+      <span>Demo · ends in {formatDemoCountdown(remainingMs)}</span>
+      <span className="visually-hidden" role="status">{isFinalDemoMinute(remainingMs) ? 'Less than a minute of the demo is left.' : ''}</span>
       <button type="button" className="btn sm" onClick={() => void openInterview()}>Try the interview as the candidate</button>
-      <button type="button" className="btn sm secondary" onClick={() => void endDemo()}>End demo</button>
-      {interviewError && <span className="small">{interviewError}</span>}
+      {confirmEnd ? (
+        <>
+          <span className="small">End the demo and sign out?</span>
+          <button type="button" className="btn sm secondary" onClick={() => void endDemo()}>Yes, end demo</button>
+          <button type="button" className="btn sm ghost" onClick={() => setConfirmEnd(false)}>Keep going</button>
+        </>
+      ) : (
+        <button type="button" className="btn sm secondary" onClick={() => setConfirmEnd(true)}>End demo</button>
+      )}
+      {interviewError && <span className="small" role="alert">{interviewError}</span>}
     </div>
   );
 }

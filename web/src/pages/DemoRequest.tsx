@@ -28,7 +28,6 @@ export function DemoRequest() {
     <div className="public-shell">
       <header className="public-bar"><Link to="/login" className="public-brand"><BrandLogo variant="lockup" size={28} /></Link><Link to="/login" className="btn sm secondary">Sign in</Link></header>
       <main className="public-body"><div className="card auth-card" style={{ maxWidth: 520, margin: '0 auto' }}>
-        <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div><div className="brand-line" aria-hidden="true" />
         {sent ? <><h1>Check your inbox</h1><p className="muted">We sent a one-time sign-in link if this address can receive a demo. It opens a private sandbox and expires after one use.</p></> : <>
           <h1>Ask for a demo</h1><p className="muted small">We only use these details to provision and operate your private demo sandbox.</p>{err && <Banner kind="error">{err}</Banner>}
           <form onSubmit={submit}>
