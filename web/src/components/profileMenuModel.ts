@@ -53,6 +53,11 @@ export function profileMenuItems(role: string): ProfileMenuItem[] {
     .map(({ roles: _roles, ...item }) => item);
 }
 
+/** Whether this role may open the Admin console (and so sees it in the sidebar). */
+export function canManageAdmin(role: string): boolean {
+  return (ADMIN_ROLES as readonly string[]).includes(role);
+}
+
 /** Whether this role may open the audit log page. */
 export function canReadAudit(role: string): boolean {
   return (AUDIT_ROLES as readonly string[]).includes(role);

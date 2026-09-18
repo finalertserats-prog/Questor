@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { initialsFor, profileMenuItems } from '../src/components/profileMenuModel';
+import { canManageAdmin, initialsFor, profileMenuItems } from '../src/components/profileMenuModel';
 
 /**
  * The sidebar profile menu's decisions, kept as pure logic so they can be
@@ -53,5 +53,15 @@ describe('profileMenuItems', () => {
   it('offers the tour to every role as an action rather than a page', () => {
     const tour = profileMenuItems('recruiter').find((item) => item.key === 'tour');
     expect(tour).toEqual({ key: 'tour', label: 'Take the tour', kind: 'action', action: 'start-tour' });
+  });
+});
+
+describe('canManageAdmin', () => {
+  it('lets an admin open the Admin console', () => {
+    expect(canManageAdmin('admin')).toBe(true);
+  });
+
+  it('keeps the Admin console from a recruiter', () => {
+    expect(canManageAdmin('recruiter')).toBe(false);
   });
 });

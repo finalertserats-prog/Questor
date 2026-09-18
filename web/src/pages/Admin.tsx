@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type KeyboardEvent } from 'react';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
@@ -7,10 +8,14 @@ import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
 import { SystemHealthPanel } from '../components/SystemHealthPanel';
+import { PageHeader } from '../components/PageHeader';
+import { AdminTabList } from '../components/AdminTabList';
+import { adminPanelId, adminTabFromParam, adminTabId, adminTabPath, nextAdminTab, type AdminTabKey } from '../components/adminTabsModel';
 import {
   LEGACY_OFF_CONFIRMATION, eventsForApi, eventsLabel, signatureView,
 } from '../components/webhookSignatureModel';
-import type { Tenant } from '../auth';
+import { useAuth, type Tenant } from '../auth';
+import { canManageAdmin } from '../components/profileMenuModel';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
 interface Providers {
@@ -34,21 +39,16 @@ interface ModelExecution { id: string; provider: string; model: string; function
 interface Webhook { id: string; url: string; events: string; active: boolean; sendLegacySignature: boolean; }
 interface WebhookList { webhooks: Webhook[]; legacySignatureDisabledEverywhere?: boolean; }
 
-/** Repeated by the loading branch, so the health panel is on screen either way. */
-function AdminTopbar() {
-  return (
-    <div className="topbar">
-      <h1>Admin &amp; Connectors</h1>
-    </div>
-  );
-}
-
 function activeBadge(c: ProviderComponent) {
   if (c.enabled || c.configured) return <Badge kind="green">Active</Badge>;
   return <Badge kind="gray">Built-in</Badge>;
 }
 
 export function Admin() {
+  const { tab } = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+  const activeTab = adminTabFromParam(tab);
+  const { user } = useAuth();
   const [providers, setProviders] = useState<Providers | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [executions, setExecutions] = useState<ModelExecution[]>([]);
@@ -116,18 +116,11 @@ export function Admin() {
     return () => { cancelled = true; };
   }, []);
 
-  // System health does not wait for the panels below it: "is anything wrong?"
-  // is the question this page is opened for, and it is answered by its own
-  // request.
-  if (loading) {
-    return (
-      <div>
-        <AdminTopbar />
-        <SystemHealthPanel />
-        <div className="muted">Loading…</div>
-      </div>
-    );
-  }
+  // After every hook. The server refuses every request here without
+  // admin:manage; the page does not render an empty console for it either.
+  if (!user || !canManageAdmin(user.role)) return <Navigate to="/" replace />;
+  // An address naming no tab goes back to the console itself.
+  if (activeTab === null) return <Navigate to="/admin" replace />;
 
   const createWebhook = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,14 +201,39 @@ export function Admin() {
     { label: 'ATS', c: providers?.ats ? { ...providers.ats, notes: 'Your organisation’s own connection. Manage it in Settings.' } : undefined },
   ];
 
+  const selectTab = (key: AdminTabKey) => navigate(adminTabPath(key));
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: AdminTabKey) => {
+    const next = nextAdminTab(current, event.key);
+    if (next === current) return;
+    event.preventDefault();
+    selectTab(next);
+    window.requestAnimationFrame(() => document.getElementById(adminTabId(next))?.focus());
+  };
+
+  // Only the open tab is rendered: a hidden System health panel would go on
+  // polling a report nobody is looking at.
+  const panel = (key: AdminTabKey, content: React.ReactNode) => activeTab === key && (
+    <section id={adminPanelId(key)} role="tabpanel" aria-labelledby={adminTabId(key)} tabIndex={0} className="admin-panel">
+      {content}
+    </section>
+  );
+
+  // System health never waits for the other sections' requests; they each
+  // say they are loading instead of holding the whole console back.
+  const loaded = (content: React.ReactNode) => (loading ? <div className="card muted">Loading…</div> : content);
+
   return (
     <div>
-      <AdminTopbar />
+      <PageHeader icon="admin" title="Admin console" />
 
-      <SystemHealthPanel />
+      <AdminTabList active={activeTab} onSelect={selectTab} onKeyDown={handleTabKeyDown} />
 
       {error && <Banner kind="error">{error}</Banner>}
 
+      {panel('health', <SystemHealthPanel />)}
+
+      {panel('organisation', loaded(
       <div className="card">
         <h2>Organisation sign-in link</h2>
         <p className="muted small">
@@ -247,7 +265,9 @@ export function Admin() {
           </button>
         </form>
       </div>
+      ))}
 
+      {panel('connectors', loaded(
       <div className="card">
         <h2>Connectors</h2>
         {panelErrors.connectors && <Banner kind="error">Connector status did not load. {panelErrors.connectors}</Banner>}
@@ -269,8 +289,14 @@ export function Admin() {
         </table>
 
         <OtherConnectorGuides ids={['email-sendgrid', 'email-smtp']} />
+      </div>
+      ))}
 
-        <h3 style={{ marginTop: 18 }}>Meeting adapters</h3>
+      {panel('meetings', loaded(
+      <div className="card">
+        <h2>Meetings</h2>
+        {panelErrors.connectors && <Banner kind="error">Meeting status did not load. {panelErrors.connectors}</Banner>}
+        <h3>Meeting adapters</h3>
         <div className="muted small" style={{ marginBottom: 10 }}>
           Open "How to set up" for what to create at each vendor and which variables to add to server/.env. Keys are set on the server and take effect after a restart; they are never stored or shown here.
         </div>
@@ -297,7 +323,9 @@ export function Admin() {
           onSaved={() => { void api.get<Providers>('/admin/providers').then(setProviders).catch(() => undefined); }}
         />
       </div>
+      ))}
 
+      {panel('analytics', loaded(
       <div className="card">
         <h2>Analytics</h2>
         {panelErrors.analytics && <Banner kind="error">Analytics did not load. {panelErrors.analytics}</Banner>}
@@ -336,7 +364,9 @@ export function Admin() {
           </div>
         </div>
       </div>
+      ))}
 
+      {panel('executions', loaded(
       <div className="card">
         <h2>Model executions</h2>
         {panelErrors.executions && <Banner kind="error">Model executions did not load. {panelErrors.executions}</Banner>}
@@ -358,7 +388,9 @@ export function Admin() {
           </table>
         )}
       </div>
+      ))}
 
+      {panel('webhooks', loaded(
       <div className="card">
         <h2>Webhooks</h2>
         {panelErrors.webhooks && <Banner kind="error">Webhooks did not load. {panelErrors.webhooks}</Banner>}
@@ -441,6 +473,7 @@ export function Admin() {
           <button className="btn" type="submit" disabled={creating || !hookUrl}>Add webhook</button>
         </form>
       </div>
+      ))}
     </div>
   );
 }

@@ -35,3 +35,33 @@ test('the admin page leads with system health', async ({ page }) => {
 
   await page.screenshot({ path: screenshotPath, fullPage: true });
 });
+
+/**
+ * The console is reached from the sidebar, where its health marker is seen from
+ * every page, and is split into tabs so no section is found by scrolling.
+ */
+test('the sidebar leads to the console, and each section is its own tab', async ({ page }) => {
+  await page.goto('/');
+  await dismissTour(page);
+
+  const adminLink = page.getByRole('navigation').getByRole('link', { name: /Admin console, System health: (Healthy|Watch|Problem|Unknown|Checking)/ });
+  await expect(adminLink).toBeVisible();
+  await adminLink.click();
+  await expect(page).toHaveURL(/\/admin$/);
+
+  const tabs = page.getByRole('tablist', { name: 'Admin console sections' });
+  await expect(tabs.getByRole('tab', { name: /System health/ })).toHaveAttribute('aria-selected', 'true');
+
+  await tabs.getByRole('tab', { name: 'Webhooks' }).click();
+  await expect(page).toHaveURL(/\/admin\/webhooks$/);
+  await expect(page.getByRole('tabpanel').getByRole('heading', { level: 2, name: 'Webhooks' })).toBeVisible();
+  // One section at a time: the others are not on the page at all.
+  await expect(page.getByRole('heading', { level: 2, name: 'System health' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2, name: 'Connectors' })).toHaveCount(0);
+
+  // Each tab has an address; an unknown one goes back to the console.
+  await page.goto('/admin/connectors');
+  await expect(page.getByRole('tabpanel').getByRole('heading', { level: 2, name: 'Connectors' })).toBeVisible();
+  await page.goto('/admin/no-such-tab');
+  await expect(page).toHaveURL(/\/admin$/);
+});

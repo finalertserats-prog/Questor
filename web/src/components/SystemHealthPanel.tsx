@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { formatDateTime } from './dateFormat';
+import { publishHealth } from './healthStatusStore';
 import {
   STATUS_BADGE, STATUS_WORD, emptySectionText, healthyToggleLabel, overallHeadline, splitChecks,
   type HealthCheckView, type HealthReportView, type HealthSectionView,
 } from './systemHealthModel';
 
 /**
- * "Is Questor healthy?" at the top of the Admin page.
+ * "Is Questor healthy?" — the first tab of the Admin console.
  *
  * The owner's first question every morning used to need an SSH session and
  * four commands (see docs/RUNBOOK.md, Daily checks). This answers what the app
@@ -73,9 +74,12 @@ export function SystemHealthPanel() {
       if (controller.signal.aborted) return;
       setReport(next);
       setError('');
+      // The sidebar marker shows this same verdict, so the two never disagree.
+      publishHealth({ status: next.status, checkedAt: Date.now() });
     } catch (err: unknown) {
       if (controller.signal.aborted) return;
       setError(err instanceof Error ? err.message : 'System health could not be checked.');
+      publishHealth({ status: 'unavailable', checkedAt: Date.now() });
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
@@ -125,7 +129,7 @@ export function SystemHealthPanel() {
         </div>
       </div>
 
-      {error && <p className="health-error">{error} The rest of this page is unaffected.</p>}
+      {error && <p className="health-error">{error} The other tabs are unaffected.</p>}
       {!report && !error && <p className="muted small">Checking every part of Questor…</p>}
       {report?.sections.map((section) => <SystemHealthSection key={section.id} section={section} />)}
       {report?.scope === 'tenant' && (
