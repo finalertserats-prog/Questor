@@ -8,7 +8,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
-import { canCreateRoleFromCatalog, parseTechStackInput } from '../components/catalogModel';
+import { canCreateRoleFromCatalog, catalogLinkFields, parseTechStackInput } from '../components/catalogModel';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
@@ -78,7 +78,7 @@ export function RoleCreate() {
     setError('');
     setSubmitting(true);
     try {
-      const catalogFields = { catalogRoleId: catalogRoleId || undefined, experienceBand: experienceBand || undefined, regionCode: regionCode || undefined, techStack: [...techStack] };
+      const catalogFields = { ...catalogLinkFields({ catalogRoleId, domainId }), experienceBand: experienceBand || undefined, regionCode: regionCode || undefined, techStack: [...techStack] };
       const resp = await api.post<CreateResp>('/roles', source === 'ats'
         ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title || undefined, useLlm, ...catalogFields }
         : { sourceType: 'paste', sourceText, title: title || undefined, useLlm, ...catalogFields });

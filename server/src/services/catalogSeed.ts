@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 import { ROLE_CATALOG } from '../seed/catalog/roleCatalog.js';
 import { normalizeTitle, slugifyCatalogName } from '../domain/catalogText.js';
 
@@ -123,4 +124,34 @@ export async function ensureCatalogSeeded(): Promise<void> {
       : [];
   });
   await insertEach(missingAliases, (data) => prisma.catalogRoleAlias.create({ data }));
+}
+
+const DEFAULT_RETRY_DELAY_MS = 60_000;
+
+/**
+ * Seed, and keep trying if it fails. A seed that failed once used to leave the
+ * New role form with an empty catalog until someone restarted the server.
+ * Resolves true once seeded, false if `maxAttempts` ran out.
+ */
+export async function seedCatalogWithRetry(opts: {
+  readonly seeder?: () => Promise<void>;
+  readonly retryDelayMs?: number;
+  readonly maxAttempts?: number;
+} = {}): Promise<boolean> {
+  const seeder = opts.seeder ?? ensureCatalogSeeded;
+  const retryDelayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const maxAttempts = opts.maxAttempts ?? Number.POSITIVE_INFINITY;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await seeder();
+      return true;
+    } catch (err) {
+      logger.error({ err: err instanceof Error ? err.message : String(err), attempt }, 'Could not seed role catalog');
+      if (attempt < maxAttempts) {
+        // unref: a pending retry must never be what keeps a stopping process alive.
+        await new Promise<void>((resolve) => { setTimeout(resolve, retryDelayMs).unref?.(); });
+      }
+    }
+  }
+  return false;
 }

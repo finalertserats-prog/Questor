@@ -250,3 +250,73 @@ describe('catalog review fixes', () => {
     expect(res.body[1].display).toMatch(/^\S.* · \d+–\d+ yrs$/);
   });
 });
+
+describe('catalog review fixes, round 2', () => {
+  const JD = 'Senior Platform Engineer\nWe need a platform engineer to run our Kubernetes estate. 5+ years with Terraform and Go.';
+
+  async function postRole(token: string, body: Record<string, unknown>) {
+    return request(app).post('/api/roles').set('Authorization', `Bearer ${token}`).send({ sourceType: 'paste', sourceText: JD, useLlm: false, experienceBand: 'senior', ...body });
+  }
+
+  it('adds a typed title to the shared catalog and links the role when only a domain is chosen', async () => {
+    const { user } = await makeTenantUser('typed@catalog.local');
+    const d = await prisma.catalogDomain.create({ data: { slug: 'cloud', name: 'Cloud', sortOrder: 1 } });
+
+    const res = await postRole(user.token, { domainId: d.id, title: 'Estate Reliability Engineer' });
+
+    const linked = await prisma.role.findUniqueOrThrow({ where: { id: res.body.role.id }, include: { catalogRole: true } });
+    expect(linked.catalogRole?.title).toBe('Estate Reliability Engineer');
+  });
+
+  it('links to the existing catalog role rather than adding a duplicate', async () => {
+    const { user } = await makeTenantUser('dupe@catalog.local');
+    const d = await prisma.catalogDomain.create({ data: { slug: 'cloud2', name: 'Cloud Two', sortOrder: 1 } });
+    const existing = await createCatalogRole(d.id, 'Estate Reliability Engineer');
+
+    const res = await postRole(user.token, { domainId: d.id, title: 'estate reliability engineer' });
+
+    expect(res.body.role.catalogRole?.id).toBe(existing.id);
+  });
+
+  it('still infers the title from the JD when it is left blank, and links what it inferred', async () => {
+    const { user } = await makeTenantUser('inferred@catalog.local');
+    const d = await prisma.catalogDomain.create({ data: { slug: 'cloud3', name: 'Cloud Three', sortOrder: 1 } });
+
+    const res = await postRole(user.token, { domainId: d.id });
+
+    expect(res.status).toBe(201);
+    const linked = await prisma.role.findUniqueOrThrow({ where: { id: res.body.role.id }, include: { catalogRole: true } });
+    expect(linked.catalogRole?.normalizedTitle).toBe(normalizeTitle(linked.title));
+  });
+
+  it('refuses an unknown domain before any extraction is spent', async () => {
+    const { user } = await makeTenantUser('baddomain@catalog.local');
+
+    const res = await postRole(user.token, { domainId: 'ckunknowndomain0000000000', title: 'Anything Engineer' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('keeps full-prefix matches when more than a hundred titles only match at a later word', async () => {
+    const { user } = await makeTenantUser('prefix@catalog.local');
+    const d = await prisma.catalogDomain.create({ data: { slug: 'data', name: 'Data', sortOrder: 1 } });
+    for (let i = 0; i < 120; i += 1) await createCatalogRole(d.id, `Senior Data Role ${i}`);
+    await createCatalogRole(d.id, 'Database Administrator');
+
+    const res = await request(app).get('/api/catalog/roles?q=data&limit=5').set('Authorization', `Bearer ${user.token}`);
+
+    expect(res.body.roles[0]?.title).toBe('Database Administrator');
+  });
+});
+
+describe('seedCatalogWithRetry', () => {
+  it('tries again after a failed seed instead of giving up until the next restart', async () => {
+    const { seedCatalogWithRetry } = await import('../src/services/catalogSeed.js');
+    let calls = 0;
+    const seeder = async () => { calls += 1; if (calls === 1) throw new Error('db busy'); };
+
+    await seedCatalogWithRetry({ seeder, retryDelayMs: 1, maxAttempts: 3 });
+
+    expect(calls).toBe(2);
+  });
+});

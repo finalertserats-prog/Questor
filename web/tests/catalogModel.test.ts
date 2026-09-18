@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bandDisplay, canCreateRoleFromCatalog, newRoleLabel, parseTechStackInput, shouldOfferNewRole } from '../src/components/catalogModel';
+import { bandDisplay, canCreateRoleFromCatalog, catalogLinkFields, isCurrentQuery, newRoleLabel, parseTechStackInput, shouldOfferNewRole } from '../src/components/catalogModel';
 
 describe('catalogModel', () => {
   it('formats experience bands without duplicate parenthetical years', () => {
@@ -35,6 +35,21 @@ describe('catalogModel', () => {
     expect(canCreateRoleFromCatalog({ ...base, experienceBand: undefined })).toBe(false);
     expect(canCreateRoleFromCatalog({ ...base, regionCode: '' })).toBe(false);
     expect(canCreateRoleFromCatalog({ ...base, sourceReady: false })).toBe(false);
-    expect(canCreateRoleFromCatalog({ ...base, catalogRoleId: undefined, title: '  ' })).toBe(false);
+
+  });
+
+  it('allows a blank title so the JD or requisition can supply it, as before the catalog', () => {
+    expect(canCreateRoleFromCatalog({ title: '  ', source: 'paste', sourceReady: true, domainId: 'd1', experienceBand: 'senior', regionCode: 'IN' })).toBe(true);
+  });
+
+  it('sends the domain so the server can link a typed or inferred title, and not when a catalog role is chosen', () => {
+    expect(catalogLinkFields({ catalogRoleId: '', domainId: 'd1' })).toEqual({ domainId: 'd1' });
+    expect(catalogLinkFields({ catalogRoleId: 'c1', domainId: 'd1' })).toEqual({ catalogRoleId: 'c1' });
+  });
+
+  it('applies a typeahead response only if the query and domain it was for are still current', () => {
+    expect(isCurrentQuery({ domainId: 'd1', value: 'eng' }, { domainId: 'd1', value: 'eng' })).toBe(true);
+    expect(isCurrentQuery({ domainId: 'd1', value: 'eng' }, { domainId: 'd1', value: '' })).toBe(false);
+    expect(isCurrentQuery({ domainId: 'd1', value: 'eng' }, { domainId: 'd2', value: 'eng' })).toBe(false);
   });
 });

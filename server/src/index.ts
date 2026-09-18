@@ -11,7 +11,7 @@ import { startRetentionSweep } from './services/dataRights.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
 import { backfillInvitationSecrets } from './services/invitations.js';
-import { ensureCatalogSeeded } from './services/catalogSeed.js';
+import { seedCatalogWithRetry } from './services/catalogSeed.js';
 import { startRateLimitPurge } from './middleware/rateLimit.js';
 import { releaseHeldLeases, runningJobCount, stopAllJobs } from './services/jobs.js';
 import { markDraining } from './services/drainState.js';
@@ -33,9 +33,10 @@ startRateLimitPurge();
 backfillInvitationSecrets().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not backfill invitation token storage');
 });
-ensureCatalogSeeded().catch((err: unknown) => {
-  logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not seed role catalog');
-});
+// Seeded before the server listens, so the first New role form after a deploy
+// never sees an empty or half-filled catalog. If that first try fails the
+// server still starts, and the seed keeps retrying in the background.
+if (!(await seedCatalogWithRetry({ maxAttempts: 1 }))) void seedCatalogWithRetry();
 
 const app = createApp();
 const httpServer = createServer(app);

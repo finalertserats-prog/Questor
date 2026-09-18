@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, ApiError } from '../api/client';
-import { newRoleLabel, shouldOfferNewRole } from './catalogModel';
+import { newRoleLabel, shouldOfferNewRole, isCurrentQuery, type TypeaheadQuery } from './catalogModel';
 
 export interface CatalogRoleOption {
   readonly id: string;
@@ -34,19 +34,27 @@ export function RoleTitleCombobox(props: {
   const offerNew = shouldOfferNewRole(props.value, result) && Boolean(props.domainId);
   const optionsCount = result.roles.length + (offerNew ? 1 : 0);
 
+  // What the input asks for right now, read by responses that arrive late.
+  const currentQuery = useRef<TypeaheadQuery>({ domainId: props.domainId, value: props.value });
+  currentQuery.current = { domainId: props.domainId, value: props.value };
+
   useEffect(() => {
-    if (props.disabled || !props.domainId || props.value.trim().length < 1) {
-      setResult({ exact: false, roles: [] });
-      return undefined;
-    }
+    // Bumped before the early return too, so a request still in flight when the
+    // input is cleared or the domain changes can never land afterwards.
     const seq = requestSeq.current + 1;
     requestSeq.current = seq;
+    if (props.disabled || !props.domainId || props.value.trim().length < 1) {
+      setResult({ exact: false, roles: [] });
+      setLoading(false);
+      return undefined;
+    }
+    const askedFor: TypeaheadQuery = { domainId: props.domainId, value: props.value };
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setLoading(true);
       const qs = new URLSearchParams({ domainId: props.domainId, q: props.value, limit: '10' });
       api.get<RolesResponse>(`/catalog/roles?${qs.toString()}`, { signal: controller.signal })
-        .then((data) => { if (requestSeq.current === seq) setResult(data); })
+        .then((data) => { if (requestSeq.current === seq && isCurrentQuery(askedFor, currentQuery.current)) setResult(data); })
         .catch(() => { if (requestSeq.current === seq) setResult({ exact: false, roles: [] }); })
         .finally(() => { if (requestSeq.current === seq) setLoading(false); });
     }, 200);

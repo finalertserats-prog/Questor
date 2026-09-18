@@ -6,7 +6,7 @@ import { prisma, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, HttpError, requireCapability } from '../middleware/index.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { normalizeTitle } from '../domain/catalogText.js';
-import { logAudit } from '../services/audit.js';
+import { addCatalogRole, catalogTitleProblem } from '../services/catalogRoles.js';
 
 export const catalogRouter = Router();
 catalogRouter.use(authenticate);
@@ -21,11 +21,10 @@ const techStackSchema = z.array(z.string().trim().min(1).max(40)).max(15).defaul
 
 const createRoleSchema = z.object({
   domainId: z.string().cuid(),
-  title: z.string().trim().min(2).max(120)
-    .refine((t) => !/[\r\n]/.test(t), 'Title must be a single line.')
-    .refine((t) => /\p{L}/u.test(t), 'Title must contain a letter.')
-    .refine((t) => !/@|https?:\/\/|www\./i.test(t), 'Title must not contain contact details or links.')
-    .refine((t) => !/\d{6,}/.test(t), 'Title must not contain requisition or phone numbers.'),
+  title: z.string().trim().superRefine((t, ctx) => {
+    const problem = catalogTitleProblem(t);
+    if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, message: problem });
+  }),
   familyId: z.string().cuid().optional(),
   techStack: techStackSchema,
 }).strict();
@@ -82,18 +81,16 @@ async function findActiveRoles(domainId: string | undefined, normalizedQuery: st
   const alias = (filter: Prisma.StringFilter) => ({ aliases: { some: { status: 'active', normalizedAlias: filter } } });
   const tiers: Prisma.CatalogRoleWhereInput[] = [
     { OR: [{ normalizedTitle: normalizedQuery }, alias({ equals: normalizedQuery })] },
-    { OR: [{ normalizedTitle: { startsWith: normalizedQuery } }, { normalizedTitle: { contains: ` ${normalizedQuery}` } }, alias({ startsWith: normalizedQuery })] },
+    { OR: [{ normalizedTitle: { startsWith: normalizedQuery } }, alias({ startsWith: normalizedQuery })] },
+    { normalizedTitle: { contains: ` ${normalizedQuery}` } },
     { OR: [{ normalizedTitle: { contains: normalizedQuery } }, alias({ contains: normalizedQuery })] },
   ];
   const results = await Promise.all(tiers.map((tier) => prisma.catalogRole.findMany({
-    where: { AND: [base, tier] }, include: ROLE_INCLUDE, take: CANDIDATES_PER_TIER,
+    // Ordered so the rows a full tier keeps are the same on SQLite and Postgres.
+    where: { AND: [base, tier] }, include: ROLE_INCLUDE, orderBy: { normalizedTitle: 'asc' }, take: CANDIDATES_PER_TIER,
   })));
   const seen = new Set<string>();
   return results.flat().filter((role) => (seen.has(role.id) ? false : (seen.add(role.id), true)));
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && (err as { readonly code?: string }).code === 'P2002';
 }
 
 function duplicateResponse(existing: { readonly id: string; readonly title: string; readonly status: string }) {
@@ -143,38 +140,8 @@ catalogRouter.post('/roles', requireCapability('role:create'), catalogCreateLimi
     const family = await prisma.catalogJobFamily.findUnique({ where: { id: body.familyId } });
     if (!family) throw new HttpError(400, 'Unknown job family.');
   }
-  const normalizedTitle = normalizeTitle(body.title);
-  // Retired roles count too: the (domain, title) key is unique whatever the
-  // status, and a retired title is the owner's decision, not a free slot.
-  const existing = await prisma.catalogRole.findFirst({
-    where: {
-      domainId: body.domainId,
-      OR: [{ normalizedTitle }, { aliases: { some: { normalizedAlias: normalizedTitle } } }],
-    },
-    select: { id: true, title: true, status: true },
-  });
-  if (existing) return res.status(409).json(duplicateResponse(existing));
-  const auth = req.auth!;
-  const created = await prisma.catalogRole.create({
-    data: {
-      domainId: body.domainId,
-      familyId: body.familyId,
-      title: body.title,
-      normalizedTitle,
-      techStackJson: JSON.stringify(body.techStack),
-      source: 'org',
-      createdByTenantId: auth.tenantId,
-      createdById: auth.userId,
-    },
-    include: { domain: true, family: true, aliases: true },
-  }).catch(async (err: unknown) => {
-    // Two people adding the same title at once: the loser gets the winner's row.
-    if (!isUniqueViolation(err)) throw err;
-    const winner = await prisma.catalogRole.findFirst({ where: { domainId: body.domainId, normalizedTitle }, select: { id: true, title: true, status: true } });
-    if (!winner) throw err;
-    return winner;
-  });
-  if (!('domain' in created)) return res.status(409).json(duplicateResponse(created));
-  await logAudit({ tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user', action: 'catalog.role.created', entityType: 'CatalogRole', entityId: created.id, after: { title: created.title, domainId: created.domainId } });
+  const result = await addCatalogRole({ auth: req.auth!, domainId: body.domainId, title: body.title, familyId: body.familyId, techStack: body.techStack });
+  if (result.kind === 'existing') return res.status(409).json(duplicateResponse(result.role));
+  const created = await prisma.catalogRole.findUniqueOrThrow({ where: { id: result.id }, include: ROLE_INCLUDE });
   res.status(201).json({ role: { ...shapeCatalogRole(created, null), techStack: parseJsonStrict<string[]>(created.techStackJson, { model: 'CatalogRole', id: created.id, field: 'techStackJson' }) } });
 }));

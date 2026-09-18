@@ -10,6 +10,8 @@ import { assertCanAccessRole, assignRole, roleScope } from '../services/access.j
 import { ATS_EXTERNAL_ID } from '../providers/ats/index.js';
 import { existingImport, lookupRequisition, type RequisitionLookup } from '../services/atsRecords.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { addCatalogRole, catalogTitleProblem } from '../services/catalogRoles.js';
+import type { AuthClaims } from '../services/auth.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
 import { BANDS } from '../engines/experienceBands.js';
 
@@ -52,6 +54,10 @@ const createSchema = z.object({
   atsRequisitionId: z.string().regex(ATS_EXTERNAL_ID, 'An ATS requisition id is letters, numbers, dashes or underscores.').optional(),
   useLlm: z.boolean().default(true),
   catalogRoleId: z.string().cuid().optional(),
+  // The catalog domain a new title belongs to. With no catalogRoleId, the
+  // role's final title (typed, or inferred from the JD / requisition) is found
+  // in or added to the shared catalog under this domain.
+  domainId: z.string().cuid().optional(),
   experienceBand: z.enum(BANDS.map((b) => b.id) as [string, ...string[]]).optional(),
   regionCode: z.string().optional(),
   techStack: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
@@ -72,6 +78,11 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   }) : null;
   if (body.catalogRoleId && !catalogRole) throw new HttpError(400, 'Unknown or inactive catalog role.');
   if (catalogRole && !titleHint.trim()) titleHint = catalogRole.title;
+  // Checked before extraction, which may spend on a paid model.
+  if (!catalogRole && body.domainId) {
+    const domain = await prisma.catalogDomain.findFirst({ where: { id: body.domainId, status: 'active' }, select: { id: true } });
+    if (!domain) throw new HttpError(400, 'Unknown or inactive catalog domain.');
+  }
   if (body.regionCode) {
     const region = await prisma.catalogRegion.findFirst({ where: { code: body.regionCode, status: 'active' }, select: { code: true } });
     if (!region) throw new HttpError(400, 'Unknown or inactive catalog region.');
@@ -94,6 +105,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
 
   const extraction = body.useLlm ? await extractRole(sourceText, titleHint) : extractRoleHeuristic(sourceText, titleHint);
   const ats = lookup?.kind === 'new' ? lookup.ats : null;
+  const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(auth, body.domainId, extraction.title, body.techStack) : undefined);
 
   let created;
   try {
@@ -105,7 +117,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
           tenantId: auth.tenantId, title: extraction.title, level: extraction.level,
           location: extraction.location, employmentType: extraction.employmentType,
           sourceType: body.sourceType, sourceText, status: 'draft', createdById: auth.userId,
-          catalogRoleId: body.catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, techStackJson: JSON.stringify(body.techStack),
+          catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, techStackJson: JSON.stringify(body.techStack),
         },
       });
       // With scoping in force an unassigned role is admin-only, so without this
@@ -141,6 +153,19 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
 
   res.status(201).json({ role: shapeRole(fullCreatedRole), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings });
 }));
+
+/**
+ * The catalog role a new role's title belongs to: the existing active match, or
+ * a new shared entry. A title the shared catalog must not hold (an email, a
+ * link, a long number) or one the owner retired leaves the role unlinked
+ * rather than refusing it — the organisation's own role is still valid.
+ */
+async function linkCatalogRole(auth: AuthClaims, domainId: string, title: string, techStack: readonly string[]): Promise<string | undefined> {
+  if (catalogTitleProblem(title)) return undefined;
+  const result = await addCatalogRole({ auth, domainId, title, techStack });
+  if (result.kind === 'created') return result.id;
+  return result.role.status === 'active' ? result.role.id : undefined;
+}
 
 /** A repeat import is not an error: it answers with the role the first one made. */
 async function respondWithExistingRole(roleId: string, res: Response) {
