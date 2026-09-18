@@ -94,7 +94,10 @@ export interface RoundContext {
 }
 
 export async function tenantMeetingProvider(tenantId: string): Promise<RoundMeetingProviderId> {
-  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { policyJson: true } });
+  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { policyJson: true, isDemo: true } });
+  // Anyone can request a demo; a sandbox round must never book a real meeting
+  // on the deployment's Zoom / Teams / Meet account, whatever is configured.
+  if (tenant?.isDemo) return 'manual';
   return resolveRoundMeetingProvider(parseJsonOptional<Record<string, unknown>>(tenant?.policyJson, {}, { model: 'Tenant', id: tenantId, field: 'policyJson' })).provider;
 }
 
