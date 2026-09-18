@@ -21,7 +21,7 @@ dashboardRouter.get('/metrics', requireCapability('candidate:read'), asyncHandle
   const query = metricsQuerySchema.parse(req.query);
   const [metrics, roleMetrics] = await Promise.all([
     getDashboardMetrics(req.auth!, query),
-    getRoleMetrics(req.auth!),
+    getRoleMetrics(req.auth!, { activeOnly: true }),
   ]);
   res.json({
     ...metrics,

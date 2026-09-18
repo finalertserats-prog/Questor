@@ -66,8 +66,8 @@ describe('getRoleMetrics', () => {
     const admin = await makeUser(tenant.id, 'admin@roles.local');
     const { role, scorecard } = await makeRole(tenant.id, 'Engineer');
     const candidate = await makeCandidate(tenant.id, role.id, 'Ada');
-    await makeSession({ tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, state: 'REVIEW_READY' });
-    await makeSession({ tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, state: 'CLOSED' });
+    await makeSession({ tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, state: 'REVIEW_READY', hours: 2 });
+    await makeSession({ tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, state: 'CLOSED', hours: 3 });
 
     const decisions: Array<'APPROVED' | 'REJECTED' | 'WITHDRAWN'> = ['APPROVED', 'APPROVED', 'APPROVED', 'REJECTED', 'REJECTED', 'WITHDRAWN'];
     for (let i = 0; i < decisions.length; i += 1) {
@@ -148,6 +148,33 @@ describe('getRoleMetrics', () => {
     expect(metrics.topByInterviewed).toHaveLength(10);
     expect(metrics.topByApplied.filter((r) => r.title === 'Other Tenant')).toEqual([]);
     expect(metrics.topByApplied.findIndex((r) => r.title === 'Tie A')).toBeLessThan(metrics.topByApplied.findIndex((r) => r.title === 'Tie B'));
+  });
+});
+
+describe('getRoleMetrics definitions', () => {
+  it('does not count a session without an invitation as invited', async () => {
+    const tenant = await prisma.tenant.create({ data: { name: 'Uninvited Org' } });
+    const admin = await makeUser(tenant.id, 'admin@uninvited.local');
+    const { role, scorecard } = await makeRole(tenant.id, 'Analyst');
+    const candidate = await makeCandidate(tenant.id, role.id, 'Grace');
+    await makeSession({ tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, state: 'PROVISIONED' });
+
+    const metrics = await getRoleMetrics({ userId: admin.id, tenantId: tenant.id, role: 'admin', email: 'admin@uninvited.local' }, { now });
+
+    expect(metrics.roles[0].interviewInvited).toBe(0);
+  });
+
+  it('leaves archived roles out of the summary when activeOnly is set', async () => {
+    const tenant = await prisma.tenant.create({ data: { name: 'Archive Org' } });
+    const admin = await makeUser(tenant.id, 'admin@archive.local');
+    const { role: archived } = await makeRole(tenant.id, 'Old Role', 'archived');
+    await makeCandidate(tenant.id, archived.id, 'Old Candidate');
+    const { role: active } = await makeRole(tenant.id, 'Live Role');
+    await makeCandidate(tenant.id, active.id, 'Live Candidate');
+
+    const metrics = await getRoleMetrics({ userId: admin.id, tenantId: tenant.id, role: 'admin', email: 'admin@archive.local' }, { now, activeOnly: true });
+
+    expect(metrics.topByApplied.map((r) => r.title)).toEqual(['Live Role']);
   });
 });
 

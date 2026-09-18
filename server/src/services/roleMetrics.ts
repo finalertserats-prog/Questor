@@ -7,7 +7,8 @@ import { COMPLETED_STATES } from './dashboardMetrics.js';
 /**
  * Role metrics contract:
  * - `applied`: candidates whose `Candidate.roleId` is the role.
- * - `interviewInvited`: distinct candidates with at least one session for the role; retakes count once.
+ * - `interviewInvited`: distinct candidates with at least one session for the role that has an
+ *   invitation; a provisioned session nobody was invited to is not counted. Retakes count once.
  * - `interviewed`: distinct candidates with at least one completed-state session for the role.
  * - `awaitingReview`: sessions for the role in `REVIEW_READY`.
  * - `decisions`: decided pipeline rows by APPROVED / REJECTED / WITHDRAWN.
@@ -63,6 +64,12 @@ export interface RoleMetricsOptions {
   readonly now?: Date;
   /** Test seam for the row ceiling; production uses ROLE_METRICS_ROW_LIMIT. */
   readonly rowLimit?: number;
+  /**
+   * Leave archived roles out entirely. The dashboard sets it: its charts sit
+   * beside "Active roles", and a closed requisition's history should neither
+   * top them nor be scanned on every dashboard load.
+   */
+  readonly activeOnly?: boolean;
 }
 
 type CountByRole = ReadonlyMap<string, number>;
@@ -99,15 +106,18 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
   const [rScope, candScope] = await Promise.all([roleScope(auth), candidateScope(auth)]);
   const candidate = candScope as Prisma.CandidateWhereInput;
 
+  const role: Prisma.RoleWhereInput = options.activeOnly
+    ? { AND: [rScope as Prisma.RoleWhereInput, { status: { not: 'archived' } }] }
+    : rScope as Prisma.RoleWhereInput;
+
   const roles = await prisma.role.findMany({
-    where: rScope as Prisma.RoleWhereInput,
+    where: role,
     select: { id: true, title: true, level: true, status: true, updatedAt: true },
     orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     take: rowLimit,
   });
   // Filter by the role relation rather than an `in` list of ids: the list can
   // run to thousands of ids, past what SQLite binds in one statement.
-  const role = rScope as Prisma.RoleWhereInput;
   const candidateRoleWhere: Prisma.CandidateWhereInput = { AND: [candidate, { role }] };
   const sessionWhere: Prisma.InterviewSessionWhereInput = { tenantId, role, candidate };
   const pipelineWhere: Prisma.CandidatePipelineWhereInput = { tenantId, role, candidate };
@@ -117,7 +127,11 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
     appliedRows, invitedRows, interviewedRows, awaitingRows, decisionRows, lastRows, turnaroundRows,
   ] = roles.length === 0 ? [[], [], [], [], [], [], []] : await Promise.all([
     prisma.candidate.groupBy({ by: ['roleId'], where: candidateRoleWhere, _count: { _all: true } }),
-    prisma.interviewSession.groupBy({ by: ['roleId', 'candidateId'], where: sessionWhere, _count: { _all: true } }),
+    prisma.interviewSession.groupBy({
+      by: ['roleId', 'candidateId'],
+      where: { ...sessionWhere, invitation: { isNot: null } },
+      _count: { _all: true },
+    }),
     prisma.interviewSession.groupBy({
       by: ['roleId', 'candidateId'],
       where: { ...sessionWhere, state: { in: [...COMPLETED_STATES] } },

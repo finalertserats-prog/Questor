@@ -167,7 +167,7 @@ export function RolesList() {
             <details style={{ marginTop: 12 }}>
               <summary>How these are counted</summary>
               <p className="muted small">Applied: candidates attached to the role.</p>
-              <p className="muted small">Invited/interviewed: distinct candidates, so retakes do not double count.</p>
+              <p className="muted small">Invited: distinct candidates with an interview invitation. Interviewed: distinct candidates who finished an interview. Retakes do not double count.</p>
               <p className="muted small">Awaiting review: sessions in review-ready state.</p>
               <p className="muted small">Rates need at least 5 decisions; withdrawn decisions are excluded.</p>
             </details>
