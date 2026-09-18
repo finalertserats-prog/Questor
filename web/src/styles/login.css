@@ -54,6 +54,14 @@
   max-width: 580px;
 }
 
+/* The lockup at the head of the sign-in card, set by height so the name reads
+   at the size the text wordmark had. */
+.auth-logo {
+  display: block;
+  height: 34px;
+  width: auto;
+}
+
 .landing-logo {
   display: block;
   width: 216px;

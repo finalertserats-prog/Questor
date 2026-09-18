@@ -13,10 +13,20 @@ import type { EmailMessage } from './index.js';
  * whatever logo the product is running; a client that blocks remote images
  * falls back to the alt text, which is why the alt text is the product name.
  */
+/**
+ * Mail is read on white, so it always takes the light cut of the wordmark —
+ * a mail client does not know the reader's Questor theme. The file is 96 px
+ * tall and drawn at 32: three source pixels to every CSS pixel keeps it sharp
+ * on high-density screens. Only the height is fixed; the width follows the
+ * artwork, so a redrawn wordmark of a different length is never squashed.
+ */
+const WORDMARK_FILE = 'questor-wordmark-light.png';
+const WORDMARK_HEIGHT_PX = 32;
+
 export function brandedEmail(message: EmailMessage): EmailMessage {
-  const wordmark = `${config.webOrigin.replace(/\/+$/, '')}/brand/questor-wordmark.png`;
+  const wordmark = `${config.webOrigin.replace(/\/+$/, '')}/brand/${WORDMARK_FILE}`;
   const html = `<div style="font-family:Segoe UI,system-ui,-apple-system,sans-serif;color:#1a1a22;font-size:15px;line-height:1.55;max-width:560px">
-<img src="${wordmark}" alt="Questor" width="180" style="width:180px;max-width:60%;height:auto;margin:0 0 18px">
+<img src="${wordmark}" alt="Questor" height="${WORDMARK_HEIGHT_PX}" style="height:${WORDMARK_HEIGHT_PX}px;width:auto;max-width:60%;border:0;display:block;margin:0 0 18px">
 ${message.html}
 <hr style="border:0;border-top:1px solid #d8d8e2;margin:22px 0 10px">
 <p style="color:#5a5a6e;font-size:12px;margin:0">Questor — The intelligence behind every hire.</p>

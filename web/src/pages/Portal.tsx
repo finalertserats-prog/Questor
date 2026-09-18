@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { Banner } from '../components/ui';
 import { sttSupported, ttsSupported, speak } from '../speech';
 import { Icon } from '../components/Icon';
+import { BrandLogo } from '../components/BrandLogo';
 import { Skeleton } from '../components/Skeleton';
 import { accommodationHint, canSubmitConsent, consentAction } from '../components/portalConsentModel';
 
@@ -150,7 +151,8 @@ export function Portal() {
   return (
     <div className="center-screen">
       <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
-        <div className="logo" style={{ fontSize: 22, fontWeight: 800 }}>QUES<span style={{ color: 'var(--brand)' }}>TOR</span></div>
+        {/* Candidate-facing: the lockup is kept small; the interview is the subject. */}
+        <BrandLogo variant="lockup" size={26} className="candidate-logo" />
         <h2 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h2>
         <p className="muted small">Hello {info.candidateName}. This is an AI-conducted voice interview, about {info.durationMinutes} minutes.</p>
         {err && <Banner kind="error">{err}</Banner>}

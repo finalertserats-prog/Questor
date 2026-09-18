@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
+import { BrandLogo } from '../components/BrandLogo';
 import { OrgPicker } from '../components/OrgPicker';
 import { orgSearchPath, type Org } from '../components/orgSearchModel';
 
@@ -65,7 +66,7 @@ export function Login() {
 
       <section className="landing-panel">
         <div className="card auth-card">
-          <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div>
+          <BrandLogo variant="lockup" size={34} className="auth-logo" />
           <div className="brand-line" aria-hidden="true" />
           <h1 className="landing-title">Sign in</h1>
           <p className="muted small">Use the sign-in link your organisation shared, or find it by name.</p>

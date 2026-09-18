@@ -401,6 +401,19 @@ code {
   color: var(--accent);
 }
 
+/* The logo artwork (components/BrandLogo.tsx). Its width and height
+   attributes reserve the space before the file arrives; height:auto then lets
+   the file's own proportions win, so artwork is never stretched. The <picture>
+   wrapper takes no box of its own, so the image sits in its parent's layout
+   exactly as a bare <img> would. */
+.brand-picture {
+  display: contents;
+}
+.brand-logo {
+  max-width: 100%;
+  height: auto;
+}
+
 .brand-line {
   margin-top: 9px;
   height: 6px;
@@ -1128,8 +1141,8 @@ tr.in-flight td:first-child {
   color: var(--room-ink);
   overflow: hidden;
 
-  /* The room's markup sets the wordmark accent inline as var(--brand), which
-     an inline style makes unbeatable from a stylesheet. Rebinding the alias
+  /* Markup inside the room may set colours inline as var(--brand), which an
+     inline style makes unbeatable from a stylesheet. Rebinding the alias
      inside the room is the one lever left: the console's deep iris would sit
      at roughly 2.5:1 on this near-black ground. */
   --brand: var(--room-accent);
@@ -1142,11 +1155,10 @@ tr.in-flight td:first-child {
   padding: 14px 22px;
   border-bottom: var(--hair) solid var(--room-line);
 }
-.room .logo {
-  color: var(--room-ink);
-}
-.room .logo span {
-  color: var(--room-accent);
+/* The candidate portal and the room carry the lockup small: the product
+   signs the page, the interview is the subject. */
+.candidate-logo {
+  display: block;
 }
 .room-role {
   color: var(--room-ink-2);

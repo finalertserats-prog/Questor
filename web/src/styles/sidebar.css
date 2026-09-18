@@ -470,6 +470,14 @@
   flex: none;
 }
 
+/* Expanded, the lockup is the mark and the name in one piece of artwork. It is
+   set by height so the name reads at the size the text wordmark had. */
+.sidebar .logo-lockup {
+  height: 28px;
+  width: auto;
+  flex: none;
+}
+
 .sidebar .logo-rail {
   flex-direction: column;
   gap: 3px;

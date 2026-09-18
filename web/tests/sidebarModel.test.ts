@@ -132,6 +132,23 @@ describe('brandDisplay', () => {
   it('uses the plain wordmark class when expanded', () => {
     expect(brandDisplay('expanded').className).not.toContain('logo-rail');
   });
+
+  it('draws the mark with the wordmark beside it when expanded', () => {
+    expect(brandDisplay('expanded').artwork).toBe('lockup');
+  });
+
+  it('draws the mark alone in the rail', () => {
+    expect(brandDisplay('collapsed').artwork).toBe('mark');
+  });
+
+  it('sets the name in text in the rail, where the mark alone does not spell it', () => {
+    expect(brandDisplay('collapsed').showText).toBe(true);
+  });
+
+  it.each(modes)('puts the name on screen in the artwork or in text when %s', (mode) => {
+    const display = brandDisplay(mode);
+    expect(display.artwork === 'lockup' || display.showText).toBe(true);
+  });
 });
 
 describe('shellClassName', () => {
