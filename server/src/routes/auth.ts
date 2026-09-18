@@ -5,11 +5,12 @@ import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
 import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
 import { logAudit } from '../services/audit.js';
+import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
 
 export const authRouter = Router();
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform(normalizeEmail),
   password: z.string().min(6),
   // Present when signing in through an organisation's own link (/o/:slug).
   orgSlug: z.string().max(64).optional(),
@@ -21,7 +22,9 @@ const NO_SUCH_USER_HASH = hashPassword('placeholder-compared-only-when-no-accoun
 
 authRouter.post('/login', asyncHandler(async (req, res) => {
   const { email, password, orgSlug } = loginSchema.parse(req.body);
-  const user = await prisma.user.findUnique({ where: { email } });
+  // Case-insensitive: accounts created before addresses were normalised may
+  // be stored in whatever case an admin typed.
+  const user = await findUserByEmail(email);
   const passwordOk = user ? verifyPassword(password, user.passwordHash) : verifyPassword(password, NO_SUCH_USER_HASH) && false;
   if (!user || !passwordOk) {
     // Sign-ins were absent from the audit trail entirely. A failed attempt on
@@ -54,7 +57,7 @@ function publicUser(user: { id: string; name: string; email: string; role: strin
 // account. The first user of a new tenant is its admin; everyone else is
 // created by an admin through user management.
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform(normalizeEmail),
   password: z.string().min(12, 'Password must be at least 12 characters'),
   name: z.string().min(1),
   tenantName: z.string().optional(),
@@ -69,8 +72,7 @@ authRouter.post('/register', asyncHandler(async (req, res) => {
     throw new HttpError(403, 'Self-registration is disabled. Ask an administrator for an account.');
   }
   const body = registerSchema.parse(req.body);
-  const existing = await prisma.user.findUnique({ where: { email: body.email } });
-  if (existing) throw new HttpError(409, 'Email already registered');
+  if (await findUserByEmail(body.email)) throw new HttpError(409, 'Email already registered');
   const tenant = await prisma.tenant.create({ data: { name: body.tenantName ?? `${body.name}'s Org` } });
   const user = await prisma.user.create({
     data: { email: body.email, name: body.name, passwordHash: hashPassword(body.password), role: 'admin', tenantId: tenant.id },

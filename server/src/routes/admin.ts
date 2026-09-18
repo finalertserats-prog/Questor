@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma, parseJsonStrict, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
+import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
 import { capabilitiesOf, isRoleName, ROLES } from '../domain/capabilities.js';
 import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
@@ -573,7 +574,7 @@ adminRouter.get('/users', requireCapability('admin:manage'), asyncHandler(async 
 const roleNameSchema = z.enum(ROLES);
 
 const createUserSchema = z.object({
-  email: z.string().email(),
+  email: z.string().trim().email().transform(normalizeEmail),
   // Mirrors the 12-character floor in /api/auth/register. An admin-created
   // account is a real login; letting it be weaker than a self-registered one
   // would make the admin path the soft target.
@@ -587,8 +588,9 @@ adminRouter.post('/users', requireCapability('admin:manage'), asyncHandler(async
   // User.email is globally unique, not per-tenant, so this collides across
   // tenants too. Reporting only "already registered" is intentional: echoing
   // which tenant holds it would confirm that address to an outsider.
-  const existing = await prisma.user.findUnique({ where: { email: body.email } });
-  if (existing) throw new HttpError(409, 'Email already registered');
+  // Case-insensitive, so a mixed-case row stored before normalisation still
+  // counts as the same mailbox.
+  if (await findUserByEmail(body.email)) throw new HttpError(409, 'Email already registered');
 
   const user = await prisma.user.create({
     data: {
@@ -617,12 +619,25 @@ adminRouter.patch('/users/:id/role', requireCapability('admin:manage'), asyncHan
   // Demoting the last admin locks the tenant out of user management, retention
   // and policy permanently — nothing else can grant admin:manage back, so
   // recovery would mean direct database surgery. Cheaper to refuse.
-  if (target.role === 'admin' && role !== 'admin') {
-    const admins = await prisma.user.count({ where: { tenantId: req.auth!.tenantId, role: 'admin' } });
-    if (admins <= 1) throw new HttpError(409, 'Cannot remove the last admin; promote another user first');
-  }
-
-  const updated = await prisma.user.update({ where: { id: target.id }, data: { role }, select: USER_FIELDS });
+  //
+  // Count and write in one serialised transaction: two admins demoting each
+  // other at once both counted two admins, both passed, and left none.
+  const updated = await prisma.$transaction(async (tx) => {
+    if (target.role === 'admin' && role !== 'admin') {
+      // Serializable is what makes the count trustworthy: on Postgres two
+      // concurrent demotions conflict and one is aborted (P2034, answered as
+      // 409 below); SQLite serialises write transactions outright.
+      const demoted = await tx.user.updateMany({ where: { id: target.id, role: 'admin' }, data: { role } });
+      const remaining = await tx.user.count({ where: { tenantId: req.auth!.tenantId, role: 'admin' } });
+      if (demoted.count !== 1 || remaining < 1) throw new HttpError(409, 'Cannot remove the last admin; promote another user first');
+    }
+    return tx.user.update({ where: { id: target.id }, data: { role }, select: USER_FIELDS });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch((err: unknown) => {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+      throw new HttpError(409, 'Another role change for this organisation happened at the same moment. Try again.');
+    }
+    throw err;
+  });
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
@@ -630,10 +645,11 @@ adminRouter.patch('/users/:id/role', requireCapability('admin:manage'), asyncHan
     before: { role: target.role }, after: { role: updated.role },
   });
 
-  // Role lives in the JWT claims, so an already-issued token keeps the old role
-  // until it expires. A demotion is therefore not immediate — surfaced in the
-  // response rather than left for an admin to discover during an incident.
-  res.json({ user: updated, note: 'Existing sessions keep their previous role until their token expires.' });
+  // HTTP requests re-read the role from the database on every call (see
+  // authenticate), so the change applies on the user's next request. The live
+  // interview socket still checks the role inside the token it connected with,
+  // which is why that caveat is stated rather than claiming instant effect.
+  res.json({ user: updated, note: 'The new role applies from the user\'s next request. A live interview connection they already have open keeps the old role until their sign-in expires.' });
 }));
 
 // Assignments. Deliberately separate from the role change above: what a user MAY
