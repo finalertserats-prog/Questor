@@ -202,6 +202,54 @@ describe('a candidate who opted in', () => {
   });
 });
 
+describe('sending approved feedback when the email fails', () => {
+  it('answers 502 rather than reporting the feedback as sent', async () => {
+    const f = await approvedFeedback();
+    await answerAtEnd(f, true);
+    sent.fails = true;
+
+    const res = await send(f);
+
+    expect(res.status).toBe(502);
+  });
+
+  it('leaves the feedback approved and off the portal, so nothing claims it went out', async () => {
+    const f = await approvedFeedback();
+    await answerAtEnd(f, true);
+    sent.fails = true;
+
+    await send(f);
+
+    const delivery = await prisma.candidateFeedbackDelivery.findUniqueOrThrow({ where: { assessmentId: f.assessmentId } });
+    const portal = await request(app).get(`/api/portal/${f.token}/feedback`);
+    expect([delivery.status, delivery.sentAt, portal.status]).toEqual(['APPROVED', null, 404]);
+  });
+
+  it('can be retried once the email works again', async () => {
+    const f = await approvedFeedback();
+    await answerAtEnd(f, true);
+    sent.fails = true;
+    await send(f);
+    sent.fails = false;
+
+    const retry = await send(f);
+
+    expect([retry.status, retry.body.feedback?.status, retry.body.delivery?.delivered]).toEqual([200, 'SENT', true]);
+  });
+});
+
+describe('two people sending the same feedback at once', () => {
+  it('emails the candidate exactly once', async () => {
+    const f = await approvedFeedback();
+    await answerAtEnd(f, true);
+    const before = sent.messages.length;
+
+    const results = await Promise.all([send(f), send(f)]);
+
+    expect([results.map((r) => r.status).sort(), sent.messages.length - before]).toEqual([[200, 409], 1]);
+  });
+});
+
 describe('the audit trail of the answer', () => {
   it('records an opt-in, and where it came from', async () => {
     const f = await approvedFeedback();

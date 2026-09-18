@@ -195,6 +195,10 @@ assessmentsRouter.post('/:id/feedback/draft', requireCapability('assessment:revi
   if (existing?.status === 'SENT') {
     throw new HttpError(409, 'This feedback has already been sent to the candidate and can no longer be changed.');
   }
+  // Mid-send: rewriting now would clear the approved text the email is carrying.
+  if (existing?.status === 'SENDING') {
+    throw new HttpError(409, 'This feedback is being sent right now. Refresh in a moment.');
+  }
   const feedback = await prisma.candidateFeedbackDelivery.upsert({
     where: { assessmentId: a.id },
     create: { assessmentId: a.id, draftText: body.draftText, status: 'DRAFT' },
@@ -241,10 +245,19 @@ assessmentsRouter.post('/:id/feedback/approve', requireCapability('assessment:re
   res.json({ feedback: presentFeedback(feedback) });
 }));
 
+/**
+ * How long a send may hold its claim before another attempt may take it over.
+ * A claim that outlives this belongs to a request that died mid-send (process
+ * restart, crash); without a ceiling that feedback could never be sent.
+ */
+const FEEDBACK_SEND_CLAIM_STALE_MS = 10 * 60_000;
+
 assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const existing = await prisma.candidateFeedbackDelivery.findUnique({ where: { assessmentId: a.id } });
-  if (!existing || existing.status !== 'APPROVED') throw new HttpError(409, 'Candidate feedback must be approved before it can be sent.');
+  if (!existing || (existing.status !== 'APPROVED' && existing.status !== 'SENDING')) {
+    throw new HttpError(409, 'Candidate feedback must be approved before it can be sent.');
+  }
   if (!await candidateFeedbackEnabledForTenant(req.auth!.tenantId)) {
     throw new HttpError(409, 'Candidate feedback delivery is disabled for this tenant.');
   }
@@ -259,70 +272,112 @@ assessmentsRouter.post('/:id/feedback/send', requireCapability('assessment:revie
   const blockReason = feedbackSendBlockReason(feedbackConsentStatus(await getOptIn(a.sessionId)));
   if (blockReason) throw new HttpError(409, blockReason);
 
+  // Claim before sending. Two reviewers pressing Send together both passed the
+  // APPROVED check above and both emailed the candidate; the conditional
+  // update lets exactly one through. SENDING is transient: `sentAt` holds the
+  // claim time so an abandoned claim can be taken over (see the stale window).
+  const claimedAt = new Date();
+  const claim = await prisma.candidateFeedbackDelivery.updateMany({
+    where: {
+      assessmentId: a.id,
+      OR: [
+        { status: 'APPROVED' },
+        { status: 'SENDING', sentAt: { lt: new Date(claimedAt.getTime() - FEEDBACK_SEND_CLAIM_STALE_MS) } },
+      ],
+    },
+    data: { status: 'SENDING', sentAt: claimedAt },
+  });
+  if (claim.count !== 1) throw new HttpError(409, 'This feedback is already being sent. Refresh to see whether it went.');
+
   const session = await prisma.interviewSession.findUnique({
     where: { id: a.sessionId },
     include: { candidate: { select: { email: true } }, role: { select: { title: true } }, invitation: { select: { tokenSealed: true } } },
   });
   const portalUrl = session?.invitation ? invitationLink(session.invitation) : null;
 
+  let outcome: { delivered: boolean; deliveryNote: string };
+  try {
+    outcome = await notifyCandidateOfFeedback(req.auth!.tenantId, a.id, session, existing.approvedText ?? '');
+  } catch (err) {
+    // Hand the claim back so the send can be retried. SENT used to be written
+    // before the email went, so one failed send released the feedback to the
+    // portal, told nobody, and could never be attempted again.
+    await prisma.candidateFeedbackDelivery.updateMany({
+      where: { assessmentId: a.id, status: 'SENDING', sentAt: claimedAt },
+      data: { status: 'APPROVED', sentAt: null },
+    });
+    throw err;
+  }
+
   // SENT means released to the candidate's portal. Whether the candidate was
-  // actually TOLD is a separate fact, reported honestly below — marking it sent
-  // and saying nothing about delivery is how feedback silently goes unseen.
+  // actually TOLD is a separate fact, reported honestly in `delivery` — a
+  // non-delivering provider or the demo sandbox still releases it, and HR is
+  // handed the link to share.
   const feedback = await prisma.candidateFeedbackDelivery.update({
     where: { assessmentId: a.id },
     data: { sentAt: new Date(), status: 'SENT' },
   });
 
-  const email = getEmail();
-  let delivered = false;
-  let deliveryNote: string;
-  if (!session) {
-    deliveryNote = 'This interview no longer exists, so nothing could be sent. Contact the candidate directly.';
-  } else if (await demoRecipientBlocked(req.auth!.tenantId, session.candidate.email)) {
-    deliveryNote = 'In the demo, email goes only to you, so this feedback was not sent to the candidate address.';
-  } else if (!email.delivers) {
-    deliveryNote = `Email is not configured to deliver (provider "${email.name}"). Share the candidate's link yourself.`;
-  } else {
-    // The offer to speak to a person rides in this email and nowhere else, so
-    // the link is minted here — once, for the single message that carries it.
-    // Failing to mint costs the offer, never the feedback.
-    let talkUrl: string | null = null;
-    try {
-      const requestToken = await issueHumanRequestToken({
-        sessionId: session.id, candidateId: session.candidateId, tenantId: req.auth!.tenantId,
-      });
-      talkUrl = `${config.webOrigin.replace(/\/+$/, '')}/talk-to-a-person/${requestToken}`;
-    } catch (err) {
-      logger.error(
-        { err: err instanceof Error ? err.message : String(err), assessmentId: a.id },
-        'Could not issue a talk-to-a-person link; the feedback email will go without the offer',
-      );
-    }
-    try {
-      await email.send(renderCandidateFeedbackEmail({
-        to: session.candidate.email,
-        roleTitle: session.role.title,
-        // What the reviewer approved, verbatim. The draft is never what goes out.
-        approvedText: feedback.approvedText ?? existing.approvedText ?? '',
-        talkUrl,
-      }));
-      delivered = true;
-      deliveryNote = `Sent to ${session.candidate.email}.`;
-    } catch (err) {
-      logger.error({ err: err instanceof Error ? err.message : String(err), assessmentId: a.id }, 'Feedback email failed');
-      deliveryNote = 'The feedback email could not be sent. Share the candidate\'s link yourself, or try again.';
-    }
-  }
-
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'feedback.sent',
     entityType: 'AssessmentVersion', entityId: a.id,
     before: { feedbackId: existing.id, status: existing.status },
-    after: { feedbackId: feedback.id, status: feedback.status, sentAt: feedback.sentAt, candidateNotified: delivered },
+    after: { feedbackId: feedback.id, status: feedback.status, sentAt: feedback.sentAt, candidateNotified: outcome.delivered },
   });
-  await emitEvent(req.auth!.tenantId, 'feedback.sent', { assessmentId: a.id, feedbackId: feedback.id, candidateNotified: delivered });
-  res.json({ feedback: presentFeedback(feedback), delivery: { delivered, portalUrl, deliveryNote } });
+  await emitEvent(req.auth!.tenantId, 'feedback.sent', { assessmentId: a.id, feedbackId: feedback.id, candidateNotified: outcome.delivered });
+  res.json({ feedback: presentFeedback(feedback), delivery: { delivered: outcome.delivered, portalUrl, deliveryNote: outcome.deliveryNote } });
 }));
+
+type FeedbackSession = {
+  readonly id: string;
+  readonly candidateId: string;
+  readonly candidate: { readonly email: string };
+  readonly role: { readonly title: string };
+} | null;
+
+/**
+ * Email the candidate their approved feedback, when there is a way to.
+ *
+ * Returns a delivery report for the cases where nothing could be emailed but
+ * the feedback is still released (no delivering provider, the demo sandbox).
+ * Throws 502 when an email was attempted and failed, so the caller can hand
+ * back its claim and the reviewer can try again.
+ */
+async function notifyCandidateOfFeedback(
+  tenantId: string, assessmentId: string, session: FeedbackSession, approvedText: string,
+): Promise<{ delivered: boolean; deliveryNote: string }> {
+  if (!session) {
+    return { delivered: false, deliveryNote: 'This interview no longer exists, so nothing could be sent. Contact the candidate directly.' };
+  }
+  if (await demoRecipientBlocked(tenantId, session.candidate.email)) {
+    return { delivered: false, deliveryNote: 'In the demo, email goes only to you, so this feedback was not sent to the candidate address.' };
+  }
+  const email = getEmail();
+  if (!email.delivers) {
+    return { delivered: false, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Share the candidate's link yourself.` };
+  }
+  // The offer to speak to a person rides in this email and nowhere else, so
+  // the link is minted here — once, for the single message that carries it.
+  // Failing to mint costs the offer, never the feedback.
+  let talkUrl: string | null = null;
+  try {
+    const requestToken = await issueHumanRequestToken({ sessionId: session.id, candidateId: session.candidateId, tenantId });
+    talkUrl = `${config.webOrigin.replace(/\/+$/, '')}/talk-to-a-person/${requestToken}`;
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), assessmentId },
+      'Could not issue a talk-to-a-person link; the feedback email will go without the offer',
+    );
+  }
+  try {
+    // What the reviewer approved, verbatim. The draft is never what goes out.
+    await email.send(renderCandidateFeedbackEmail({ to: session.candidate.email, roleTitle: session.role.title, approvedText, talkUrl }));
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : String(err), assessmentId }, 'Feedback email failed');
+    throw new HttpError(502, 'The feedback email could not be sent, so it has not been released to the candidate. Try again.');
+  }
+  return { delivered: true, deliveryNote: `Sent to ${session.candidate.email}.` };
+}
 
 assessmentsRouter.get('/:id/feedback', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
