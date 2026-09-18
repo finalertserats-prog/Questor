@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Questor">
+<title>Questor</title>
+<defs><radialGradient id="qf0" gradientUnits="userSpaceOnUse" cx="55.9" cy="2.1" r="72.66"><stop offset="0" stop-color="#b6b1fc"/><stop offset="0.11" stop-color="#ada7f9"/><stop offset="0.33" stop-color="#8a82ea"/><stop offset="0.55" stop-color="#5d52d6"/><stop offset="0.72" stop-color="#544bc6"/><stop offset="0.9" stop-color="#6353d6"/><stop offset="1" stop-color="#6a58dc"/></radialGradient><linearGradient id="qf1" gradientUnits="userSpaceOnUse" x1="46.57" y1="43.68" x2="62.28" y2="59.39"><stop offset="0" stop-color="#7c75de"/><stop offset="0.34" stop-color="#5f56cc"/><stop offset="0.75" stop-color="#4944b6"/><stop offset="1" stop-color="#4540b0"/></linearGradient><linearGradient id="qf2" gradientUnits="userSpaceOnUse" x1="46.57" y1="43.68" x2="62.28" y2="59.39"><stop offset="0" stop-color="#ffffff"/><stop offset="0.35" stop-color="#d3d1fa"/><stop offset="0.71" stop-color="#9a92ef"/><stop offset="1" stop-color="#8b83ea"/></linearGradient></defs>
+<circle cx="31.75" cy="28.86" r="29.99" fill="url(#qf0)"/>
+<polygon points="44.93,35.44 61.06,51.56 61.34,51.87 61.61,52.19 61.85,52.54 62.08,52.89 62.28,53.26 62.45,53.65 62.6,54.04 62.72,54.44 62.81,54.85 62.88,55.27 62.92,55.69 62.94,56.11 62.92,56.53 62.88,56.95 62.81,57.36 62.72,57.77 62.6,58.17 62.45,58.57 62.28,58.95 62.08,59.32 61.85,59.68 61.61,60.02 61.34,60.35 61.06,60.65 58.9,62.81 58.9,62.81 58.59,63.09 58.27,63.36 57.93,63.61 57.57,63.83 57.2,64.03 56.82,64.2 56.42,64.35 56.02,64.47 55.61,64.57 55.2,64.63 54.78,64.68 54.36,64.69 53.94,64.68 53.52,64.63 53.1,64.57 52.69,64.47 52.29,64.35 51.9,64.2 51.51,64.03 51.14,63.83 50.78,63.61 50.44,63.36 50.12,63.09 49.81,62.81 33.69,46.68" fill="url(#qf1)"/>
+<polygon points="44.93,35.44 61.06,51.56 61.34,51.87 61.61,52.19 61.85,52.54 62.08,52.89 62.28,53.26 62.45,53.65 62.6,54.04 62.72,54.44 62.81,54.85 62.88,55.27 62.92,55.69 62.94,56.11 62.92,56.53 62.88,56.95 62.81,57.36 62.72,57.77 62.6,58.17 62.45,58.57 62.28,58.95 62.08,59.32 61.85,59.68 61.61,60.02 61.34,60.35 61.06,60.65 59.98,61.73 39.31,41.06" fill="url(#qf2)"/>
+<circle cx="31.65" cy="29.37" r="17.24" fill="#ffffff"/>
+<polygon points="17.75,36.33 15.65,47.09 24.87,44.02 27.95,38.43" fill="#ffffff"/>
+<circle cx="22.22" cy="29.22" r="3.56" fill="#594ec6"/>
+<circle cx="31.58" cy="29.23" r="3.56" fill="#594ec6"/>
+<circle cx="40.92" cy="29.22" r="3.56" fill="#594ec6"/>
+</svg>
