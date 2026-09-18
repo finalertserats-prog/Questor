@@ -200,6 +200,12 @@ describe('computeAgreementReport', () => {
 // ---------------------------------------------------------------------------
 
 const app = createApp();
+
+/** The approve body: approval names the version the approver reviewed. */
+async function reviewedScorecard(roleId: string) {
+  const sc = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId }, orderBy: { version: 'desc' } });
+  return { scorecardId: sc.id, version: sc.version };
+}
 let token = '';
 let assessmentId = '';
 
@@ -213,7 +219,7 @@ beforeAll(async () => {
   const role = await request(app).post('/api/roles').set(auth)
     .send({ sourceType: 'paste', sourceText: DEMO_JD, title: 'Senior Data Engineer', useLlm: false });
   const roleId = role.body.role.id;
-  await request(app).post(`/api/roles/${roleId}/approve`).set(auth).send({});
+  await request(app).post(`/api/roles/${roleId}/approve`).set(auth).send(await reviewedScorecard(roleId));
 
   const cand = await request(app).post('/api/candidates').set(auth)
     .send({ fullName: 'Priya Sharma', email: 'priya.shadow@e.com', roleId });

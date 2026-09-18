@@ -12,6 +12,12 @@ import { invitationSecretColumns, mintInvitationToken } from '../src/services/in
  */
 
 const app = createApp();
+
+/** The approve body: approval names the version the approver reviewed. */
+async function reviewedScorecard(roleId: string) {
+  const sc = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId }, orderBy: { version: 'desc' } });
+  return { scorecardId: sc.id, version: sc.version };
+}
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 let tenantId = '';
@@ -148,7 +154,7 @@ describe('approving a scorecard stored before the edit schema existed', () => {
     profile.scoringRules.passThreshold = 6500;
     await prisma.roleScorecardVersion.update({ where: { id: version.id }, data: { profileJson: JSON.stringify(profile) } });
 
-    const res = await request(app).post(`/api/roles/${roleRes.body.role.id}/approve`).set(auth(adminToken));
+    const res = await request(app).post(`/api/roles/${roleRes.body.role.id}/approve`).set(auth(adminToken)).send(await reviewedScorecard(roleRes.body.role.id));
 
     expect(res.status).toBe(400);
   });

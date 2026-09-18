@@ -37,6 +37,12 @@ async function makeUser(role: string, email: string): Promise<string> {
 
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
+/** The approve body: approval names the version the approver reviewed. */
+async function reviewedScorecard(roleId: string) {
+  const sc = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId }, orderBy: { version: 'desc' } });
+  return { scorecardId: sc.id, version: sc.version };
+}
+
 beforeAll(async () => {
   // wipe() predates the assignment tables and does not clear them; their FKs to
   // Role/Candidate would make its deleteMany calls fail.
@@ -136,12 +142,12 @@ describe('scorecard approval is separated from authorship', () => {
   it('refuses to let a recruiter approve a scorecard', async () => {
     // Recruiters hold role:edit_scorecard but not role:approve_scorecard —
     // approving the scorecard you authored is the control being added here.
-    const res = await request(app).post(`/api/roles/${roleAId}/approve`).set(auth(recruiterAToken)).send({});
+    const res = await request(app).post(`/api/roles/${roleAId}/approve`).set(auth(recruiterAToken)).send(await reviewedScorecard(roleAId));
     expect(res.status).toBe(403);
   });
 
   it('lets a manager-capability holder approve it', async () => {
-    const res = await request(app).post(`/api/roles/${roleAId}/approve`).set(auth(adminToken)).send({});
+    const res = await request(app).post(`/api/roles/${roleAId}/approve`).set(auth(adminToken)).send(await reviewedScorecard(roleAId));
     expect(res.status).toBe(200);
   });
 });

@@ -6,6 +6,12 @@ import { prisma } from '../src/db.js';
 
 const app = createApp();
 
+/** The approve body: approval names the version the approver reviewed. */
+async function reviewedScorecard(roleId: string) {
+  const sc = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId }, orderBy: { version: 'desc' } });
+  return { scorecardId: sc.id, version: sc.version };
+}
+
 /**
  * Stand in for the candidate accepting the disclosure.
  *
@@ -56,7 +62,7 @@ describe('Questor API end-to-end', () => {
   });
 
   it('approves the scorecard', async () => {
-    const res = await request(app).post(`/api/roles/${roleId}/approve`).set('Authorization', `Bearer ${token}`).send({});
+    const res = await request(app).post(`/api/roles/${roleId}/approve`).set('Authorization', `Bearer ${token}`).send(await reviewedScorecard(roleId));
     expect(res.status).toBe(200);
     expect(res.body.scorecard.status).toBe('approved');
   });

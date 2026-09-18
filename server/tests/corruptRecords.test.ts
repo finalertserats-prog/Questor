@@ -22,6 +22,12 @@ import { getAgreementReport, BLIND_REVIEW_STATUS } from '../src/services/shadowM
  */
 
 const app = createApp();
+
+/** The approve body: approval names the version the approver reviewed. */
+async function reviewedScorecard(roleId: string) {
+  const sc = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId }, orderBy: { version: 'desc' } });
+  return { scorecardId: sc.id, version: sc.version };
+}
 const CORRUPT = '{not-json';
 const CORRUPT_MESSAGE = /stored data is corrupted/i;
 
@@ -151,8 +157,10 @@ describe('recruiter routes over unreadable decision data', () => {
   it('refuses to approve a scorecard it cannot read, rather than calling it empty', async () => {
     const ids = await seeded();
     await corruptScorecard(ids.scorecardId);
+    // The demo scorecard is seeded approved; approval is only offered on a draft.
+    await prisma.roleScorecardVersion.update({ where: { id: ids.scorecardId }, data: { status: 'draft' } });
 
-    const res = await request(app).post(`/api/roles/${ids.roleId}/approve`).set('Authorization', ids.auth);
+    const res = await request(app).post(`/api/roles/${ids.roleId}/approve`).set('Authorization', ids.auth).send(await reviewedScorecard(ids.roleId));
 
     expect(res.status).toBe(500);
   });

@@ -14,6 +14,12 @@ import { fingerprint } from '../src/middleware/rateLimit.js';
  */
 
 const app = createApp();
+
+/** The approve body: approval names the version the approver reviewed. */
+async function reviewedScorecard(roleId: string) {
+  const sc = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId }, orderBy: { version: 'desc' } });
+  return { scorecardId: sc.id, version: sc.version };
+}
 const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 let tenantId = '';
@@ -78,7 +84,7 @@ describe('who may read and write candidate detail', () => {
 
 describe('which scorecard a resume is scored against', () => {
   it('prefers the approved version over a newer draft', async () => {
-    await request(app).post(`/api/roles/${roleId}/approve`).set(auth(adminToken));
+    await request(app).post(`/api/roles/${roleId}/approve`).set(auth(adminToken)).send(await reviewedScorecard(roleId));
     const approved = await prisma.roleScorecardVersion.findFirstOrThrow({ where: { roleId, status: 'approved' } });
     await prisma.roleScorecardVersion.create({ data: { roleId, version: approved.version + 1, status: 'draft', profileJson: approved.profileJson } });
 

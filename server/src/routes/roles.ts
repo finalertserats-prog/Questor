@@ -24,7 +24,7 @@ rolesRouter.use(authenticate);
 // Scoped to the requisitions this user is actually assigned, not to the whole
 // tenant. A tenant-wide list here is a disclosure in itself: requisition titles
 // and headcount leak reorganisations and unannounced hiring before they are public.
-rolesRouter.get('/', asyncHandler(async (req, res) => {
+rolesRouter.get('/', requireCapability('role:read'), asyncHandler(async (req, res) => {
   const roles = await prisma.role.findMany({
     where: await roleScope(req.auth!),
     orderBy: { updatedAt: 'desc' },
@@ -188,7 +188,7 @@ async function respondWithExistingRole(roleId: string, res: Response) {
 }
 
 // Get role + latest scorecard
-rolesRouter.get('/:id', asyncHandler(async (req, res) => {
+rolesRouter.get('/:id', requireCapability('role:read'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const scorecards = await prisma.roleScorecardVersion.findMany({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
@@ -202,7 +202,6 @@ const updateScorecardSchema = z.object({ profile: roleSuccessProfileSchema });
 // Edit the draft scorecard (calibrate competencies/weights) — creates a new version if approved one exists
 rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
-  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const { profile } = updateScorecardSchema.parse(req.body);
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to update');
@@ -222,11 +221,24 @@ rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyn
 // Recruiters hold `role:edit_scorecard` but deliberately NOT
 // `role:approve_scorecard`: the author of a scorecard approving it themselves is
 // the separation-of-duties gap this gate exists to close.
+//
+// The client names the version it reviewed. Approving "whatever is latest"
+// let a scorecard saved a second before the click be approved unseen.
+const approveScorecardSchema = z.object({
+  scorecardId: z.string().min(1),
+  version: z.number().int().positive(),
+});
+
 rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
-  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
+  const reviewed = approveScorecardSchema.parse(req.body ?? {});
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to approve');
+  if (latest.id !== reviewed.scorecardId || latest.version !== reviewed.version) {
+    throw new HttpError(409, `The scorecard has changed since you opened it (it is now version ${latest.version}). Reload and review it before approving.`, 'scorecard_stale');
+  }
+  if (latest.status !== 'draft') throw new HttpError(409, 'This version is already approved.', 'scorecard_not_draft');
+  await assertNotSelfApproval(req.auth!, role, latest);
   // Unreadable is not "no competencies": that message sends the author to edit
   // a scorecard whose editor would show them nothing to fix.
   const profile = parseJsonStrict<RoleSuccessProfile>(latest.profileJson, { model: 'RoleScorecardVersion', id: latest.id, field: 'profileJson' });
@@ -240,18 +252,49 @@ rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), as
     throw new HttpError(400, `This scorecard cannot be approved until its scoring settings are fixed: ${first?.message ?? 'invalid scorecard'} Open it, correct it, save, and approve again.`);
   }
 
-  const approved = await prisma.roleScorecardVersion.update({
-    where: { id: latest.id }, data: { status: 'approved', approvedById: req.auth!.userId, approvedAt: new Date() },
+  // Conditional, so two approvers racing on the same draft approve it once.
+  const claimed = await prisma.roleScorecardVersion.updateMany({
+    where: { id: latest.id, status: 'draft' },
+    data: { status: 'approved', approvedById: req.auth!.userId, approvedAt: new Date() },
   });
+  if (claimed.count !== 1) throw new HttpError(409, 'This version is already approved.', 'scorecard_not_draft');
+  const approved = await prisma.roleScorecardVersion.findUniqueOrThrow({ where: { id: latest.id } });
   await prisma.role.update({ where: { id: role.id }, data: { status: 'approved' } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'role.approved', entityType: 'RoleScorecardVersion', entityId: approved.id });
   res.json({ scorecard: shapeScorecard(approved) });
 }));
 
+/**
+ * Separation of duties for scorecards: the person who last shaped a draft does
+ * not approve it, unless they are an admin (who could grant themselves any
+ * role anyway, so refusing them adds friction without adding control).
+ *
+ * No schema column records a draft's author, so the audit trail is the record:
+ * the actor of the latest 'role.scorecard.updated' event for this version, or
+ * for an unedited version 1, whoever created the role (its extraction is the
+ * draft). A version with neither record is not blocked — there is nobody to
+ * compare against.
+ */
+async function assertNotSelfApproval(
+  auth: AuthClaims,
+  role: { readonly createdById: string | null },
+  scorecard: { readonly id: string; readonly version: number },
+): Promise<void> {
+  if (auth.role === 'admin') return;
+  const lastEdit = await prisma.auditEvent.findFirst({
+    where: { tenantId: auth.tenantId, action: 'role.scorecard.updated', entityType: 'RoleScorecardVersion', entityId: scorecard.id },
+    orderBy: { createdAt: 'desc' },
+    select: { actorId: true },
+  });
+  const author = lastEdit?.actorId ?? (scorecard.version === 1 ? role.createdById : null);
+  if (author && author === auth.userId) {
+    throw new HttpError(403, 'You made the latest changes to this scorecard, so someone else needs to approve it.', 'scorecard_self_approval');
+  }
+}
+
 // Validate: JD language warnings without mutating the role (FR-005)
-rolesRouter.get('/:id/validate', asyncHandler(async (req, res) => {
+rolesRouter.get('/:id/validate', requireCapability('role:read'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
-  const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   const extraction = extractRoleHeuristic(role.sourceText, role.title);
   res.json({ jdWarnings: extraction.jdWarnings });
 }));
