@@ -5,6 +5,7 @@ import { formatDate } from '../components/dateFormat';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { roleDetailLine, roleDisplayLabels } from '../components/roleLabelModel';
 import { PageSkeleton } from '../components/Skeleton';
 import { Badge, Banner } from '../components/ui';
 import {
@@ -17,7 +18,6 @@ import {
   type RoleMetricsPayload,
   type RoleSortKey,
   type RoleStatusFilter,
-  roleCatalogLine,
   type SortDirection,
 } from '../components/rolesListModel';
 
@@ -64,6 +64,10 @@ export function RolesList() {
   }, []);
 
   const domains = useMemo(() => domainsFromRoles(roles), [roles]);
+  const labelById = useMemo(() => {
+    const labels = roleDisplayLabels(roles);
+    return new Map(roles.map((role, index) => [role.id, labels[index]]));
+  }, [roles]);
   const visible = useMemo(
     () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined }), sortKey, direction),
     [roles, query, status, domain, sortKey, direction],
@@ -156,8 +160,8 @@ export function RolesList() {
                   {visible.map((role) => (
                     <tr key={role.id} data-testid="role-row">
                       <td>
-                        <Link to={`/roles/${role.id}`}>{role.title}</Link>
-                        <div className="muted small">{roleCatalogLine(role)}</div>
+                        <Link to={`/roles/${role.id}`}>{labelById.get(role.id) ?? role.title}</Link>
+                        <div className="muted small">{roleDetailLine(role)}</div>
                       </td>
                       <td>{statusBadge(role.status)}</td>
                       <td>{role.applied}</td>

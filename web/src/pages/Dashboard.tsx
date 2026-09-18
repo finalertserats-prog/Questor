@@ -9,6 +9,8 @@ import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } f
 import { EmptyState } from '../components/EmptyState';
 import { chartTone, formatHours, groupSessionStates, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
+import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
+import type { TopRole } from '../components/rolesListModel';
 
 interface Metrics {
   generatedAt: string;
@@ -29,12 +31,12 @@ interface Metrics {
   truncated?: boolean;
   recentInterviews: {
     id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
-    candidate: { id: string; name: string }; role: { id: string; title: string };
+    candidate: { id: string; name: string }; role: RoleLabelSource & { id: string };
   }[];
   roles?: {
     kpis: { activeRoles: number; rolesWithoutCandidates: number; rolesWithReviewBacklog: number };
-    topByApplied: { id: string; title: string; count: number }[];
-    topByInterviewed: { id: string; title: string; count: number }[];
+    topByApplied: TopRole[];
+    topByInterviewed: TopRole[];
     minSample: number;
   };
 }
@@ -69,6 +71,12 @@ function interviewDate(row: Metrics['recentInterviews'][number]): { label: strin
   return { label: 'Created', at: row.createdAt };
 }
 
+/** Ranked roles as bars, with same-titled roles told apart by their labels. */
+function toRoleBars(roles: readonly TopRole[], tone: string): BarItem[] {
+  const labels = roleDisplayLabels(roles);
+  return roles.map((r, index) => ({ key: r.id, label: labels[index], count: r.count, tone }));
+}
+
 export function Dashboard() {
   const { user } = useAuth();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -99,8 +107,10 @@ export function Dashboard() {
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
   const stopped = stateItems.find((g) => g.key === 'stopped')?.count ?? 0;
   const weeklyData = trimSparseWeeks(metrics?.interviewsPerWeek ?? []);
-  const topRoleApplied: BarItem[] = (metrics?.roles?.topByApplied ?? []).map((r) => ({ key: r.id, label: r.title, count: r.count, tone: 'tone-accent' }));
-  const topRoleInterviewed: BarItem[] = (metrics?.roles?.topByInterviewed ?? []).map((r) => ({ key: r.id, label: r.title, count: r.count, tone: 'tone-pass' }));
+  const topRoleApplied = toRoleBars(metrics?.roles?.topByApplied ?? [], 'tone-accent');
+  const topRoleInterviewed = toRoleBars(metrics?.roles?.topByInterviewed ?? [], 'tone-pass');
+  const recent = metrics?.recentInterviews ?? [];
+  const recentRoleLabels = roleDisplayLabels(recent.map((row) => row.role));
   const truncation = truncationNote(metrics?.truncated);
 
   return (
@@ -265,15 +275,15 @@ export function Dashboard() {
               <div className="dash-table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Candidate</th><th>Role</th><th>State</th><th>Date</th><th><span className="dash-sr-only">Actions</span></th></tr>
+                    <tr><th>Candidate</th><th>Role</th><th>State</th><th>Date</th><th><span className="visually-hidden">Actions</span></th></tr>
                   </thead>
                   <tbody>
-                    {metrics.recentInterviews.map((row) => {
+                    {metrics.recentInterviews.map((row, index) => {
                       const date = interviewDate(row);
                       return (
                         <tr key={row.id}>
                           <td><Link to={`/candidates/${row.candidate.id}`}>{row.candidate.name}</Link></td>
-                          <td className="muted">{row.role.title}</td>
+                          <td className="muted">{recentRoleLabels[index]}</td>
                           <td>{stateBadge(row.state)}</td>
                           <td className="small">
                             <span className="muted">{date.label}</span> {new Date(date.at).toLocaleDateString()}

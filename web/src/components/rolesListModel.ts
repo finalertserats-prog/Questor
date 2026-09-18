@@ -21,6 +21,18 @@ export interface RoleFunnel {
   readonly medianInviteToCompleteHours: number | null;
   readonly lastActivityAt: string | null;
   readonly updatedAt: string;
+  readonly createdAt?: string | null;
+}
+
+/** A role in a dashboard ranking. The display fields arrive with newer servers. */
+export interface TopRole {
+  readonly id: string;
+  readonly title: string;
+  readonly count: number;
+  readonly level?: string | null;
+  readonly regionCode?: string | null;
+  readonly experienceBand?: string | null;
+  readonly createdAt?: string | null;
 }
 
 export interface RoleMetricsPayload {
@@ -33,8 +45,8 @@ export interface RoleMetricsPayload {
     readonly rolesWithoutCandidates: number;
     readonly rolesWithReviewBacklog: number;
   };
-  readonly topByApplied: readonly { readonly id: string; readonly title: string; readonly count: number }[];
-  readonly topByInterviewed: readonly { readonly id: string; readonly title: string; readonly count: number }[];
+  readonly topByApplied: readonly TopRole[];
+  readonly topByInterviewed: readonly TopRole[];
 }
 
 export function filterRoles(
@@ -93,8 +105,4 @@ export function formatTurnaround(hours: number | null): string {
 
 export function domainsFromRoles(roles: readonly RoleFunnel[]): readonly string[] {
   return [...new Set(roles.flatMap((r) => (r.domain ? [r.domain] : [])))].sort((a, b) => a.localeCompare(b));
-}
-
-export function roleCatalogLine(role: RoleFunnel): string {
-  return role.domain ? [role.domain, role.regionCode, role.experienceBand].filter(Boolean).join(' ? ') : 'Not linked to catalog';
 }

@@ -62,6 +62,14 @@ const ROUND: StatusTable = {
   CANCELLED: ['stop', 'x-circle'],
 };
 
+// A role's lifecycle. Archived is neutral and locked: it is finished with,
+// not waiting on anyone, so it must not share the draft's amber.
+const ROLE: StatusTable = {
+  draft: ['hold', 'draft'],
+  approved: ['pass', 'check-circle'],
+  archived: ['neutral', 'lock'],
+};
+
 const RECOMMENDATION: StatusTable = {
   PROCEED: ['pass', 'check-circle'],
   CONSIDER: ['hold', 'question'],
@@ -73,7 +81,7 @@ const RECOMMENDATION: StatusTable = {
 };
 
 /** "CANDIDATE_QUESTIONS" -> "Candidate questions". */
-function humanise(value: string): string {
+export function humanise(value: string): string {
   const words = value.replace(/_/g, ' ').trim().toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
@@ -94,6 +102,7 @@ export const pipelineStatus = (status: string): StatusMeta => lookup(PIPELINE, s
 export const decisionStatus = (decision: string): StatusMeta => lookup(DECISION, decision);
 export const roundStatus = (status: string): StatusMeta => lookup(ROUND, status);
 export const recommendationStatus = (rec: string): StatusMeta => lookup(RECOMMENDATION, rec);
+export const roleStatus = (status: string): StatusMeta => lookup(ROLE, status);
 
 export type BadgeKind = 'green' | 'amber' | 'red' | 'blue' | 'gray';
 

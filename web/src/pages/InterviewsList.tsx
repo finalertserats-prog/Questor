@@ -7,10 +7,11 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { statesInGroup } from '../components/dashboardModel';
+import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
 
 interface Session {
   id: string; state: string; provider: string; scheduledAt: string | null;
-  candidate: { id: string; name: string }; role: { id: string; title: string };
+  candidate: { id: string; name: string }; role: (RoleLabelSource & { id: string }) | null;
   recommendation: string | null; assessmentId: string | null; invited: boolean; createdAt: string;
 }
 
@@ -39,6 +40,11 @@ export function InterviewsList() {
     if (!wanted.length) return sessions;
     return sessions.filter((s) => wanted.includes(s.state));
   }, [sessions, group]);
+  const roleLabelById = useMemo(() => {
+    const roles = sessions.flatMap((s) => (s.role ? [s.role] : []));
+    const labels = roleDisplayLabels(roles);
+    return new Map(roles.map((role, index) => [role.id, labels[index]]));
+  }, [sessions]);
 
   // `cancelled` so a response that lands after someone has navigated away does
   // not set state on a page that is gone.
@@ -106,7 +112,7 @@ export function InterviewsList() {
                 {visible.map((s) => (
                   <tr key={s.id}>
                     <td>{s.candidate?.name}</td>
-                    <td>{s.role?.title}</td>
+                    <td>{s.role ? roleLabelById.get(s.role.id) ?? s.role.title : null}</td>
                     <td>{stateBadge(s.state)}</td>
                     <td className="muted">{s.provider}</td>
                     <td>{recBadge(s.recommendation)}</td>
