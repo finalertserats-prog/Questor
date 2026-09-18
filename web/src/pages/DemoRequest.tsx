@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Banner } from '../components/ui';
+import { BrandLogo } from '../components/BrandLogo';
 
 export function DemoRequest() {
   const [name, setName] = useState('');
@@ -25,7 +26,7 @@ export function DemoRequest() {
   };
   return (
     <div className="public-shell">
-      <header className="public-bar"><Link to="/login" className="public-brand"><img src="/brand/questor-mark.webp" alt="" width={26} height={27} /><span>Questor</span></Link><Link to="/login" className="btn sm secondary">Sign in</Link></header>
+      <header className="public-bar"><Link to="/login" className="public-brand"><BrandLogo variant="lockup" size={28} /></Link><Link to="/login" className="btn sm secondary">Sign in</Link></header>
       <main className="public-body"><div className="card auth-card" style={{ maxWidth: 520, margin: '0 auto' }}>
         <div className="logo" style={{ fontSize: 26 }}>QUES<span>TOR</span></div><div className="brand-line" aria-hidden="true" />
         {sent ? <><h1>Check your inbox</h1><p className="muted">We sent a one-time sign-in link if this address can receive a demo. It opens a private sandbox and expires after one use.</p></> : <>
