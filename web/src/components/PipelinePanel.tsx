@@ -389,7 +389,7 @@ export function PipelinePanel(
           </form>
 
           <form className="pipeline-action" onSubmit={recordDecision}>
-            <h3 className="card-title"><Icon name="check-circle" size={16} />Record decision</h3>
+            <h3 className="card-title"><Icon name="decision" size={16} />Record decision</h3>
             <label htmlFor="decision">Outcome</label>
             <select
               id="decision"
@@ -479,7 +479,7 @@ export function PipelinePanel(
 
       {openHumanRounds.length > 0 && (
         <form className="pipeline-action pipeline-complete" onSubmit={completeRound}>
-          <h3 className="card-title"><Icon name="candidates" size={16} />Complete a human round</h3>
+          <h3 className="card-title"><Icon name="human-review" size={16} />Complete a human round</h3>
           <p className="muted small">What the interviewers recorded becomes the evidence for this stage.</p>
           {openHumanRounds.length > 1 && (
             <>

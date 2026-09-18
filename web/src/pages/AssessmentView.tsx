@@ -369,13 +369,13 @@ export function AssessmentView() {
 
       {showReport && (
         <div className="card">
-          <h2 className="card-title"><Icon name="job" />Full report</h2>
+          <h2 className="card-title"><Icon name="reports" />Full report</h2>
           {reportLoading ? <Skeleton lines={6} label="Loading report…" /> : <Markdown text={report} />}
         </div>
       )}
 
       <div className="card">
-        <h2 className="card-title"><Icon name="evidence" />Competency scorecard</h2>
+        <h2 className="card-title"><Icon name="scorecard" />Competency scorecard</h2>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency scorecard">
         <table>
           <thead>
@@ -421,7 +421,7 @@ export function AssessmentView() {
       </div>
 
       <div className="card">
-        <h2 className="card-title"><Icon name="check-circle" />Human review</h2>
+        <h2 className="card-title"><Icon name="human-review" />Human review</h2>
         <form onSubmit={submitReview}>
           <div className="grid cols-2">
             <div>

@@ -328,7 +328,7 @@ export function CandidateDetail() {
   return (
     <div>
       <PageHeader
-        icon="candidates"
+        icon="candidate-profile"
         title={candidate.fullName}
         subtitle={`${candidate.email}${candidate.phone ? ` · ${candidate.phone}` : ''}`}
         actions={
@@ -563,7 +563,7 @@ function CandidateProfileTab({
       {error && <Banner kind="error">{error}</Banner>}
 
       <div className="card">
-        <h2 className="card-title"><Icon name="candidates" />Candidate Profile</h2>
+        <h2 className="card-title"><Icon name="candidate-profile" />Candidate Profile</h2>
         <div className="grid cols-3">
           <Stat label="Email" value={candidate.email} />
           <Stat label="Phone" value={candidate.phone || '?'} />
@@ -626,7 +626,7 @@ function CandidateProfileTab({
       )}
 
       <div className="card">
-        <h2 className="card-title"><Icon name="sparkle" />Resume fit for applied role</h2>
+        <h2 className="card-title"><Icon name="role-match" />Resume fit for applied role</h2>
         <p className="muted small">
           Scored from the resume against the role's scorecard. It says nothing about the interview, which is
           assessed separately from what the candidate actually said.
@@ -640,7 +640,7 @@ function CandidateProfileTab({
       </div>
 
       <div className="card">
-        <h2 className="card-title"><Icon name="role" />Other visible roles that may fit</h2>
+        <h2 className="card-title"><Icon name="role-match" />Other visible roles that may fit</h2>
         <p className="muted small">Compared server-side against approved scorecards for roles in your permitted scope only.</p>
         {analysis ? (
           <>
