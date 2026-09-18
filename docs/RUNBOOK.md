@@ -10,13 +10,18 @@ Defaults from `scripts/deploy.sh`: repo `/root/Questor/repo`, branch `claude/ope
 
 ## Daily checks
 
-- `GET /api/health`; compare `commit` with `git rev-parse HEAD` and the intended release.
-- `GET /api/admin/ops`; review job runs, webhook pending/due/failed counts, and model failures.
-- `pm2 status questor`; if restarts increased, read `pm2 logs questor --nostream --lines 100`.
-- `df -h`; confirm a fresh `/root/Questor/backups/questor-nightly-*.dump`.
+- **Open Admin → System health.** Signed in as the operator (the `SIGNUP_APPROVER_EMAIL` address) it answers most of the checks below without SSH: database reachability and latency, migration state, process memory and uptime, drain state, disk free, running commit, the newest backup and its age, every background job against its own interval, email/AI/speech/rate-limit/retention configuration, the webhook v1 switch, and account requests waiting. Signed in as any other admin it shows that organisation's own checks only. Green needs nothing; amber says what to watch; red says what to do. It re-checks itself every minute and caches each answer for 15 s (`GET /api/admin/health`).
+- Only if something is red or amber, or the panel itself could not be checked:
+  - `GET /api/health`; compare `commit` with `git rev-parse HEAD` and the intended release.
+  - `GET /api/admin/ops`; review job runs, webhook pending/due/failed counts, and model failures.
+  - `pm2 status questor`; if restarts increased, read `pm2 logs questor --nostream --lines 100`. Restart counts are the one daily check the app cannot see about itself.
+  - `df -h`; confirm a fresh `/root/Questor/backups/questor-nightly-*.dump`.
+
+The panel reads backups from `BACKUP_DIR` (default `/root/Questor/backups` when `NODE_ENV=production`), matching `questor-*.dump`: it warns past 26 h, fails past 50 h, and fails on a zero-byte or missing dump. If the app cannot read that folder it says so rather than reporting health it does not have.
 
 ## Weekly checks
 
+- Admin → System health, with the healthy checks expanded: read the notes (legal holds, candidates without a resume, webhooks still on v1) rather than only the problems.
 - Review the last week of ops job results and webhook failures.
 - Confirm disk headroom for a new dump and a restore-drill scratch database.
 - Open one recent candidate, transcript, and assessment in the UI.

@@ -21,6 +21,7 @@ import { feedbackConsentRouter } from './routes/feedbackConsent.js';
 import { signupRouter, signupDecisionRouter } from './routes/signup.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
+import { systemHealthRouter } from './routes/systemHealth.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { connectorsRouter } from './routes/connectors.js';
 import { atsConnectionRouter } from './routes/atsConnection.js';
@@ -181,6 +182,9 @@ export function createApp() {
   app.use('/api/assessments', assessmentsRouter);
   app.use('/api/admin/connectors', connectorsRouter);
   app.use('/api/admin/ats', atsConnectionRouter);
+  // The console polls this every minute per open tab; the report is cached for
+  // 15 s, and this bounds what a script can make the database do.
+  app.use('/api/admin/health', rateLimit({ name: 'admin-health', windowMs: 60_000, max: 30 }), systemHealthRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
 
