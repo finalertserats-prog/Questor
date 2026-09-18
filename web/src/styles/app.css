@@ -1600,3 +1600,20 @@ tr.in-flight td:first-child {
 .field-hint.field-problem {
   color: var(--stop);
 }
+
+/* The highlighted combobox option: a rule down its leading edge and full ink,
+   never a tinted block. */
+.combobox-option {
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+}
+.combobox-option[aria-selected='true'] {
+  border-left-color: var(--focus);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The hidden attribute wins over any display a class sets. */
+[hidden] {
+  display: none !important;
+}

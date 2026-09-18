@@ -65,7 +65,8 @@ describe('form labels', () => {
     const html = renderRoleCreate();
     const targets = [...html.matchAll(/<label[^>]*\bfor="([^"]+)"/g)].map((m) => m[1]);
     const missing = targets.filter((id) => !html.includes(`id="${id}"`));
-    expect({ labels: targets.length, missing }).toEqual({ labels: 7, missing: [] });
+    // Six visible fields: source-specific input, domain, experience, region, title, tech stack.
+    expect({ labels: targets.length, missing }).toEqual({ labels: 6, missing: [] });
   });
 
   it('names the new-role fields by their visible captions', () => {
