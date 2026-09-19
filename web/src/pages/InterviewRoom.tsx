@@ -403,6 +403,7 @@ export function InterviewRoom() {
         finished={phase === 'done'}
         question={questionNumber(msgs)}
         capture={live && micOpen ? { mode: textMode ? 'mic' : 'transcribing', stt: info.speech.stt, aiFact } : null}
+        privacy={<RoomPrivacy aiFact={aiFact} stt={info.speech.stt} canCapture={canCapture} />}
         showActions={live}
         paused={paused}
         pauseAvailable={phase === 'listening'}
