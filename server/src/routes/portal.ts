@@ -355,8 +355,16 @@ const consentSchema = z.object({
   observerNoticeShown: z.boolean().optional(),
 });
 portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
+  const loaded = await loadByToken(req.params.token, { requireUnconsumed: true });
+  if (!PRE_INTERVIEW_STATES.includes(loaded.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
+  // The page may have been opened before this session got its interviewer (a
+  // tab left open across a deploy, or a failed assignment the portal page
+  // ignored). Assign it here too, so the disclosure check below sees the
+  // named wording instead of refusing the candidate.
+  await ensureSessionInterviewer(loaded.sessionId).catch((err: unknown) => {
+    logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: loaded.sessionId }, 'Could not assign an interviewer before consent');
+  });
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
-  if (!PRE_INTERVIEW_STATES.includes(inv.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
   const body = consentSchema.parse(req.body);
   if (!body.accepted) throw new HttpError(400, 'Consent to proceed is required, or choose the human-alternative path.');
 
@@ -402,7 +410,10 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   // is the one place the candidate is told; a session whose disclosure does
   // not open by naming the AI interviewer (empty, damaged, or from a path that
   // never wrote one) must not collect a consent that would claim otherwise.
-  if (!hasConsentIntro(typeof consent.disclosureText === 'string' ? consent.disclosureText : '')) {
+  // A candidate who already consented agreed to exactly the stored text, even
+  // if it predates the named wording; consent does not move the state, so they
+  // come back through this step and must not be locked out.
+  if (!hasRecordedConsent(inv.session) && !hasConsentIntro(typeof consent.disclosureText === 'string' ? consent.disclosureText : '')) {
     logger.error({ sessionId: inv.sessionId }, 'Consent refused: the stored disclosure does not name the AI interviewer');
     throw new HttpError(409, 'This interview is not ready yet. Please contact the hiring team, who can send you a fresh link.', 'disclosure_missing');
   }

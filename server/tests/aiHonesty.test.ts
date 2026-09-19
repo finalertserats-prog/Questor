@@ -49,6 +49,9 @@ describe('detectAiIdentityQuestion', () => {
     'Are you ChatGPT?',
     'Who am I talking to?',
     "Hang on, you're a bot, right?",
+    'Is this an AI interviewer?',
+    'Are you a real person or a bot?',
+    'Are you human, though?',
   ])('recognises "%s"', (text) => {
     expect(detectAiIdentityQuestion(text)).toBe(true);
   });
@@ -62,6 +65,12 @@ describe('detectAiIdentityQuestion', () => {
     'Is that the person who approves the budget?',
     'I automated the billing reconciliation last year.',
     'Our chatbot is a real product used by millions.',
+    // The subject word followed by a noun is a question about the job.
+    'Is this a machine learning team?',
+    'Is it a computer vision role?',
+    'Is that program in Java?',
+    'Is it automated testing?',
+    'Are you an AI-first company?',
   ])('ignores "%s"', (text) => {
     expect(detectAiIdentityQuestion(text)).toBe(false);
   });

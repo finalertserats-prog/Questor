@@ -88,6 +88,37 @@ describe('consent fails closed without the AI disclosure', () => {
   });
 });
 
+describe('a candidate who consented before the interviewer catalogue', () => {
+  // Consent does not change the session state, so a candidate who agreed to
+  // the old wording and closed the tab goes through the consent step again
+  // when they come back. They already agreed to exactly that stored text.
+  const legacyDisclosure = `Hello, I'm ${RETIRED}, an AI interviewer for this first-round conversation. Your voice is transcribed.`;
+
+  it('can consent again to the disclosure they already agreed to', async () => {
+    await setConsent({ disclosureText: legacyDisclosure, consentedAt: '2026-09-01T10:00:00.000Z', accepted: true });
+    const res = await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true });
+    expect(res.status).toBe(200);
+  });
+
+  it('keeps the disclosure they agreed to on record', async () => {
+    await setConsent({ disclosureText: legacyDisclosure, consentedAt: '2026-09-01T10:00:00.000Z', accepted: true });
+    await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true });
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: ids.sessionId } });
+    expect((JSON.parse(session.consentJson) as { disclosureText: string }).disclosureText).toBe(legacyDisclosure);
+  });
+});
+
+describe('consent when the interviewer was never assigned', () => {
+  // The page may have been loaded before the deploy, and the portal ignores a
+  // failed assignment. Consent must try again rather than refuse the candidate.
+  it('assigns the interviewer and accepts consent for a legacy session', async () => {
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { personaJson: JSON.stringify({ name: RETIRED, tone: 'warm' }) } });
+    await setConsent({ disclosureText: `Hello, I'm ${RETIRED}, an AI interviewer for this first-round conversation.` });
+    const res = await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: false, accepted: true });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('retake of a session from before the interviewer catalogue', () => {
   async function incompleteLegacySession(): Promise<string> {
     await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { personaJson: JSON.stringify({ name: RETIRED, tone: 'neutral' }) } });

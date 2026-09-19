@@ -130,16 +130,21 @@ export function detectWithdrawal(text: string): boolean {
 const MACHINE = String.raw`(?:an?\s+)?(?:ai|a\.i\.|bot|chat ?bot|robot|machine|computer|recording|pre-?recorded|automated|chatgpt|gpt|program)`;
 const HUMAN = String.raw`(?:a\s+|an\s+)?(?:real|human|live|actual)(?:\s+(?:person|human|interviewer|being|someone))?|(?:a\s+)?human being|(?:a\s+)?person`;
 
+// The subject has to close the question ("…a machine?", "…an AI interviewer,
+// or…"), not start a noun phrase: "a machine learning team" or "an AI-first
+// company" is a question about the job, not about who is asking.
+const SUBJECT_END = String.raw`(?=\s*(?:(?:interviewer|person|being|agent|assistant|system|model|voice)\b)?\s*(?:[?.!,;]|$|\bor\b|\band\b|\bright\b|\bthough\b|\bactually\b|\bthen\b))`;
+
 const AI_IDENTITY_QUESTIONS: readonly RegExp[] = [
   // "Are you an AI / real / human / ChatGPT?" — the subject straight after.
-  new RegExp(String.raw`\b(?:are|r)\s+(?:you|u)\s+(?:${MACHINE}|${HUMAN})\b`),
+  new RegExp(String.raw`\b(?:are|r)\s+(?:you|u)\s+(?:${MACHINE}|${HUMAN})${SUBJECT_END}`),
   // "Am I talking to a bot / a real person / a recording?"
-  new RegExp(String.raw`\bam i\s+(?:talking|speaking|chatting)\s+(?:to|with)\s+(?:${MACHINE}|${HUMAN})\b`),
+  new RegExp(String.raw`\bam i\s+(?:talking|speaking|chatting)\s+(?:to|with)\s+(?:${MACHINE}|${HUMAN})${SUBJECT_END}`),
   // "Who am I talking to?"
   /\bwho am i\s+(?:talking|speaking|chatting)\s+(?:to|with)\b/,
   // "Is this automated / an AI / a real person?" — only "this"/"that"/"it"
   // directly followed by the subject, so "is it a human-centred role" is not.
-  new RegExp(String.raw`\bis\s+(?:this|that|it)\s+(?:${MACHINE}|(?:a\s+|an\s+)?(?:real|actual)\s+(?:person|human|interviewer)|(?:a\s+)?human being)\b`),
+  new RegExp(String.raw`\bis\s+(?:this|that|it)\s+(?:${MACHINE}|(?:a\s+|an\s+)?(?:real|actual)\s+(?:person|human|interviewer)|(?:a\s+)?human being)${SUBJECT_END}`),
   // "Is there a human / someone real on the other end?"
   /\bis there\s+(?:a\s+|an\s+)?(?:real\s+)?(?:human|person|someone|anyone|somebody)\b[^.?!]{0,30}\b(?:other end|there|listening|on the line)\b/,
   // Tag questions: "you're not a real person, are you?" / "you're a bot, right?"
