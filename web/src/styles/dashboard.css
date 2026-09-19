@@ -1,0 +1,443 @@
+/* ==========================================================================
+   Dashboard KPIs and charts, and the audit log page.
+   Colours come only from tokens in app.css, so both themes follow.
+   ========================================================================== */
+
+:root {
+  /* A KPI is a measure, not a banner. On a 1680px shell four stretched cards
+     put the number and its label a hand's width apart and the row stops being
+     scannable, so a card is capped and the grid packs from the left. */
+  --kpi-card-max: 320px;
+  --kpi-grid-gap: var(--space-4);
+}
+
+/* A section heading, not a column header. The mono micro-label is Questor's
+   signature and it stays on labels — on measurements — but a heading that
+   says "Key metrics" is prose, and setting it in shouted uppercase mono was
+   what made the whole page read like a spreadsheet. Same words, same place,
+   same hierarchy; a speaking voice instead of a stencil. */
+.dash-heading {
+  margin: var(--section-gap-tight) 0 var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--type-section-size);
+  font-weight: var(--type-section-weight);
+  letter-spacing: var(--type-section-track);
+  line-height: var(--type-section-line);
+  text-transform: none;
+  color: var(--ink);
+}
+
+
+/* --- KPI cards ------------------------------------------------------------ */
+
+.kpi-grid {
+  display: grid;
+  /* auto-fit, not a fixed 4: with nine cards a four-column grid leaves a single
+     stray card on a third row. The earlier note here rejected a hard minimum,
+     and was right to -- but only because the count was fixed: 4 x 240px cannot
+     fit the 672px column between the 820px and 980px breakpoints. auto-fit
+     chooses a count that fits, so the minimum never overflows, and on a wide
+     screen the row fills the width instead of stopping short of it.
+     The count comes from the minimum: with a definite maximum in minmax() the
+     browser counts columns by the maximum, so a 320px cap fitted only two
+     columns into a 970px page and left a third of it empty. auto-fill keeps
+     the empty tracks, so a short row does not stretch its cards. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--kpi-grid-gap);
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  list-style: none;
+}
+
+.kpi {
+  display: flex;
+}
+
+.kpi-link {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas:
+    'icon value'
+    'label label'
+    'hint hint';
+  align-items: center;
+  column-gap: 10px;
+  flex: 1;
+  padding: var(--space-4);
+  background: var(--sheet);
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius-sheet);
+  box-shadow: var(--shadow-sheet);
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* Only the cards that go somewhere lift, and they lift by a single pixel —
+   enough to answer "is this a link?", too little to disturb a row being read.
+   The wash stays as the hover fill so the affordance is not motion alone. */
+a.kpi-link {
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-base) var(--ease-standard),
+    transform var(--dur-base) var(--ease-standard);
+}
+a.kpi-link:hover {
+  /* The border, the lift and the chip rule underneath already answer "is this a
+     link?". Washing the card as well was the fourth signal and the only one
+     that looked stock. */
+  border-color: var(--accent);
+  box-shadow: var(--shadow-raised);
+  transform: translateY(-1px);
+  text-decoration: none;
+}
+a.kpi-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Not a filled lozenge. A measurement on this page is a reading taken against
+   a scale, so the icon sits in a square bracket with a rule under it -- the
+   corner marks of a caliper rather than a pastel pill. The flat wash that used
+   to fill this shape is what made the page look bought rather than designed. */
+.kpi-icon {
+  grid-area: icon;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--accent);
+  box-shadow:
+    inset 2px 0 0 -1px var(--accent-edge),
+    inset -2px 0 0 -1px var(--accent-edge);
+}
+.kpi-icon::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: 0;
+  left: 3px;
+  height: 2px;
+  background: var(--accent);
+}
+a.kpi-link:hover .kpi-icon::after {
+  left: 0;
+  right: 0;
+}
+.kpi-icon::after {
+  transition: left var(--dur-base) var(--ease-out), right var(--dur-base) var(--ease-out);
+}
+
+/* The one spark on the page. It marks the measure that is asking a person to
+   do something — interviews the machine has finished with and a human has not.
+   One card, by the colour budget; making a second one warm would spend the
+   emphasis and mark nothing. */
+.kpi-link--spark .kpi-icon {
+  background: transparent;
+  color: var(--spark);
+  box-shadow:
+    inset 2px 0 0 -1px var(--spark-edge),
+    inset -2px 0 0 -1px var(--spark-edge);
+}
+.kpi-link--spark .kpi-icon::after {
+  background: var(--spark);
+}
+
+.kpi-value {
+  grid-area: value;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.kpi-label {
+  grid-area: label;
+  margin-top: var(--space-2);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  line-height: var(--type-micro-line);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.kpi-hint {
+  grid-area: hint;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* --- Charts --------------------------------------------------------------- */
+
+.dash-charts .card h3 {
+  margin: 0 0 2px;
+}
+
+.chart {
+  margin: 10px 0 0;
+}
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* Layout keeps every label and value inside the viewBox; anything that
+     still escapes is clipped rather than pushing the card sideways. */
+  overflow: hidden;
+}
+
+/* Grid lines are a ruler held behind the data, not part of it. */
+.chart-grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+  opacity: 0.72;
+}
+.chart-axis,
+.chart-value {
+  font-family: var(--font-data);
+  font-size: 11px;
+  fill: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.chart-value {
+  fill: var(--ink);
+  font-weight: 600;
+}
+.chart-label {
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  fill: var(--ink-2);
+}
+
+/* The ruled fill. The ground keeps the bar readable as a shape at any size;
+   the lines carry the meaning. Spacing stays at 5px so the pattern never
+   collapses into a solid tone on a narrow bar. */
+.chart-ruled-ground {
+  fill: var(--chart-ruled-ground);
+}
+.chart-ruled-line {
+  stroke: var(--chart-a);
+  stroke-width: 2;
+}
+
+/* The baseline is the one rule that must always be visible: it is what every
+   bar is measured from. The interior grid is deliberately lighter than it. */
+.chart-baseline {
+  /* rule-strong sits at 1.87:1 on the sheet, which is too faint for the one
+     line every bar is measured from. The muted tone carries it at 3.63:1. */
+  stroke: var(--chart-muted);
+  stroke-width: 1;
+}
+.chart-tick {
+  /* rule-strong is 1.87:1 light and 2.04:1 dark. The tick is now the only thing
+     marking where the scale ends, so it takes the tone that survives both. */
+  stroke: var(--chart-muted);
+  stroke-width: 1;
+}
+/* A zero still leaves a mark, so an empty week reads as measured-and-empty
+   rather than as missing data. */
+.chart-witness {
+  stroke: var(--chart-muted);
+  stroke-width: 2;
+}
+/* The ruled body needs its own edge or it dissolves at one or two units. */
+.chart-series-a-edge {
+  fill: none;
+  stroke: var(--chart-a);
+  stroke-width: 1;
+}
+
+.chart-series-a,
+.tone-accent-soft {
+  fill: var(--chart-a);
+  background: var(--chart-a);
+}
+.chart-series-b,
+.tone-accent {
+  fill: var(--chart-b);
+  background: var(--chart-b);
+}
+.tone-spark {
+  fill: var(--chart-c);
+  background: var(--chart-c);
+}
+.tone-pass {
+  fill: var(--pass);
+}
+.tone-hold {
+  fill: var(--hold);
+}
+.tone-stop {
+  fill: var(--stop);
+}
+.tone-muted {
+  fill: var(--chart-muted);
+}
+
+/* One entrance, no loop, no bounce: the bars grow out of their own baseline
+   once, as the numbers arrive. Nothing re-runs on hover or on scroll, because
+   a chart that keeps moving is a chart nobody can read a value off. */
+@keyframes chart-rise {
+  from {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+@keyframes chart-grow {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+.chart-rise,
+.chart-grow {
+  transform-box: fill-box;
+  animation-duration: var(--dur-slow);
+  animation-timing-function: var(--ease-out);
+  animation-fill-mode: both;
+  animation-iteration-count: 1;
+}
+.chart-rise {
+  transform-origin: bottom;
+  animation-name: chart-rise;
+}
+.chart-grow {
+  transform-origin: left;
+  animation-name: chart-grow;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: var(--space-2);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* A 10px swatch takes the card radius literally and turns into a dot, which
+   then reads as a bullet rather than as a sample of the bar it names. */
+.chart-legend .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-xs);
+}
+/* At 10px a 5px hatch would read as noise, so the swatch states the same
+   distinction with a single rule: ruled body, solid body. */
+.chart-legend .chart-series-a {
+  background: var(--chart-ruled-ground);
+  box-shadow: inset 0 0 0 1px var(--chart-a);
+}
+
+.chart-data {
+  margin-top: var(--space-2);
+  font-size: 12.5px;
+}
+.chart-data table {
+  margin-top: 6px;
+}
+
+/* --- Tables on narrow screens --------------------------------------------- */
+
+/* position: relative so the visually hidden "Actions" header is contained by
+   this scroller. Without it that absolutely positioned text was placed against
+   the page and widened the whole document past a phone's viewport. */
+.dash-table-wrap {
+  position: relative;
+  overflow-x: auto;
+}
+
+/* --- Audit log ------------------------------------------------------------ */
+
+.audit-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+.audit-pager {
+  margin-top: 12px;
+}
+
+@media (max-width: 980px) {
+  .kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, var(--kpi-card-max)));
+  }
+  .audit-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 420px) {
+  .kpi-grid,
+  .audit-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  a.kpi-link:hover {
+    transform: none;
+  }
+  .chart-rise,
+  .chart-grow {
+    animation: none;
+    transform: none;
+  }
+}
+
+/* Title and "View all" share a line while both fit. The heading's basis is the
+   same in every chart card, so the link drops below it at the same card width
+   everywhere rather than in one card and not its neighbour. */
+.chart-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+.chart-card-head h3 {
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin: 0;
+}
+
+/* A bar row that opens its role. The hit area is invisible until hovered or
+   focused; focus draws a ring on the row rather than a filled block. */
+.chart-row-hit {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2;
+}
+.chart-row-link {
+  cursor: pointer;
+  outline: none;
+}
+.chart-row-link:hover .chart-label {
+  fill: var(--ink);
+  text-decoration: underline;
+}
+.chart-row-link:focus-visible .chart-row-hit {
+  stroke: var(--focus);
+}

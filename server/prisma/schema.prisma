@@ -1,0 +1,1073 @@
+// Questor domain model (BRD Section 15).
+// Default datasource is SQLite (zero-config, open source).
+// To use the Postgres connector: change `provider` to "postgresql" and set
+// DATABASE_URL to your Postgres URL (see docs/CONNECTORS.md). Complex objects
+// are stored as JSON strings so the schema is portable across both engines.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name         String
+  // The organisation's own sign-in link: /o/<slug>. Null until an admin sets it.
+  slug         String?  @unique
+  region       String   @default("in")
+  // JSON: disclosure text, retention days, recording default, allowed modules, languages
+  policyJson   String   @default("{}")
+  createdAt    DateTime @default(now())
+  isDemo       Boolean  @default(false)
+  demoExpiresAt DateTime?
+  users        User[]
+  roles        Role[]
+  candidates   Candidate[]
+  interviews   InterviewSession[]
+  auditEvents  AuditEvent[]
+  webhooks     WebhookEndpoint[]
+  atsConnection   AtsConnection?
+  atsRequisitions AtsRequisitionImport[]
+  atsLinks        CandidateAtsLink[]
+  demoGrants     DemoGrant[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  tenant       Tenant   @relation(fields: [tenantId], references: [id])
+  email        String   @unique
+  name         String
+  passwordHash String
+  // recruiter | manager | admin | auditor | program_owner
+  role         String   @default("recruiter")
+  createdAt    DateTime @default(now())
+  // When the guided product tour was finished or skipped. Null until then, so
+  // it runs once on the user's first sign-in — on every browser, not just one.
+  tourCompletedAt DateTime?
+  reviews      HumanReview[]
+  approvedFeedbackDeliveries CandidateFeedbackDelivery[]
+  roleAssignments      RoleAssignment[]
+  candidateAssignments CandidateAssignment[]
+  demoGrants   DemoGrant[]
+  catalogRefreshRuns CatalogRefreshRun[] @relation("CatalogRefreshTriggeredBy")
+  catalogProposalReviews CatalogProposal[] @relation("CatalogProposalReviewedBy")
+}
+
+model CatalogDomain {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  summary   String   @default("")
+  sortOrder Int
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  roles     CatalogRole[]
+  proposals CatalogProposal[]
+}
+
+model CatalogJobFamily {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  sortOrder Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  roles     CatalogRole[]
+  proposals CatalogProposal[]
+}
+
+model CatalogRegion {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  sortOrder Int
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  jdDrafts  CatalogJdDraft[]
+}
+
+model CatalogRole {
+  id                String   @id @default(cuid())
+  domainId          String
+  domain            CatalogDomain @relation(fields: [domainId], references: [id])
+  familyId          String?
+  family            CatalogJobFamily? @relation(fields: [familyId], references: [id])
+  title             String
+  normalizedTitle   String
+  summary           String   @default("")
+  marketSignal      String   @default("")
+  techStackJson     String   @default("[]")
+  source            String
+  status            String   @default("active")
+  createdByTenantId String?
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  roles             Role[]
+  jdDrafts          CatalogJdDraft[]
+  aliases           CatalogRoleAlias[]
+  aliasProposals     CatalogProposal[] @relation("CatalogProposalTargetRole")
+  createdFromProposals CatalogProposal[] @relation("CatalogProposalCreatedRole")
+
+  @@unique([domainId, normalizedTitle])
+  @@index([normalizedTitle])
+}
+
+model CatalogJdDraft {
+  id             String   @id @default(cuid())
+  catalogRoleId  String
+  catalogRole    CatalogRole @relation(fields: [catalogRoleId], references: [id])
+  experienceBand String
+  regionCode     String
+  region         CatalogRegion @relation(fields: [regionCode], references: [code])
+  status         String   @default("pending")
+  text           String   @default("")
+  generator      String   @default("")
+  model          String   @default("")
+  promptVersion  String   @default("")
+  lintJson       String   @default("[]")
+  attempts       Int      @default(0)
+  lastError      String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  roles          Role[]
+
+  @@unique([catalogRoleId, experienceBand, regionCode])
+  @@index([status, updatedAt])
+}
+
+model CatalogRoleAlias {
+  id              String   @id @default(cuid())
+  roleId          String
+  role            CatalogRole @relation(fields: [roleId], references: [id])
+  alias           String
+  normalizedAlias String
+  locale          String   @default("en")
+  source          String
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([roleId, normalizedAlias])
+  @@index([normalizedAlias])
+}
+
+model CatalogRefreshRun {
+  id            String   @id @default(cuid())
+  status        String   @default("running")
+  trigger       String
+  triggeredById String?
+  // SetNull: removing a user must not be blocked by, or erase, the catalog history.
+  triggeredBy   User?    @relation("CatalogRefreshTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+  startedAt     DateTime @default(now())
+  finishedAt    DateTime?
+  cursorJson    String   @default("{}")
+  statsJson     String   @default("{}")
+  llmCalls      Int      @default(0)
+  researchCalls Int      @default(0)
+  error         String   @default("")
+  proposals     CatalogProposal[]
+
+  @@index([status, startedAt])
+}
+
+model CatalogProposal {
+  id                   String   @id @default(cuid())
+  runId                String
+  run                  CatalogRefreshRun @relation(fields: [runId], references: [id])
+  kind                 String
+  status               String   @default("pending")
+  title                String
+  normalizedTitle      String
+  domainId             String?
+  domain               CatalogDomain? @relation(fields: [domainId], references: [id])
+  familyId             String?
+  family               CatalogJobFamily? @relation(fields: [familyId], references: [id])
+  summary              String   @default("")
+  targetRoleId         String?
+  targetRole           CatalogRole? @relation("CatalogProposalTargetRole", fields: [targetRoleId], references: [id])
+  sourcesJson          String
+  confidence           Float
+  reviewerNote         String   @default("")
+  reviewedById         String?
+  reviewedBy           User?    @relation("CatalogProposalReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt           DateTime?
+  createdCatalogRoleId String?
+  createdCatalogRole   CatalogRole? @relation("CatalogProposalCreatedRole", fields: [createdCatalogRoleId], references: [id])
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([normalizedTitle])
+  @@index([runId, status])
+}
+
+model Role {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  catalogRoleId String?
+  catalogRole   CatalogRole? @relation(fields: [catalogRoleId], references: [id])
+  experienceBand String?
+  regionCode    String?
+  techStackJson String @default("[]")
+  title         String
+  level         String   @default("")
+  location      String   @default("")
+  employmentType String  @default("")
+  sourceType    String   @default("paste") // paste | file | ats | form
+  sourceText    String   @default("")
+  jdDraftId     String?
+  jdDraft       CatalogJdDraft? @relation(fields: [jdDraftId], references: [id], onDelete: SetNull)
+  jdOrigin      String   @default("")
+  status        String   @default("draft")  // draft | approved | archived
+  createdById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  scorecards    RoleScorecardVersion[]
+  candidates    Candidate[]
+  interviews    InterviewSession[]
+  assignments   RoleAssignment[]
+  // JSON stage plan for new pipelines on this role (see domain/pipelineStages.ts).
+  // Empty means the default medallion stages.
+  pipelineStagesJson String @default("")
+  pipelines     CandidatePipeline[]
+  atsImport     AtsRequisitionImport?
+
+  // Every list and dashboard count starts from the tenant.
+  @@index([tenantId, createdAt])
+  @@index([catalogRoleId])
+}
+
+model RoleScorecardVersion {
+  id             String   @id @default(cuid())
+  roleId         String
+  role           Role     @relation(fields: [roleId], references: [id])
+  version        Int      @default(1)
+  status         String   @default("draft") // draft | approved
+  // JSON RoleSuccessProfile: outcomes, responsibilities, competencies[], scoringRules, policyRules
+  profileJson    String   @default("{}")
+  approvedById   String?
+  approvedAt     DateTime?
+  createdAt      DateTime @default(now())
+  interviews     InterviewSession[]
+  assessments    AssessmentVersion[]
+}
+
+model Candidate {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  roleId        String?
+  role          Role?    @relation(fields: [roleId], references: [id])
+  fullName      String
+  email         String
+  phone         String   @default("")
+  createdAt     DateTime @default(now())
+  profiles      CandidateProfileVersion[]
+  interviews    InterviewSession[]
+  artifacts     Artifact[]
+  assignments   CandidateAssignment[]
+  pipelines     CandidatePipeline[]
+  feedbackOptIns   CandidateFeedbackOptIn[]
+  humanRequests    CandidateHumanRequest[]
+  atsLinks         CandidateAtsLink[]
+  feedbackOptInRequests CandidateFeedbackOptInRequest[]
+
+  @@index([tenantId, createdAt])
+}
+
+model CandidateProfileVersion {
+  id            String   @id @default(cuid())
+  candidateId   String
+  candidate     Candidate @relation(fields: [candidateId], references: [id])
+  version       Int      @default(1)
+  rawText       String   @default("")
+  // JSON normalized profile: employment[], education[], projects[], certifications[], skills[]
+  profileJson   String   @default("{}")
+  // JSON fit score: overall, confidence, components[], missing[], probes[]
+  fitScoreJson  String   @default("{}")
+  createdAt     DateTime @default(now())
+  evidenceNodes EvidenceNode[]
+}
+
+model EvidenceNode {
+  id            String   @id @default(cuid())
+  profileId     String
+  profile       CandidateProfileVersion @relation(fields: [profileId], references: [id])
+  kind          String   // claim | competency | evidence | question | answer
+  label         String
+  dataJson      String   @default("{}")
+  createdAt     DateTime @default(now())
+  outEdges      EvidenceEdge[] @relation("fromNode")
+  inEdges       EvidenceEdge[] @relation("toNode")
+}
+
+model EvidenceEdge {
+  id        String   @id @default(cuid())
+  fromId    String
+  toId      String
+  from      EvidenceNode @relation("fromNode", fields: [fromId], references: [id])
+  to        EvidenceNode @relation("toNode", fields: [toId], references: [id])
+  // supports | contradicts | requires-validation | demonstrates-at-level | source
+  relation  String
+  weight    Float    @default(1)
+}
+
+model InterviewPlanVersion {
+  id            String   @id @default(cuid())
+  sessionId     String   @unique
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  version       Int      @default(1)
+  // JSON: blocks[] {competencyId, intent, targetMinutes, followupHints[], prohibited[]}, durationMinutes, language, modules[]
+  planJson      String   @default("{}")
+  createdAt     DateTime @default(now())
+}
+
+model InterviewSession {
+  id                String   @id @default(cuid())
+  tenantId          String
+  tenant            Tenant   @relation(fields: [tenantId], references: [id])
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  roleId            String
+  role              Role     @relation(fields: [roleId], references: [id])
+  scorecardId       String
+  scorecard         RoleScorecardVersion @relation(fields: [scorecardId], references: [id])
+  state             String   @default("PROVISIONED")
+  provider          String   @default("hosted")
+  language          String   @default("en")
+  durationMinutes   Int      @default(45)
+  personaJson       String   @default("{}")
+  consentJson       String   @default("{}")     // version, timestamp, channel, recording, withdrawn
+  qualityJson       String   @default("{}")      // audio quality, latency samples
+  contextJson       String   @default("{}")      // structured running memory (resilience checkpoints)
+  recordingConsent  Boolean  @default(false)
+  // Retention is a session-level property, not a per-artifact one: the
+  // recruitment purpose completes for a whole interview at once, and the
+  // candidate's data is spread across turns, assessments and reviews that all
+  // belong to this session. Null means "use the tenant default window" — see
+  // DEFAULT_RETENTION_DAYS in services/dataRights.ts. Both fields are optional
+  // so existing rows stay valid.
+  retainUntil       DateTime?
+  // Mirrors Artifact.legalHold. A session under hold is NEVER purged, whatever
+  // retainUntil says — litigation/regulatory holds override storage limitation.
+  legalHold         Boolean  @default(false)
+  scheduledAt       DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  // Separate from completedAt on purpose. An interview that stopped part-way
+  // was not completed, and a report counting completed interviews must not
+  // count it.
+  interruptedAt     DateTime?
+  // Retake support (no-fault only — see routes/interviews.ts POST /:id/retake).
+  // A retake is a brand-new session linked to the one it replaces, never a
+  // resumption of it — resuming an existing session is what /reopen is for.
+  // attemptNumber lets HR and the bias audit tell attempts apart without
+  // treating them as independent candidates.
+  attemptNumber     Int      @default(1)
+  retakeOfSessionId String?
+  retakeOf          InterviewSession?  @relation("SessionRetake", fields: [retakeOfSessionId], references: [id])
+  retakes           InterviewSession[] @relation("SessionRetake")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  plan              InterviewPlanVersion?
+  invitation        Invitation?
+  turns             Turn[]
+  assessments       AssessmentVersion[]
+  artifacts         Artifact[]
+  integrityEvents   IntegrityEvent[]
+  feedbackOptIn     CandidateFeedbackOptIn?
+  humanRequest      CandidateHumanRequest?
+  feedbackOptInRequest CandidateFeedbackOptInRequest?
+
+  // The dashboard counts interviews per tenant by when they were created,
+  // scheduled and completed, and groups them by state; the lists read newest
+  // first. Without these, each of those is a scan of the whole table.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, scheduledAt])
+  @@index([tenantId, completedAt])
+  @@index([tenantId, state])
+  @@index([tenantId, roleId, candidateId])
+}
+
+model IntegrityEvent {
+  id        String   @id @default(cuid())
+  sessionId String
+  session   InterviewSession @relation(fields: [sessionId], references: [id])
+  type      String
+  detail    String   @default("{}")
+  createdAt DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([type])
+}
+
+model Invitation {
+  id            String   @id @default(cuid())
+  sessionId     String   @unique
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  // Plaintext lives here only until backfillInvitationSecrets() has run once;
+  // new rows never set it. Kept nullable so a deploy over an old database
+  // starts, hashes what it finds, and clears this column.
+  token         String?  @unique
+  // SHA-256 of the token: the only thing a link is looked up by.
+  tokenHash     String?  @unique
+  // The token encrypted under a key derived from AUTH_SECRET, so the app can
+  // still show and resend the link. See services/invitations.ts.
+  tokenSealed   String   @default("")
+  channel       String   @default("email")
+  status        String   @default("created") // created | sent | opened | accepted | consumed | expired | cancelled
+  sentAt        DateTime?
+  // First time the candidate actually loaded their portal link. The closest
+  // thing to delivery confirmation available: SMTP acceptance only proves the
+  // mail was handed to a provider, not that a person ever saw it.
+  openedAt      DateTime?
+  acceptedAt    DateTime?
+  expiresAt     DateTime?
+  eventsJson    String   @default("[]")
+  createdAt     DateTime @default(now())
+}
+
+model Turn {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  index         Int
+  speaker       String   // agent | candidate | system
+  text          String
+  startMs       Int      @default(0)
+  endMs         Int      @default(0)
+  confidence    Float    @default(1)
+  competencyId  String   @default("")
+  metaJson      String   @default("{}")
+  createdAt     DateTime @default(now())
+
+  // The transcript's canonical order. Two writers reading the turn count and
+  // inserting at that number wrote the same index twice, leaving the order a
+  // reviewer reads — and the evidence quotes anchored to it — dependent on row
+  // insertion order. The application allocates the index in a transaction; this
+  // is what makes that allocation actually safe.
+  @@unique([sessionId, index])
+}
+
+model AssessmentVersion {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       InterviewSession @relation(fields: [sessionId], references: [id])
+  scorecardId   String
+  scorecard     RoleScorecardVersion @relation(fields: [scorecardId], references: [id])
+  version       Int      @default(1)
+  recommendation String  @default("CONSIDER") // PROCEED | CONSIDER | DO_NOT_PROGRESS
+  confidence    Float    @default(0)
+  evidenceCoverage Float @default(0)
+  // JSON: competencies[], strengths[], concerns[], contradictions[], openQuestions[], limitations[], summary
+  resultJson    String   @default("{}")
+  modelExecId   String?
+  createdAt     DateTime @default(now())
+  reviews       HumanReview[]
+  candidateFeedback CandidateFeedbackDelivery?
+}
+
+model HumanReview {
+  id             String   @id @default(cuid())
+  assessmentId   String
+  assessment     AssessmentVersion @relation(fields: [assessmentId], references: [id])
+  reviewerId     String
+  reviewer       User     @relation(fields: [reviewerId], references: [id])
+  status         String   @default("PENDING") // PENDING | COMPLETED
+  disposition    String   @default("")         // PROCEED | CONSIDER | DO_NOT_PROGRESS
+  // JSON overrides: [{competencyId, from, to, reason}]
+  overridesJson  String   @default("[]")
+  comments       String   @default("")
+  reason         String   @default("")
+  createdAt      DateTime @default(now())
+  completedAt    DateTime?
+}
+
+model CandidateFeedbackDelivery {
+  id               String   @id @default(cuid())
+  assessmentId     String   @unique
+  assessment       AssessmentVersion @relation(fields: [assessmentId], references: [id])
+  draftText        String
+  approvedText     String?
+  approvedByUserId String?
+  approvedByUser   User?    @relation(fields: [approvedByUserId], references: [id])
+  approvedAt       DateTime?
+  sentAt           DateTime?
+  status           String   @default("DRAFT") // DRAFT | APPROVED | SENT
+  // True when this draft exists because the candidate asked for feedback at the
+  // end of their interview, rather than because someone on the team started it.
+  // It changes nothing about approval — it tells the reviewer who is waiting.
+  candidateRequested Boolean @default(false)
+  createdAt        DateTime @default(now())
+}
+
+// The candidate's own answer to "would you like written feedback by email?",
+// asked once, at the moment their interview finishes.
+//
+// Explicit rather than inferred. "No row" means we never asked or they never
+// answered; it must never be read as either consent or refusal, because those
+// two are not the same and both are actionable.
+//
+// One per session, which is also the idempotency guarantee: a double submit or
+// a replayed request finds the first answer and returns it.
+model CandidateFeedbackOptIn {
+  id              String   @id @default(cuid())
+  sessionId       String   @unique
+  session         InterviewSession @relation(fields: [sessionId], references: [id])
+  // Denormalised from the session so erasure, the retention sweep and the HR
+  // views can all reach this row through the person it is about.
+  candidateId     String
+  candidate       Candidate @relation(fields: [candidateId], references: [id])
+  tenantId        String
+  choice          String   // YES | NO
+  decidedAt       DateTime @default(now())
+  // Consent evidence: who made this choice. Always the candidate today; stored
+  // rather than assumed, because "who decided" is the part that gets asked about.
+  decidedBy       String   @default("candidate")
+  // Outcome of preparing the draft, so "they asked and nothing happened" is
+  // visible instead of silent.
+  // PENDING | PREPARED | ALREADY_DRAFTED | NO_ASSESSMENT | FAILED
+  draftStatus     String   @default("PENDING")
+  draftNote       String   @default("")
+  draftPreparedAt DateTime?
+
+  @@index([tenantId, choice])
+  @@index([candidateId])
+}
+
+// A recruiter's request that a candidate who was never asked about written
+// feedback answer the question now, by email.
+//
+// Feedback is sent only on an explicit yes, so a candidate with no answer on
+// file cannot be sent any. This is how the hiring team asks. The answer itself
+// is still recorded in CandidateFeedbackOptIn, through the same once-only path
+// the end-of-interview question uses; this row only carries the link.
+//
+// The link uses the same token scheme as CandidateHumanRequest (see
+// services/candidateFeedback.ts): 256 random bits, only the hash stored.
+// Re-sending replaces the hash, so only the newest link works.
+model CandidateFeedbackOptInRequest {
+  id                String   @id @default(cuid())
+  sessionId         String   @unique
+  session           InterviewSession @relation(fields: [sessionId], references: [id])
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  tenantId          String
+  tokenHash         String   @unique
+  requestedByUserId String
+  issuedAt          DateTime @default(now())
+  expiresAt         DateTime
+
+  @@index([tenantId])
+  @@index([candidateId])
+}
+
+// The single-purpose link in the feedback email: "would you like to speak to a
+// person?".
+//
+// Deliberately NOT the InterviewSession MANUAL_HANDOFF state. That state means
+// the AI interview stopped part-way and a person must take over mid-interview —
+// the state machine only allows it from live states, and dashboards count it
+// beside no-shows and technical failures. A finished interview whose candidate
+// would like a conversation about their feedback is a different fact about a
+// different moment, and folding the two together would both corrupt a completed
+// interview's record and misreport it as a failed one.
+//
+// Only the hash of the token is stored: the link lives in a mailbox, and a
+// database copy should not also be a working credential.
+model CandidateHumanRequest {
+  id           String   @id @default(cuid())
+  sessionId    String   @unique
+  session      InterviewSession @relation(fields: [sessionId], references: [id])
+  candidateId  String
+  candidate    Candidate @relation(fields: [candidateId], references: [id])
+  tenantId     String
+  tokenHash    String   @unique
+  issuedAt     DateTime @default(now())
+  expiresAt    DateTime
+  status       String   @default("ISSUED") // ISSUED | REQUESTED
+  // First click only. Replays never move it.
+  requestedAt  DateTime?
+
+  @@index([tenantId, status])
+  @@index([candidateId])
+}
+
+model Artifact {
+  id            String   @id @default(cuid())
+  tenantId      String
+  candidateId   String?
+  candidate     Candidate? @relation(fields: [candidateId], references: [id])
+  sessionId     String?
+  session       InterviewSession? @relation(fields: [sessionId], references: [id])
+  kind          String   // resume | recording | transcript | report | clip
+  filename      String   @default("")
+  contentType   String   @default("")
+  storageKey    String   @default("")
+  sizeBytes     Int      @default(0)
+  retentionDays Int      @default(180)
+  legalHold     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
+
+
+// Signup is an operator decision queue, not a half-created account: until a
+// person approves it, there is deliberately no Tenant and no User to discover,
+// abandon or accidentally grant access to.
+model SignupRequest {
+  id                String   @id @default(cuid())
+  name              String
+  email             String
+  mode              String
+  organisationName  String?
+  orgSlug           String?
+  passwordHash      String
+  status            String   @default("PENDING") // PENDING | APPROVED | DECLINED | EXPIRED
+  decisionTokenHash String   @unique
+  expiresAt         DateTime
+  decidedAt         DateTime?
+  decidedBy         String?
+  createdTenantId   String?
+  createdUserId     String?
+  createdAt         DateTime @default(now())
+
+  // Re-applications are allowed, but operators still need to find the history
+  // for one address without scanning every pending request.
+  @@index([email])
+  @@index([status, createdAt])
+}
+
+
+model DemoGrant {
+  id                String   @id @default(cuid())
+  name              String
+  email             String
+  company           String
+  status            String   @default("sent") // sent | consumed | reaccess_requested | declined
+  linkTokenHash     String?  @unique
+  linkExpiresAt     DateTime?
+  tenantId          String?
+  tenant            Tenant?  @relation(fields: [tenantId], references: [id])
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id])
+  consumedAt        DateTime?
+  sessionEndsAt     DateTime?
+  decisionTokenHash String?  @unique
+  decisionExpiresAt DateTime?
+  requestIpHash     String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // One grant per address: the second demo is the owner's decision, and a
+  // unique key is what holds that when two requests race.
+  @@unique([email])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  actorId     String   @default("system")
+  actorType   String   @default("user") // user | system | model
+  action      String
+  entityType  String   @default("")
+  entityId    String   @default("")
+  beforeJson  String   @default("")
+  afterJson   String   @default("")
+  requestId   String   @default("")
+  createdAt   DateTime @default(now())
+
+  // The audit log is read newest-first per tenant, and filtered by action;
+  // without these every page reads the whole tenant's history.
+  @@index([tenantId, createdAt])
+  @@index([tenantId, action])
+}
+
+model ModelExecution {
+  id          String   @id @default(cuid())
+  sessionId   String   @default("")
+  provider    String
+  model       String
+  function    String   // role_parser | resume_assessor | live_interviewer | director | evidence_extractor | evaluator | report_writer | policy
+  promptRef   String   @default("")
+  paramsJson  String   @default("{}")
+  inputTokens Int      @default(0)
+  outputTokens Int     @default(0)
+  latencyMs   Int      @default(0)
+  safetyJson  String   @default("{}")
+  createdAt   DateTime @default(now())
+}
+
+model WebhookEndpoint {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  url         String
+  events      String   @default("*")  // comma-separated event names or *
+  active      Boolean  @default(true)
+  // Whether deliveries still carry the original, untimestamped
+  // `x-questor-signature` header beside v2. False for every webhook created
+  // from now on; the migration that adds the column sets it true on the rows
+  // that already existed, so no receiver stops verifying on deploy. An admin
+  // turns it off per webhook once that receiver checks v2, and
+  // WEBHOOK_V1_SIGNATURE=off turns it off everywhere.
+  sendLegacySignature Boolean @default(false)
+  createdAt   DateTime @default(now())
+  deliveries  WebhookDelivery[]
+}
+
+model WebhookDelivery {
+  id          String   @id @default(cuid())
+  endpointId  String
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id])
+  event       String
+  payloadJson String
+  status      String   @default("pending") // pending | delivered | failed
+  attempts    Int      @default(0)
+  lastError   String   @default("")
+  // When the next attempt is due. Retries used to be setTimeout chains in one
+  // process; now a job picks up whatever is due, on whichever instance runs it.
+  nextAttemptAt DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([status, nextAttemptAt])
+}
+
+// ---- Background jobs ----
+//
+// One row per job name, holding a time-limited lease. A job runs only where the
+// lease was won, so two instances (or one restarting mid-run) never sweep the
+// same rows twice. The lease outlives a crash by at most its TTL.
+model JobLease {
+  name      String   @id
+  holder    String
+  expiresAt DateTime
+}
+
+// What each run did, for the operations view and for alerting. A sweep that has
+// failed quietly for a month is exactly what this table exists to make visible.
+model JobRun {
+  id         String    @id @default(cuid())
+  name       String
+  holder     String
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  ok         Boolean?
+  note       String    @default("")
+
+  @@index([name, startedAt])
+}
+
+// ---- Shared rate limits ----
+//
+// One fixed window per limiter key, shared by every instance. Counters used to
+// live in process memory, so two instances doubled every limit. `key` is
+// "<limiter>:<sha256 of the caller key>" — caller keys can be invitation
+// tokens, which must never be stored in the clear. Rows past `expiresAt` are
+// dead and purged by the rate-limit-purge job.
+model RateLimitBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+}
+
+// ---- Object-level access control ----
+//
+// Capabilities answer "may this user perform this kind of action?". These
+// assignments answer "may this user touch THIS object?" — the question that
+// actually matters when every recruiter in a tenant could otherwise read every
+// candidate's transcript.
+//
+// Two levels, because requisition ownership and candidate ownership genuinely
+// differ: several recruiters may share a role while each owns different
+// candidates under it, and a candidate can exist with no roleId at all
+// (Candidate.roleId is optional), so role-inherited access cannot cover
+// everyone.
+
+model RoleAssignment {
+  id        String   @id @default(cuid())
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  // owner | collaborator — owner may reassign, collaborator may work the role
+  relation  String   @default("collaborator")
+  createdAt DateTime @default(now())
+
+  @@unique([roleId, userId])
+  @@index([userId])
+}
+
+model CandidateAssignment {
+  id          String   @id @default(cuid())
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  // owner | reviewer — reviewer is granted for assessment review only
+  relation    String   @default("owner")
+  createdAt   DateTime @default(now())
+
+  @@unique([candidateId, userId])
+  @@index([userId])
+}
+
+// ---- Medallion pipeline ----
+//
+// One candidate moving through ordered stages for one role (see
+// domain/pipelineStages.ts). The stage plan is snapshotted at creation so a
+// later change to the role's configuration never rewrites an in-flight path.
+
+model CandidatePipeline {
+  id                String    @id @default(cuid())
+  tenantId          String
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  roleId            String
+  role              Role      @relation(fields: [roleId], references: [id])
+  stagesJson        String
+  currentStageKey   String
+  status            String    @default("ACTIVE") // ACTIVE | DECIDED
+  decision          String?   // APPROVED | REJECTED | WITHDRAWN
+  decisionReason    String?
+  decidedAtStageKey String?
+  decidedById       String?
+  decidedAt         DateTime?
+  createdById       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  rounds            InterviewRound[]
+
+  @@unique([candidateId, roleId])
+  @@index([tenantId])
+}
+
+// An interview scheduled at a pipeline stage. The AI conducts only the AI
+// interview stage (HR may silently observe); every other round is led by a
+// person with the AI as silent observer.
+model InterviewRound {
+  id               String   @id @default(cuid())
+  tenantId         String
+  pipelineId       String
+  pipeline         CandidatePipeline @relation(fields: [pipelineId], references: [id])
+  stageKey         String
+  conductedBy      String   // AI | HUMAN
+  aiObserver       Boolean  @default(false)
+  hrMayObserve     Boolean  @default(false)
+  // The AI interview session for an AI-conducted round.
+  sessionId        String?
+  interviewersJson String   @default("[]")
+  scheduledAt      DateTime
+  status           String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED
+  notes            String   @default("")
+  // When the round was completed with notes; the notes' retention runs from here.
+  completedAt      DateTime?
+  createdById      String?
+  createdAt        DateTime @default(now())
+  observation      RoundObservation?
+
+  // Length of the meeting booked for the round.
+  durationMinutes   Int      @default(60)
+  // The online meeting for a human round (services/roundMeeting.ts). The
+  // provider and the vendor's id are kept so reschedule and cancel reach the
+  // same meeting even if the tenant later switches provider.
+  meetingProvider   String?   // manual | teams | zoom | meet
+  meetingExternalId String?
+  meetingUrl        String?
+  // LINKED | MANUAL | NEEDS_LINK | CREATING | OUT_OF_SYNC | CANCELLED | CANCEL_FAILED
+  meetingStatus     String?
+  // A recruiter-facing sentence explaining the last failure; never vendor text.
+  meetingError      String?
+  meetingUpdatedAt  DateTime?
+
+  @@index([pipelineId])
+  @@index([tenantId])
+}
+
+// ---- ATS integration, owned by the tenant ----
+//
+// Each organisation connects its own ATS. There used to be one ATS for the
+// whole deployment, so any tenant could import any requisition from it and
+// export to any candidate id it typed. See docs/CONNECTORS.md.
+
+model AtsConnection {
+  id            String    @id @default(cuid())
+  // One connection per organisation.
+  tenantId      String    @unique
+  tenant        Tenant    @relation(fields: [tenantId], references: [id])
+  provider      String    @default("generic") // generic | greenhouse
+  baseUrl       String
+  // The account inside a multi-customer ATS (Greenhouse serves every customer
+  // from one URL); empty when the base URL already identifies the account.
+  accountId     String    @default("")
+  // provider|baseUrl|accountId, normalised. Unique: one ATS account belongs to
+  // one organisation, so two tenants cannot both read the same requisitions.
+  atsKey        String    @unique
+  // The API key, sealed under AUTH_SECRET. Never returned by the API.
+  apiKeySealed  String    @default("")
+  // tenant: configured by the organisation's admin. env: the deployment's
+  // ATS_* variables bound to this tenant by ATS_TENANT_ID; the key stays in env.
+  source        String    @default("tenant") // tenant | env
+  status        String    @default("untested") // untested | ok | failed | disconnected
+  lastTestedAt  DateTime?
+  disconnectedAt DateTime?
+  createdById   String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  requisitions  AtsRequisitionImport[]
+  candidateLinks CandidateAtsLink[]
+}
+
+// A requisition that became a role. Unique per ATS account, so a requisition
+// is imported once, by one organisation, and a re-import finds the same role.
+model AtsRequisitionImport {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  tenant                Tenant   @relation(fields: [tenantId], references: [id])
+  connectionId          String
+  connection            AtsConnection @relation(fields: [connectionId], references: [id])
+  atsKey                String
+  externalRequisitionId String
+  roleId                String   @unique
+  role                  Role     @relation(fields: [roleId], references: [id])
+  createdById           String?
+  createdAt             DateTime @default(now())
+
+  @@unique([atsKey, externalRequisitionId])
+  @@index([tenantId])
+}
+
+// Which ATS candidate a Questor candidate is. Exports go only to this id;
+// a caller can no longer name the target.
+model CandidateAtsLink {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  tenant              Tenant    @relation(fields: [tenantId], references: [id])
+  candidateId         String
+  candidate           Candidate @relation(fields: [candidateId], references: [id])
+  connectionId        String
+  connection          AtsConnection @relation(fields: [connectionId], references: [id])
+  externalCandidateId String
+  source              String    @default("manual") // manual | import
+  createdById         String?
+  createdAt           DateTime  @default(now())
+
+  @@unique([tenantId, candidateId, connectionId])
+  @@unique([tenantId, connectionId, externalCandidateId])
+  @@index([candidateId])
+}
+
+// The AI observer on a human round (services/roundObserver.ts). Both the
+// interviewer and the candidate consent before anything is captured; either
+// may decline or stop it. It produces a transcript and, once the round ends,
+// verbatim quotes mapped to scorecard competencies — never a score, rating,
+// recommendation or characterisation of the candidate.
+model RoundObservation {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  roundId              String    @unique
+  round                InterviewRound @relation(fields: [roundId], references: [id])
+  // Denormalised from the round's pipeline so erasure, retention and holds can
+  // find a candidate's observations without walking the pipeline.
+  candidateId          String
+  // AWAITING_CANDIDATE | CONSENTED | LISTENING | STOPPED | DECLINED | ENDED
+  status               String    @default("AWAITING_CANDIDATE")
+  // Which wording of the capture notice both parties agreed to.
+  noticeVersion        String
+  // The interviewer who consented; the only person who may send audio.
+  interviewerId        String
+  interviewerConsentAt DateTime?
+  candidateTokenHash   String?   @unique
+  candidateTokenSealed String    @default("")
+  candidateConsentAt   DateTime?
+  declinedBy           String?   // interviewer | candidate
+  declinedAt           DateTime?
+  startedAt            DateTime?
+  stoppedBy            String?   // interviewer | candidate
+  stoppedAt            DateTime?
+  endedAt              DateTime?
+  // OK | DEGRADED (some stretch of the round could not be captured)
+  captureStatus        String    @default("OK")
+  // PENDING | READY | NONE | UNAVAILABLE
+  quotesStatus         String    @default("PENDING")
+  quotesNote           String    @default("")
+  // JSON [{competencyId, competencyName, quote, segmentIndex, offsetMs}]
+  quotesJson           String    @default("[]")
+  // JSON counts of model output the validator refused, by reason.
+  quotesDroppedJson    String    @default("{}")
+  legalHold            Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  segments             ObservationSegment[]
+
+  @@index([tenantId])
+  @@index([candidateId])
+}
+
+// One captured stretch of a human round, or a GAP where capture failed. Gaps
+// are stored so the transcript says where it is incomplete instead of reading
+// as if nothing was said.
+model ObservationSegment {
+  id            String   @id @default(cuid())
+  tenantId      String
+  observationId String
+  observation   RoundObservation @relation(fields: [observationId], references: [id])
+  index         Int
+  kind          String   // SPEECH | GAP
+  offsetMs      Int
+  durationMs    Int      @default(0)
+  text          String   @default("")
+  source        String   @default("") // browser | server provider id
+  createdAt     DateTime @default(now())
+
+  @@unique([observationId, index])
+  @@index([tenantId])
+}
+
+// ---- AI interviewers ----
+//
+// Five selectable interviewers that differ ONLY in name and voice. Nothing
+// about how the interview is run hangs off these rows: questions, scoring,
+// difficulty and the separate Tone setting all come from the interview's own
+// settings. Global rather than per tenant, seeded on boot (insert missing,
+// never overwrite an edit).
+model AIInterviewer {
+  id             String       @id // 'maya'
+  name           String
+  voiceProfileId String       @unique // one voice per interviewer
+  voiceProfile   VoiceProfile @relation(fields: [voiceProfileId], references: [id])
+  avatarUrl      String       @default("")
+  active         Boolean      @default(true)
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// Which provider voice speaks for an interviewer. provider/providerVoiceId are
+// backend configuration (VOICE_PROFILE_0N env overrides) and are never sent to
+// HR users or candidates. fallbackHint only steers the browser's own voice
+// choice when no server voice exists.
+model VoiceProfile {
+  id              String         @id // 'voice_02'
+  displayName     String
+  provider        String
+  providerVoiceId String         @default("")
+  language        String         @default("English")
+  locale          String         @default("en-US")
+  enabled         Boolean        @default(true)
+  fallbackHint    String         @default("")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  interviewer     AIInterviewer?
+}

@@ -1,0 +1,271 @@
+/* ==========================================================================
+   About — what Questor is, why it exists, how it runs and who it serves.
+   --------------------------------------------------------------------------
+   The workflow sequence and the product list used to sit on the sign-in page.
+   They belong here: someone signing in wants the form, and someone asking
+   "what is this?" wants the whole answer in one place. The styles moved with
+   them rather than being copied, so there is still one definition of each.
+   ========================================================================== */
+
+.about-logo {
+  display: block;
+  width: 180px;
+  max-width: 60%;
+  height: auto;
+  margin: 0 0 16px;
+}
+
+.about-lede {
+  max-width: 68ch;
+  margin: 0 0 18px;
+  color: var(--ink-2);
+  font-size: 14.5px;
+  line-height: 1.6;
+}
+
+.about-section {
+  margin: 0 0 22px;
+}
+
+.about-section:last-child {
+  margin-bottom: 0;
+}
+
+.about-section > p {
+  max-width: 72ch;
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+.about-heading {
+  margin: 0 0 10px;
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* Who it serves: one row per role, the name and what that person gets. */
+.about-roles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.about-role {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  column-gap: 9px;
+}
+
+.about-role-icon {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  justify-content: center;
+  padding-top: 2px;
+  color: var(--accent);
+}
+
+.about-role-name {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.about-role-detail {
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* What the product does not do. Stated plainly and in the same voice as the
+   rest: a reader who finds a limit here will not find a surprise later. */
+.about-limits {
+  margin: 0;
+  padding: 0 0 0 18px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.about-limits li {
+  margin: 0 0 5px;
+}
+
+/* --------------------------------------------------------------------------
+   The workflow, shown as a sequence rather than a list
+   -------------------------------------------------------------------------- */
+
+.workflow-showcase {
+  margin: 0 0 6px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.workflow-showcase .workflow-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* The steps are buttons, not links — there is nothing to navigate to — so they
+   need the type and alignment resets a link does not. */
+.workflow-showcase .workflow-link {
+  width: 100%;
+  gap: 2px;
+  padding: 11px 12px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workflow-showcase .workflow-icon {
+  width: 30px;
+  height: 30px;
+  margin-bottom: 4px;
+}
+.workflow-showcase .workflow-title {
+  font-size: 13px;
+}
+.workflow-showcase .workflow-detail {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* The current step. The inset rail means the highlight is not carried by colour
+   alone, and aria-current says the same thing to a screen reader. */
+.workflow-showcase .workflow-link.is-active {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+  box-shadow: inset var(--rail) 0 0 var(--accent);
+}
+.workflow-showcase .workflow-link.is-active .workflow-icon {
+  background: var(--accent);
+  color: var(--accent-on);
+}
+
+.workflow-showcase .workflow-arrow {
+  right: -14px;
+}
+/* No arrow off the end of a row. */
+.workflow-showcase .workflow-step:nth-child(3n) .workflow-arrow {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   What the product actually does
+   -------------------------------------------------------------------------- */
+
+.showcase-features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 18px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.showcase-feature {
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr);
+  column-gap: 8px;
+}
+
+.showcase-feature-icon {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  justify-content: center;
+  padding-top: 2px;
+  color: var(--accent);
+}
+.showcase-feature-title {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.showcase-feature-detail {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+@media (max-width: 900px) {
+  .workflow-showcase .workflow-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  /* The stacked layout wraps unpredictably, so the numbers carry the order. */
+  .workflow-showcase .workflow-arrow {
+    display: none;
+  }
+  .showcase-features,
+  .about-roles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .workflow-showcase .workflow-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   About, read without an account
+   --------------------------------------------------------------------------
+   No sidebar, no profile menu — there is no session to serve. Just the mark,
+   a way in, and the page itself on the same desk surface as the console.
+   -------------------------------------------------------------------------- */
+
+.public-shell {
+  min-height: 100vh;
+  background: var(--desk);
+}
+
+.public-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px 22px;
+  border-bottom: var(--hair) solid var(--rule);
+  background: var(--sheet);
+}
+
+.public-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 17px;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+}
+
+.public-brand img {
+  height: 28px;
+  width: auto;
+}
+
+.public-body {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+}
+
+@media (max-width: 640px) {
+  .public-bar {
+    padding: 11px 14px;
+  }
+  .public-body {
+    padding: 16px 14px 36px;
+  }
+}

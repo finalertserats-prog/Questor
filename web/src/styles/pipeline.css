@@ -1,0 +1,122 @@
+/* ==========================================================================
+   Candidate hiring pipeline panel.
+   ========================================================================== */
+
+.stage-track {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  margin: 4px 0 16px;
+  padding: 0;
+  list-style: none;
+}
+
+/* Not ".stage": the interview room owns that name, and sharing it painted
+   this card's light sheet behind the room's dark stage. */
+.pipeline-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 12px 8px 10px;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  text-align: center;
+}
+
+.pipeline-badge {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.pipeline-badge-fallback {
+  display: block;
+  border: var(--hair) solid var(--rule-strong);
+  background: var(--sheet-sunk);
+}
+
+.stage-label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.stage-caption,
+.stage-state {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+.stage-state {
+  font-family: var(--font-data);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The stage a candidate is actually at. Marked with a heavier edge and its own
+   rule rather than a tinted panel: the stages sit in a row, and a filled one
+   reads as a selected tab in a template rather than as a position reached. */
+.stage-current {
+  border-color: var(--accent);
+  box-shadow: inset 0 -3px 0 -1px var(--accent);
+}
+.stage-current .stage-state {
+  color: var(--accent);
+  font-weight: 600;
+}
+.stage-decided {
+  border-color: var(--rule-strong);
+  background: var(--sheet-sunk);
+}
+.stage-upcoming .pipeline-badge,
+.stage-skipped .pipeline-badge {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+.stage-skipped {
+  border-style: dashed;
+}
+
+.pipeline-actions {
+  margin: 4px 0 16px;
+}
+.pipeline-action {
+  padding: 12px;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+}
+.pipeline-action h3 {
+  margin-top: 0;
+}
+
+.evidence-list {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+.evidence-mark {
+  display: inline-block;
+  width: 18px;
+  color: var(--ink-3);
+  font-weight: 700;
+}
+.has-evidence .evidence-mark {
+  color: var(--accent);
+}
+
+/* Meeting cell of a human round. A failure is marked with a rule and colour,
+   not a tinted block. */
+.round-meeting {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+}
+.round-meeting-error {
+  color: var(--stop);
+  border-left: 2px solid var(--stop);
+  padding-left: 6px;
+}

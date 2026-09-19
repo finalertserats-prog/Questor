@@ -1,0 +1,238 @@
+/* ==========================================================================
+   The sign-in page.
+   --------------------------------------------------------------------------
+   One quiet composition: the mark, a sentence worth reading, three things worth
+   knowing, and the form. The backdrop is a soft wash with the product's own
+   shapes — a lens, a speech bubble, a few lines of process — kept pale enough
+   that the card never fights it.
+
+   Everything that explains the product in full now lives on About. A person at
+   this page is signing in; a person asking "what is this?" deserves a page, not
+   a margin.
+   ========================================================================== */
+
+.landing {
+  display: grid;
+  /* Both columns bounded, and the pair bounded again by max-width: without it
+     the flexible column swallows a wide monitor and pushes the whole
+     composition into the right-hand third, which is exactly how it looked. */
+  grid-template-columns: minmax(0, 1.15fr) minmax(320px, 390px);
+  gap: 56px;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 32px 30px;
+  /* The image sits under a wash in the product's own colours, so the page still
+     reads as Questor before it loads and if it never does. */
+  background:
+    radial-gradient(1100px 560px at 22% 18%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 62%),
+    linear-gradient(168deg, var(--sheet), var(--desk) 68%);
+}
+
+.landing-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background: url('/brand/login-backdrop.webp') center / cover no-repeat;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Above the backdrop, without giving either child a stacking context of its own. */
+.landing-hero,
+.landing-panel {
+  position: relative;
+  z-index: 1;
+}
+
+.landing-hero {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 580px;
+}
+
+/* The lockup at the head of the sign-in card, set by height so the name reads
+   at the size the text wordmark had. */
+.auth-logo {
+  display: block;
+  height: 34px;
+  width: auto;
+}
+
+.landing-logo {
+  display: block;
+  width: 216px;
+  max-width: 64%;
+  height: auto;
+  margin: 0 0 18px;
+}
+
+.landing-headline {
+  margin: 0 0 12px;
+  max-width: 18ch;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 34px;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.landing-lede {
+  margin: 0 0 26px;
+  max-width: 46ch;
+  color: var(--ink-2);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* --------------------------------------------------------------------------
+   Three things worth knowing before you sign in
+   -------------------------------------------------------------------------- */
+
+.landing-points {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  max-width: 48ch;
+  list-style: none;
+}
+
+.landing-point {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 2px;
+}
+
+.landing-point-icon {
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--accent-wash);
+  color: var(--accent);
+}
+
+.landing-point-title {
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.landing-point-detail {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* --------------------------------------------------------------------------
+   The sign-in card
+   -------------------------------------------------------------------------- */
+
+.landing-panel {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.landing-panel > .card {
+  width: 100%;
+  box-shadow: var(--shadow-pop);
+}
+
+/* "Signing in to" above an organisation's name, on its own link. */
+.landing-eyebrow {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.landing-title {
+  margin: 14px 0 4px;
+  font-size: 22px;
+}
+
+.landing-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+.landing-divider::before,
+.landing-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Dark theme: the artwork is light by design, so it recedes rather than glows.
+   -------------------------------------------------------------------------- */
+
+:root[data-theme='dark'] .landing-backdrop {
+  opacity: 0.16;
+  filter: saturate(0.7) brightness(0.8);
+}
+
+/* --------------------------------------------------------------------------
+   Narrow screens: sign in first, read the welcome after.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  .landing {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 26px;
+    min-height: 0;
+    padding: 22px 16px 32px;
+  }
+  /* The form is the errand. */
+  .landing-panel {
+    order: -1;
+  }
+  .landing-hero {
+    margin-left: 0;
+    max-width: none;
+  }
+  .landing-logo {
+    width: 176px;
+  }
+  .landing-headline {
+    font-size: 27px;
+    max-width: none;
+  }
+  .landing-lede {
+    margin-bottom: 20px;
+  }
+  .landing-backdrop {
+    opacity: 0.38;
+  }
+}

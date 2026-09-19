@@ -1,0 +1,415 @@
+/* ==========================================================================
+   Polish — page headers, status badges, empty states, skeletons, responsive
+   tables. Colour comes only from the tokens in app.css, so the dark theme
+   follows without any rule here.
+   ========================================================================== */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.icon {
+  flex: none;
+}
+
+/* --- page header ---------------------------------------------------------- */
+
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+/* Bracketed, not filled. The topbar already draws a ruled measure beneath
+   itself; a tinted tile floating above that rule is the one piece of the header
+   that looks bought rather than drawn, so the icon takes the same caliper marks
+   the KPI chips use and lets the rule underneath do the dividing. */
+.page-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  box-shadow:
+    inset 2px 0 0 -1px var(--accent-edge),
+    inset -2px 0 0 -1px var(--accent-edge);
+}
+.page-icon::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 0;
+  left: 4px;
+  height: 2px;
+  background: var(--accent);
+}
+.page-title-text {
+  min-width: 0;
+}
+.page-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.page-title-line h1 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.page-actions {
+  gap: 8px;
+}
+
+/* Section headings inside a card that carry an icon. */
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-title .icon {
+  color: var(--ink-3);
+}
+
+/* --- status badge: the icon replaces the shape marker ------------------- */
+
+.status-badge {
+  gap: 5px;
+  padding-left: 7px;
+}
+.status-badge::before {
+  display: none;
+}
+
+/* --- controls: visible hover, press and focus states ------------------- */
+
+.btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--focus-halo);
+}
+.btn:not(:disabled):active {
+  transform: translateY(1px);
+}
+.btn .icon {
+  margin-left: -2px;
+}
+
+.card {
+  transition:
+    border-color var(--dur-fast) var(--ease-standard),
+    box-shadow var(--dur-base) var(--ease-standard);
+}
+.card:focus-within {
+  border-color: var(--rule-strong);
+  box-shadow: var(--shadow-raised);
+}
+
+/* The micro-label inside an empty state and an observe turn follows the same
+   softened tracking as every other one, so the signature stays consistent. */
+.observe-speaker {
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  line-height: var(--type-micro-line);
+}
+
+td a:not(.btn) {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+}
+
+.link-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* --- empty states --------------------------------------------------------- */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 28px 16px 24px;
+  border: var(--hair) dashed var(--rule-strong);
+  border-radius: var(--radius-sheet);
+  background: var(--sheet-sunk);
+}
+.empty-state.compact {
+  padding: 16px 12px;
+  gap: 4px;
+}
+.empty-icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--sheet);
+  border: var(--hair) solid var(--rule);
+  color: var(--accent);
+}
+.empty-state.compact .empty-icon {
+  width: 40px;
+  height: 40px;
+}
+.empty-art {
+  width: min(180px, 60%);
+  height: auto;
+  margin-bottom: 6px;
+}
+
+/* The artwork is light-on-transparent: a pale tile and a white calendar body.
+   Left alone on the dark desk it reads as a lit panel rather than a drawing,
+   so it is dimmed to sit at the same weight as the text around it. */
+:root[data-theme='dark'] .empty-art {
+  opacity: 0.85;
+  filter: brightness(0.88) saturate(0.92);
+}
+.empty-title {
+  margin: 0;
+  font-size: 15px;
+}
+.empty-message {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13.5px;
+  max-width: 46ch;
+}
+.empty-action {
+  margin-top: 10px;
+}
+
+/* --- skeletons ------------------------------------------------------------ */
+
+.skeleton,
+.page-skeleton {
+  display: grid;
+  gap: 10px;
+}
+.skeleton-line,
+.skeleton-block {
+  display: block;
+  border-radius: var(--radius);
+  background: linear-gradient(90deg, var(--sheet-sunk) 0%, var(--rule) 50%, var(--sheet-sunk) 100%);
+  background-size: 200% 100%;
+  animation: skeleton-sheen 1.4s ease-in-out infinite;
+}
+.skeleton-line {
+  height: 12px;
+  margin: 8px 0;
+}
+.skeleton-line:nth-child(3n) {
+  width: 62%;
+}
+.skeleton-line:nth-child(3n + 1) {
+  width: 88%;
+}
+.skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.skeleton-avatar {
+  width: 40px;
+  height: 40px;
+}
+.skeleton-heading {
+  width: min(260px, 60%);
+  height: 24px;
+}
+@keyframes skeleton-sheen {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* --- tables that stay inside their card on a phone ---------------------- */
+
+.table-scroll {
+  /* The containing block for anything absolutely positioned inside the table
+     (visually-hidden header text, badges). Without it those escape the
+     scroll clip and widen the whole page on a phone. */
+  position: relative;
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.table-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.candidate-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border-bottom: 1px solid var(--rule);
+  margin: 4px 0 16px;
+  max-width: 100%;
+}
+
+.candidate-detail-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 10px 14px;
+}
+
+.candidate-detail-tab:hover {
+  color: var(--ink);
+  background: var(--sheet-sunk);
+}
+
+.candidate-detail-tab.active,
+.candidate-detail-tab[aria-selected='true'] {
+  background: var(--sheet);
+  border-color: var(--rule);
+  color: var(--ink);
+  margin-bottom: -1px;
+}
+
+.candidate-detail-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.candidate-profile-tab,
+.alternative-role-list {
+  display: grid;
+  /* An explicit shrinkable column: the implicit 'auto' track grew to the fit
+     table's 560px minimum and pushed every card off a phone screen. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  min-width: 0;
+}
+
+.profile-entry,
+.alternative-role-card {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.alternative-role-card {
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--sheet-sunk);
+  padding: 14px;
+}
+
+/* --- pipeline additions --------------------------------------------------- */
+
+.evidence-mark .icon {
+  vertical-align: -3px;
+}
+.has-evidence .evidence-mark {
+  color: var(--pass);
+}
+
+/* --- observe transcript ---------------------------------------------------- */
+
+.observe-transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.observe-turn {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet-sunk);
+}
+.observe-agent {
+  background: var(--accent-wash);
+  border-color: var(--accent-edge);
+}
+.observe-speaker {
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+/* --- candidate portal check rows ----------------------------------------- */
+
+.check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- interview room control icons (always-dark surface) ------------------ */
+
+.ctl .icon {
+  color: var(--room-ink);
+}
+
+/* --- small screens --------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  /* 64px on top, as in sidebar.css: this file loads later, and an 18px top
+     put the fixed Menu button on top of every page title. */
+  .main {
+    padding: 64px 16px 40px;
+  }
+  .table-scroll table {
+    min-width: 560px;
+  }
+  .topbar {
+    align-items: flex-start;
+  }
+  .page-actions {
+    width: 100%;
+  }
+  .page-icon {
+    width: 34px;
+    height: 34px;
+  }
+  .card {
+    padding: 14px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line,
+  .skeleton-block {
+    animation: none;
+  }
+  .btn:not(:disabled):active {
+    transform: none;
+  }
+}

@@ -1,0 +1,504 @@
+/* ==========================================================================
+   Collapsible sidebar drawer and profile menu.
+   Imported after app.css; overrides the static sidebar layout there.
+   ========================================================================== */
+
+.sidebar nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The wordmark row: the mark on the left, the collapse control on the right. */
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rail-toggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 5px;
+  border: var(--hair) solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  /* Brand indigo in light, lavender in dark: the collapse/show icons are drawn
+     in the brand colour, not the grey of passive chrome. */
+  color: var(--accent);
+  cursor: pointer;
+}
+.rail-toggle:hover {
+  color: var(--accent);
+  background: var(--sheet-sunk);
+}
+/* One arrow that turns: toward the menu while open (collapse), a half turn to
+   point away from it once collapsed (show). */
+.rail-toggle-icon {
+  transform-origin: 50% 50%;
+  transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rail-toggle-icon.is-turned {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-toggle-icon {
+    transition: none;
+  }
+}
+
+.nav-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--scrim);
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+/* The button that opens the drawer, sitting at the top-left of every page. */
+.nav-toggle {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 9px;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink-2);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.nav-toggle:hover {
+  color: var(--ink);
+  background: var(--sheet-sunk);
+}
+.nav-toggle:focus-visible,
+.nav-close:focus-visible,
+.rail-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.nav-close {
+  position: absolute;
+  top: 16px;
+  right: 12px;
+  display: inline-flex;
+  padding: 5px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.nav-close:hover {
+  color: var(--ink);
+  background: var(--sheet-sunk);
+}
+
+/* ==========================================================================
+   Docked — wide viewports.
+
+   The sidebar is in the page's flow beside the content: it overlays nothing,
+   needs no backdrop, and leaves the page perfectly usable while it is open,
+   which is why it can afford to be open by default. Collapsing it narrows it
+   to an icon rail rather than taking it away.
+   ========================================================================== */
+
+@media (min-width: 821px) {
+  .nav-toggle,
+  .nav-backdrop,
+  .nav-close {
+    display: none;
+  }
+
+  /* The aside stretches with the page, so its background and edge rule run
+     the full length of a long page; the inner box is what stays in view.
+     Nothing inside may paint past the column onto the page: overflow-x is
+     clipped (clip, not hidden, so this is not a scroll container and the
+     sticky box and the nav's own scrolling are unaffected). */
+  .sidebar {
+    box-sizing: border-box;
+  }
+  .sidebar-inner {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    height: 100dvh;
+    box-sizing: border-box;
+    overflow-x: clip;
+  }
+
+  /* The width animates only while the reader toggles the rail (the shell
+     carries is-rail-animating for that moment). Left on permanently, any
+     other layout change — widening the window past the drawer breakpoint, a
+     full-page capture — replayed the sidebar growing from nothing, drawn
+     mid-way with its wordmark spilling over the page title. */
+  .app.is-rail-animating .sidebar {
+    transition: width 0.18s ease;
+  }
+  .app.is-rail-animating .sidebar-inner {
+    transition: padding 0.18s ease;
+  }
+
+  /* ---- The collapsed rail ---- */
+
+  .app.is-rail .sidebar {
+    width: 72px;
+  }
+  .app.is-rail .sidebar-inner {
+    padding-left: 10px;
+    padding-right: 10px;
+    gap: 16px;
+  }
+  /* The rail's tooltips have to escape the column; they may, once the rail
+     has finished narrowing. */
+  .app.is-rail:not(.is-rail-animating) .sidebar-inner {
+    overflow-x: visible;
+  }
+  /* The mark stays, stacked above the control and simply set smaller. The one
+     thing a collapse must never do is take the product's name off the screen. */
+  .app.is-rail .sidebar-head {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .app.is-rail .logo-rail {
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    line-height: 1;
+  }
+
+  /* The tagline and the ticked rule are the flourish, and those do go. */
+  .app.is-rail .brand-line,
+  .app.is-rail .sidebar-tagline {
+    display: none;
+  }
+
+  /* Group names become the hairline they were already drawing, while staying
+     in the accessibility tree for anyone reading the nav out. */
+  .app.is-rail .nav-group {
+    height: var(--hair);
+    margin: 14px 6px 10px;
+    padding: 0;
+    overflow: hidden;
+    text-indent: -999em;
+    background: var(--rule);
+  }
+
+  /* Tooltips have to escape the nav box, so in the rail it stops scrolling —
+     five items and two rules always fit. */
+  .app.is-rail .sidebar nav {
+    overflow: visible;
+  }
+
+  .app.is-rail .sidebar nav a {
+    position: relative;
+    justify-content: center;
+    gap: 0;
+    padding: 9px 0;
+    border-left-width: 0;
+  }
+
+  /* Labels are clipped, not removed: the icon keeps its accessible name. */
+  .app.is-rail .nav-label,
+  .app.is-rail .profile-details {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* ...and the name is shown again on hover and on keyboard focus. */
+  .app.is-rail .sidebar nav a[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: 50%;
+    left: calc(100% + 12px);
+    transform: translateY(-50%);
+    z-index: 80;
+    padding: 4px 9px;
+    border: var(--hair) solid var(--rule-strong);
+    border-radius: var(--radius);
+    background: var(--sheet);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+  .app.is-rail .sidebar nav a:hover::after,
+  .app.is-rail .sidebar nav a:focus-visible::after {
+    opacity: 1;
+  }
+
+  /* The profile stays pinned at the foot and stays usable: the avatar alone,
+     with its menu opening out over the page rather than inside 72px. */
+  .app.is-rail .profile-trigger {
+    justify-content: center;
+    padding: 8px 0;
+  }
+  .app.is-rail .profile-menu-popover {
+    right: auto;
+    left: 0;
+    width: 212px;
+  }
+}
+
+/* ==========================================================================
+   Overlay drawer — narrow viewports. Closed until asked for, over the content,
+   with a backdrop behind it. The rail is a desktop idea and does not apply.
+   ========================================================================== */
+
+/* 820.98 rather than 820: at a fractional width like 820.5px — ordinary with
+   Windows display scaling or browser zoom — a max-width of 820 and the docked
+   block's min-width of 821 would both miss, leaving a docked sidebar with the
+   floating Menu button on top of it. */
+@media (max-width: 820.98px) {
+  .app {
+    display: block;
+  }
+
+  /* Leave room for the toggle so it never sits on a page title. */
+  .main {
+    margin: 0 auto;
+    padding-top: 64px;
+  }
+
+  .rail-toggle {
+    display: none;
+  }
+
+  /* app.css hides the static sidebar at this width; the drawer needs it back.
+     It is hidden until opened — `visibility` (not just transform) keeps its
+     links out of the tab order while it is closed. */
+  .sidebar {
+    display: block;
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(86vw, 280px);
+    height: 100dvh;
+    box-sizing: border-box;
+    z-index: 60;
+    box-shadow: 0 0 0 transparent;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s, box-shadow 0.2s ease;
+  }
+  .sidebar.is-open {
+    transform: none;
+    visibility: visible;
+    box-shadow: var(--shadow-pop);
+    transition: transform 0.2s ease, visibility 0s, box-shadow 0.2s ease;
+  }
+  .sidebar-inner {
+    position: relative;
+    height: 100%;
+    box-sizing: border-box;
+  }
+}
+
+/* ---- Profile, pinned to the bottom of the drawer ---- */
+
+.profile-container {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: var(--hair) solid var(--rule);
+}
+
+.profile-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: var(--hair) solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.profile-trigger:hover {
+  background: var(--sheet-sunk);
+}
+.profile-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.profile-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: var(--hair) solid var(--rule-strong);
+  background: var(--accent-wash);
+  color: var(--accent);
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+}
+
+.profile-details {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.profile-name,
+.profile-role {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.profile-name {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.profile-role {
+  color: var(--ink-3);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+
+.profile-menu-popover {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  box-shadow: var(--shadow-pop);
+}
+
+.profile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-2);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.profile-menu-item:hover {
+  background: var(--sheet-sunk);
+  color: var(--ink);
+  text-decoration: none;
+}
+.profile-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.profile-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--rule);
+}
+.profile-menu-theme {
+  padding: 2px 10px;
+}
+.profile-menu-signout {
+  color: var(--ink-3);
+}
+
+/* ---- Settings and About pages ---- */
+
+.settings-card,
+.about-card {
+  max-width: 640px;
+}
+.settings-list {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+.settings-row dd {
+  margin: 3px 0 0;
+  font-weight: 500;
+}
+.settings-theme,
+.about-build {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: var(--hair) solid var(--rule);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar,
+  .sidebar.is-open,
+  .sidebar nav a::after,
+  .app.is-rail-animating .sidebar,
+  .app.is-rail-animating .sidebar-inner {
+    transition: none;
+  }
+}
+
+/* The mark sits beside the name rather than replacing it: collapsing the
+   sidebar narrows it, it does not take the product's name off the screen. */
+.sidebar .logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar .logo-mark {
+  width: 26px;
+  height: auto;
+  flex: none;
+}
+
+/* Expanded, the lockup is the mark and the name in one piece of artwork. It is
+   set by height so the name reads at the size the text wordmark had. */
+.sidebar .logo-lockup {
+  height: 28px;
+  width: auto;
+  flex: none;
+}
+
+.sidebar .logo-rail {
+  flex-direction: column;
+  gap: 3px;
+}
+
+.sidebar .logo-rail .logo-mark {
+  width: 30px;
+}
