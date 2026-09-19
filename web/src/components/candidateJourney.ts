@@ -369,7 +369,7 @@ export function initialsOf(fullName: string): string {
 }
 
 export function journeyTitle(roleTitle: string | null): string {
-  return roleTitle ? `Candidate Journey: ${roleTitle}` : 'Candidate Journey';
+  return roleTitle ? `Candidate journey: ${roleTitle}` : 'Candidate journey';
 }
 
 function clock(ms: number): string {

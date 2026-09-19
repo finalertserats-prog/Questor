@@ -3,6 +3,25 @@ import { formatHours } from './dashboardModel';
 export type RoleStatusFilter = 'all' | 'draft' | 'approved' | 'archived';
 export type RoleSortKey = 'title' | 'applied' | 'interviewed' | 'awaitingReview' | 'advanceRate' | 'medianInviteToCompleteHours' | 'lastActivityAt';
 export type SortDirection = 'asc' | 'desc';
+/** The narrower views the dashboard's role KPIs link to (?filter=…). */
+export type RoleMetricFilter = 'no-candidates' | 'awaiting-review';
+
+export const METRIC_FILTER_LABELS: Readonly<Record<RoleMetricFilter, string>> = {
+  'no-candidates': 'Roles with no candidates',
+  'awaiting-review': 'Roles awaiting review',
+};
+
+/** The dashboard filter named by a ?filter= value, or null for anything else. */
+export function metricFilterFromParam(value: string | null): RoleMetricFilter | null {
+  return value === 'no-candidates' || value === 'awaiting-review' ? value : null;
+}
+
+// The same rules the server uses for the two KPIs (rolesWithoutCandidates,
+// rolesWithReviewBacklog), so the number on the card and the rows here agree.
+const METRIC_MATCHES: Readonly<Record<RoleMetricFilter, (role: RoleFunnel) => boolean>> = {
+  'no-candidates': (role) => role.applied === 0,
+  'awaiting-review': (role) => role.awaitingReview > 0,
+};
 
 export interface RoleFunnel {
   readonly id: string;
@@ -21,6 +40,18 @@ export interface RoleFunnel {
   readonly medianInviteToCompleteHours: number | null;
   readonly lastActivityAt: string | null;
   readonly updatedAt: string;
+  readonly createdAt?: string | null;
+}
+
+/** A role in a dashboard ranking. The display fields arrive with newer servers. */
+export interface TopRole {
+  readonly id: string;
+  readonly title: string;
+  readonly count: number;
+  readonly level?: string | null;
+  readonly regionCode?: string | null;
+  readonly experienceBand?: string | null;
+  readonly createdAt?: string | null;
 }
 
 export interface RoleMetricsPayload {
@@ -33,19 +64,28 @@ export interface RoleMetricsPayload {
     readonly rolesWithoutCandidates: number;
     readonly rolesWithReviewBacklog: number;
   };
-  readonly topByApplied: readonly { readonly id: string; readonly title: string; readonly count: number }[];
-  readonly topByInterviewed: readonly { readonly id: string; readonly title: string; readonly count: number }[];
+  readonly topByApplied: readonly TopRole[];
+  readonly topByInterviewed: readonly TopRole[];
 }
 
 export function filterRoles(
   roles: readonly RoleFunnel[],
-  options: { readonly query?: string; readonly status?: RoleStatusFilter; readonly domain?: string },
+  options: {
+    readonly query?: string;
+    readonly status?: RoleStatusFilter;
+    readonly domain?: string;
+    readonly metric?: RoleMetricFilter | null;
+  },
 ): RoleFunnel[] {
   const status = options.status ?? 'all';
   const q = (options.query ?? '').trim().toLowerCase();
   return roles.filter((role) => {
-    const statusMatches = status === 'all' ? role.status !== 'archived' : role.status === status;
+    // The review backlog KPI counts archived roles too (a review left behind
+    // on an archived role is still owed), so that view does not hide them.
+    const showsArchived = options.metric === 'awaiting-review';
+    const statusMatches = status === 'all' ? showsArchived || role.status !== 'archived' : role.status === status;
     if (!statusMatches) return false;
+    if (options.metric && !METRIC_MATCHES[options.metric](role)) return false;
     if (options.domain && role.domain !== options.domain) return false;
     if (!q) return true;
     return role.title.toLowerCase().includes(q) || role.level.toLowerCase().includes(q);
@@ -93,8 +133,4 @@ export function formatTurnaround(hours: number | null): string {
 
 export function domainsFromRoles(roles: readonly RoleFunnel[]): readonly string[] {
   return [...new Set(roles.flatMap((r) => (r.domain ? [r.domain] : [])))].sort((a, b) => a.localeCompare(b));
-}
-
-export function roleCatalogLine(role: RoleFunnel): string {
-  return role.domain ? [role.domain, role.regionCode, role.experienceBand].filter(Boolean).join(' ? ') : 'Not linked to catalog';
 }

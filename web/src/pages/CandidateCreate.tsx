@@ -8,6 +8,7 @@ import { PageHeader } from '../components/PageHeader';
 import { PageSkeleton } from '../components/Skeleton';
 import { EMPTY_RESUME, ResumeFields, uploadResume, type ResumeValue } from '../components/ResumeFields';
 import { atsErrorMessage } from '../components/atsModel';
+import { roleDisplayLabels } from '../components/roleLabelModel';
 import {
   addCandidateBlocker,
   hasResume,
@@ -21,6 +22,7 @@ import {
 
 interface Role {
   id: string; title: string; level: string; status: string;
+  regionCode?: string | null; experienceBand?: string | null; createdAt?: string | null;
   latestScorecard: { id: string; version: number; status: string } | null;
   candidates: number; updatedAt: string;
 }
@@ -154,19 +156,22 @@ export function CandidateCreate() {
       <form className="card" onSubmit={submit}>
         <fieldset className="row" style={{ border: 0, padding: 0, gap: 16 }} disabled={!!created}>
           <legend className="small muted">Start from</legend>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="candidate-source" style={{ width: 'auto' }} checked={source === 'manual'} onChange={() => switchSource('manual')} />
+          <label className="check-row">
+            <input type="radio" name="candidate-source" checked={source === 'manual'} onChange={() => switchSource('manual')} />
             Details I enter
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="candidate-source" style={{ width: 'auto' }} checked={source === 'ats'} onChange={() => switchSource('ats')} />
+          <label className="check-row">
+            <input type="radio" name="candidate-source" checked={source === 'ats'} onChange={() => switchSource('ats')} />
             A candidate in your ATS
           </label>
         </fieldset>
 
         <label htmlFor={`${fieldId}-role`}>Role</label>
         <select id={`${fieldId}-role`} value={roleId} onChange={(e) => setRoleId(e.target.value)} disabled={roles.length === 0 || !!created} required>
-          {roles.map((r) => <option key={r.id} value={r.id}>{r.title} ({r.level})</option>)}
+          {/* The level is part of the base label here, as it always was; two
+              roles that still collide are told apart by region, band or date. */}
+          {roleDisplayLabels(roles.map((r) => ({ ...r, title: r.level ? `${r.title} (${r.level})` : r.title })))
+            .map((label, index) => <option key={roles[index].id} value={roles[index].id}>{label}</option>)}
         </select>
 
         {source === 'ats' ? (

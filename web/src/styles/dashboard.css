@@ -27,14 +27,6 @@
   color: var(--ink);
 }
 
-.dash-sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
 
 /* --- KPI cards ------------------------------------------------------------ */
 
@@ -196,7 +188,9 @@ a.kpi-link:hover .kpi-icon::after {
   display: block;
   width: 100%;
   height: auto;
-  overflow: visible;
+  /* Layout keeps every label and value inside the viewBox; anything that
+     still escapes is clipped rather than pushing the card sideways. */
+  overflow: hidden;
 }
 
 /* Grid lines are a ruler held behind the data, not part of it. */
@@ -410,4 +404,40 @@ a.kpi-link:hover .kpi-icon::after {
     animation: none;
     transform: none;
   }
+}
+
+/* Title and "View all" share a line while both fit. The heading's basis is the
+   same in every chart card, so the link drops below it at the same card width
+   everywhere rather than in one card and not its neighbour. */
+.chart-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+}
+.chart-card-head h3 {
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin: 0;
+}
+
+/* A bar row that opens its role. The hit area is invisible until hovered or
+   focused; focus draws a ring on the row rather than a filled block. */
+.chart-row-hit {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2;
+}
+.chart-row-link {
+  cursor: pointer;
+  outline: none;
+}
+.chart-row-link:hover .chart-label {
+  fill: var(--ink);
+  text-decoration: underline;
+}
+.chart-row-link:focus-visible .chart-row-hit {
+  stroke: var(--focus);
 }

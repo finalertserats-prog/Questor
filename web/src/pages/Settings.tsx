@@ -3,6 +3,7 @@ import { ThemeToggle } from '../components/theme';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { AtsConnectionPanel } from '../components/AtsConnectionPanel';
+import { humanise } from '../components/statusModel';
 
 export function Settings() {
   const { user, tenant } = useAuth();
@@ -10,7 +11,7 @@ export function Settings() {
   const rows: Array<[string, string, IconName]> = [
     ['Name', user?.name ?? '—', 'candidate-profile'],
     ['Email', user?.email ?? '—', 'mail'],
-    ['Role', user?.role ?? '—', 'admin'],
+    ['Role', user ? humanise(user.role) : '—', 'admin'],
     ['Organisation', tenant?.name ?? '—', 'team'],
   ];
 

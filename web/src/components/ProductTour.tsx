@@ -290,7 +290,7 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
     <>
       {/* Always present so assistive technology has it registered before the
           first step is announced into it. */}
-      <div className="tour-sr-only" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="visually-hidden" aria-live="polite" aria-atomic="true">{announcement}</div>
       {step && position && (
         <div className={motion.animate ? 'tour is-animated' : 'tour'}>
           <div className="tour-scrim" aria-hidden="true" />

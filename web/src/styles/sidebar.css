@@ -36,7 +36,7 @@
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(12, 12, 24, 0.28);
+  background: var(--scrim);
   border: none;
   padding: 0;
   cursor: default;
@@ -288,7 +288,7 @@
   .sidebar.is-open {
     transform: none;
     visibility: visible;
-    box-shadow: 0 12px 40px rgba(12, 12, 24, 0.18);
+    box-shadow: var(--shadow-pop);
     transition: transform 0.2s ease, visibility 0s, box-shadow 0.2s ease;
   }
   .sidebar-inner {
@@ -382,7 +382,7 @@
   border: var(--hair) solid var(--rule-strong);
   border-radius: var(--radius);
   background: var(--sheet);
-  box-shadow: 0 8px 24px rgba(12, 12, 24, 0.16);
+  box-shadow: var(--shadow-pop);
 }
 
 .profile-menu-item {

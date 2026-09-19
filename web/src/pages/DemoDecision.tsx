@@ -30,7 +30,8 @@ export function DemoDecision() {
   const { token } = useParams();
   const [phase, setPhase] = useState<DecisionPhase>('loading');
   const [applicant, setApplicant] = useState<Applicant | null>(null);
-  const [busy, setBusy] = useState(false);
+  // Which decision is being recorded, so only that button says so.
+  const [busy, setBusy] = useState<'approve' | 'decline' | null>(null);
   const [confirmDecline, setConfirmDecline] = useState(false);
 
   useEffect(() => {
@@ -50,14 +51,15 @@ export function DemoDecision() {
 
   // The only thing that records a decision, and it needs a press to happen.
   const decide = async (decision: 'approve' | 'decline') => {
-    setBusy(true);
+    if (busy) return;
+    setBusy(decision);
     try {
       await api.post(`/demo/decision/${token}`, { decision });
       setPhase(decision === 'approve' ? 'approved' : 'declined');
     } catch (err: unknown) {
       setPhase(err instanceof ApiError ? decisionPhaseForStatus(err.status) : 'failed');
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
@@ -70,7 +72,7 @@ export function DemoDecision() {
 
         {phase === 'open' && applicant && (
           <>
-            <h2>Someone is asking for demo access again</h2>
+            <h1>Someone is asking for demo access again</h1>
             <dl className="signup-facts">
               <div>
                 <dt>Name</dt>
@@ -89,27 +91,27 @@ export function DemoDecision() {
 
 
             <p className="muted small">
-              Approving opens the account. Declining creates nothing. Either way this link stops working
-              afterwards.
+              Approving emails them a new one-time demo link. Declining sends nothing. Either way this link
+              stops working afterwards.
             </p>
 
             <div className="signup-actions">
-              <button type="button" className="btn" onClick={() => void decide('approve')} disabled={busy}>
+              <button type="button" className="btn" onClick={() => void decide('approve')} disabled={busy !== null}>
                 <Icon name="check" size={15} />
-                {busy ? 'Recording…' : 'Approve'}
+                {busy === 'approve' ? 'Sending…' : 'Approve and send a new link'}
               </button>
               {confirmDecline ? (
                 <>
-                  <button type="button" className="btn secondary" onClick={() => void decide('decline')} disabled={busy}>
+                  <button type="button" className="btn secondary" onClick={() => void decide('decline')} disabled={busy !== null}>
                     <Icon name="x-circle" size={15} />
-                    {busy ? 'Declining…' : 'Confirm decline'}
+                    {busy === 'decline' ? 'Declining…' : 'Confirm decline'}
                   </button>
-                  <button type="button" className="btn ghost" onClick={() => setConfirmDecline(false)} disabled={busy}>
+                  <button type="button" className="btn ghost" onClick={() => setConfirmDecline(false)} disabled={busy !== null}>
                     Cancel
                   </button>
                 </>
               ) : (
-                <button type="button" className="btn secondary" onClick={() => setConfirmDecline(true)} disabled={busy}>
+                <button type="button" className="btn secondary" onClick={() => setConfirmDecline(true)} disabled={busy !== null}>
                   <Icon name="x-circle" size={15} />
                   Decline
                 </button>
@@ -120,21 +122,21 @@ export function DemoDecision() {
 
         {phase === 'approved' && (
           <>
-            <h2>Approved</h2>
-            <p className="muted">{who}'s request has been approved. There is nothing else to do here.</p>
+            <h1>Approved</h1>
+            <p className="muted">{who}'s demo request has been approved and a new demo link is on its way to them. There is nothing else to do here.</p>
           </>
         )}
 
         {phase === 'declined' && (
           <>
-            <h2>Declined</h2>
-            <p className="muted">{who}'s request has been declined. Nothing has been created.</p>
+            <h1>Declined</h1>
+            <p className="muted">{who}'s demo request has been declined. No link has been sent.</p>
           </>
         )}
 
         {phase === 'decided' && (
           <>
-            <h2>This one has already been decided</h2>
+            <h1>This demo request has already been decided</h1>
             <p className="muted">
               It has been approved or declined already — possibly by you, in another tab or on another
               device. Nothing further is needed.
@@ -144,32 +146,35 @@ export function DemoDecision() {
 
         {phase === 'expired' && (
           <>
-            <h2>This link has expired</h2>
+            <h1>This link has expired</h1>
             <p className="muted">
-              Approval links stop working after a while, so an old message cannot open an account.
-              Opening an expired link also closes the request, so it is no longer waiting for a
-              decision and the person has not been told anything. If they still want an account, ask
-              them to request one again.
+              Decision links stop working after a while, so an old message cannot hand out a demo.
+              Opening an expired link also closes the request, and the person has not been told
+              anything. If they still want a demo, they can ask for one again from the demo page.
             </p>
           </>
         )}
 
         {phase === 'invalid' && (
           <>
-            <h2>This link doesn't work</h2>
+            <h1>This link doesn't work</h1>
             <p className="muted">
-              It may have been copied incompletely. Try opening it straight from the email, or decide the
-              request under Account requests when you sign in.
+              It may have been copied incompletely. Try opening it straight from the email.
             </p>
           </>
         )}
 
         {phase === 'failed' && (
           <>
-            <h2>Something went wrong at our end</h2>
+            <h1>Something went wrong at our end</h1>
             <p className="muted">
               Nothing has been recorded. Please try again in a moment — the request is still waiting.
             </p>
+            {applicant && (
+              <button type="button" className="btn secondary" onClick={() => setPhase('open')}>
+                <Icon name="refresh" size={15} />Try again
+              </button>
+            )}
           </>
         )}
       </div>

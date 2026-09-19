@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, ApiError } from '../api/client';
-import { newRoleLabel, shouldOfferNewRole, isCurrentQuery, type TypeaheadQuery } from './catalogModel';
+import { clampActiveOption, newRoleLabel, shouldOfferNewRole, isCurrentQuery, type TypeaheadQuery } from './catalogModel';
 
 export interface CatalogRoleOption {
   readonly id: string;
@@ -24,6 +24,8 @@ export function RoleTitleCombobox(props: {
   readonly onTitleChange: (value: string) => void;
   readonly onSelect: (role: CatalogRoleOption) => void;
   readonly onNotice: (message: string) => void;
+  /** A failure, shown as an error rather than as information. */
+  readonly onError: (message: string) => void;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -33,6 +35,19 @@ export function RoleTitleCombobox(props: {
   const requestSeq = useRef(0);
   const offerNew = shouldOfferNewRole(props.value, result) && Boolean(props.domainId);
   const optionsCount = result.roles.length + (offerNew ? 1 : 0);
+  // Results can shrink under the highlight; the active option always exists.
+  const activeIndex = clampActiveOption(active, optionsCount);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // Close when a click or tap lands anywhere outside the field and its list.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event: PointerEvent) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointer);
+    return () => document.removeEventListener('pointerdown', onPointer);
+  }, [open]);
 
   // What the input asks for right now, read by responses that arrive late.
   const currentQuery = useRef<TypeaheadQuery>({ domainId: props.domainId, value: props.value });
@@ -85,7 +100,7 @@ export function RoleTitleCombobox(props: {
           return;
         }
       }
-      props.onNotice(err instanceof Error ? err.message : 'Could not add that role.');
+      props.onError(err instanceof Error ? err.message : 'Could not add that role.');
     }
   };
 
@@ -96,35 +111,47 @@ export function RoleTitleCombobox(props: {
   };
 
   return (
-    <div style={{ position: 'relative' }}>
+    <div
+      ref={wrapperRef}
+      style={{ position: 'relative' }}
+      // Focus moving to anything outside (Tab away) closes the list too.
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}
+    >
       <input
         id={props.inputId}
         role="combobox"
+        aria-autocomplete="list"
         aria-expanded={open}
         aria-controls={`${id}-list`}
-        aria-activedescendant={open && optionsCount > 0 ? `${id}-opt-${active}` : undefined}
+        aria-activedescendant={open && optionsCount > 0 ? `${id}-opt-${activeIndex}` : undefined}
         disabled={props.disabled}
         value={props.value}
         onChange={(e) => { props.onTitleChange(e.target.value); setOpen(true); setActive(0); }}
         onFocus={() => setOpen(true)}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive((a) => Math.min(optionsCount - 1, a + 1)); }
-          if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)); }
+          if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setActive(clampActiveOption(activeIndex + 1, optionsCount)); }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setActive(clampActiveOption(activeIndex - 1, optionsCount)); }
           if (e.key === 'Escape') setOpen(false);
-          if (e.key === 'Enter' && open && optionsCount > 0) { e.preventDefault(); choose(active); }
+          if (e.key === 'Enter' && open && optionsCount > 0) { e.preventDefault(); choose(activeIndex); }
         }}
         placeholder={props.disabled ? 'Choose a domain first' : 'Start typing a role title'}
       />
       {open && optionsCount > 0 && (
-        <div id={`${id}-list`} role="listbox" className="card" style={{ position: 'absolute', zIndex: 20, width: '100%', marginTop: 4, padding: 6 }}>
-          {offerNew && <button id={`${id}-opt-0`} role="option" aria-selected={active === 0} type="button" className="link-button" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(0)}>+ {newRoleLabel(props.value, props.domainName)}</button>}
+        <div id={`${id}-list`} role="listbox" className="card combobox-list" style={{ position: 'absolute', zIndex: 20, width: '100%', marginTop: 4, padding: 6 }}>
+          {offerNew && <button id={`${id}-opt-0`} role="option" aria-selected={activeIndex === 0} type="button" className="link-button combobox-option" onMouseEnter={() => setActive(0)} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(0)}>+ {newRoleLabel(props.value, props.domainName)}</button>}
           {result.roles.map((role, i) => {
             const index = i + (offerNew ? 1 : 0);
-            return <button key={role.id} id={`${id}-opt-${index}`} role="option" aria-selected={active === index} type="button" className="link-button" style={{ display: 'block', padding: 6 }} onMouseEnter={() => setActive(index)} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(index)}>
+            return <button key={role.id} id={`${id}-opt-${index}`} role="option" aria-selected={activeIndex === index} type="button" className="link-button combobox-option" style={{ display: 'block', padding: 6 }} onMouseEnter={() => setActive(index)} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(index)}>
               <span>{role.title}</span><br /><span className="muted small">{role.domain.name}{role.family ? ` · ${role.family}` : ''}{role.matchedAlias ? ` · also called ${role.matchedAlias}` : ''}</span>
             </button>;
           })}
           {loading && <div className="muted small">Searching…</div>}
+        </div>
+      )}
+      {/* Said, not left blank: an empty list read as "the field is broken". */}
+      {open && optionsCount === 0 && !props.disabled && props.value.trim().length > 0 && (
+        <div className="muted small" role="status" style={{ marginTop: 4 }}>
+          {loading ? 'Searching…' : 'No matching catalog roles. Keep typing to use your own title.'}
         </div>
       )}
     </div>

@@ -7,12 +7,14 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatScoreOutOf100, hasScore } from '../components/scoreFormat';
+import { roleDisplayLabels } from '../components/roleLabelModel';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
 interface CandidateRow {
   id: string; fullName: string; email: string;
   roleId: string | null; roleTitle: string | null;
+  roleLevel?: string | null; roleRegionCode?: string | null; roleExperienceBand?: string | null;
   fit: CandidateFit | null;
   latestInterview: LatestInterview | null;
   createdAt: string;
@@ -107,6 +109,16 @@ export function CandidatesList() {
       [c.fullName, c.email, c.roleTitle ?? ''].some((field) => field.toLowerCase().includes(q)));
   }, [candidates, query]);
 
+  // Labelled across every candidate, not only the filtered rows, so a role's
+  // label does not change as the filter narrows the list.
+  const roleLabelById = useMemo(() => {
+    const withRole = candidates.flatMap((c) => (c.roleId && c.roleTitle
+      ? [{ id: c.roleId, title: c.roleTitle, level: c.roleLevel, regionCode: c.roleRegionCode, experienceBand: c.roleExperienceBand }]
+      : []));
+    const labels = roleDisplayLabels(withRole);
+    return new Map(withRole.map((role, index) => [role.id, labels[index]]));
+  }, [candidates]);
+
   if (loading) return <PageSkeleton label="Loading candidates…" />;
 
   // Counted apart because they need different action. Someone who never started
@@ -120,7 +132,7 @@ export function CandidatesList() {
       <PageHeader
         icon="candidates"
         title="Candidates"
-        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add Candidate</Link>}
+        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
       />
 
       {error && <Banner kind="error">{error}</Banner>}
@@ -185,7 +197,7 @@ export function CandidatesList() {
                     interview. Named so, because a bare "Fit" beside an
                     interview column read as an interview result. */}
                 <th><abbr title="Scored from the resume against the role's scorecard. Not an interview result.">Resume fit</abbr></th>
-                <th>Interview</th><th>Added</th><th></th>
+                <th>Interview</th><th>Added</th><th><span className="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -195,7 +207,7 @@ export function CandidatesList() {
                   <td className="muted">{c.email}</td>
                   <td>
                     {c.roleId && c.roleTitle
-                      ? <Link to={`/roles/${c.roleId}`}>{c.roleTitle}</Link>
+                      ? <Link to={`/roles/${c.roleId}`}>{roleLabelById.get(c.roleId) ?? c.roleTitle}</Link>
                       : <span className="muted">—</span>}
                   </td>
                   {/* A fit row stored before `overall` existed still has a fit

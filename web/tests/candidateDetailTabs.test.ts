@@ -3,7 +3,7 @@ import { candidateDetailTabs, nextCandidateDetailTab, candidateDetailPanelId, ca
 
 describe('candidate detail tab model', () => {
   it('defaults to the candidate profile tab', () => {
-    expect(candidateDetailTabs[0]).toMatchObject({ key: 'profile', label: 'Candidate Profile' });
+    expect(candidateDetailTabs[0]).toMatchObject({ key: 'profile', label: 'Candidate profile' });
   });
 
   it('uses stable linked tab and panel ids for assistive tech', () => {

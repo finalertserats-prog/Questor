@@ -536,6 +536,7 @@ export function InterviewRoom() {
 
   return (
     <div className="room">
+      <h1 className="visually-hidden">Your interview</h1>
       <header className="room-bar">
         <div className="row" style={{ gap: 12, alignItems: 'center' }}>
           {/* The room is dark in both themes, so it always takes the dark cut. */}
@@ -649,10 +650,16 @@ export function InterviewRoom() {
               was kept — and makes the decision. No recording of your voice exists.
             </p>
             <p className="muted">
-              <b>Everything that was captured is shown on the right</b>, exactly as the reviewer will see
+              <b>Everything that was captured is in the transcript</b>, exactly as the reviewer will see
               it. Take as long as you like to read it before closing this window. If something you said is
               missing or came out wrong, reply to your invitation email and tell us — we would rather know.
             </p>
+            {/* Closed by mistake, the transcript had no way back in this phase. */}
+            {!showTranscript && (
+              <button type="button" className="btn secondary" onClick={() => setShowTranscript(true)} aria-expanded={false}>
+                <Icon name="list" size={16} />Show transcript
+              </button>
+            )}
 
             {/* Asked here, and only here: the invitation link is consumed the
                 moment the interview finalises, so this is the last moment the
@@ -682,7 +689,13 @@ export function InterviewRoom() {
         )}
       </footer>
 
-      <aside className={`transcript-panel ${showTranscript ? 'open' : ''}`}>
+      {/* inert while closed: off-screen is not gone, and its close button and
+          text were still reachable by Tab and read by a screen reader. */}
+      <aside
+        className={`transcript-panel ${showTranscript ? 'open' : ''}`}
+        aria-label="Transcript"
+        {...(showTranscript ? {} : { inert: '' })}
+      >
         <div className="row spread" style={{ marginBottom: 10 }}>
           <strong>Transcript</strong>
           <button type="button" className="ctl" onClick={() => setShowTranscript(false)}><Icon name="close" label="Close transcript" /></button>

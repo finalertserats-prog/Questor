@@ -72,7 +72,7 @@ export function RoundMeeting({ pipelineId, round, busy, run, onOutcome, onError,
       </div>
       {adding && (
         <form className="row" style={{ gap: 6, marginTop: 4 }} onSubmit={saveLink}>
-          <label className="round-sr-only" htmlFor={`meeting-link-${round.id}`}>Meeting link</label>
+          <label className="visually-hidden" htmlFor={`meeting-link-${round.id}`}>Meeting link</label>
           <input
             id={`meeting-link-${round.id}`}
             type="url"
@@ -118,7 +118,7 @@ export function RoundActions(
   if (moving) {
     return (
       <form className="row" style={{ gap: 6 }} onSubmit={reschedule}>
-        <label className="round-sr-only" htmlFor={`reschedule-${round.id}`}>New date and time</label>
+        <label className="visually-hidden" htmlFor={`reschedule-${round.id}`}>New date and time</label>
         <input id={`reschedule-${round.id}`} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} required />
         <button className="btn sm" disabled={busy}>Move</button>
         <button type="button" className="btn sm ghost" onClick={() => setMoving(false)}>Back</button>

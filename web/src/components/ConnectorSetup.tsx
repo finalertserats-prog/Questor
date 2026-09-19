@@ -123,6 +123,7 @@ export function MeetingAdapterSetup(
   }, []);
 
   return (
+    <div className="table-scroll" tabIndex={0} role="region" aria-label="Meeting connectors">
     <table>
       <thead>
         <tr>
@@ -152,7 +153,7 @@ export function MeetingAdapterSetup(
                 <td><Check on={m.capabilities.botJoin} /></td>
                 <td className="muted small">{m.fallback}</td>
                 <td>
-                  <div className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
+                  <div className="row" style={{ gap: 6 }}>
                     {guide && (
                       <button type="button" className="btn sm secondary" aria-expanded={isOpen} aria-controls={`connector-guide-${m.provider}`} onClick={() => toggleGuide(m.provider)}>
                         {isOpen ? 'Hide setup' : 'How to set up'}
@@ -191,6 +192,7 @@ export function MeetingAdapterSetup(
         })}
       </tbody>
     </table>
+    </div>
   );
 }
 

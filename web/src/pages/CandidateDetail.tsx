@@ -84,8 +84,8 @@ const MODULES = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
 export type CandidateDetailTabKey = 'profile' | 'journey';
 export const candidateDetailTabs: ReadonlyArray<{ key: CandidateDetailTabKey; label: string }> = [
-  { key: 'profile', label: 'Candidate Profile' },
-  { key: 'journey', label: 'Candidate Journey' },
+  { key: 'profile', label: 'Candidate profile' },
+  { key: 'journey', label: 'Candidate journey' },
 ];
 
 export function candidateDetailTabId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-tab`; }
@@ -116,6 +116,13 @@ interface ProfileAnalysisResp {
 }
 
 
+/** What each enrichment read is called when it fails. */
+const DETAIL_LABELS: Readonly<Record<string, string>> = {
+  role: 'Role',
+  interviews: 'Interviews',
+  pipeline: 'Pipeline',
+};
+
 export function CandidateDetail() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -132,6 +139,17 @@ export function CandidateDetail() {
   const [assessmentBlockedReason, setAssessmentBlockedReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // The reads that only enrich the journey fail on their own, without costing
+  // the profile — but they are said, not swallowed: an empty column with no
+  // reason reads as "nothing happened" when the truth is "we could not ask".
+  const [detailErrors, setDetailErrors] = useState<Readonly<Record<string, string>>>({});
+  const noteDetail = useCallback((key: string, err: unknown) => {
+    const message = err instanceof Error ? err.message : 'Could not load.';
+    setDetailErrors((prev) => ({ ...prev, [key]: message }));
+  }, []);
+  const clearDetail = useCallback((key: string) => {
+    setDetailErrors((prev) => (key in prev ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key)) : prev));
+  }, []);
   // Bumped by the pipeline panel after any action it completes, so the journey
   // board beside it re-reads rather than showing the state before the click.
   const [version, setVersion] = useState(0);
@@ -141,7 +159,7 @@ export function CandidateDetail() {
   const [durationMinutes, setDurationMinutes] = useState(45);
   const [personaName, setPersonaName] = useState('Schranders');
   const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
-  const [provider, setProvider] = useState<'hosted' | 'teams' | 'zoom' | 'meet'>('hosted');
+
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -155,6 +173,20 @@ export function CandidateDetail() {
     let cancelled = false;
     if (loadedId.current !== id) {
       loadedId.current = id;
+      // A different candidate: nothing of the previous one may be drawn
+      // against this person while their own reads are in flight.
+      setData(null);
+      setError('');
+      setRole(null);
+      setProfileAnalysis(null);
+      setProfileAnalysisError('');
+      setSessions({});
+      setPipeline(null);
+      setMissingEvidence([]);
+      setAssessment(null);
+      setAssessmentBlockedReason(null);
+      setDetailErrors({});
+      setActiveTab('profile');
       setLoading(true);
     }
 
@@ -163,10 +195,10 @@ export function CandidateDetail() {
         if (cancelled) return;
         setData(candidateResp);
 
-        // Everything below only enriches the journey. Each failure is swallowed
-        // on its own: losing the role, the pipeline or the assessment must not
-        // cost the operator the candidate's profile, and a column that says
-        // "not available" is better than a page that says nothing.
+        // Everything below only enriches the journey. Each failure is kept on
+        // its own: losing the role, the pipeline or the assessment must not
+        // cost the operator the candidate's profile, and it is reported inline.
+        if (!candidateResp.candidate.roleId) setRole(null);
         if (candidateResp.candidate.roleId) {
           api.get<RoleResp>(`/roles/${candidateResp.candidate.roleId}`)
             .then((r) => {
@@ -181,8 +213,9 @@ export function CandidateDetail() {
                 scorecardVersion: scorecard?.version ?? null,
                 scorecardStatus: scorecard?.status ?? null,
               });
+              clearDetail('role');
             })
-            .catch(() => undefined);
+            .catch((err: unknown) => { if (!cancelled) noteDetail('role', err); });
         }
       })
       .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load this candidate.'); })
@@ -193,8 +226,12 @@ export function CandidateDetail() {
       .catch((err: unknown) => { if (!cancelled) setProfileAnalysisError(err instanceof Error ? err.message : 'Could not load candidate profile analysis.'); });
 
     api.get<{ sessions: SessionSummary[] }>('/interviews')
-      .then((d) => { if (!cancelled) setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s]))); })
-      .catch(() => undefined);
+      .then((d) => {
+        if (cancelled) return;
+        setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s])));
+        clearDetail('interviews');
+      })
+      .catch((err: unknown) => { if (!cancelled) noteDetail('interviews', err); });
 
     // The pipeline panel below loads this too. Two reads of the same scoped
     // endpoint is the cost of leaving that panel — which owns every action —
@@ -204,14 +241,16 @@ export function CandidateDetail() {
         const current = d.pipelines?.[0] ?? null;
         if (cancelled) return;
         setPipeline(current);
-        if (!current) { setMissingEvidence([]); return; }
+        if (!current) { setMissingEvidence([]); clearDetail('pipeline'); return; }
         const { summary } = await api.get<{ summary: { missingEvidence: string[] } }>(`/pipelines/${current.id}/summary`);
-        if (!cancelled) setMissingEvidence(summary?.missingEvidence ?? []);
+        if (cancelled) return;
+        setMissingEvidence(summary?.missingEvidence ?? []);
+        clearDetail('pipeline');
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => { if (!cancelled) noteDetail('pipeline', err); });
 
     return () => { cancelled = true; };
-  }, [id, version]);
+  }, [id, version, noteDetail, clearDetail]);
 
   // The assessment the decision column reads: the newest interview that produced
   // one. Its id only becomes known once /interviews has landed, so it is fetched
@@ -309,7 +348,9 @@ export function CandidateDetail() {
         language: 'en',
         modules: MODULES,
         persona: { name: personaName, tone },
-        provider,
+        // The AI interview always runs in Questor's own browser room; meeting
+        // providers only create links for human rounds (PipelinePanel).
+        provider: 'hosted',
         // Always false: no audio artefact is produced, so requesting one would
         // only set a flag that misleads whoever reads it back.
         recordingRequested: false,
@@ -386,6 +427,12 @@ export function CandidateDetail() {
         hidden={activeTab !== 'journey'}
         tabIndex={0}
       >
+        {Object.keys(detailErrors).length > 0 && (
+          <Banner kind="error">
+            Part of this candidate&rsquo;s journey could not be loaded, so some columns may be incomplete.{' '}
+            {Object.entries(detailErrors).map(([key, message]) => `${DETAIL_LABELS[key] ?? key}: ${message}`).join(' ')}
+          </Banner>
+        )}
         {journey && <CandidateJourneyBoard journey={journey} />}
 
         <PipelinePanel
@@ -427,19 +474,19 @@ export function CandidateDetail() {
           <div>
             <label htmlFor="interview-tone">Tone</label>
             <select id="interview-tone" value={tone} onChange={(e) => setTone(e.target.value as typeof tone)}>
-              <option value="warm">warm</option>
-              <option value="neutral">neutral</option>
-              <option value="formal">formal</option>
+              <option value="warm">Warm</option>
+              <option value="neutral">Neutral</option>
+              <option value="formal">Formal</option>
             </select>
           </div>
           <div>
-            <label htmlFor="interview-provider">Provider</label>
-            <select id="interview-provider" value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
-              <option value="hosted">hosted</option>
-              <option value="teams">teams</option>
-              <option value="zoom">zoom</option>
-              <option value="meet">meet</option>
-            </select>
+            {/* A caption, not a form label: there is no choice to make. The
+                old provider picker stored a label and changed nothing — every
+                AI interview ran in the hosted room whatever was picked. */}
+            <div className="field-label">Where it happens</div>
+            <div className="muted small" style={{ marginTop: 5 }}>
+              In Questor&rsquo;s own browser room. Teams, Zoom or Meet links are for human rounds, set up in the pipeline.
+            </div>
           </div>
           {/* The "Request recording" checkbox is gone. It set a flag that
               produced no audio anywhere in the system, so a recruiter ticking it
@@ -563,10 +610,10 @@ function CandidateProfileTab({
       {error && <Banner kind="error">{error}</Banner>}
 
       <div className="card">
-        <h2 className="card-title"><Icon name="candidate-profile" />Candidate Profile</h2>
+        <h2 className="card-title"><Icon name="candidate-profile" />Candidate profile</h2>
         <div className="grid cols-3">
           <Stat label="Email" value={candidate.email} />
-          <Stat label="Phone" value={candidate.phone || '?'} />
+          <Stat label="Phone" value={candidate.phone || '—'} />
           <Stat label="Applied role" value={role ? `${role.title}${role.level ? ` · ${role.level}` : ''}` : 'Role not available'} />
         </div>
         {analysis?.profileVersion && (

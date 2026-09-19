@@ -101,7 +101,6 @@
   /* --- charts: series colour is named once, here -----------------------
      a and b are the two halves of one comparison, c is the single emphasis
      series the colour budget allows, muted is "everything else / zero". */
-  --chart-track: #eeedf3;
   /* The ground under the ruled fill: tinted enough to hold the bar's shape,
      light enough that the rules on top stay the loudest thing in it. */
   --chart-ruled-ground: #f3f2fc;
@@ -235,7 +234,6 @@
   --shadow-pop: 0 18px 44px -24px rgba(0, 0, 0, 0.88);
   --scrim: rgba(0, 0, 0, 0.6);
 
-  --chart-track: #101016;
   --chart-ruled-ground: #232140;
   --chart-grid: #343442;
   --chart-a: #7d76d4;
@@ -478,20 +476,6 @@ code {
   font-weight: 600;
 }
 
-.sidebar .foot {
-  margin-top: auto;
-  padding-top: 16px;
-  border-top: var(--hair) solid var(--rule);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.sidebar .foot .who {
-  color: var(--ink-2);
-  font-weight: 600;
-  font-size: 13px;
-}
-
 .theme-toggle {
   display: inline-flex;
   margin: 10px 0;
@@ -712,6 +696,34 @@ label,
   margin: 14px 0 5px;
 }
 
+/* A label that wraps a checkbox or radio is a sentence the person agrees to,
+   not a caption over a field: normal type, normal case, full ink. */
+label.check-row,
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.45;
+  text-transform: none;
+  color: var(--ink);
+}
+.check-row input[type='checkbox'],
+.check-row input[type='radio'] {
+  width: auto;
+  flex: none;
+  margin-top: 3px;
+}
+
+/* Long unbroken strings (URLs, slugs, tokens) wrap instead of widening the page. */
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 input,
 textarea,
 select {
@@ -918,6 +930,7 @@ tr.in-flight td:first-child {
    ========================================================================== */
 
 .stat {
+  min-width: 0;
   background: var(--sheet);
   border: var(--hair) solid var(--rule);
   border-radius: var(--radius-sheet);
@@ -925,12 +938,21 @@ tr.in-flight td:first-child {
   box-shadow: var(--shadow-sheet);
 }
 .stat .value {
+  /* An email or a long role name must wrap inside the tile, not run out of it. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-display);
   font-size: 30px;
   font-weight: 600;
   line-height: 1.1;
   letter-spacing: -0.015em;
   color: var(--ink);
+}
+.stat .value-text {
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.35;
+  letter-spacing: 0;
 }
 .stat .label {
   font-family: var(--font-data);
@@ -1455,7 +1477,9 @@ tr.in-flight td:first-child {
   border-left: var(--hair) solid var(--room-line);
   padding: 18px;
   transform: translateX(100%);
-  transition: transform 0.28s ease;
+  /* Hidden once it has slid away, so nothing off-screen can take focus. */
+  visibility: hidden;
+  transition: transform 0.28s ease, visibility 0s linear 0.28s;
   display: flex;
   flex-direction: column;
   z-index: 20;
@@ -1463,6 +1487,8 @@ tr.in-flight td:first-child {
 }
 .transcript-panel.open {
   transform: translateX(0);
+  visibility: visible;
+  transition: transform 0.28s ease, visibility 0s;
 }
 .transcript-scroll {
   overflow-y: auto;
@@ -1555,6 +1581,27 @@ tr.in-flight td:first-child {
 .flag-item:last-child {
   border-bottom: 0;
 }
-.field-problem {
-  color: var(--danger, #a12d2d);
+/* Doubled with .field-hint so a hint that turns into a problem takes the
+   problem's colour whichever stylesheet loads last. --stop carries contrast in
+   both themes; the old #a12d2d fallback failed it on dark. */
+.field-problem,
+.field-hint.field-problem {
+  color: var(--stop);
+}
+
+/* The highlighted combobox option: a rule down its leading edge and full ink,
+   never a tinted block. */
+.combobox-option {
+  border-left: 2px solid transparent;
+  padding-left: 8px;
+}
+.combobox-option[aria-selected='true'] {
+  border-left-color: var(--focus);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* The hidden attribute wins over any display a class sets. */
+[hidden] {
+  display: none !important;
 }

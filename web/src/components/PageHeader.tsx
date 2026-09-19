@@ -21,7 +21,7 @@ export function PageHeader({ icon, title, subtitle, badge, actions }: PageHeader
             <h1>{title}</h1>
             {badge}
           </div>
-          {subtitle && <div className="muted small">{subtitle}</div>}
+          {subtitle && <div className="muted small break-anywhere">{subtitle}</div>}
         </div>
       </div>
       {actions && <div className="row page-actions">{actions}</div>}

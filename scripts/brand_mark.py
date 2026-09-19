@@ -43,11 +43,15 @@ HANDLE_LIGHT = [(0.0, "#ffffff"), (0.35, "#d3d1fa"), (0.71, "#9a92ef"), (1.0, "#
 HANDLE_LIGHT_U = (150.0, 309.0)
 DOT_COLOUR = "#594ec6"
 
-# The square the mark is drawn in, in source pixels: the artwork's bounds
-# (x 408-851, y 240-708) centred with a little air.
-FULL_BOX = (389.5, 234.0, 480.0)
-# The favicon is cropped tighter so the mark fills the tab.
-FAVICON_BOX = (400.0, 245.0, 458.0)
+# The square the mark is drawn in, in source pixels. The drawn geometry spans
+# x 412.6-850.4 and y 236.9-707.9 (disc top to handle end); both boxes are
+# centred on that and sized from its height, the longer side. The old boxes
+# were measured from the raster artwork and cut the disc's top and the
+# handle's end off the favicon (y -1.1 to 64.7 in a 64 frame).
+# Full mark: 2 units of air on the long side.
+FULL_BOX = (380.3, 221.2, 502.4)
+# The favicon keeps 1 unit, so the mark still fills the tab.
+FAVICON_BOX = (388.4, 229.3, 486.2)
 VIEW = 64.0
 
 

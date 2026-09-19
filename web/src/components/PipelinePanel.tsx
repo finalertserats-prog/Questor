@@ -7,9 +7,10 @@ import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
 import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
-import { decisionStatus } from './statusModel';
+import { decisionStatus, interviewStatus } from './statusModel';
+import { sessionOptionLabels } from './roleLabelModel';
 import { interviewerName } from './candidateJourney';
-import { formatDate, formatDateTime } from './dateFormat';
+import { formatDateTime } from './dateFormat';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
 import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
@@ -108,6 +109,11 @@ export function PipelinePanel(
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // A failed load is kept apart from a failed action: with no pipeline read,
+  // the panel cannot tell "none yet" from "could not ask", so it must not offer
+  // to start one.
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   // Only the newest load may write state, so a slow response for a previously
   // viewed candidate can never replace this candidate's pipeline.
   const latestLoad = useRef(0);
@@ -144,14 +150,15 @@ export function PipelinePanel(
     setPipeline(null);
     setSummary(null);
     setError('');
+    setLoadError('');
     setLoading(true);
     // load() claims the next id synchronously; a failure from an older load must
     // not set this candidate's error or loading state either.
     const loadId = latestLoad.current + 1;
     load()
-      .catch((e: unknown) => { if (latestLoad.current === loadId) setError(errorMessage(e)); })
+      .catch((e: unknown) => { if (latestLoad.current === loadId) setLoadError(errorMessage(e)); })
       .finally(() => { if (latestLoad.current === loadId) setLoading(false); });
-  }, [load]);
+  }, [load, reloadKey]);
 
   // Which provider will create links for human rounds. Only read by people who
   // can schedule; without it the form simply asks for a link.
@@ -182,6 +189,18 @@ export function PipelinePanel(
       <section className="card pipeline">
         <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
         <Skeleton lines={3} label="Loading pipeline…" />
+      </section>
+    );
+  }
+
+  if (loadError && (!pipeline || pipeline.candidateId !== candidateId)) {
+    return (
+      <section className="card pipeline">
+        <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
+        <Banner kind="error">Could not load this candidate&rsquo;s pipeline. {loadError}</Banner>
+        <button type="button" className="btn secondary" onClick={() => setReloadKey((k) => k + 1)}>
+          <Icon name="refresh" size={16} />Try again
+        </button>
       </section>
     );
   }
@@ -309,7 +328,10 @@ export function PipelinePanel(
 
       {schedulingNotice && (
         <Banner kind={schedulingNotice.delivered ? 'ok' : 'info'}>
-          Round scheduled. {schedulingNotice.deliveryNote} <a href={schedulingNotice.link}>{schedulingNotice.link}</a>
+          Round scheduled. {schedulingNotice.deliveryNote}{' '}
+          {safeMeetingUrl(schedulingNotice.link)
+            ? <a className="break-anywhere" href={safeMeetingUrl(schedulingNotice.link) ?? undefined} target="_blank" rel="noopener noreferrer">{schedulingNotice.link}</a>
+            : <span className="break-anywhere">{schedulingNotice.link}</span>}
         </Banner>
       )}
 
@@ -363,9 +385,9 @@ export function PipelinePanel(
                     <label htmlFor="round-session">AI interview</label>
                     <select id="round-session" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
                       <option value="">Link one later</option>
-                      {interviews.map((iv) => (
-                        <option key={iv.id} value={iv.id}>{formatDate(iv.createdAt)} · {iv.state}</option>
-                      ))}
+                      {/* Date and time, so two sessions set up the same day differ. */}
+                      {sessionOptionLabels(interviews.map((iv) => ({ id: iv.id, createdAt: iv.createdAt, text: interviewStatus(iv.state).label })))
+                        .map((label, index) => <option key={interviews[index].id} value={interviews[index].id}>{label}</option>)}
                     </select>
                   </>
                 ) : (

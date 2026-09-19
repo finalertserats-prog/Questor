@@ -22,8 +22,7 @@
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121218" />
     <script>
       // Runs before first paint so the console never flashes the wrong theme.
-      // A stored choice wins; otherwise only a positive OS dark signal moves us
-      // off the light default.
+      // A stored choice wins; otherwise the page is light.
       (function () {
         try {
           // Light unless the person chose dark. The OS preference is not

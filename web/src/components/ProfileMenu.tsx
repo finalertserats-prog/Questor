@@ -6,6 +6,10 @@ import { ThemeToggle } from './theme';
 import { useTour } from './tourContext';
 import { initialsFor, profileMenuItems } from './profileMenuModel';
 import { demoHidesNavItem } from './demoModel';
+import { humanise } from './statusModel';
+
+// The theme switch sits inside the menu, so arrow keys reach it as well as the items.
+const MENU_STOPS = '[role="menuitem"], .profile-menu-theme button';
 
 const MENU_ICONS: Record<string, IconName> = {
   settings: 'settings',
@@ -64,7 +68,7 @@ export function ProfileMenu() {
 
   // Arrow keys move between menu items, as expected of role="menu".
   const handleMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>(MENU_STOPS) ?? []);
     if (items.length === 0) return;
     const index = items.indexOf(document.activeElement as HTMLElement);
     const focusAt = (i: number) => items[(i + items.length) % items.length].focus();
@@ -77,7 +81,14 @@ export function ProfileMenu() {
   if (!user) return null;
 
   return (
-    <div className="profile-container" ref={containerRef}>
+    <div
+      className="profile-container"
+      ref={containerRef}
+      // Tabbing out of the menu closes it, rather than leaving it open behind the focus.
+      onBlur={(event) => {
+        if (isOpen && !event.currentTarget.contains(event.relatedTarget as Node | null)) setIsOpen(false);
+      }}
+    >
       {isOpen && (
         <div ref={menuRef} className="profile-menu-popover" role="menu" aria-label="Profile menu" onKeyDown={handleMenuKeyDown}>
           {profileMenuItems(user.role).filter((item) => !(tenant?.isDemo && 'to' in item && demoHidesNavItem(item.to))).map((item) => (
@@ -130,7 +141,7 @@ export function ProfileMenu() {
         <span className="profile-avatar" aria-hidden="true">{initialsFor(user.name)}</span>
         <span className="profile-details">
           <span className="profile-name">{user.name}</span>
-          <span className="profile-role">{user.role}</span>
+          <span className="profile-role">{humanise(user.role)}</span>
         </span>
       </button>
     </div>

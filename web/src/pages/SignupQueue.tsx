@@ -28,6 +28,9 @@ export function SignupQueue() {
   const [signups, setSignups] = useState<PendingSignup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // A failed read is not an empty queue: "No requests waiting" over a failed
+  // load told an admin nobody was waiting when they could not know that.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [notice, setNotice] = useState('');
   const [actingId, setActingId] = useState<string | null>(null);
   const [pendingDeclineId, setPendingDeclineId] = useState<string | null>(null);
@@ -37,7 +40,9 @@ export function SignupQueue() {
       const data = await api.get<{ signups: PendingSignup[] }>('/admin/signups?status=pending');
       setSignups(data.signups ?? []);
       setError('');
+      setLoadFailed(false);
     } catch (err: unknown) {
+      setLoadFailed(true);
       setError(err instanceof ApiError && err.status === 403
         ? 'Your role does not include deciding account requests.'
         : err instanceof Error ? err.message : 'Could not load account requests.');
@@ -86,7 +91,14 @@ export function SignupQueue() {
       {notice && <Banner kind="ok">{notice}</Banner>}
 
       <div className="card">
-        {signups.length === 0 ? (
+        {signups.length === 0 && loadFailed ? (
+          <div className="row" style={{ gap: 8 }}>
+            <span className="muted small">The queue could not be read, so it is not known whether anyone is waiting.</span>
+            <button type="button" className="btn secondary sm" onClick={() => { setLoading(true); void load(); }}>
+              <Icon name="refresh" size={14} />Try again
+            </button>
+          </div>
+        ) : signups.length === 0 ? (
           <EmptyState
             icon="inbox"
             title="No requests waiting"
@@ -98,7 +110,7 @@ export function SignupQueue() {
               <table>
                 <thead>
                   <tr>
-                    <th>Who</th><th>Asking for</th><th>Requested</th><th></th>
+                    <th>Who</th><th>Asking for</th><th>Requested</th><th><span className="visually-hidden">Decision</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -120,12 +132,12 @@ export function SignupQueue() {
                         <td>{applicantIntent(signup.mode, signup.organisation)}</td>
                         <td className="muted small">{formatDate(signup.createdAt)}</td>
                         <td>
-                          <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }}>
-                            <button type="button" className="btn sm" disabled={busy}
+                          <span className="row" style={{ gap: 6 }}>
+                            <button type="button" className="btn sm" disabled={busy} aria-label={`Approve ${signup.name}'s request`}
                               onClick={() => void decide(signup, 'approve')}>Approve</button>
                             {pendingDeclineId === signup.id ? (
                               <>
-                                <button type="button" className="btn sm secondary" disabled={busy}
+                                <button type="button" className="btn sm secondary" disabled={busy} aria-label={`Confirm declining ${signup.name}'s request`}
                                   onClick={() => void decide(signup, 'decline')}>
                                   {busy ? 'Declining…' : 'Confirm decline'}
                                 </button>
@@ -133,7 +145,7 @@ export function SignupQueue() {
                                   onClick={() => setPendingDeclineId(null)}>Cancel</button>
                               </>
                             ) : (
-                              <button type="button" className="btn sm secondary" disabled={busy}
+                              <button type="button" className="btn sm secondary" disabled={busy} aria-label={`Decline ${signup.name}'s request`}
                                 onClick={() => setPendingDeclineId(signup.id)}>Decline</button>
                             )}
                           </span>

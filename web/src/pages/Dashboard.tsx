@@ -9,6 +9,8 @@ import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } f
 import { EmptyState } from '../components/EmptyState';
 import { chartTone, formatHours, groupSessionStates, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
 import { canReadAudit } from '../components/profileMenuModel';
+import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
+import type { TopRole } from '../components/rolesListModel';
 
 interface Metrics {
   generatedAt: string;
@@ -29,12 +31,12 @@ interface Metrics {
   truncated?: boolean;
   recentInterviews: {
     id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
-    candidate: { id: string; name: string }; role: { id: string; title: string };
+    candidate: { id: string; name: string }; role: RoleLabelSource & { id: string };
   }[];
   roles?: {
     kpis: { activeRoles: number; rolesWithoutCandidates: number; rolesWithReviewBacklog: number };
-    topByApplied: { id: string; title: string; count: number }[];
-    topByInterviewed: { id: string; title: string; count: number }[];
+    topByApplied: TopRole[];
+    topByInterviewed: TopRole[];
     minSample: number;
   };
 }
@@ -69,6 +71,12 @@ function interviewDate(row: Metrics['recentInterviews'][number]): { label: strin
   return { label: 'Created', at: row.createdAt };
 }
 
+/** Ranked roles as bars, with same-titled roles told apart by their labels. */
+function toRoleBars(roles: readonly TopRole[], tone: string): BarItem[] {
+  const labels = roleDisplayLabels(roles);
+  return roles.map((r, index) => ({ key: r.id, label: labels[index], count: r.count, tone, to: `/roles/${r.id}` }));
+}
+
 export function Dashboard() {
   const { user } = useAuth();
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -99,8 +107,10 @@ export function Dashboard() {
   const totalInterviews = stateItems.reduce((sum, s) => sum + s.count, 0);
   const stopped = stateItems.find((g) => g.key === 'stopped')?.count ?? 0;
   const weeklyData = trimSparseWeeks(metrics?.interviewsPerWeek ?? []);
-  const topRoleApplied: BarItem[] = (metrics?.roles?.topByApplied ?? []).map((r) => ({ key: r.id, label: r.title, count: r.count, tone: 'tone-accent' }));
-  const topRoleInterviewed: BarItem[] = (metrics?.roles?.topByInterviewed ?? []).map((r) => ({ key: r.id, label: r.title, count: r.count, tone: 'tone-pass' }));
+  const topRoleApplied = toRoleBars(metrics?.roles?.topByApplied ?? [], 'tone-accent');
+  const topRoleInterviewed = toRoleBars(metrics?.roles?.topByInterviewed ?? [], 'tone-pass');
+  const recent = metrics?.recentInterviews ?? [];
+  const recentRoleLabels = roleDisplayLabels(recent.map((row) => row.role));
   const truncation = truncationNote(metrics?.truncated);
 
   return (
@@ -108,9 +118,9 @@ export function Dashboard() {
       <div className="topbar">
         <h1>Dashboard</h1>
         <div className="row">
-          <Link className="btn" to="/roles/new">New Role</Link>
+          <Link className="btn" to="/roles/new">New role</Link>
           <Link className="btn secondary" to="/candidates">Candidates</Link>
-          <Link className="btn secondary" to="/candidates/new">Add Candidate</Link>
+          <Link className="btn secondary" to="/candidates/new">Add candidate</Link>
         </div>
       </div>
 
@@ -140,7 +150,10 @@ export function Dashboard() {
           <section aria-labelledby="dash-kpis" data-tour="kpis">
             <h2 id="dash-kpis" className="dash-heading">Key metrics</h2>
             <ul className="kpi-grid">
-              <Kpi icon="jobs" label="Open roles" value={k.openRoles} hint="Draft or approved" />
+              {/* One roles count, not two: "Open roles" and "Active roles" were
+                  the same number under two names. The role metrics' version
+                  links to the list; an older server only has this one. */}
+              {!metrics.roles && <Kpi icon="jobs" label="Open roles" value={k.openRoles} to="/roles" hint="Draft or approved" />}
               <Kpi icon="candidates" label="Candidates" value={k.candidates} to="/candidates" hint="You can access" />
               <Kpi icon="funnel" label="In pipeline" value={k.activePipelines} hint="Active, not yet decided" />
               {/* Both counts include the human rounds, not only the AI sessions
@@ -148,7 +161,7 @@ export function Dashboard() {
                   for someone to discover by counting rows. */}
               <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="AI interviews and human rounds, next 7 days" />
               <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="AI interviews and human rounds, last 30 days" />
-              <Kpi icon="human-review" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
+              <Kpi icon="human-review" label="Interviews awaiting review" value={k.awaitingReview} to="/interviews?state=review" hint="AI interviews ready for a person" spark />
               <Kpi
                 icon="user-x"
                 label="Stopped"
@@ -158,7 +171,7 @@ export function Dashboard() {
               />
               {/* It measures invitation to COMPLETED interview, which is a
                   longer thing than the old label described. */}
-              <Kpi icon="clock" label="Invite to completed" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
+              <Kpi icon="clock" label="Invite → completed (average)" value={formatHours(k.avgInviteToCompleteHours)} hint="Mean time, last 90 days" />
               <Kpi
                 icon="decision"
                 label="Approved"
@@ -168,8 +181,8 @@ export function Dashboard() {
               {metrics.roles && (
                 <>
                   <Kpi icon="role" label="Active roles" value={metrics.roles.kpis.activeRoles} to="/roles" hint="Draft or approved" />
-                  <Kpi icon="inbox" label="Roles with no candidates" value={metrics.roles.kpis.rolesWithoutCandidates} to="/roles" hint="Active roles" />
-                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles" hint="At least one review-ready interview" />
+                  <Kpi icon="inbox" label="Roles with no candidates" value={metrics.roles.kpis.rolesWithoutCandidates} to="/roles?filter=no-candidates" hint="Active roles" />
+                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles?filter=awaiting-review" hint="Roles with at least one review-ready interview" />
                 </>
               )}
             </ul>
@@ -224,8 +237,8 @@ export function Dashboard() {
             {metrics.roles && (
               <div className="grid cols-2">
                 <div className="card">
-                  <div className="spread row" style={{ marginBottom: 8 }}>
-                    <h3 style={{ margin: 0 }}>Top roles by candidates</h3>
+                  <div className="chart-card-head">
+                    <h3>Top roles by candidates</h3>
                     <Link className="btn sm secondary" to="/roles">View all roles</Link>
                   </div>
                   {topRoleApplied.length === 0 ? (
@@ -235,8 +248,8 @@ export function Dashboard() {
                   )}
                 </div>
                 <div className="card">
-                  <div className="spread row" style={{ marginBottom: 8 }}>
-                    <h3 style={{ margin: 0 }}>Top roles by completed interviews</h3>
+                  <div className="chart-card-head">
+                    <h3>Top roles by completed interviews</h3>
                     <Link className="btn sm secondary" to="/roles">View all roles</Link>
                   </div>
                   {topRoleInterviewed.length === 0 ? (
@@ -265,15 +278,15 @@ export function Dashboard() {
               <div className="dash-table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Candidate</th><th>Role</th><th>State</th><th>Date</th><th><span className="dash-sr-only">Actions</span></th></tr>
+                    <tr><th>Candidate</th><th>Role</th><th>State</th><th>Date</th><th><span className="visually-hidden">Actions</span></th></tr>
                   </thead>
                   <tbody>
-                    {metrics.recentInterviews.map((row) => {
+                    {metrics.recentInterviews.map((row, index) => {
                       const date = interviewDate(row);
                       return (
                         <tr key={row.id}>
                           <td><Link to={`/candidates/${row.candidate.id}`}>{row.candidate.name}</Link></td>
-                          <td className="muted">{row.role.title}</td>
+                          <td className="muted">{recentRoleLabels[index]}</td>
                           <td>{stateBadge(row.state)}</td>
                           <td className="small">
                             <span className="muted">{date.label}</span> {new Date(date.at).toLocaleDateString()}

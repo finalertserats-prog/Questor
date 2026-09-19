@@ -1,23 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { formatDate } from '../components/dateFormat';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { roleDetailLine, roleDisplayLabels } from '../components/roleLabelModel';
 import { PageSkeleton } from '../components/Skeleton';
-import { Badge, Banner } from '../components/ui';
+import { Banner } from '../components/ui';
+import { StatusBadge } from '../components/StatusBadge';
 import {
   domainsFromRoles,
   filterRoles,
   formatAdvanceRate,
   formatTurnaround,
+  METRIC_FILTER_LABELS,
+  metricFilterFromParam,
   sortRoles,
   type RoleFunnel,
   type RoleMetricsPayload,
   type RoleSortKey,
   type RoleStatusFilter,
-  roleCatalogLine,
   type SortDirection,
 } from '../components/rolesListModel';
 
@@ -25,19 +28,14 @@ const COLUMNS: ReadonlyArray<{ key: RoleSortKey; label: string }> = [
   { key: 'title', label: 'Role' },
   { key: 'applied', label: 'Applied' },
   { key: 'interviewed', label: 'Interviewed' },
-  { key: 'awaitingReview', label: 'Awaiting review' },
+  { key: 'awaitingReview', label: 'Interviews awaiting review' },
   { key: 'advanceRate', label: 'Advance rate' },
-  { key: 'medianInviteToCompleteHours', label: 'Invite→complete' },
+  { key: 'medianInviteToCompleteHours', label: 'Invite → completed (median)' },
   { key: 'lastActivityAt', label: 'Last activity' },
 ];
 
 function nextDirection(active: boolean, current: SortDirection): SortDirection {
   return active && current === 'asc' ? 'desc' : 'asc';
-}
-
-function statusBadge(status: string) {
-  const kind = status === 'approved' ? 'green' : status === 'draft' ? 'amber' : 'gray';
-  return <Badge kind={kind}>{status}</Badge>;
 }
 
 export function RolesList() {
@@ -49,6 +47,11 @@ export function RolesList() {
   const [direction, setDirection] = useState<SortDirection>('asc');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [forbidden, setForbidden] = useState(false);
+  // The dashboard's role KPIs link here with ?filter=no-candidates or
+  // ?filter=awaiting-review; the rows are narrowed by the same rule as the count.
+  const [params, setParams] = useSearchParams();
+  const metric = metricFilterFromParam(params.get('filter'));
 
   // Metrics are the list's source of truth: the endpoint already scopes roles
   // and candidate counts the same way the sidebar pages do.
@@ -57,17 +60,29 @@ export function RolesList() {
     api.get<RoleMetricsPayload>('/roles/metrics')
       .then((d) => { if (!cancelled) setRoles(d.roles ?? []); })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof ApiError || err instanceof Error ? err.message : 'Could not load roles.');
+        if (cancelled) return;
+        // An auditor may not read candidate counts; that is a permission, not a fault.
+        if (err instanceof ApiError && err.status === 403) setForbidden(true);
+        else setError(err instanceof Error ? err.message : 'Could not load roles.');
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, []);
 
   const domains = useMemo(() => domainsFromRoles(roles), [roles]);
+  const labelById = useMemo(() => {
+    const labels = roleDisplayLabels(roles);
+    return new Map(roles.map((role, index) => [role.id, labels[index]]));
+  }, [roles]);
   const visible = useMemo(
-    () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined }), sortKey, direction),
-    [roles, query, status, domain, sortKey, direction],
+    () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined, metric }), sortKey, direction),
+    [roles, query, status, domain, metric, sortKey, direction],
   );
+  const clearMetric = () => {
+    const next = new URLSearchParams(params);
+    next.delete('filter');
+    setParams(next);
+  };
 
   const setSort = (key: RoleSortKey) => {
     const active = key === sortKey;
@@ -76,6 +91,16 @@ export function RolesList() {
   };
 
   if (loading) return <PageSkeleton label="Loading roles…" />;
+  if (forbidden) {
+    return (
+      <div>
+        <PageHeader icon="role" title="Roles" />
+        <Banner kind="info">
+          The roles list shows candidate counts, which your role does not include. Ask an admin if you need access.
+        </Banner>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -86,6 +111,13 @@ export function RolesList() {
       />
 
       {error && <Banner kind="error">{error}</Banner>}
+
+      {metric && (
+        <p className="row small" style={{ gap: 8 }}>
+          <span>Showing: <strong>{METRIC_FILTER_LABELS[metric]}</strong></span>
+          <button type="button" className="btn ghost sm" onClick={clearMetric}><Icon name="close" size={14} />Show all roles</button>
+        </p>
+      )}
 
       <div className="card">
         <div className="row spread" style={{ marginBottom: 12 }}>
@@ -125,7 +157,7 @@ export function RolesList() {
             icon="search"
             title="No matches"
             message="No role matches the current filters."
-            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); setDomain(''); }}><Icon name="close" size={14} />Clear filters</button>}
+            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); setDomain(''); if (metric) clearMetric(); }}><Icon name="close" size={14} />Clear filters</button>}
           />
         ) : (
           <>
@@ -156,10 +188,10 @@ export function RolesList() {
                   {visible.map((role) => (
                     <tr key={role.id} data-testid="role-row">
                       <td>
-                        <Link to={`/roles/${role.id}`}>{role.title}</Link>
-                        <div className="muted small">{roleCatalogLine(role)}</div>
+                        <Link to={`/roles/${role.id}`}>{labelById.get(role.id) ?? role.title}</Link>
+                        <div className="muted small">{roleDetailLine(role)}</div>
                       </td>
-                      <td>{statusBadge(role.status)}</td>
+                      <td><StatusBadge kind="role" value={role.status} /></td>
                       <td>{role.applied}</td>
                       <td>{role.interviewInvited}</td>
                       <td>{role.interviewed}</td>

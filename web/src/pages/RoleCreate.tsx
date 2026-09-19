@@ -8,7 +8,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
-import { canCreateRoleFromCatalog, catalogLinkFields, parseTechStackInput } from '../components/catalogModel';
+import { catalogLinkFields, missingRoleFields, parseTechStackInput, shouldOfferCatalogAdd } from '../components/catalogModel';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
@@ -40,11 +40,18 @@ export function RoleCreate() {
   const [experienceBand, setExperienceBand] = useState('');
   const [regionCode, setRegionCode] = useState('');
   const [catalogRoleId, setCatalogRoleId] = useState('');
+  // A typed title only reaches the catalog every organisation shares if the
+  // person says so. Checked by default: most typed titles are real job titles.
+  const [addToCatalog, setAddToCatalog] = useState(true);
   const [techStack, setTechStack] = useState<readonly string[]>([]);
   const [techDraft, setTechDraft] = useState('');
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+  // Errors from the title field's own "add to catalog" action, cleared as soon as the title changes.
+  const [titleError, setTitleError] = useState('');
   const [warnings, setWarnings] = useState<{ term: string; suggestion: string }[]>([]);
   // Set once the role exists: the warnings are shown against it, and the way on
   // is a button rather than a timer.
@@ -53,14 +60,15 @@ export function RoleCreate() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([api.get<readonly Domain[]>('/catalog/domains'), api.get<readonly Region[]>('/catalog/regions'), api.get<readonly Band[]>('/catalog/experience-bands')])
-      .then(([d, r, b]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); } })
-      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load catalog fields.'); });
+      .then(([d, r, b]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); setCatalogError(''); } })
+      .catch((err: unknown) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Could not load catalog fields.'); });
     return () => { cancelled = true; };
-  }, []);
+  }, [catalogAttempt]);
 
   const selectedDomain = domains.find((d) => d.id === domainId);
   const sourceReady = source === 'ats' ? isAtsId(requisitionId.trim()) : Boolean(sourceText.trim());
-  const canSubmit = canCreateRoleFromCatalog({ catalogRoleId, title, source, sourceReady, domainId, experienceBand, regionCode });
+  const missing = missingRoleFields({ source, sourceReady, domainId, experienceBand, regionCode });
+  const canSubmit = missing.length === 0;
 
   // The sample loads only into an empty form, and fills the title as well as
   // the description: loading one without the other produced a role named for
@@ -73,12 +81,22 @@ export function RoleCreate() {
     setSourceText(draft.sourceText);
   };
 
+  const offerCatalogAdd = shouldOfferCatalogAdd({ title, catalogRoleId });
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Once the role exists the form is spent: a second press made a second role.
+    if (createdRoleId || submitting) return;
     setError('');
     setSubmitting(true);
     try {
-      const catalogFields = { ...catalogLinkFields({ catalogRoleId, domainId }), experienceBand: experienceBand || undefined, regionCode: regionCode || undefined, techStack: [...techStack] };
+      const catalogFields = {
+        ...catalogLinkFields({ catalogRoleId, domainId }),
+        experienceBand: experienceBand || undefined,
+        regionCode: regionCode || undefined,
+        techStack: [...techStack],
+        addToCatalog: offerCatalogAdd ? addToCatalog : false,
+      };
       const resp = await api.post<CreateResp>('/roles', source === 'ats'
         ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title.trim() || undefined, useLlm, ...catalogFields }
         : { sourceType: 'paste', sourceText, title: title.trim() || undefined, useLlm, ...catalogFields });
@@ -103,9 +121,17 @@ export function RoleCreate() {
 
   return (
     <div>
-      <PageHeader icon="job-description" title="New Role" subtitle="Paste a job description, or import a requisition from your ATS, and Questor drafts a scorecard for you to review." />
+      <PageHeader icon="job-description" title="New role" subtitle="Paste a job description, or import a requisition from your ATS, and Questor drafts a scorecard for you to review." />
 
       {error && <Banner kind="error">{error}</Banner>}
+      {catalogError && (
+        <Banner kind="error">
+          The domain, experience and region lists did not load, so a role cannot be created yet. {catalogError}{' '}
+          <button type="button" className="btn secondary sm" onClick={() => setCatalogAttempt((n) => n + 1)}>
+            <Icon name="refresh" size={14} />Try again
+          </button>
+        </Banner>
+      )}
       {notice && <Banner kind="info">{notice}</Banner>}
       {warnings.length > 0 && (
         <Banner kind="info">
@@ -125,38 +151,42 @@ export function RoleCreate() {
         </Banner>
       )}
 
-      <form className="card" onSubmit={submit}>
+      {createdRoleId && (
+        <p className="muted small">The role has been created. Open it from the button above to review its scorecard.</p>
+      )}
+
+      <form className="card" onSubmit={submit} hidden={createdRoleId !== null}>
         <fieldset className="row" style={{ border: 0, padding: 0, gap: 16 }}>
           <legend className="small muted">Start from</legend>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="role-source" style={{ width: 'auto' }} checked={source === 'paste'} onChange={() => { setSource('paste'); setError(''); }} />
+          <label className="check-row">
+            <input type="radio" name="role-source" checked={source === 'paste'} onChange={() => { setSource('paste'); setError(''); }} />
             A job description
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="role-source" style={{ width: 'auto' }} checked={source === 'ats'} onChange={() => { setSource('ats'); setError(''); }} />
+          <label className="check-row">
+            <input type="radio" name="role-source" checked={source === 'ats'} onChange={() => { setSource('ats'); setError(''); }} />
             A requisition in your ATS
           </label>
         </fieldset>
 
         <label htmlFor={`${fieldId}-domain`}>Domain</label>
-        <select id={`${fieldId}-domain`} value={domainId} onChange={(e) => { setDomainId(e.target.value); setCatalogRoleId(''); }}>
+        <select id={`${fieldId}-domain`} required value={domainId} onChange={(e) => { setDomainId(e.target.value); setCatalogRoleId(''); }}>
           <option value="">Choose a domain</option>
           {domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
 
         <label htmlFor={`${fieldId}-experience`}>Experience</label>
-        <select id={`${fieldId}-experience`} value={experienceBand} onChange={(e) => setExperienceBand(e.target.value)}>
+        <select id={`${fieldId}-experience`} required value={experienceBand} onChange={(e) => setExperienceBand(e.target.value)}>
           <option value="">Choose an experience band</option>
           {bands.map((b) => <option key={b.id} value={b.id}>{b.display}</option>)}
         </select>
 
         <label htmlFor={`${fieldId}-region`}>Region</label>
-        <select id={`${fieldId}-region`} value={regionCode} onChange={(e) => setRegionCode(e.target.value)}>
+        <select id={`${fieldId}-region`} required value={regionCode} onChange={(e) => setRegionCode(e.target.value)}>
           <option value="">Choose a region</option>
           {regions.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
         </select>
 
-        <label htmlFor={`${fieldId}-title`}>Role title (choose from catalog or add a new shared title)</label>
+        <label htmlFor={`${fieldId}-title`}>Role title (optional)</label>
         <RoleTitleCombobox
           inputId={`${fieldId}-title`}
           domainId={domainId}
@@ -164,21 +194,27 @@ export function RoleCreate() {
           value={title}
           techStack={techStack}
           disabled={!domainId}
-          onTitleChange={(value) => { setTitle(value); setCatalogRoleId(''); }}
-          onSelect={(role: CatalogRoleOption) => { setCatalogRoleId(role.id); setTitle(role.title); }}
-          onNotice={setNotice}
+          onTitleChange={(value) => { setTitle(value); setCatalogRoleId(''); setTitleError(''); }}
+          onSelect={(role: CatalogRoleOption) => { setCatalogRoleId(role.id); setTitle(role.title); setTitleError(''); }}
+          onNotice={(message) => { setTitleError(''); setNotice(message); }}
+          onError={(message) => { setNotice(''); setTitleError(message); }}
         />
-        <div className="muted small">Required for the new catalog path. Paste JD can still infer a title only when you do not select a catalog role.</div>
+        {titleError && <p className="field-hint field-problem" role="alert">{titleError}</p>}
+        <div className="muted small">Choose a catalog title, or type your own. Left blank, the title is taken from the {source === 'ats' ? 'requisition' : 'job description'}.</div>
 
         <label htmlFor={`${fieldId}-tech`}>Tech stack (optional)</label>
         <div className="row" style={{ gap: 8 }}>
           <input id={`${fieldId}-tech`} value={techDraft} onChange={(e) => setTechDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); } }} placeholder="Type and press Enter" />
           <button type="button" className="btn secondary" onClick={() => { setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); }}>Add</button>
         </div>
-        <div>{techStack.map((t) => <button key={t} type="button" className="chip" onClick={() => setTechStack(techStack.filter((x) => x !== t))}>{t} ?</button>)}</div>
+        <div>{techStack.map((t) => <button key={t} type="button" className="chip" aria-label={`Remove ${t}`} onClick={() => setTechStack(techStack.filter((x) => x !== t))}>{t} <span aria-hidden="true">×</span></button>)}</div>
 
-        <label htmlFor={`${fieldId}-legacy-title`} style={{ display: 'none' }}>Role title (optional — inferred from the {source === 'ats' ? 'requisition' : 'JD'} if left blank)</label>
-        <input id={`${fieldId}-legacy-title`} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Senior Data Engineer" style={{ display: 'none' }} />
+        {offerCatalogAdd && (
+          <label className="check-row" style={{ marginTop: 8 }}>
+            <input type="checkbox" checked={addToCatalog} onChange={(e) => setAddToCatalog(e.target.checked)} />
+            Add this title to the shared role catalog (visible to all organisations)
+          </label>
+        )}
 
         {source === 'ats' ? (
           <>
@@ -208,12 +244,11 @@ export function RoleCreate() {
           </>
         )}
 
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+        <label className="check-row" style={{ marginTop: 12 }}>
           <input
             type="checkbox"
             checked={useLlm}
             onChange={(e) => setUseLlm(e.target.checked)}
-            style={{ width: 'auto' }}
           />
           Use AI extraction (falls back to built-in extractor)
         </label>
@@ -236,6 +271,9 @@ export function RoleCreate() {
               <Icon name="job" size={16} />
               Load sample JD
             </button>
+          )}
+          {!canSubmit && !submitting && (
+            <span className="muted small" role="status">Still needed: {missing.join(', ')}.</span>
           )}
           {import.meta.env.DEV && source === 'paste' && !sampleAllowed && (
             <span id="sample-jd-hint" className="muted small">

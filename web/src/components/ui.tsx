@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { StatusBadge } from './StatusBadge';
+import { isTextStatValue } from './scoreFormat';
 
 export function Badge({ children, kind }: { children: ReactNode; kind?: 'green' | 'amber' | 'red' | 'blue' | 'gray' }) {
   return <span className={`badge ${kind ?? 'gray'}`}>{children}</span>;
@@ -52,7 +53,7 @@ export function Meter({ value }: { value: number }) {
 }
 
 export function Stat({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="stat"><div className="value">{value}</div><div className="label">{label}</div></div>;
+  return <div className="stat"><div className={isTextStatValue(value) ? 'value value-text' : 'value'}>{value}</div><div className="label">{label}</div></div>;
 }
 
 // Minimal, safe markdown renderer (headings, bold, tables, blockquotes, lists).
@@ -76,8 +77,9 @@ function renderMarkdown(md: string): string {
       i += 2;
       const rows: string[][] = [];
       while (i < lines.length && /^\|/.test(lines[i])) { rows.push(lines[i].split('|').slice(1, -1).map((c) => c.trim())); i++; }
-      out.push('<table><thead><tr>' + header.map((h) => `<th>${inline(h)}</th>`).join('') + '</tr></thead><tbody>' +
-        rows.map((r) => '<tr>' + r.map((c) => `<td>${inline(c)}</td>`).join('') + '</tr>').join('') + '</tbody></table>');
+      // Scrolls inside its own region rather than pushing the page sideways.
+      out.push('<div class="table-scroll" tabindex="0" role="region" aria-label="Report table"><table><thead><tr>' + header.map((h) => `<th>${inline(h)}</th>`).join('') + '</tr></thead><tbody>' +
+        rows.map((r) => '<tr>' + r.map((c) => `<td>${inline(c)}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>');
       continue;
     }
     if (/^### /.test(line)) out.push(`<h3>${inline(line.slice(4))}</h3>`);
