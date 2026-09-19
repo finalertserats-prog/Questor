@@ -11,6 +11,7 @@ import { Icon } from '../components/Icon';
 import { BrandLogo } from '../components/BrandLogo';
 import { interviewerName } from '../components/candidateJourney';
 import { shouldCaptureAudio } from '../components/portalConsentModel';
+import { roomOpening, type StartResponse } from '../components/roomResumeModel';
 import {
   FEEDBACK_EXPLANATION, FEEDBACK_NO_LABEL, FEEDBACK_QUESTION, FEEDBACK_YES_LABEL, answerConfirmation,
 } from '../components/feedbackOptInCopy';
@@ -105,6 +106,10 @@ export function InterviewRoom() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [currentAgent, setCurrentAgent] = useState('');
   const [currentTurnId, setCurrentTurnId] = useState('');
+  // "Welcome back." after a rejoin: shown in the caption before the pending
+  // question, never spoken — the spoken text must stay the stored turn, which
+  // is what server speech synthesises from.
+  const [captionPrefix, setCaptionPrefix] = useState('');
   const [interim, setInterim] = useState('');
   const [typed, setTyped] = useState('');
   const [textMode, setTextMode] = useState(false);
@@ -467,9 +472,10 @@ export function InterviewRoom() {
     rec.stop();
   };
 
-  function sayAndListen(turn: AgentTurn) {
+  function sayAndListen(turn: AgentTurn, prefix = '') {
     setCurrentAgent(turn.text);
     setCurrentTurnId(turn.turnId);
+    setCaptionPrefix(prefix);
     setPhase('speaking');
     void speakTurn({
       token, turnId: turn.turnId, text: turn.text,
@@ -509,9 +515,22 @@ export function InterviewRoom() {
       setMicOpen(meterRef.current !== null);
     }
     try {
-      const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/start`, {});
-      addMsg({ speaker: 'agent', text: res.turn.text });
-      sayAndListen(res.turn);
+      const res = await api.post<StartResponse>(`/portal/${token}/start`, {});
+      // A rejoin mid-interview resumes rather than replaying the opening: the
+      // conversation so far is restored and only the pending question is said.
+      const opening = roomOpening(res);
+      // Set back so answers given now are stamped after everything on record.
+      // The timer shows the same offset, which is the honest elapsed time.
+      startTimeRef.current = Date.now() - opening.clockOffsetMs;
+      setMsgs(opening.messages);
+      if (opening.mode === 'listen') {
+        setCurrentAgent(opening.turn.text);
+        setCurrentTurnId(opening.turn.turnId);
+        setCaptionPrefix(opening.captionPrefix);
+        void beginListening();
+      } else {
+        sayAndListen(opening.turn, opening.captionPrefix);
+      }
     } catch (e: unknown) { setErr(errorMessage(e)); setPhase('ready'); }
   };
 
@@ -585,7 +604,7 @@ export function InterviewRoom() {
         <div className="captions">
           {listening && interim
             ? <p><span className="cap-who">You</span>{interim}</p>
-            : <p><span className="cap-who">{interviewer}</span>{currentAgent}</p>}
+            : <p><span className="cap-who">{interviewer}</span>{captionPrefix && `${captionPrefix} `}{currentAgent}</p>}
         </div>
       )}
 

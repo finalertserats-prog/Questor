@@ -16,7 +16,7 @@ import {
   audioBytesMatchMimeType,
 } from '../providers/speech.js';
 import { logger } from '../logger.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from '../realtime/interviewEngine.js';
+import { startOrResumeInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from '../realtime/interviewEngine.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
@@ -379,8 +379,10 @@ portalRouter.post('/:token/techcheck', asyncHandler(async (req, res) => {
 // completable over plain HTTP.
 portalRouter.post('/:token/start', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
-  const turn = await startInterview(inv.sessionId);
-  res.json({ turn });
+  // A live session resumes: the pending question plus the conversation so far,
+  // so a reload or a return through the link does not replay the opening.
+  const { turn, resumed, history, awaitingReply, elapsedMs } = await startOrResumeInterview(inv.sessionId);
+  res.json({ turn, resumed, history, awaitingReply, elapsedMs });
 }));
 portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });

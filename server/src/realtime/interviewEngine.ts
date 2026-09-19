@@ -250,27 +250,86 @@ export async function withdrawInterview(sessionId: string, reason: 'candidate_wi
   logger.info({ sessionId, reason }, 'Interview ended at candidate request — not assessed');
 }
 
+/** One line of the conversation as the candidate may see it: who spoke, and what. */
+export interface TranscriptLine {
+  speaker: 'agent' | 'candidate';
+  text: string;
+}
+
+/** What a start hands the room: the turn to put to the candidate, and the context around it. */
+export interface StartOutcome {
+  turn: AgentTurnOut;
+  /** True when the session was already live and nothing new was written. */
+  resumed: boolean;
+  /**
+   * The conversation on record, oldest first, ending with `turn` — or, when
+   * `awaitingReply`, with the candidate's unanswered answer. Speaker and text
+   * only: scores, flags, competencies and timings are for reviewers.
+   */
+  history: TranscriptLine[];
+  /** The last thing on record is the candidate's answer, and no reply to it exists. */
+  awaitingReply: boolean;
+  /**
+   * How far into the interview this is, in the same clock as turn startMs/endMs.
+   * The room offsets its own clock by this so answers given after a rejoin are
+   * stamped after everything already on record, not from zero again.
+   */
+  elapsedMs: number;
+}
+
+/** Agent turn kinds after which the conversation is over (see produceAgentTurn). */
+const ENDING_KINDS = ['signoff', 'safety', 'withdrawn'];
+const WITHDRAWN_KINDS = ['withdrawn', 'safety'];
+
+function toTranscript(turns: { speaker: string; text: string }[]): TranscriptLine[] {
+  return turns
+    .filter((t): t is TranscriptLine => t.speaker === 'agent' || t.speaker === 'candidate')
+    .map((t) => ({ speaker: t.speaker, text: t.text }));
+}
+
 /**
- * The opening agent turn already on the record, replayed without writing.
+ * Where a live interview stands, read without writing anything.
+ *
+ * The turn handed back is the latest agent turn: the question the candidate
+ * still owes an answer to. When the last row is the candidate's own answer —
+ * stored, but the reply never was (the model failed, or they reloaded while it
+ * was thinking) — the reply is NOT generated here. Doing so would make start a
+ * paid LLM call, and it would race the original request if that is still in
+ * flight, putting two replies to one answer on the record. Instead the
+ * question that answer was for is handed back with `awaitingReply`, and the
+ * room invites the candidate to carry on: whatever they send next is appended
+ * and the reply is produced from the whole transcript, their stored answer
+ * included, by the normal answer path.
  *
  * Returns null when a live session somehow has no agent turn yet, so the caller
  * falls through and produces one rather than handing back nothing.
  */
-async function existingOpeningTurn(sessionId: string, state: string): Promise<AgentTurnOut | null> {
-  const first = await prisma.turn.findFirst({
-    where: { sessionId, speaker: 'agent' },
-    orderBy: { index: 'asc' },
-  });
-  if (!first) return null;
-  const kind = parseJsonOptional<{ kind?: unknown }>(first.metaJson, {}, { model: 'Turn', id: first.id, field: 'metaJson' }).kind;
+async function resumeLiveInterview(sessionId: string, state: string, startedAt: Date | null): Promise<StartOutcome | null> {
+  const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' } });
+  const pending = [...turns].reverse().find((t) => t.speaker === 'agent');
+  if (!pending) return null;
+  const kindValue = parseJsonOptional<{ kind?: unknown }>(pending.metaJson, {}, { model: 'Turn', id: pending.id, field: 'metaJson' }).kind;
+  const kind = typeof kindValue === 'string' ? kindValue : 'question';
+  const last = turns[turns.length - 1];
+  const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
+  // Wall-clock time since the start where the server knows it, but never less
+  // than the latest stamp on record: agent turns are stamped on a virtual clock
+  // that can run ahead of real time, and a stamp that went backwards would put
+  // a later answer before an earlier one in the reviewer's transcript.
+  const wallClock = startedAt ? Math.max(0, Date.now() - startedAt.getTime()) : 0;
   return {
-    turnId: first.id, index: first.index, text: first.text, competencyId: first.competencyId,
-    kind: typeof kind === 'string' ? kind : 'question',
-    state,
-    // An opening is by definition not the end of the interview, so replaying it
-    // must never tell the caller the session is over.
-    done: false,
-    withdrawn: false,
+    turn: {
+      turnId: pending.id, index: pending.index, text: pending.text, competencyId: pending.competencyId,
+      kind, state,
+      // Mirrors produceAgentTurn, so a rejoin after the sign-off ends the room
+      // exactly as the sign-off itself would have.
+      done: ENDING_KINDS.includes(kind),
+      withdrawn: WITHDRAWN_KINDS.includes(kind),
+    },
+    resumed: true,
+    history: toTranscript(turns),
+    awaitingReply: last?.speaker === 'candidate',
+    elapsedMs: Math.max(wallClock, lastEnd),
   };
 }
 
@@ -292,6 +351,17 @@ function hasRecordedConsent(session: { id: string; consentJson: string }): boole
 
 /** Begin the assessed conversation: move to ASSESSING and emit the opening. */
 export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
+  return (await startOrResumeInterview(sessionId)).turn;
+}
+
+/**
+ * Start the interview, or resume it when it is already live.
+ *
+ * The room calls start on every entry — first join, reload, reconnect, return
+ * through the invitation link — so a live session is the common case, not an
+ * edge one. See resumeLiveInterview for what a resume hands back.
+ */
+export async function startOrResumeInterview(sessionId: string): Promise<StartOutcome> {
   const { session } = await loadContext(sessionId);
   // Starting an interview that is already live is a repeat, not a new start.
   // A refresh, a double-tap, or a socket reconnect racing the portal fallback
@@ -299,11 +369,11 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   // 'interview.started' event, and a transcript whose canonical order contains
   // two greetings — the interviewer introducing itself again mid-interview.
   if (LIVE_STATES.includes(session.state)) {
-    const opening = await existingOpeningTurn(sessionId, session.state);
-    if (opening) {
+    const resumed = await resumeLiveInterview(sessionId, session.state, session.startedAt);
+    if (resumed) {
       // A candidate coming back mid-interview is live work for the drain.
       noteSessionActivity(sessionId);
-      return opening;
+      return resumed;
     }
   }
   // Pre-live states (invite/accept/consent/ready-check) are governed by the
@@ -343,7 +413,9 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
   await logAudit({ tenantId: session.tenantId, action: 'interview.started', entityType: 'InterviewSession', entityId: sessionId });
   await emitEvent(session.tenantId, 'interview.started', { sessionId });
-  return produceAgentTurn(sessionId);
+  const turn = await produceAgentTurn(sessionId);
+  const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' }, select: { speaker: true, text: true } });
+  return { turn, resumed: false, history: toTranscript(turns), awaitingReply: false, elapsedMs: 0 };
 }
 
 /** Ingest a candidate turn and return the next agent turn. */

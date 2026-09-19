@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
 import { sttSupported, ttsSupported, speak } from '../speech';
 import { Icon } from '../components/Icon';
 import { BrandLogo } from '../components/BrandLogo';
 import { Skeleton } from '../components/Skeleton';
 import { accommodationHint, canSubmitConsent, consentAction } from '../components/portalConsentModel';
+import { entryFromRefusal, portalEntry, type PortalEntry } from '../components/portalEntryModel';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -88,12 +89,37 @@ export function Portal() {
   const [mic, setMic] = useState(false);
   const [speaker, setSpeaker] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Set when a button press tells us the interview has moved on since this page
+  // loaded; it overrides the state the page was opened with.
+  const [refusedEntry, setRefusedEntry] = useState<PortalEntry | null>(null);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`).then(setInfo).catch((e) => setErr(e.message));
   }, [token]);
 
   const action = consentAction({ accepted, accommodation });
+
+  /**
+   * A refused consent or audio check usually means this page is stale: the
+   * interview started or finished in another tab or on another device. Show
+   * the screen for where the interview actually is, not a red error about a
+   * form that no longer applies.
+   */
+  const handleRefusal = async (e: unknown, fallback: string) => {
+    const status = e instanceof ApiError ? e.status : undefined;
+    const message = e instanceof Error ? e.message : fallback;
+    const entry = entryFromRefusal(status, message);
+    if (entry) { setRefusedEntry(entry); return; }
+    if (status === 409) {
+      try {
+        const fresh = await api.get<PortalInfo>(`/portal/${token}`);
+        if (portalEntry(fresh.state).kind !== 'journey') { setInfo(fresh); return; }
+      } catch {
+        // The re-read is a courtesy; the original refusal is still the answer.
+      }
+    }
+    setErr(message);
+  };
 
   const submitConsent = async () => {
     if (!canSubmitConsent({ accepted, accommodation, busy })) return;
@@ -107,7 +133,7 @@ export function Portal() {
       if (res.handoff) { setHandoff(res.message || 'Your request has been recorded.'); return; }
       setStep('techcheck');
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'We could not record your answer. Please try again.');
+      await handleRefusal(e, 'We could not record your answer. Please try again.');
     } finally { setBusy(false); }
   };
 
@@ -130,7 +156,7 @@ export function Portal() {
       await api.post(`/portal/${token}/techcheck`, { mic, speaker });
       nav(`/room/${token}`);
     } catch (e: unknown) {
-      setErr(e instanceof Error ? e.message : 'We could not start your interview. Please try again.');
+      await handleRefusal(e, 'We could not start your interview. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -147,6 +173,26 @@ export function Portal() {
     );
   }
   if (handoff) return <div className="center-screen"><div className="card auth-card"><Banner kind="ok">{handoff}</Banner></div></div>;
+
+  const entry = refusedEntry ?? portalEntry(info.state);
+  if (entry.kind !== 'journey') {
+    return (
+      <div className="center-screen">
+        <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
+          <BrandLogo variant="lockup" size={26} className="candidate-logo" />
+          <h1 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h1>
+          <p className="muted small">Hello {info.candidateName}.</p>
+          <h3>{entry.title}</h3>
+          <Banner kind={entry.kind === 'closed' ? 'info' : 'ok'}>{entry.message}</Banner>
+          {entry.kind === 'rejoin' && (
+            <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={() => nav(`/room/${token}`)}>
+              {entry.action}<Icon name="arrow-right" size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="center-screen">

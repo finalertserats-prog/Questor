@@ -49,6 +49,13 @@ test('portal consent without voice capture starts typed mode and never asks for 
   );
   expect(micRequests).toBe(0);
 
+  // What the interviewer is saying, without the name label in front of it.
+  const captionLine = () => portalPage.locator('.captions p').evaluate((p) => Array.from(p.childNodes)
+    .filter((n) => !(n instanceof HTMLElement && n.classList.contains('cap-who')))
+    .map((n) => n.textContent ?? '').join('').trim());
+  await expect.poll(captionLine).not.toBe('');
+  const openingLine = await captionLine();
+
   // A typed answer must reach the server and bring the next question. Every
   // typed answer once failed with "Invalid request" and this test never sent one.
   const answer = portalPage.getByPlaceholder(/Type your answer/);
@@ -57,5 +64,23 @@ test('portal consent without voice capture starts typed mode and never asks for 
   await expect(portalPage.getByText(/your answer was not sent/)).toHaveCount(0);
   await expect(answer).toBeVisible({ timeout: 20_000 });
   await expect(answer).toHaveValue('');
+  await expect.poll(captionLine).not.toBe(openingLine);
+  const nextQuestion = await captionLine();
+
+  // A reload mid-interview resumes: the question still owed, not the opening
+  // disclosure read out again.
+  await portalPage.reload();
+  await portalPage.getByRole('button', { name: 'Join interview' }).click();
+  await expect.poll(captionLine, { timeout: 20_000 }).toBe(`Welcome back. ${nextQuestion}`);
+  await expect(portalPage.getByPlaceholder(/Type your answer/)).toBeVisible();
+
+  // The invitation link, reopened mid-interview, offers the way back in rather
+  // than the consent form the server would refuse.
+  await portalPage.goto(portalUrl);
+  await expect(portalPage.getByText('Your interview is in progress')).toBeVisible();
+  await expect(portalPage.getByLabel(/I understand this first round/)).toHaveCount(0);
+  await portalPage.getByRole('button', { name: 'Rejoin interview' }).click();
+  await expect(portalPage).toHaveURL(/\/room\//);
+  await expect(portalPage.getByRole('button', { name: 'Join interview' })).toBeVisible();
   await context.close();
 });
