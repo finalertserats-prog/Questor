@@ -7,6 +7,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { statesInGroup } from '../components/dashboardModel';
+import { humanise } from '../components/statusModel';
 import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
 
 interface Session {
@@ -64,7 +65,7 @@ export function InterviewsList() {
       <PageHeader
         icon="interviews"
         title={groupLabel ? `Interviews — ${groupLabel}` : 'Interviews'}
-        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add Candidate</Link>}
+        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
       />
 
       {error && <Banner kind="error">{error}</Banner>}
@@ -114,7 +115,7 @@ export function InterviewsList() {
                     <td>{s.candidate?.name}</td>
                     <td>{s.role ? roleLabelById.get(s.role.id) ?? s.role.title : null}</td>
                     <td>{stateBadge(s.state)}</td>
-                    <td className="muted">{s.provider}</td>
+                    <td className="muted">{humanise(s.provider)}</td>
                     <td>{recBadge(s.recommendation)}</td>
                     <td>
                       {s.assessmentId

@@ -68,7 +68,7 @@ const PATHS = {
   'add-candidate': <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20v-.5a6.5 6.5 0 0 1 13 0v.5z" /><path d="M19 8v6" /><path d="M16 11h6" /></>,
   admin: <><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></>,
   about: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></>,
-  contact: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 7l9 6 9-6" /></>,
+  contact: <><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-5 4V6a1 1 0 0 1 1-1z" /><path d="M8 10h8M8 13h5" /></>,
   'sign-out': <><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" /></>,
   onboard: <><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20v-.5a6.5 6.5 0 0 1 13 0v.5z" /><path d="M16 11l2 2 4-4" /></>,
   audit: <><path d="M8 4h11v16H5V7z" /><path d="M8 4v3H5" /><path d="M9 11h6" /><path d="M9 15h4" /></>,

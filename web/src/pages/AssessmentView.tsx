@@ -6,11 +6,11 @@ import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { CandidateFeedbackPanel } from '../components/CandidateFeedbackPanel';
 import { EmptyState } from '../components/EmptyState';
-import { PageSkeleton, Skeleton } from '../components/Skeleton';
+import { PageSkeleton } from '../components/Skeleton';
 import {
   DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored, type Disposition,
 } from '../components/assessmentModel';
-import { recommendationStatus } from '../components/statusModel';
+import { humanise, recommendationStatus } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
 import { useAuth } from '../auth';
 import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
@@ -370,7 +370,7 @@ export function AssessmentView() {
       {showReport && (
         <div className="card">
           <h2 className="card-title"><Icon name="reports" />Full report</h2>
-          {reportLoading ? <Skeleton lines={6} label="Loading report…" /> : <Markdown text={report} />}
+          <Markdown text={report} />
         </div>
       )}
 
@@ -471,7 +471,7 @@ export function AssessmentView() {
                   <tr key={r.id}>
                     <td>{recBadge(r.disposition)}</td>
                     <td className="muted small">{r.reason}</td>
-                    <td>{r.status}</td>
+                    <td>{humanise(r.status)}</td>
                     <td className="muted small">{r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}</td>
                   </tr>
                 ))}

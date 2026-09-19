@@ -62,7 +62,7 @@ export function TalkToAPerson() {
 
         {phase === 'open' && (
           <>
-            <h2>Would you like to speak to someone?</h2>
+            <h1>Would you like to speak to someone?</h1>
             <p className="muted">
               If you would rather talk your feedback through with a person than read it, press the button
               below and we will pass that on to the hiring team. Nobody will contact you unless you do.
@@ -78,7 +78,7 @@ export function TalkToAPerson() {
             should read as reassurance rather than as an error. */}
         {phase === 'recorded' && (
           <>
-            <h2>Thank you — that's been passed on.</h2>
+            <h1>Thank you — that's been passed on.</h1>
             <p className="muted">
               Someone from the hiring team will be in touch. You do not need to do anything else, and it is
               fine if you pressed this more than once.
@@ -88,7 +88,7 @@ export function TalkToAPerson() {
 
         {phase === 'expired' && (
           <>
-            <h2>This link has expired.</h2>
+            <h1>This link has expired.</h1>
             <p className="muted">
               Links in feedback emails work for 30 days. You can still reach us by replying to the email your
               feedback came in — we would be glad to hear from you.
@@ -98,7 +98,7 @@ export function TalkToAPerson() {
 
         {phase === 'unknown' && (
           <>
-            <h2>This link doesn't work.</h2>
+            <h1>This link doesn't work.</h1>
             <p className="muted">
               It may have been copied incompletely. Try opening it straight from your email, or simply reply
               to that email instead.
@@ -108,7 +108,7 @@ export function TalkToAPerson() {
 
         {phase === 'failed' && (
           <>
-            <h2>Something went wrong at our end.</h2>
+            <h1>Something went wrong at our end.</h1>
             <p className="muted">
               Please try again in a moment. If it keeps happening, replying to your feedback email will reach
               the same people.

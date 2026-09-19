@@ -58,7 +58,7 @@ export function FeedbackConsent() {
 
         {phase === 'open' && (
           <>
-            <h2>{FEEDBACK_QUESTION}</h2>
+            <h1>{FEEDBACK_QUESTION}</h1>
             <p className="muted">{FEEDBACK_EXPLANATION}</p>
             <div className="row">
               <button type="button" className="btn" disabled={submitting} onClick={() => void answer(true)}>
@@ -73,21 +73,21 @@ export function FeedbackConsent() {
 
         {phase === 'recorded' && (
           <>
-            <h2>Thank you.</h2>
+            <h1>Thank you.</h1>
             <p className="muted">{answerConfirmation(choice)}</p>
           </>
         )}
 
         {phase === 'answered' && (
           <>
-            <h2>You have already answered.</h2>
+            <h1>You have already answered.</h1>
             <p className="muted">{ALREADY_ANSWERED}</p>
           </>
         )}
 
         {phase === 'expired' && (
           <>
-            <h2>This link has expired.</h2>
+            <h1>This link has expired.</h1>
             <p className="muted">
               These links work for 30 days. We will not send you feedback without your yes. If you would still
               like some, reply to the email this link came in.
@@ -97,7 +97,7 @@ export function FeedbackConsent() {
 
         {phase === 'unknown' && (
           <>
-            <h2>This link doesn't work.</h2>
+            <h1>This link doesn't work.</h1>
             <p className="muted">
               It may have been copied incompletely, or a newer email replaced it. Try the link in the most
               recent email from us, or reply to that email instead.
@@ -107,7 +107,7 @@ export function FeedbackConsent() {
 
         {phase === 'failed' && (
           <>
-            <h2>Something went wrong at our end.</h2>
+            <h1>Something went wrong at our end.</h1>
             <p className="muted">
               Your answer was not saved. Please try again in a moment, or reply to the email this link came in.
             </p>

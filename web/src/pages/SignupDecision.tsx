@@ -77,7 +77,7 @@ export function SignupDecision() {
 
         {phase === 'open' && applicant && (
           <>
-            <h2>Someone is asking for an account</h2>
+            <h1>Someone is asking for an account</h1>
             <dl className="signup-facts">
               <div>
                 <dt>Name</dt>
@@ -132,21 +132,21 @@ export function SignupDecision() {
 
         {phase === 'approved' && (
           <>
-            <h2>Approved</h2>
+            <h1>Approved</h1>
             <p className="muted">{who}'s request has been approved. There is nothing else to do here.</p>
           </>
         )}
 
         {phase === 'declined' && (
           <>
-            <h2>Declined</h2>
+            <h1>Declined</h1>
             <p className="muted">{who}'s request has been declined. Nothing has been created.</p>
           </>
         )}
 
         {phase === 'decided' && (
           <>
-            <h2>This one has already been decided</h2>
+            <h1>This one has already been decided</h1>
             <p className="muted">
               It has been approved or declined already — possibly by you, in another tab or on another
               device. Nothing further is needed.
@@ -156,7 +156,7 @@ export function SignupDecision() {
 
         {phase === 'expired' && (
           <>
-            <h2>This link has expired</h2>
+            <h1>This link has expired</h1>
             <p className="muted">
               Approval links stop working after a while, so an old message cannot open an account.
               Opening an expired link also closes the request, so it is no longer waiting for a
@@ -168,7 +168,7 @@ export function SignupDecision() {
 
         {phase === 'invalid' && (
           <>
-            <h2>This link doesn't work</h2>
+            <h1>This link doesn't work</h1>
             <p className="muted">
               It may have been copied incompletely. Try opening it straight from the email, or decide the
               request under Account requests when you sign in.
@@ -178,7 +178,7 @@ export function SignupDecision() {
 
         {phase === 'failed' && (
           <>
-            <h2>Something went wrong at our end</h2>
+            <h1>Something went wrong at our end</h1>
             <p className="muted">
               Nothing has been recorded. Please try again in a moment — the request is still waiting.
             </p>

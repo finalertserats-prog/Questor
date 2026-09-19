@@ -8,6 +8,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { isInFlight } from './CandidatesList';
 import { formatDateTime } from '../components/dateFormat';
+import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
@@ -173,10 +174,10 @@ export function InterviewDetail() {
 
       <div className="card">
         <div className="grid cols-4">
-          <div><div className="muted small">Provider</div><b>{session.provider}</b></div>
+          <div><div className="muted small">Provider</div><b>{humanise(session.provider)}</b></div>
           <div><div className="muted small">Duration</div><b>{session.durationMinutes} min</b></div>
           <div><div className="muted small">Language</div><b>{session.language}</b></div>
-          <div><div className="muted small">Persona</div><b>{session.persona?.name} ({session.persona?.tone})</b></div>
+          <div><div className="muted small">Persona</div><b>{session.persona?.name}{session.persona?.tone ? ` (${session.persona.tone.toLowerCase()} tone)` : ''}</b></div>
         </div>
         {session.scheduledAt && (
           <div className="muted small" style={{ marginTop: 10 }}>

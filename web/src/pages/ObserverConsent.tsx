@@ -62,6 +62,7 @@ export function ObserverConsent() {
 
   return (
     <div className="center-screen">
+      <h1 className="visually-hidden">Interview observer consent</h1>
       {error && <Banner kind="error">{error}</Banner>}
       {!view && !error && <p className="muted">One moment…</p>}
       {view && (

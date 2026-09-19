@@ -153,7 +153,7 @@ export function Portal() {
       <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
         {/* Candidate-facing: the lockup is kept small; the interview is the subject. */}
         <BrandLogo variant="lockup" size={26} className="candidate-logo" />
-        <h2 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h2>
+        <h1 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h1>
         <p className="muted small">Hello {info.candidateName}. This is an AI-conducted voice interview, about {info.durationMinutes} minutes.</p>
         {err && <Banner kind="error">{err}</Banner>}
 

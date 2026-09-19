@@ -101,7 +101,6 @@
   /* --- charts: series colour is named once, here -----------------------
      a and b are the two halves of one comparison, c is the single emphasis
      series the colour budget allows, muted is "everything else / zero". */
-  --chart-track: #eeedf3;
   /* The ground under the ruled fill: tinted enough to hold the bar's shape,
      light enough that the rules on top stay the loudest thing in it. */
   --chart-ruled-ground: #f3f2fc;
@@ -235,7 +234,6 @@
   --shadow-pop: 0 18px 44px -24px rgba(0, 0, 0, 0.88);
   --scrim: rgba(0, 0, 0, 0.6);
 
-  --chart-track: #101016;
   --chart-ruled-ground: #232140;
   --chart-grid: #343442;
   --chart-a: #7d76d4;
@@ -476,20 +474,6 @@ code {
   border-left-color: var(--accent);
   color: var(--ink);
   font-weight: 600;
-}
-
-.sidebar .foot {
-  margin-top: auto;
-  padding-top: 16px;
-  border-top: var(--hair) solid var(--rule);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.sidebar .foot .who {
-  color: var(--ink-2);
-  font-weight: 600;
-  font-size: 13px;
 }
 
 .theme-toggle {
@@ -1493,7 +1477,9 @@ tr.in-flight td:first-child {
   border-left: var(--hair) solid var(--room-line);
   padding: 18px;
   transform: translateX(100%);
-  transition: transform 0.28s ease;
+  /* Hidden once it has slid away, so nothing off-screen can take focus. */
+  visibility: hidden;
+  transition: transform 0.28s ease, visibility 0s linear 0.28s;
   display: flex;
   flex-direction: column;
   z-index: 20;
@@ -1501,6 +1487,8 @@ tr.in-flight td:first-child {
 }
 .transcript-panel.open {
   transform: translateX(0);
+  visibility: visible;
+  transition: transform 0.28s ease, visibility 0s;
 }
 .transcript-scroll {
   overflow-y: auto;

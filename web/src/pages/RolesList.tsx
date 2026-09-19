@@ -47,6 +47,7 @@ export function RolesList() {
   const [direction, setDirection] = useState<SortDirection>('asc');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [forbidden, setForbidden] = useState(false);
   // The dashboard's role KPIs link here with ?filter=no-candidates or
   // ?filter=awaiting-review; the rows are narrowed by the same rule as the count.
   const [params, setParams] = useSearchParams();
@@ -59,7 +60,10 @@ export function RolesList() {
     api.get<RoleMetricsPayload>('/roles/metrics')
       .then((d) => { if (!cancelled) setRoles(d.roles ?? []); })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof ApiError || err instanceof Error ? err.message : 'Could not load roles.');
+        if (cancelled) return;
+        // An auditor may not read candidate counts; that is a permission, not a fault.
+        if (err instanceof ApiError && err.status === 403) setForbidden(true);
+        else setError(err instanceof Error ? err.message : 'Could not load roles.');
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -87,6 +91,16 @@ export function RolesList() {
   };
 
   if (loading) return <PageSkeleton label="Loading roles…" />;
+  if (forbidden) {
+    return (
+      <div>
+        <PageHeader icon="role" title="Roles" />
+        <Banner kind="info">
+          The roles list shows candidate counts, which your role does not include. Ask an admin if you need access.
+        </Banner>
+      </div>
+    );
+  }
 
   return (
     <div>
