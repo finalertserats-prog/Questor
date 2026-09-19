@@ -83,10 +83,19 @@ test('the room shows the conversation and a confirm step before leaving', async 
   await dialog.getByRole('button', { name: 'Stay in the interview' }).click();
   await expect(dialog).toBeHidden();
 
-  // Confirming ends the interview through the candidate-withdrawal path.
+  // Confirming ends the interview as the Leave action: a neutral marker in the
+  // conversation, not words the candidate never said, and an ending that says
+  // they left rather than that their interview was submitted for review.
+  await answer.fill('A draft I had not sent');
   await room.getByRole('button', { name: 'Leave', exact: true }).click();
   await dialog.getByRole('button', { name: 'Leave interview' }).click();
-  await expect(conversation.getByText('I want to stop the interview.')).toBeVisible({ timeout: 20_000 });
-  await expect(room.getByRole('heading', { name: /That's everything/ })).toBeVisible({ timeout: 20_000 });
+  await expect(conversation.getByText('(Left the interview)')).toBeVisible({ timeout: 20_000 });
+  const ending = room.getByRole('heading', { name: "You've left the interview." });
+  await expect(ending).toBeVisible({ timeout: 20_000 });
+  // The control they used is gone; focus lands on the ending, not the page.
+  await expect(ending).toBeFocused();
+  await expect(room.getByText('submitted for human review')).toHaveCount(0);
+  // There is nothing left to leave.
+  await expect(room.getByRole('button', { name: 'Leave', exact: true })).toHaveCount(0);
   await context.close();
 });

@@ -84,4 +84,15 @@ describe('questionNumber', () => {
     ];
     expect(questionNumber(msgs)).toBe(1);
   });
+
+  it('does not count the sign-off as a question', () => {
+    const msgs = [
+      { speaker: 'agent' as const },
+      { speaker: 'candidate' as const },
+      { speaker: 'agent' as const },
+      { speaker: 'candidate' as const },
+      { speaker: 'agent' as const, final: true },
+    ];
+    expect(questionNumber(msgs)).toBe(1);
+  });
 });

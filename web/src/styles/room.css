@@ -12,7 +12,14 @@
 
 .room {
   position: fixed;
-  inset: 0;
+  /* Sized to the visible viewport, not the layout one: with a phone keyboard
+     open the layout viewport stays full height and the composer would sit
+     under the keyboard. --room-vh/--room-top follow window.visualViewport
+     (useVisualViewport); dvh is the fallback. */
+  top: var(--room-top, 0px);
+  left: 0;
+  right: 0;
+  height: var(--room-vh, 100dvh);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--room-bg);
@@ -463,8 +470,10 @@
 .room-word {
   transition: opacity 0.25s ease;
 }
+/* Faint enough to show the voice has not reached them, still readable for
+   anyone who reads ahead or cannot hear. */
 .room-word.is-pending {
-  opacity: 0.18;
+  opacity: 0.5;
 }
 /* Code keeps its indentation, and scrolls inside itself rather than pushing
    the page sideways. */
@@ -585,15 +594,33 @@
   font-weight: 600;
   margin-bottom: 3px;
 }
-.room-current p {
+.room-current-text {
   margin: 0;
   max-width: none;
   line-height: 1.5;
   color: var(--room-ink);
+  cursor: pointer;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.room-current-text.is-open {
+  display: block;
+  -webkit-line-clamp: unset;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+.room-current-toggle {
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--room-ink-2);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
 }
 .room-paused {
   display: flex;
@@ -725,7 +752,7 @@
   cursor: not-allowed;
   color: var(--room-ink-3);
 }
-.room-round.room-mic[aria-pressed='true'] {
+.room-round.room-mic.is-live {
   border-color: var(--room-you);
   color: var(--room-you);
   box-shadow: 0 0 0 4px var(--room-you-halo);
@@ -870,12 +897,43 @@
   .room-wave {
     width: 70px;
   }
-  .room-current p {
+  .room-current-text {
     -webkit-line-clamp: 3;
   }
+  /* Capped by the visible height, so with the keyboard open the editor,
+     the mode switch and Send all stay on screen. */
+  .room-answer,
   .room-answer.is-code {
-    min-height: 160px;
+    max-height: calc(var(--room-vh, 100dvh) * 0.32);
   }
+  .room-answer.is-code {
+    min-height: min(160px, calc(var(--room-vh, 100dvh) * 0.26));
+  }
+}
+
+/* --- short visible height (a phone keyboard is open): the answer box, the
+   mode switch and Send get the room; participants and labels fold away, and
+   the question shrinks to one line (Show all still opens it) --- */
+:root[data-room-compact] .room-people,
+:root[data-room-compact] .room-convo-head,
+:root[data-room-compact] .room-current-label,
+:root[data-room-compact] .room-mode-row .room-hint,
+:root[data-room-compact] .room-nudge {
+  display: none;
+}
+:root[data-room-compact] .room-body {
+  grid-template-rows: minmax(0, 1fr);
+}
+/* The heading row is gone, so the conversation takes the first row. */
+:root[data-room-compact] .room-convo {
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
+}
+:root[data-room-compact] .room-current-text:not(.is-open) {
+  -webkit-line-clamp: 1;
+}
+:root[data-room-compact] .room-composer {
+  gap: 6px;
+  padding-block: 8px;
 }
 
 @media (prefers-reduced-motion: reduce) {

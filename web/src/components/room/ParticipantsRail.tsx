@@ -29,7 +29,7 @@ export function ParticipantTile({ tone, name, initial, tag, getLevel, status, ac
     <div className={`room-tile room-tile-${tone}${isActive ? ' is-active' : ''}`} data-testid={testId}>
       <RingedAvatar initial={initial} ringRef={ringRef} avatarRef={avatarRef} />
       <div className="room-tile-text">
-        <div className="room-tile-name">
+        <div className="room-tile-name" data-testid={testId ? `${testId}-name` : undefined}>
           {name}
           {tag && <span className="room-tag">{tag}</span>}
         </div>

@@ -408,6 +408,8 @@ export interface UtteranceOptions {
   /** Spoken in the opening only when the consent screen said HR may observe. */
   observerNotice?: string;
   sessionId?: string;
+  /** The candidate pressed Leave: an action, withdrawn whatever the words. */
+  candidateLeft?: boolean;
 }
 
 /**
@@ -443,7 +445,7 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   // candidate said "I'm going to end the interview", got asked another
   // question, said "I don't wanna do this to you anymore", and got asked
   // another one. He left. No score is worth that.
-  if (lastText && detectWithdrawal(lastText)) {
+  if (opts.candidateLeft || (lastText && detectWithdrawal(lastText))) {
     return {
       text: 'Of course — we\'ll stop there. Thank you for the time you did give us, and nothing you\'ve said will count against you. Our team will follow up by email, and you can ask them for a different format or a conversation with a person instead. You can close this window now.',
       competencyId: signal.nextCompetencyId ?? '',

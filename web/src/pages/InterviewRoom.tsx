@@ -6,25 +6,27 @@ import {
 } from '../speech';
 import type { SttCapability } from './Portal';
 import { interviewerName } from '../components/candidateJourney';
+import { interviewRoomHeader, roomAiFact } from '../components/interviewerModel';
 import { shouldCaptureAudio } from '../components/portalConsentModel';
 import { FINISHED_ENTRY } from '../components/portalEntryModel';
-import type { StartResponse, StartedTurn } from '../components/roomResumeModel';
+import type { StartResponse } from '../components/roomResumeModel';
 import { AiVoiceLevel } from '../components/room/aiVoiceLevel';
 import { Composer } from '../components/room/Composer';
 import { ConversationPanel, type RevealingMessage } from '../components/room/Conversation';
 import { ParticipantsRail } from '../components/room/ParticipantsRail';
 import { DonePanel, JoinPanel, LeaveDialog, RoomLoading, RoomPrivacy } from '../components/room/RoomPanels';
 import { RoomTopBar } from '../components/room/RoomTopBar';
-import { LEAVE_REQUEST_TEXT, speakAvailability } from '../components/room/roomComposerModel';
+import { LEAVE_MARKER, joinAnswer, speakAvailability } from '../components/room/roomComposerModel';
 import { useAnswerMode, useRefState } from '../components/room/useAnswerMode';
 import {
-  aiStatus, avatarInitial, candidateStatus, fromTranscript, initials, type RoomMessage, type RoomPhase,
+  aiStatus, candidateStatus, fromTranscript, initials, type RoomMessage, type RoomPhase,
 } from '../components/room/roomConversationModel';
 import { questionNumber } from '../components/room/roomProgressModel';
 import { useVoiceAnswer } from '../components/room/useVoiceAnswer';
 import { refusalOf, useRejoin } from '../components/room/useRejoin';
 import { useAnswerControls } from '../components/room/useAnswerControls';
-import { useFeedbackOptIn, useIntegrityEvents } from '../components/room/useRoomServices';
+import { useLeave, type PortalTurn } from '../components/room/useLeave';
+import { useFeedbackOptIn, useIntegrityEvents, useVisualViewport } from '../components/room/useRoomServices';
 
 // The interview room is the only screen a candidate ever sees, and it is the
 // screen they judge the company by. It borrows the grammar of a video call —
@@ -34,11 +36,11 @@ import { useFeedbackOptIn, useIntegrityEvents } from '../components/room/useRoom
 // What things look like lives in components/room.
 
 /** A turn as the portal sends it to the room: only what the room uses. */
-type AgentTurn = StartedTurn;
+type AgentTurn = PortalTurn;
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
-  /** Who conducts this interview, and whether they may listen. Both absent on an older server. */
-  persona?: { name: string | null } | null;
+  /** Who conducts this interview; absent on an older server. voiceHint picks the browser voice when there is no server voice; never a provider voice id. */
+  persona?: { name: string | null; interviewerId?: string | null; voiceHint?: string } | null;
   recordingConsented?: boolean;
   speech: { stt: SttCapability };
   proctoringEnabled: boolean;
@@ -74,6 +76,11 @@ export function InterviewRoom() {
   const [paused, setPaused, pausedRef] = useRefState(false);
   const [revealing, setRevealing] = useState<{ id: string; text: string } | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
+  // The question on screen is the sign-off: the interview is finalised, and
+  // there is nothing left to leave.
+  const [currentDone, setCurrentDone] = useState(false);
+  // The interview ended because the candidate chose to stop.
+  const [withdrawn, setWithdrawn] = useState(false);
   // Tracked so the capture indicator reflects whether the mic is ACTUALLY open,
   // rather than whether we asked for it. A candidate who denied permission is
   // not being captured and must not be shown a badge saying they are.
@@ -103,11 +110,15 @@ export function InterviewRoom() {
   // The newest line the room opened on, revealed as it is spoken on a fresh start.
   const lastOpenedIdRef = useRef('');
   const aiVoice = useMemo(() => new AiVoiceLevel(), []);
+  // Read by callbacks created before the portal info arrived, so the fallback
+  // browser voice is always this interviewer's, never the default.
+  const voiceHintRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`)
       .then((d) => {
         setInfo(d);
+        voiceHintRef.current = d.persona?.voiceHint;
         canCaptureRef.current = shouldCaptureAudio(d.recordingConsented);
         // No consent to capture voice means no microphone at all — the
         // interview is answered by typing. The AI still speaks: that is output,
@@ -124,6 +135,14 @@ export function InterviewRoom() {
     stopAllSpeech();
   }, []);
 
+  // The sign-off arrived while the Leave dialog was open: close it.
+  useEffect(() => { if (currentDone) setLeaveOpen(false); }, [currentDone]);
+
+  /** Words that must not be lost go into the typed draft, after whatever is already there. */
+  const mergeIntoDraft = (text: string) => {
+    setTyped((prev) => (prev.trim() && prev.trim() !== text.trim() ? joinAnswer(prev, text) : text));
+  };
+
   const addMsg = (m: Omit<RoomMessage, 'id' | 'atMs'>, atMs?: number | null): string => {
     msgSeqRef.current += 1;
     const id = `m${msgSeqRef.current}`;
@@ -133,9 +152,10 @@ export function InterviewRoom() {
   };
 
   useIntegrityEvents(token, info?.proctoringEnabled === true, phase);
+  useVisualViewport();
   const feedback = useFeedbackOptIn(token, info?.feedbackOptIn?.offered === true, info?.feedbackOptIn?.choice ?? null);
 
-  const submitAnswer = async (text: string, opts: { code?: boolean; leaving?: boolean } = {}) => {
+  const submitAnswer = async (text: string, opts: { code?: boolean } = {}) => {
     if (!text.trim()) return;
     voice.detachRecognizer();
     setInterim('');
@@ -156,8 +176,8 @@ export function InterviewRoom() {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/turn`, {
         text, startMs, endMs,
         // The question on screen, so the server can refuse an answer aimed at
-        // one the interview has moved past. Leaving applies whatever is asked.
-        inReplyTo: opts.leaving ? undefined : currentTurnRef.current?.turnId || undefined,
+        // one the interview has moved past.
+        inReplyTo: currentTurnRef.current?.turnId || undefined,
       });
       // Only show the answer once the server has it. Showing it first made a
       // failed submit invisible: the candidate saw their answer sitting in the
@@ -176,7 +196,7 @@ export function InterviewRoom() {
       if (refusal === 'stale') { void rejoin.catchUpAfterStale(text); return; }
       // Keep the text so they can retry rather than reconstruct what they said.
       voice.turnClosedRef.current = false;
-      setTyped(text);
+      mergeIntoDraft(text);
       setTextMode(true);
       setErr(`${errorMessage(e)} — your answer was not sent. It's in the box below; press Send to try again.`);
       setPhase('listening');
@@ -184,15 +204,18 @@ export function InterviewRoom() {
   };
 
   const voice = useVoiceAnswer({
-    token, phaseRef, textModeRef, canCaptureRef, pausedRef, speechSeqRef, setPhase, setTextMode, setInterim, setErr,
+    token, phaseRef, textModeRef, canCaptureRef, pausedRef, speechSeqRef, voiceHintRef, setPhase, setTextMode, setInterim, setErr,
     submitAnswer: (text) => { void submitAnswer(text); },
     addNudge: (text) => { addMsg({ speaker: 'agent', text, nudge: true }); },
+    mergeIntoDraft,
+    onMicDead: () => { meterRef.current?.stop(); meterRef.current = null; setMicOpen(false); },
   });
-  const { beginListening, holdCapture } = voice;
+  const { beginListening } = voice;
 
   /** Put a question on screen as the one the next answer replies to. */
   function showQuestion(turn: AgentTurn, prefix: string, questionText = turn.text) {
     currentTurnRef.current = turn;
+    setCurrentDone(turn.done);
     setCurrentAgent(questionText);
     setQuestionPrefix(prefix);
   }
@@ -200,11 +223,13 @@ export function InterviewRoom() {
   function sayAndListen(turn: AgentTurn, opts: { reveal?: string; resume?: boolean; prefix?: string } = {}) {
     speechSeqRef.current += 1;
     const seq = speechSeqRef.current;
+    // A new question ends the previous answer; a repeat continues it.
+    if (!opts.resume) voice.endAnswer();
     showQuestion(turn, opts.prefix ?? '');
     setRevealing(opts.reveal ? { id: opts.reveal, text: turn.text } : null);
     setPhase('speaking');
     void speakTurn({
-      token, turnId: turn.turnId, text: turn.text,
+      token, turnId: turn.turnId, text: turn.text, voiceHint: voiceHintRef.current,
       onDone: () => {
         // A repeat or a leave replaced this speech; its end is not ours.
         if (seq !== speechSeqRef.current) return;
@@ -216,6 +241,7 @@ export function InterviewRoom() {
           meterRef.current?.stop();
           meterRef.current = null;
           setMicOpen(false);
+          setWithdrawn(turn.withdrawn === true);
           setPhase('done');
           return;
         }
@@ -227,7 +253,7 @@ export function InterviewRoom() {
   }
 
   function receiveTurn(turn: AgentTurn) {
-    const id = addMsg({ speaker: 'agent', text: turn.text });
+    const id = addMsg({ speaker: 'agent', text: turn.text, final: turn.done });
     applyQuestionMode(turn.text);
     sayAndListen(turn, { reveal: id });
   }
@@ -293,7 +319,7 @@ export function InterviewRoom() {
     thinking: () => setPhase('thinking'),
     showFinished,
     // Their words stay on screen: typing, and not switched away by the next question.
-    keepAnswer: (text) => { answerMode.choose(); setTyped(text); setTextMode(true); },
+    keepAnswer: (text) => { answerMode.choose(); mergeIntoDraft(text); setTextMode(true); },
     setErr,
     reopenTurn: () => { voice.turnClosedRef.current = false; setPhase('listening'); },
     stopAnswering: () => { voice.discardCapture(); voice.turnClosedRef.current = true; setInterim(''); },
@@ -301,30 +327,31 @@ export function InterviewRoom() {
     currentTurnId: () => currentTurnRef.current?.turnId,
   });
 
-  const repeat = async () => {
-    const turn = currentTurnRef.current;
-    if (!turn) return;
-    // Mid-answer, the answer so far is kept and continues after the repeat;
-    // during the question itself, the turn has not started yet.
-    const midAnswer = phaseRef.current === 'listening';
-    await holdCapture();
-    stopAllSpeech();
-    sayAndListen(turn, { resume: midAnswer });
-  };
-
-  const { pause, resume, selectMode } = useAnswerControls({
+  const { pause, resume, selectMode, repeat } = useAnswerControls({
     voice, answerMode, typed, setTyped, setInterim, setPaused, pausedRef, phaseRef, setPhase, speakUnavailableRef,
+    replayQuestion: (continueAnswer) => {
+      const turn = currentTurnRef.current;
+      if (!turn) return;
+      stopAllSpeech();
+      sayAndListen(turn, { resume: continueAnswer });
+    },
   });
 
-  /** Leave goes through the same path as saying "I want to stop": the server withdraws, unassessed. */
-  const leave = () => {
-    setLeaveOpen(false);
-    speechSeqRef.current += 1;
-    stopAllSpeech();
-    voice.discardCapture();
-    voice.turnClosedRef.current = true;
-    void submitAnswer(LEAVE_REQUEST_TEXT, { leaving: true });
-  };
+  const leaving = useLeave({
+    token, textModeRef, pausedRef, setPhase, setErr, showFinished,
+    currentTurnDone: () => currentTurnRef.current?.done === true,
+    holdCapture: voice.holdCapture,
+    beginListening: voice.beginListening,
+    stopSpeech: () => { speechSeqRef.current += 1; stopAllSpeech(); },
+    onLeft: (turn) => {
+      voice.discardCapture();
+      addMsg({ speaker: 'candidate', text: LEAVE_MARKER });
+      setErr('');
+      setAwaitingReply(false);
+      receiveTurn(turn);
+    },
+  });
+  const leave = () => { setLeaveOpen(false); void leaving.leave(); };
 
   const reveal = useMemo<RevealingMessage | null>(
     () => (revealing ? { id: revealing.id, spoken: () => aiVoice.spoken(revealing.text) } : null),
@@ -338,10 +365,13 @@ export function InterviewRoom() {
 
   if (!info) return <RoomLoading err={err} />;
 
-  // The persona is configurable per interview, so the name on screen is the one
-  // this candidate was actually introduced to.
+  // The name on screen is the interviewer this candidate was introduced to on
+  // the consent screen, where they were told it is an AI. It carries no label,
+  // as on a real call; the AI fact stays reachable beside what is captured.
+  const header = interviewRoomHeader(info.persona);
   const interviewer = interviewerName(info.persona?.name);
-  const interviewerBadge = { name: interviewer, initial: avatarInitial(info.persona?.name) };
+  const interviewerBadge = { name: header.name, initial: header.initial };
+  const aiFact = roomAiFact(info.persona?.name);
   const live = phase !== 'ready' && phase !== 'done';
   const canSend = phase === 'listening' && (textMode ? typed.trim().length > 0 : !paused && interim.trim().length > 0);
 
@@ -354,11 +384,11 @@ export function InterviewRoom() {
         startedAt={phase === 'ready' ? 0 : startTimeRef.current}
         finished={phase === 'done'}
         question={questionNumber(msgs)}
-        capture={live && micOpen ? { mode: textMode ? 'mic' : 'transcribing', stt: info.speech.stt } : null}
+        capture={live && micOpen ? { mode: textMode ? 'mic' : 'transcribing', stt: info.speech.stt, aiFact } : null}
         showActions={live}
         paused={paused}
         pauseAvailable={phase === 'listening'}
-        leaveAvailable={phase === 'listening' || phase === 'speaking'}
+        leaveAvailable={leaving.available(phase === 'listening' || phase === 'speaking')}
         onPause={() => void pause()}
         onLeave={() => setLeaveOpen(true)}
       />
@@ -373,7 +403,7 @@ export function InterviewRoom() {
           getCandidateLevel={getCandidateLevel}
           candidateStatus={(speakingNow) => candidateStatus({ phase, textMode, speakingNow })}
           observers={[]}
-          privacy={<RoomPrivacy interviewer={interviewer} stt={info.speech.stt} canCapture={canCapture} />}
+          privacy={<RoomPrivacy aiFact={aiFact} stt={info.speech.stt} canCapture={canCapture} />}
         />
         <ConversationPanel
           err={err}
@@ -384,13 +414,13 @@ export function InterviewRoom() {
         >
           {phase === 'ready' && (
             <div className="room-dock">
-              <JoinPanel durationMinutes={info.durationMinutes} interviewer={interviewer} stt={info.speech.stt} canCapture={canCapture} onJoin={() => void begin()} />
+              <JoinPanel durationMinutes={info.durationMinutes} interviewer={interviewer} aiFact={aiFact} stt={info.speech.stt} canCapture={canCapture} onJoin={() => void begin()} />
               {!ttsSupported() && <p className="room-note">Your browser can't play synthesised speech — questions will appear as text.</p>}
             </div>
           )}
           {phase === 'done' && (
             <div className="room-dock">
-              <DonePanel feedback={feedback} completedNote={completedNote} />
+              <DonePanel feedback={feedback} completedNote={completedNote} withdrawn={withdrawn} />
             </div>
           )}
           {live && (

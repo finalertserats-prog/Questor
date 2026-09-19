@@ -96,18 +96,46 @@ export function joinAnswer(...parts: string[]): string {
   return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
-/** Speech heard so far in an answer that was interrupted, and its audio for the server fallback. */
-export interface HeldAnswer {
+/**
+ * One stretch of an answer between interruptions: what the recognizer heard,
+ * and the recording of it. Either may be missing — a recognizer that failed
+ * leaves audio with no words, and that audio is transcribed rather than lost.
+ */
+export interface HeldSegment {
   readonly text: string;
-  readonly audio: readonly Blob[];
+  readonly audio: Blob | null;
 }
 
-export const NOTHING_HELD: HeldAnswer = { text: '', audio: [] };
+/** An answer that was interrupted (pause, check-in, repeat, typed text carried in), in order. */
+export interface HeldAnswer {
+  readonly segments: readonly HeldSegment[];
+}
+
+export const NOTHING_HELD: HeldAnswer = { segments: [] };
+
+export function holdSegment(held: HeldAnswer, text: string, audio: Blob | null): HeldAnswer {
+  const words = joinAnswer(text);
+  if (!words && !audio) return held;
+  return { segments: [...held.segments, { text: words, audio }] };
+}
+
+export function heldText(held: HeldAnswer): string {
+  return joinAnswer(...held.segments.map((s) => s.text));
+}
+
+/** Indexes of segments that have audio but no words yet. */
+export function untranscribed(held: HeldAnswer): number[] {
+  return held.segments.flatMap((s, i) => (!s.text && s.audio ? [i] : []));
+}
+
+/** The answer in order, with wordless segments filled from their transcripts where there is one. */
+export function answerFromHeld(held: HeldAnswer, transcripts: ReadonlyMap<number, string>): string {
+  return joinAnswer(...held.segments.map((s, i) => s.text || transcripts.get(i) || ''));
+}
 
 /**
- * What "Leave" sends. Leaving goes through the same path as a candidate saying
- * they want to stop — the server recognises it, closes the interview without
- * assessing it, and the interviewer signs off. The words are the candidate's
- * request as it will appear in the transcript, so they say exactly that.
+ * What "Leave" puts in the transcript. Leave is an action, recorded as one on
+ * the server (source "leave_button"), so the transcript shows a neutral marker
+ * rather than a sentence the candidate never said. Must match the server's.
  */
-export const LEAVE_REQUEST_TEXT = 'I want to stop the interview.';
+export const LEAVE_MARKER = '(Left the interview)';

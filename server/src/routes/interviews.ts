@@ -18,7 +18,7 @@ import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap, demoInvitationExpiry } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, transitionIfInState } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, transitionIfInState, leftByButton, LEAVE_SOURCE } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
@@ -269,7 +269,11 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   res.json({
     session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
     plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
-    turns: turns.map((t) => ({ id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId })),
+    turns: turns.map((t) => ({
+      id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId,
+      // A reviewer must be able to tell the Leave button from anything said.
+      ...(leftByButton(t) ? { source: LEAVE_SOURCE } : {}),
+    })),
     assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJsonStrict(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' }) } : null,
     // Integrity events are human-review context only. They are deliberately not
     // passed into assessment generation or score fields.

@@ -231,6 +231,7 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
     plan, signal, turns, role: profile, persona, sessionId,
     candidateName: session.candidate.fullName, roleTitle: session.role.title,
     observerNotice: hasObserverNotice(consent.disclosureText ?? '') ? OBSERVER_NOTICE : undefined,
+    candidateLeft: leftByButton(session.turns[session.turns.length - 1]),
   });
 
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
@@ -256,6 +257,20 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
     turnId: agentTurn.id, index: agentTurn.index, text: utter.text, competencyId: utter.competencyId,
     kind: utter.kind, state: session.state, done, withdrawn,
   };
+}
+
+/** How a Leave-button turn is marked on the record and shown in the transcript. */
+export const LEAVE_SOURCE = 'leave_button';
+export const LEAVE_MARKER = '(Left the interview)';
+
+/** Whether a stored turn is the candidate pressing Leave. */
+export function leftByButton(turn: { speaker: string; metaJson: string } | undefined): boolean {
+  if (!turn || turn.speaker !== 'candidate') return false;
+  try {
+    return (JSON.parse(turn.metaJson) as { source?: unknown }).source === LEAVE_SOURCE;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -605,13 +620,16 @@ export async function submitCandidateAnswer(
   sessionId: string,
   text: string,
   timing?: { startMs?: number; endMs?: number; confidence?: number },
-  opts?: { inReplyTo?: string },
+  opts?: { inReplyTo?: string; leaving?: boolean },
 ): Promise<{ turn: AgentTurnOut; produced: boolean }> {
   const { session, turns } = await loadContext(sessionId);
+  // Leave is an action, not an answer: the record says so in neutral words
+  // rather than quoting a sentence the candidate never said.
+  const said = opts?.leaving ? LEAVE_MARKER : text;
   // All three guards run before any LLM call so an abusive caller never reaches
   // a billable path.
-  if (text.length > MAX_ANSWER_CHARS) {
-    logger.warn({ sessionId, chars: text.length }, 'Oversized candidate answer refused');
+  if (said.length > MAX_ANSWER_CHARS) {
+    logger.warn({ sessionId, chars: said.length }, 'Oversized candidate answer refused');
     throw new HttpError(400, `That answer is too long (limit ${MAX_ANSWER_CHARS} characters).`);
   }
   if (!LIVE_STATES.includes(session.state)) {
@@ -625,21 +643,25 @@ export async function submitCandidateAnswer(
   // Attribute this answer to whatever competency the last agent question targeted.
   const lastAgent = [...turns].reverse().find((t) => t.speaker === 'agent');
   const competencyId = lastAgent?.competencyId ?? '';
-  const injection = detectInjection(text);
+  const injection = opts?.leaving ? { injection: false, matched: [] as string[] } : detectInjection(said);
+  const meta: Record<string, unknown> = {
+    ...(opts?.leaving ? { source: LEAVE_SOURCE } : {}),
+    ...(injection.injection ? { flags: ['prompt_injection'], injectionMatched: injection.matched, flaggedAt: new Date().toISOString() } : {}),
+  };
   if (injection.injection) {
     // The interviewer never obeys the injected text, but a human reads the
     // report — the attempt itself is signal about the candidate and must
     // survive on the turn record rather than living only in the server log.
-    logger.warn({ sessionId, index: turns.length, matched: injection.matched, textLength: text.length }, 'Prompt-injection attempt flagged on candidate turn');
+    logger.warn({ sessionId, index: turns.length, matched: injection.matched, textLength: said.length }, 'Prompt-injection attempt flagged on candidate turn');
   }
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const answer = await appendTurn(sessionId, {
-    speaker: 'candidate', text,
+    speaker: 'candidate', text: said,
     startMs: timing?.startMs ?? lastEnd + 1000,
     endMs: timing?.endMs ?? lastEnd + 30_000,
     confidence: timing?.confidence ?? 0.9,
     competencyId,
-  }, injection.injection ? { flags: ['prompt_injection'], injectionMatched: injection.matched, flaggedAt: new Date().toISOString() } : undefined,
+  }, Object.keys(meta).length > 0 ? meta : undefined,
   async (tx) => {
     if (!opts?.inReplyTo) return;
     const newest = await tx.turn.findFirst({

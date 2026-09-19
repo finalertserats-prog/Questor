@@ -24,7 +24,7 @@ const candidate = list.candidates.find((c) => /^E2E Candidate/.test(c.fullName ?
 if (!candidate) throw new Error('No E2E candidate found; run the e2e suite first.');
 const headers = { 'X-CSRF-Token': csrf };
 const created = await (await hr.request.post('/api/interviews', {
-  headers, data: { candidateId: candidate.id, persona: { name: 'Maya', tone: 'warm' }, recordingRequested: true },
+  headers, data: { candidateId: candidate.id, interviewer: 'maya', persona: { tone: 'warm' }, recordingRequested: true },
 })).json();
 const invite = await (await hr.request.post(`/api/interviews/${created.session.id}/invite`, { headers, data: {} })).json();
 const portalUrl = invite.invitation.portalUrl;
@@ -121,6 +121,15 @@ await page.getByLabel('Your answer').fill(
   "WITH days AS (\n  SELECT DISTINCT user_id, event_date\n  FROM events\n)\nSELECT user_id, COUNT(*) AS active_days\nFROM days\nGROUP BY user_id;",
 );
 await shoot('code');
+
+// A phone with the keyboard open: the visible height is roughly halved. The
+// editor, the mode switch and Send must all stay on screen.
+await page.setViewportSize({ width: 375, height: 460 });
+await page.getByLabel('Your answer').focus();
+await page.waitForTimeout(700);
+await page.screenshot({ path: resolve(out, 'room-code-375x460-keyboard.png') });
+const sendBox = await page.getByRole('button', { name: 'Send' }).boundingBox();
+console.log(`code 375x460 keyboard: send visible=${sendBox !== null && sendBox.y + sendBox.height <= 460}`);
 
 await ctx.close();
 await hr.close();

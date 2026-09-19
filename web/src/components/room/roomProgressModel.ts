@@ -56,6 +56,8 @@ interface CountedMessage {
   readonly speaker: 'agent' | 'candidate';
   /** A check-in after a long silence: said by the interviewer, but not a question. */
   readonly nudge?: boolean;
+  /** The interviewer's last turn — the sign-off — which asks nothing. */
+  readonly final?: boolean;
 }
 
 /**
@@ -65,6 +67,6 @@ interface CountedMessage {
  * would be less honest than this plain count.
  */
 export function questionNumber(messages: readonly CountedMessage[]): number | null {
-  const asked = messages.filter((m) => m.speaker === 'agent' && !m.nudge).length - 1;
+  const asked = messages.filter((m) => m.speaker === 'agent' && !m.nudge && !m.final).length - 1;
   return asked > 0 ? asked : null;
 }

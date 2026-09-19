@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   isCodingQuestion, composerMode, speakAvailability, modeForNewQuestion, insertIndent,
-  composerHint, joinAnswer, CODE_NUDGE, MIC_UNAVAILABLE_NOTE, LEAVE_REQUEST_TEXT,
+  composerHint, joinAnswer, CODE_NUDGE, MIC_UNAVAILABLE_NOTE, LEAVE_MARKER,
+  NOTHING_HELD, holdSegment, heldText, untranscribed, answerFromHeld,
 } from '../src/components/room/roomComposerModel';
-import { detectWithdrawal } from '../../server/src/engines/policyEngine';
 
 describe('isCodingQuestion', () => {
   it('recognises a request to write a SQL query', () => {
@@ -110,8 +110,40 @@ describe('joinAnswer', () => {
   });
 });
 
-describe('LEAVE_REQUEST_TEXT', () => {
-  it('is recognised by the server as a request to stop', () => {
-    expect(detectWithdrawal(LEAVE_REQUEST_TEXT)).toBe(true);
+describe('LEAVE_MARKER', () => {
+  // Read from the source rather than imported: the engine pulls in the
+  // database client, which is far too heavy for a web unit test.
+  it('matches the marker the server records for the Leave button', async () => {
+    const { readFileSync } = await import('node:fs');
+    const engine = readFileSync(new URL('../../server/src/realtime/interviewEngine.ts', import.meta.url), 'utf8');
+    expect(engine).toContain(`export const LEAVE_MARKER = '${LEAVE_MARKER}';`);
+  });
+});
+
+const clip = new Blob(['a']);
+
+describe('held answer segments', () => {
+  it('ignores a segment with neither words nor audio', () => {
+    expect(holdSegment(NOTHING_HELD, '', null).segments).toHaveLength(0);
+  });
+
+  it('joins the words of every segment in order', () => {
+    const held = holdSegment(holdSegment(NOTHING_HELD, 'first', clip), 'second', null);
+    expect(heldText(held)).toBe('first second');
+  });
+
+  it('lists the audio of segments that have no words', () => {
+    const held = holdSegment(holdSegment(NOTHING_HELD, '', clip), 'second', clip);
+    expect(untranscribed(held)).toEqual([0]);
+  });
+
+  it('fills a wordless segment from its transcript, in place', () => {
+    const held = holdSegment(holdSegment(NOTHING_HELD, '', clip), 'later', null);
+    expect(answerFromHeld(held, new Map([[0, 'earlier']]))).toBe('earlier later');
+  });
+
+  it('leaves out a segment whose audio could not be transcribed', () => {
+    const held = holdSegment(holdSegment(NOTHING_HELD, '', clip), 'later', null);
+    expect(answerFromHeld(held, new Map())).toBe('later');
   });
 });

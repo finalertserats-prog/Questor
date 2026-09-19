@@ -11,6 +11,17 @@ import { isSpeakingNow, smoothLevel, withAlpha } from './roomLevelModel';
 
 const DRAW_FLOOR = 0.02;
 
+// The room's colours are fixed tokens, so each canvas's colour is read from
+// the stylesheet once rather than forcing a style recalculation every frame.
+const colourCache = new WeakMap<Element, string>();
+function colourOf(el: Element): string {
+  const cached = colourCache.get(el);
+  if (cached) return cached;
+  const colour = getComputedStyle(el).color;
+  colourCache.set(el, colour);
+  return colour;
+}
+
 export function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -24,7 +35,7 @@ function drawRing(canvas: HTMLCanvasElement, level: number, t: number, reduced: 
   const cy = h / 2;
   ctx.clearRect(0, 0, w, h);
   if (level < DRAW_FLOOR) return;
-  const color = getComputedStyle(canvas).color;
+  const color = colourOf(canvas);
   const base = w * 0.29;
   if (reduced) {
     // Still says "this person is speaking", without anything moving.
@@ -77,7 +88,7 @@ function drawWave(canvas: HTMLCanvasElement, level: number, t: number, reduced: 
   const count = 24;
   const gap = w / count;
   const live = level > DRAW_FLOOR;
-  ctx.fillStyle = live ? getComputedStyle(canvas).color : 'rgba(255, 255, 255, 0.18)';
+  ctx.fillStyle = live ? colourOf(canvas) : 'rgba(255, 255, 255, 0.18)';
   for (let i = 0; i < count; i += 1) {
     const shape = reduced ? 0.6 : Math.abs(Math.sin(t / 120 + i * 0.7));
     const v = live ? shape * level * 0.9 + 0.08 : 0.08;

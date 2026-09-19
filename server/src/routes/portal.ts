@@ -480,8 +480,10 @@ portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
   // Unauthenticated route where every call funds an LLM prompt. The 2mb Express
   // JSON limit is not a spend limit, so bound the answer here: a spoken reply
   // runs a few hundred characters, far under this ceiling.
-  const { text, startMs, endMs, inReplyTo } = z.object({
+  const { text, startMs, endMs, inReplyTo, leaving } = z.object({
     text: z.string().min(1).max(MAX_TURN_TEXT_CHARS),
+    // The Leave button: recorded as that action and withdrawn, whatever the text.
+    leaving: z.boolean().optional(),
     // The question on the candidate's screen. Optional for older rooms; when
     // present, an answer to a question the interview has moved past is
     // refused rather than credited to one they never saw.
@@ -493,7 +495,7 @@ portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
     startMs: z.number().int().min(0).max(MAX_TURN_MS).nullish().transform((v) => v ?? undefined),
     endMs: z.number().int().min(0).max(MAX_TURN_MS).nullish().transform((v) => v ?? undefined),
   }).refine((b) => b.startMs === undefined || b.endMs === undefined || b.endMs >= b.startMs, { message: 'endMs must not be before startMs.' }).parse(req.body);
-  const { turn, produced } = await submitCandidateAnswer(inv.sessionId, text, { startMs, endMs }, { inReplyTo });
+  const { turn, produced } = await submitCandidateAnswer(inv.sessionId, text, { startMs, endMs }, { inReplyTo, leaving });
   const assessmentReady = produced ? await settleTurn(inv.sessionId, turn) : false;
   res.json({ turn: candidateTurn(turn), assessmentReady });
 }));

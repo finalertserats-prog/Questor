@@ -50,6 +50,20 @@ export function Conversation({ messages, interviewer, candidateInitials, reveali
   const followRef = useRef(true);
   const seenCountRef = useRef(messages.length);
   const [unseen, setUnseen] = useState(false);
+  // What a screen reader hears: only the interviewer's newest line, when it
+  // is added. The list itself is not live, so a rejoin that fills in the whole
+  // conversation at once is not read out from the top.
+  const [announcement, setAnnouncement] = useState('');
+  const shownIdsRef = useRef<readonly string[]>([]);
+
+  useEffect(() => {
+    const before = shownIdsRef.current;
+    shownIdsRef.current = messages.map((m) => m.id);
+    const appended = messages.length > before.length && before.every((id, i) => messages[i]?.id === id);
+    if (!appended) return;
+    const newest = [...messages.slice(before.length)].reverse().find((m) => m.speaker === 'agent');
+    if (newest) setAnnouncement(`${interviewer.name}: ${newest.text}`);
+  }, [messages, interviewer.name]);
 
   // Follow new messages only while the reader is at the bottom: someone who
   // scrolled up to re-read an answer must not be pulled away from it.
@@ -95,7 +109,7 @@ export function Conversation({ messages, interviewer, candidateInitials, reveali
 
   return (
     <div className="room-convo-body">
-      <ol className="room-transcript" ref={listRef} onScroll={onScroll} aria-live="polite" aria-relevant="additions" aria-label="Conversation so far">
+      <ol className="room-transcript" ref={listRef} onScroll={onScroll} aria-label="Conversation so far">
         {messages.length === 0 && <li className="room-empty">The conversation will appear here as you go.</li>}
         {messages.map((m) => {
           const agent = m.speaker === 'agent';
@@ -117,6 +131,7 @@ export function Conversation({ messages, interviewer, candidateInitials, reveali
           );
         })}
       </ol>
+      <div className="visually-hidden" role="status" aria-live="polite">{announcement}</div>
       {unseen && (
         <button type="button" className="room-jump" onClick={jumpToLatest}>Jump to latest</button>
       )}

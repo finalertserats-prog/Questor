@@ -44,9 +44,15 @@ test('portal consent without voice capture starts typed mode and never asks for 
 
   await expect(portalPage.getByPlaceholder(/Type your answer/)).toBeVisible({ timeout: 20_000 });
   await expect(portalPage.getByText('Typing', { exact: true })).toBeVisible();
-  // The room shows just the chosen interviewer's name, as on a real call.
+  // The room shows just the chosen interviewer's name, as on a real call: the
+  // tile is the initial and the name, with no "AI interviewer" label (the
+  // tile also carries a status line, so the name is checked on its own).
   const roomInterviewer = portalPage.getByTestId('room-interviewer');
-  await expect(roomInterviewer).toHaveText(/^M\s*Maya$/);
+  await expect(portalPage.getByTestId('room-interviewer-name')).toHaveText('Maya');
+  await expect(roomInterviewer).toContainText(/^M\s*Maya/);
+  await expect(roomInterviewer).not.toContainText(/AI interviewer/i);
+  // The AI fact is still reachable in the room, in "What's captured".
+  await expect(portalPage.getByText('Maya is an AI interviewer. A person on the hiring team reviews the interview.')).toBeAttached();
   // The interview opens with a greeting, not a read-out disclosure.
   await expect(portalPage.getByText(/I'm Maya — thanks for making the time today\./).first()).toBeVisible();
   // No listening controls: those only render while the room is capturing voice.

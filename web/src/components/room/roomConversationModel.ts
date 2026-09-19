@@ -12,6 +12,8 @@ export interface RoomMessage {
   readonly code?: boolean;
   /** An interviewer check-in after a long silence, not a question. */
   readonly nudge?: boolean;
+  /** The interviewer's closing turn. */
+  readonly final?: boolean;
 }
 
 export interface TranscriptEntry {

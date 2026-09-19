@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Icon } from '../Icon';
 import { useVoiceFrames } from './SpeakingRing';
 import { composerHint, insertIndent, type ComposerMode } from './roomComposerModel';
@@ -65,7 +65,25 @@ export function Composer(props: ComposerProps) {
   // the code editor; focusing the editor again restores indenting.
   const tabReleasedRef = useRef(false);
   const caretRef = useRef<number | null>(null);
+  const segRef = useRef<HTMLDivElement>(null);
+  // Whether the answer box had focus. When it is replaced (the room switched
+  // back to speaking) focus would fall to the page; it goes to the mode
+  // switch instead, so a keyboard user is not dropped at the top.
+  const textFocusedRef = useRef(false);
+  const [questionOpen, setQuestionOpen] = useState(false);
   useVoiceFrames(props.getCandidateLevel, () => ({ wave: waveRef.current }));
+
+  // A new question starts clamped again.
+  useEffect(() => { setQuestionOpen(false); }, [props.currentQuestion]);
+
+  const typing = mode !== 'speak';
+  useEffect(() => {
+    if (typing || !textFocusedRef.current) return;
+    textFocusedRef.current = false;
+    if (document.activeElement === document.body || document.activeElement === null) {
+      segRef.current?.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.focus();
+    }
+  }, [typing]);
 
   // Grow with the answer up to the stylesheet's max-height, then scroll.
   useLayoutEffect(() => {
@@ -96,7 +114,6 @@ export function Composer(props: ComposerProps) {
     }
   };
 
-  const typing = mode !== 'speak';
   const micLabel = speakUnavailable
     ? 'Speaking unavailable — why?'
     : !typing
@@ -114,9 +131,26 @@ export function Composer(props: ComposerProps) {
         <div className="room-current">
           <div>
             <div className="room-current-label">Current question</div>
-            <p title={props.currentQuestion} data-testid="room-current-question">
+            {/* Clamped to two lines; the whole question opens on a tap, or from
+                the keyboard with the toggle — not only from a tooltip nobody
+                can reach. The toggle is its own button so its name stays short. */}
+            <p
+              id="room-current-question"
+              className={questionOpen ? 'room-current-text is-open' : 'room-current-text'}
+              data-testid="room-current-question"
+              onClick={() => setQuestionOpen((open) => !open)}
+            >
               {props.questionPrefix && `${props.questionPrefix} `}{props.currentQuestion}
             </p>
+            <button
+              type="button"
+              className="room-current-toggle"
+              aria-expanded={questionOpen}
+              aria-controls="room-current-question"
+              onClick={() => setQuestionOpen((open) => !open)}
+            >
+              {questionOpen ? 'Show less' : 'Show all'}
+            </button>
           </div>
           <button type="button" className="room-ghost" onClick={props.onRepeat} disabled={!props.repeatAvailable} title="Hear the question again">
             <Icon name="refresh" size={14} />Repeat
@@ -132,7 +166,7 @@ export function Composer(props: ComposerProps) {
       )}
 
       <div className="room-mode-row">
-        <div className="room-seg" role="group" aria-label="Answer by">
+        <div className="room-seg" role="group" aria-label="Answer by" ref={segRef}>
           {MODES.map((m) => (
             <button
               key={m.mode}
@@ -163,7 +197,8 @@ export function Composer(props: ComposerProps) {
             value={props.typed}
             onChange={(e) => props.onTypedChange(e.target.value)}
             onKeyDown={onKeyDown}
-            onFocus={() => { tabReleasedRef.current = false; }}
+            onFocus={() => { tabReleasedRef.current = false; textFocusedRef.current = true; }}
+            onBlur={() => { textFocusedRef.current = false; }}
             placeholder={mode === 'code' ? 'Write your query or code here. Indentation is kept.' : 'Type your answer…'}
             aria-label="Your answer"
             aria-describedby="room-composer-hint"
@@ -180,9 +215,10 @@ export function Composer(props: ComposerProps) {
         )}
         <button
           type="button"
-          className="room-round room-mic"
+          // The label changes with the state ("Done answering"), so it is not
+          // also a toggle: a screen reader would announce both.
+          className={`room-round room-mic${!typing && props.capturing ? ' is-live' : ''}`}
           aria-label={micLabel}
-          aria-pressed={!typing && !speakUnavailable ? props.capturing : undefined}
           aria-disabled={speakUnavailable ? true : undefined}
           aria-describedby={speakUnavailable ? 'room-mic-note' : undefined}
           disabled={!speakUnavailable && !typing && !props.capturing}

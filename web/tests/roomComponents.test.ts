@@ -41,11 +41,18 @@ describe('Conversation', () => {
     expect(html).toContain('room-word is-pending');
   });
 
-  it('announces additions politely', () => {
+  it('has a polite live region for what is newly said', () => {
     const html = renderToStaticMarkup(createElement(Conversation, {
       messages: [], interviewer, candidateInitials: 'PS', revealing: null,
     }));
-    expect(html).toContain('aria-live="polite"');
+    expect(html).toContain('role="status"');
+  });
+
+  it('does not make the whole history a live region, so a rejoin is not read out in full', () => {
+    const html = renderToStaticMarkup(createElement(Conversation, {
+      messages: [{ id: 'a', speaker: 'agent', text: 'Hello' }], interviewer, candidateInitials: 'PS', revealing: null,
+    }));
+    expect(html).not.toMatch(/<ol[^>]*aria-live/);
   });
 });
 
@@ -89,6 +96,16 @@ describe('Composer', () => {
     expect(html).toContain('Current question');
   });
 
+  it('lets the full current question be opened from the keyboard', () => {
+    const html = renderToStaticMarkup(createElement(Composer, composerProps()));
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*>/);
+  });
+
+  it('does not mark the microphone as a toggle as well as renaming it', () => {
+    const html = renderToStaticMarkup(createElement(Composer, composerProps({ mode: 'speak', capturing: true })));
+    expect(html).not.toMatch(/room-mic[^>]*aria-pressed|aria-pressed[^>]*room-mic/);
+  });
+
   it('labels the pressed microphone as the way to finish a spoken answer', () => {
     const html = renderToStaticMarkup(createElement(Composer, composerProps({ mode: 'speak', capturing: true })));
     expect(html).toContain('aria-label="Done answering"');
@@ -108,6 +125,20 @@ describe('DonePanel', () => {
     const feedback = { offered: true, choice: null, saving: false, error: '', onAnswer: () => undefined };
     const html = renderToStaticMarkup(createElement(DonePanel, { feedback, completedNote: 'Already done.' }));
     expect(html).toContain('Your interview is complete');
+  });
+});
+
+describe('DonePanel after leaving', () => {
+  const feedback = { offered: false, choice: null, saving: false, error: '', onAnswer: () => undefined };
+
+  it('says the candidate left, not that the interview was submitted for review', () => {
+    const html = renderToStaticMarkup(createElement(DonePanel, { feedback, withdrawn: true }));
+    expect(html).not.toContain('submitted for human review');
+  });
+
+  it('keeps the promise that nothing counts against them', () => {
+    const html = renderToStaticMarkup(createElement(DonePanel, { feedback, withdrawn: true }));
+    expect(html).toContain('will not count against you');
   });
 });
 
@@ -131,5 +162,14 @@ describe('ParticipantsRail', () => {
   it('shows an observer who is present', () => {
     const html = renderToStaticMarkup(createElement(ParticipantsRail, railProps({ observers: [{ name: 'Jordan Lee' }] })));
     expect(html).toContain('Hiring team · observing silently');
+  });
+});
+
+describe('room stylesheet', () => {
+  it('keeps words not yet spoken readable', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('../src/styles/room.css', import.meta.url), 'utf8');
+    const rule = css.match(/\.room-word\.is-pending\s*\{[^}]*opacity:\s*([\d.]+)/);
+    expect(Number(rule?.[1])).toBeGreaterThanOrEqual(0.5);
   });
 });

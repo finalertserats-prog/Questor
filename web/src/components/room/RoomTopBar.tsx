@@ -27,12 +27,14 @@ function useSecondTick(running: boolean): number {
  * 'transcribing' — audio is being captured and turned into text.
  * 'mic'          — the mic is open for the level meter only (typed answers).
  */
-export function CaptureIndicator({ mode, stt }: { mode: 'transcribing' | 'mic'; stt: SttCapability }) {
-  const detail = mode === 'transcribing'
+export function CaptureIndicator({ mode, stt, aiFact }: { mode: 'transcribing' | 'mic'; stt: SttCapability; aiFact: string }) {
+  // The AI fact rides with what is captured, so it stays reachable during the
+  // interview even though the name on screen carries no label.
+  const detail = (mode === 'transcribing'
     ? `Your voice is captured while you answer and transcribed to text. ${transcriptionProcessorSentence(stt)} `
       + 'No audio file is stored — the written transcript is what is kept and reviewed.'
     : 'Your microphone is open so the level meter can show you it is working. You are answering by '
-      + 'typing, so no audio is being transcribed and none is stored.';
+      + 'typing, so no audio is being transcribed and none is stored.') + ` ${aiFact}`;
   return (
     <span className="room-capture" title={detail}>
       <i />{mode === 'transcribing' ? 'LIVE TRANSCRIPTION' : 'MIC OPEN'}
@@ -47,7 +49,7 @@ export interface RoomTopBarProps {
   readonly startedAt: number;
   readonly finished: boolean;
   readonly question: number | null;
-  readonly capture: { readonly mode: 'transcribing' | 'mic'; readonly stt: SttCapability } | null;
+  readonly capture: { readonly mode: 'transcribing' | 'mic'; readonly stt: SttCapability; readonly aiFact: string } | null;
   readonly showActions: boolean;
   readonly paused: boolean;
   readonly pauseAvailable: boolean;
@@ -72,7 +74,7 @@ export function RoomTopBar(props: RoomTopBarProps) {
         </span>
         <span className="room-progress-label">{label}</span>
       </div>
-      {props.capture && <CaptureIndicator mode={props.capture.mode} stt={props.capture.stt} />}
+      {props.capture && <CaptureIndicator mode={props.capture.mode} stt={props.capture.stt} aiFact={props.capture.aiFact} />}
       <span className="room-timer" aria-label="Elapsed time">{formatElapsed(elapsedMs)}</span>
       {props.showActions && (
         <div className="room-bar-actions">

@@ -5,9 +5,11 @@ import {
   FEEDBACK_EXPLANATION, FEEDBACK_NO_LABEL, FEEDBACK_QUESTION, FEEDBACK_YES_LABEL, answerConfirmation,
 } from '../feedbackOptInCopy';
 
-export function JoinPanel({ durationMinutes, interviewer, stt, canCapture, onJoin }: {
+export function JoinPanel({ durationMinutes, interviewer, aiFact, stt, canCapture, onJoin }: {
   durationMinutes: number;
   interviewer: string;
+  /** "<Name> is an AI interviewer…" — the on-screen name carries no label. */
+  aiFact: string;
   stt: SttCapability;
   canCapture: boolean;
   onJoin: () => void;
@@ -20,11 +22,10 @@ export function JoinPanel({ durationMinutes, interviewer, stt, canCapture, onJoi
       {/* Repeated here, not just on the consent screen. The consent screen may
           have been read minutes ago on another device, and this is the last
           moment before the microphone actually opens. */}
-      {canCapture && (
-        <div className="room-muted room-join-facts">
-          <VoiceHandling stt={stt} />
-        </div>
-      )}
+      <div className="room-muted room-join-facts">
+        <p data-testid="room-ai-fact">{aiFact}</p>
+        {canCapture && <VoiceHandling stt={stt} />}
+      </div>
       <button type="button" className="room-join-btn" onClick={onJoin}><Icon name="play" size={18} />Join interview</button>
     </div>
   );
@@ -35,11 +36,11 @@ export function JoinPanel({ durationMinutes, interviewer, stt, canCapture, onJoi
  * interview, and so do the four voice facts from the consent screen, so a
  * candidate can check either at any moment without leaving the room.
  */
-export function RoomPrivacy({ interviewer, stt, canCapture }: { interviewer: string; stt: SttCapability; canCapture: boolean }) {
+export function RoomPrivacy({ aiFact, stt, canCapture }: { aiFact: string; stt: SttCapability; canCapture: boolean }) {
   return (
     <>
       <ul>
-        <li>{interviewer} is an AI interviewer. A person on the hiring team reviews the interview.</li>
+        <li>{aiFact}</li>
         {canCapture
           ? <li>Your voice is turned into text while you speak. No audio is kept.</li>
           : <li>Your microphone is not used — you are answering by typing.</li>}
@@ -58,20 +59,51 @@ export interface FeedbackState {
   readonly onAnswer: (wantsFeedback: boolean) => void;
 }
 
-export function DonePanel({ feedback, completedNote = '' }: { feedback: FeedbackState; completedNote?: string }) {
+/**
+ * The ending's heading. Focus moves here when the interview ends, because the
+ * control the candidate was using (Send, Leave) has just disappeared, and a
+ * keyboard or screen-reader user would otherwise be left nowhere.
+ */
+function DoneHeading({ children }: { children: string }) {
+  const ref = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { ref.current?.focus(); }, []);
+  return <h3 ref={ref} tabIndex={-1}>{children}</h3>;
+}
+
+export function DonePanel({ feedback, completedNote = '', withdrawn = false }: {
+  feedback: FeedbackState;
+  completedNote?: string;
+  /** The candidate chose to leave: nothing is being reviewed as an interview. */
+  withdrawn?: boolean;
+}) {
   // Reached from a refusal rather than the sign-off: this room saw none of the
   // interview, so it says only that it is complete.
   if (completedNote) {
     return (
       <div className="room-done">
-        <h3>Your interview is complete</h3>
+        <DoneHeading>Your interview is complete</DoneHeading>
         <p className="room-muted">{completedNote}</p>
+      </div>
+    );
+  }
+  if (withdrawn) {
+    return (
+      <div className="room-done">
+        <DoneHeading>You've left the interview.</DoneHeading>
+        <p className="room-muted">
+          Your microphone is now off. The interview has ended at your request and will not be scored —
+          it will not count against you. The hiring team will follow up by email, and you can ask them
+          for a different format or a conversation with a person instead.
+        </p>
+        <p className="room-muted">
+          The conversation above is everything that was captured. You can close this window whenever you like.
+        </p>
       </div>
     );
   }
   return (
     <div className="room-done">
-      <h3>That's everything — thank you.</h3>
+      <DoneHeading>That's everything — thank you.</DoneHeading>
       <p className="room-muted">
         Your microphone is now off. Your interview has been submitted for human review: a person on
         the hiring team reads the <b>transcript</b> — the text of what you said, which is all that

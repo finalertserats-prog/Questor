@@ -12,7 +12,11 @@ import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
-interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null; }
+interface Turn {
+  id: string; index: number; speaker: 'agent' | 'candidate' | 'system'; text: string; startMs: number; endMs: number; competencyId: string | null;
+  /** Set when the turn is the candidate pressing Leave rather than anything they said. */
+  source?: 'leave_button';
+}
 interface Invitation { token: string; status: string; portalUrl: string; sentAt: string | null; openedAt: string | null; }
 interface Session {
   id: string; state: string; provider: string; language: string; durationMinutes: number;
@@ -285,7 +289,7 @@ export function InterviewDetail() {
           <div className="transcript">
             {turns.map((t) => (
               <div key={t.id} className={'turn ' + t.speaker}>
-                <div className="who">{t.speaker}</div>
+                <div className="who">{t.speaker}{t.source === 'leave_button' && ' · Candidate chose to leave'}</div>
                 <div className="bubble">{t.text}</div>
               </div>
             ))}

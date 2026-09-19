@@ -74,3 +74,36 @@ export function useFeedbackOptIn(token: string, offered: boolean, onFile: string
 
   return { offered, choice, saving, error, onAnswer: (wants) => { void onAnswer(wants); } };
 }
+
+/**
+ * Keep the room the size of the visible viewport. A phone keyboard shrinks
+ * the visual viewport but not the layout one, so a full-height fixed room
+ * would put the composer — and the Send button — under the keyboard.
+ */
+const COMPACT_BELOW_PX = 560;
+
+export function useVisualViewport(): void {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    const html = document.documentElement;
+    const root = html.style;
+    const update = () => {
+      root.setProperty('--room-vh', `${vv.height}px`);
+      root.setProperty('--room-top', `${vv.offsetTop}px`);
+      // Too short for everything (typically a keyboard is open): the room
+      // gives the answer box the space and folds away what can wait.
+      html.toggleAttribute('data-room-compact', vv.height < COMPACT_BELOW_PX);
+    };
+    update();
+    vv.addEventListener('resize', update);
+    vv.addEventListener('scroll', update);
+    return () => {
+      vv.removeEventListener('resize', update);
+      vv.removeEventListener('scroll', update);
+      root.removeProperty('--room-vh');
+      root.removeProperty('--room-top');
+      html.removeAttribute('data-room-compact');
+    };
+  }, []);
+}
