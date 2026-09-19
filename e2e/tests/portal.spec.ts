@@ -64,6 +64,12 @@ test('portal consent without voice capture starts typed mode and never asks for 
     .filter((n) => !(n instanceof HTMLElement && n.classList.contains('cap-who')))
     .map((n) => n.textContent ?? '').join('').trim());
   await expect.poll(captionLine).not.toBe('');
+
+  // A reload before answering puts the opening's question again, without the
+  // greeting: "Hi …, I'm Maya" twice reads as the interviewer forgetting them.
+  await portalPage.reload();
+  await portalPage.getByRole('button', { name: 'Join interview' }).click();
+  await expect.poll(captionLine, { timeout: 20_000 }).toBe("Welcome back. Could you briefly tell me about your current role and the project you've worked on that's most relevant to this position?");
   const openingLine = await captionLine();
 
   // A typed answer must reach the server and bring the next question. Every

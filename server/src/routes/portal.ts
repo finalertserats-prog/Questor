@@ -527,9 +527,17 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
     throw new HttpError(404, 'No matching interviewer turn for this session');
   }
 
+  // What is spoken: the stored turn, or — when the room puts only the end of
+  // it again, as a rejoin does with the opening's question — that tail. The
+  // tail is still text the server wrote into this session's transcript, so
+  // this is no looser than speaking the row; anything else in the body is
+  // ignored and the stored row is spoken.
+  const requested = body.turnId && body.text ? body.text.trim() : '';
+  const spoken = requested && turn.text.toLowerCase().endsWith(requested.toLowerCase()) ? requested : turn.text;
+
   // A stored turn longer than the cap is legitimate content, not an attack, so
   // fall back to browser speech rather than failing the interview over it.
-  if (turn.text.length > MAX_SPEAK_TEXT_CHARS) {
+  if (spoken.length > MAX_SPEAK_TEXT_CHARS) {
     logger.warn({ sessionId: inv.sessionId, turnId: turn.id, chars: turn.text.length }, 'Agent turn exceeds TTS cap; falling back to browser speech');
     return res.status(204).end();
   }
@@ -543,14 +551,14 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
   // calling the vendor — checking it afterwards would save bandwidth but still
   // pay for the audio, which defeats the point. The voice is the session
   // interviewer's, so a changed interviewer never matches another's audio.
-  const etag = speechEtag(turn.text, voice);
+  const etag = speechEtag(spoken, voice);
   res.setHeader('ETag', etag);
   res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
   let speech: Awaited<ReturnType<typeof synthesizeServerSpeech>>;
   try {
-    speech = await synthesizeServerSpeech(turn.text, voice);
+    speech = await synthesizeServerSpeech(spoken, voice);
   } catch (err) {
     // A vendor outage must not stop an interview mid-question. Log it and let
     // the client fall back to the browser voice.

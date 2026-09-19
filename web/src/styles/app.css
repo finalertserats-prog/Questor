@@ -1294,9 +1294,10 @@ tr.in-flight td:first-child {
 }
 
 /* --- stage / participant tiles ---
-   `room-stage`, not `stage`: pipeline.css styles its stage-track items as
-   `.stage`, loads later, and was turning this grid into a white bordered
-   column in the light theme. */
+   `room-stage`, not a bare `stage`: pipeline.css once styled its stage-track
+   items as `.stage` (now `.pipeline-stage`) and turned this grid into a white
+   bordered column in the light theme. Both names are now specific to their
+   owner, which tests/cssClassOwnership.test.ts guards. */
 .room-stage {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));

@@ -69,6 +69,21 @@ export interface OpeningInput {
   readonly observerNotice?: string;
 }
 
+const QUESTION_LEAD = "Let's start — ";
+
+/**
+ * The question inside an opening, for when it has to be put again on a
+ * rejoin: greeting a candidate a second time mid-interview reads as the
+ * interviewer having forgotten them. Text that is not an opening is returned
+ * as it is.
+ */
+export function openingQuestion(openingText: string): string {
+  const at = openingText.lastIndexOf(QUESTION_LEAD);
+  if (at < 0) return openingText;
+  const question = openingText.slice(at + QUESTION_LEAD.length).trim();
+  return question ? question.charAt(0).toUpperCase() + question.slice(1) : openingText;
+}
+
 export function buildOpeningGreeting(input: OpeningInput): string {
   const who = firstName(input.candidateName);
   const me = (input.interviewerName ?? '').trim();
@@ -86,6 +101,6 @@ export function buildOpeningGreeting(input: OpeningInput): string {
     looking,
     `We'll spend about ${input.durationMinutes} minutes together, and feel free to ask me to repeat anything.`,
     ...(input.observerNotice ? [input.observerNotice] : []),
-    `Let's start — ${WARMUP_QUESTION}`,
+    `${QUESTION_LEAD}${WARMUP_QUESTION}`,
   ].join(' ');
 }

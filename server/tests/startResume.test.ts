@@ -130,6 +130,22 @@ describe('rejoining straight after the opening', () => {
 
     expect(rejoin.body.history).toEqual([{ speaker: 'agent', text: ids.opening.turn.text }]);
   });
+
+  it('puts only the question again, not the greeting', async () => {
+    const ids = await startedInterview();
+
+    const rejoin = await request(app).post(`/api/portal/${ids.token}/start`).send({});
+
+    expect(rejoin.body.turn.text).toBe("Could you briefly tell me about your current role and the project you've worked on that's most relevant to this position?");
+  });
+
+  it('keeps the same turn, so the answer is still credited to the opening', async () => {
+    const ids = await startedInterview();
+
+    const rejoin = await request(app).post(`/api/portal/${ids.token}/start`).send({});
+
+    expect(rejoin.body.turn.turnId).toBe(ids.opening.turn.turnId);
+  });
 });
 
 describe('a fresh start', () => {

@@ -14,6 +14,7 @@ import { logger } from '../logger.js';
 import { assertAcceptingNewInterviews } from '../services/drainState.js';
 import { noteSessionActivity } from './liveSessions.js';
 import { OBSERVER_NOTICE, hasObserverNotice } from '../services/observerPolicy.js';
+import { openingQuestion } from '../engines/openingModel.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -385,7 +386,13 @@ async function recordedOutcome(sessionId: string, state: string, resumed: boolea
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   return {
     turn: {
-      turnId: pending.id, index: pending.index, text: pending.text, competencyId: pending.competencyId,
+      turnId: pending.id, index: pending.index,
+      // A rejoin puts the opening's question again, not its greeting; the
+      // history below still shows the greeting as it was said. The room's
+      // speech of this text is allowed because it is the tail of the stored
+      // turn (routes/portal.ts /speak).
+      text: resumed && kind === 'opening' ? openingQuestion(pending.text) : pending.text,
+      competencyId: pending.competencyId,
       kind, state,
       // Mirrors produceAgentTurn, so a rejoin after the sign-off ends the room
       // exactly as the sign-off itself would have.

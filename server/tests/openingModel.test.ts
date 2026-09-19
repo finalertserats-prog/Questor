@@ -4,6 +4,7 @@ import {
   buildOpeningGreeting,
   firstName,
   focusAreas,
+  openingQuestion,
 } from '../src/engines/openingModel.js';
 import type { Competency, RoleSuccessProfile } from '../src/domain/types.js';
 
@@ -128,6 +129,14 @@ describe('buildOpeningGreeting', () => {
   it('says aloud that a member of the hiring team may observe, when the candidate was told so', () => {
     const notice = 'A member of the hiring team may observe this interview live.';
     expect(buildOpeningGreeting({ ...base, observerNotice: notice })).toContain(`feel free to ask me to repeat anything. ${notice} Let's start`);
+  });
+
+  it('gives just the question when the opening has to be put again on a rejoin', () => {
+    expect(openingQuestion(opening)).toBe("Could you briefly tell me about your current role and the project you've worked on that's most relevant to this position?");
+  });
+
+  it('leaves text that is not an opening unchanged', () => {
+    expect(openingQuestion('Tell me about a pipeline you owned.')).toBe('Tell me about a pipeline you owned.');
   });
 
   it('keeps to four sentences before the question', () => {

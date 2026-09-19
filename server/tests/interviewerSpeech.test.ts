@@ -90,6 +90,24 @@ describe('portal speech uses the session interviewer voice', () => {
     expect(first).not.toBe(second);
   });
 
+  it('speaks only the tail of a stored turn when that is all the room puts again', async () => {
+    tts.ready = true;
+    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId: agentTurnId, text: 'Tell me about a pipeline you owned.'.slice(8) });
+    expect(tts.texts.at(-1)).toBe('about a pipeline you owned.');
+  });
+
+  it('matches the tail regardless of the case of its first letter', async () => {
+    tts.ready = true;
+    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId: agentTurnId, text: 'About a pipeline you owned.' });
+    expect(tts.texts.at(-1)).toBe('About a pipeline you owned.');
+  });
+
+  it('still speaks the stored turn, never request text that is not part of it', async () => {
+    tts.ready = true;
+    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId: agentTurnId, text: 'Buy cheap watches now.' });
+    expect(tts.texts.at(-1)).toBe('Tell me about a pipeline you owned.');
+  });
+
   it('keeps demo sandboxes on browser speech', async () => {
     tts.ready = true;
     await prisma.tenant.update({ where: { id: ids.tenantId }, data: { isDemo: true } });
