@@ -37,13 +37,22 @@ describe('running a job under a lease', () => {
     expect(outcome).toBe('ran');
   });
 
-  it('lets only one of two simultaneous runners do the work', async () => {
-    let started = 0;
-    const slow = async () => { started += 1; await new Promise((r) => setTimeout(r, 150)); };
+  it('never lets two runners do the work at the same time', async () => {
+    // The guarantee is no overlap. Counting runs was timing-dependent: on
+    // Postgres the second runner's first query can land after the first has
+    // finished and released the lease, and then running is correct.
+    let active = 0;
+    let maxActive = 0;
+    const slow = async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((r) => setTimeout(r, 150));
+      active -= 1;
+    };
 
     const outcomes = await Promise.all([runExclusive('race-job', 60_000, slow), runExclusive('race-job', 60_000, slow)]);
 
-    expect([outcomes.sort(), started]).toEqual([['ran', 'skipped'], 1]);
+    expect({ maxActive, ranAtLeastOnce: outcomes.includes('ran') }).toEqual({ maxActive: 1, ranAtLeastOnce: true });
   });
 
   it('frees the lease once the work is done', async () => {
