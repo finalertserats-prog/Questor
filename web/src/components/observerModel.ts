@@ -181,3 +181,12 @@ export function candidatePhase(view: CandidateConsentView): CandidatePhase {
     }
   }
 }
+
+/**
+ * How the observe page should present a failed load. 409 is the server saying
+ * "not yet" (the candidate has not joined or heard the observer notice), which
+ * is information to wait on, not an error to alarm about.
+ */
+export function observeLoadProblem(status: number | undefined): 'waiting' | 'error' {
+  return status === 409 ? 'waiting' : 'error';
+}

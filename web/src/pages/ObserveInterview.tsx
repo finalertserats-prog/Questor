@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
+import { observeLoadProblem } from '../components/observerModel';
 import { Banner } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
@@ -45,6 +46,7 @@ export function ObserveInterview() {
   const { id = '' } = useParams();
   const [data, setData] = useState<ObserveResp | null>(null);
   const [error, setError] = useState('');
+  const [waiting, setWaiting] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -58,11 +60,14 @@ export function ObserveInterview() {
         if (!active) return;
         setData(next);
         setError('');
+        setWaiting('');
         delay = POLL_DELAY_MS;
         if (!FINISHED.has(next.session.state)) timer = window.setTimeout(poll, delay);
       } catch (e: unknown) {
         if (!active) return;
-        setError(e instanceof Error ? e.message : 'Could not load the interview.');
+        const message = e instanceof Error ? e.message : 'Could not load the interview.';
+        if (observeLoadProblem(e instanceof ApiError ? e.status : undefined) === 'waiting') { setWaiting(message); setError(''); }
+        else { setError(message); setWaiting(''); }
         // A failed poll used to end the polling silently while the page still
         // claimed to be updating, so an observer watched a transcript that had
         // quietly stopped. Keep asking, less often each time.
@@ -90,6 +95,7 @@ export function ObserveInterview() {
       />
 
       {error && <Banner kind="error">{error}</Banner>}
+      {waiting && <Banner kind="info">{waiting} This page checks again on its own.</Banner>}
 
       {!data && !error && <div className="card"><Skeleton lines={5} label="Connecting to the live transcript…" /></div>}
 

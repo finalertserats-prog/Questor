@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   candidatePhase, formatOffset, groupQuotesByCompetency, orderedTranscript, readQuotes, roomPhase, stopSentence,
-  type ObservationView, type ObserverRoundView,
-} from '../src/components/observerModel';
+  type ObservationView, type ObserverRoundView, observeLoadProblem } from '../src/components/observerModel';
 
 function roundView(observation: Partial<ObservationView> | null, round: Partial<ObserverRoundView['round']> = {}): ObserverRoundView {
   return {
@@ -106,5 +105,11 @@ describe('the candidate phase', () => {
       status: 'LISTENING', organisation: '', stage: '', notice: '', decision: 'consented',
       canConsent: false, canDecline: false, canStop: true, listening: true,
     })).toBe('listening');
+  });
+});
+
+describe('observeLoadProblem', () => {
+  it('treats 409 as waiting for the candidate, and anything else as an error', () => {
+    expect([observeLoadProblem(409), observeLoadProblem(500), observeLoadProblem(undefined)]).toEqual(['waiting', 'error', 'error']);
   });
 });
