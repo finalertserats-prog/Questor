@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { formatDate } from '../components/dateFormat';
@@ -11,18 +11,35 @@ import { Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
 import {
   domainsFromRoles,
+  EMPTY_ROLE_FILTERS,
   filterRoles,
+  filtersFromParams,
+  filtersToParams,
   formatAdvanceRate,
+  formatRoleCount,
   formatTurnaround,
+  hasActiveFilters,
+  isSearchPending,
+  MAX_ROLE_SEARCH_LENGTH,
+  mergeOptionNames,
   METRIC_FILTER_LABELS,
   metricFilterFromParam,
+  roleMetricsPath,
   sortRoles,
+  type RoleFilterState,
   type RoleFunnel,
   type RoleMetricsPayload,
   type RoleSortKey,
   type RoleStatusFilter,
   type SortDirection,
 } from '../components/rolesListModel';
+
+interface CatalogDomain { readonly id: string; readonly name: string }
+interface CatalogBand { readonly id: string; readonly display: string }
+interface CatalogRegion { readonly code: string; readonly name: string }
+
+/** Long enough that a word is typed before the server is asked. */
+const SEARCH_DEBOUNCE_MS = 300;
 
 const COLUMNS: ReadonlyArray<{ key: RoleSortKey; label: string }> = [
   { key: 'title', label: 'Role' },
@@ -40,9 +57,6 @@ function nextDirection(active: boolean, current: SortDirection): SortDirection {
 
 export function RolesList() {
   const [roles, setRoles] = useState<readonly RoleFunnel[]>([]);
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<RoleStatusFilter>('all');
-  const [domain, setDomain] = useState('');
   const [sortKey, setSortKey] = useState<RoleSortKey>('title');
   const [direction, setDirection] = useState<SortDirection>('asc');
   const [loading, setLoading] = useState(true);
@@ -52,6 +66,62 @@ export function RolesList() {
   // ?filter=awaiting-review; the rows are narrowed by the same rule as the count.
   const [params, setParams] = useSearchParams();
   const metric = metricFilterFromParam(params.get('filter'));
+  // The URL holds every filter, so a filtered view can be shared and survives a reload.
+  const filters = filtersFromParams(params);
+  const fieldId = useId();
+  // What is typed; it reaches the URL (and the server) once typing pauses.
+  const [draft, setDraft] = useState(filters.q);
+  const [matchingIds, setMatchingIds] = useState<ReadonlySet<string> | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [catalog, setCatalog] = useState<{ domains: readonly CatalogDomain[]; bands: readonly CatalogBand[]; regions: readonly CatalogRegion[] }>({ domains: [], bands: [], regions: [] });
+
+  const updateFilters = useCallback((change: Partial<RoleFilterState>) => {
+    setParams((current) => filtersToParams({ ...filtersFromParams(current), ...change }, current), { replace: true });
+  }, [setParams]);
+
+  useEffect(() => {
+    if (draft.trim() === filters.q) return undefined;
+    const timer = window.setTimeout(() => updateFilters({ q: draft.slice(0, MAX_ROLE_SEARCH_LENGTH) }), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, filters.q, updateFilters]);
+
+  // Back and forward move the URL without typing; the box follows it.
+  useEffect(() => {
+    setDraft((current) => (current.trim() === filters.q ? current : filters.q));
+  }, [filters.q]);
+
+  // The search reaches the job description and scorecard, which the list does
+  // not carry, so the server answers it; the other filters stay in the browser.
+  useEffect(() => {
+    if (!filters.q) {
+      setMatchingIds(null);
+      setSearchError('');
+      setSearching(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setSearching(true);
+    api.get<RoleMetricsPayload>(roleMetricsPath(filters.q))
+      .then((d) => { if (!cancelled) { setMatchingIds(new Set((d.roles ?? []).map((r) => r.id))); setSearchError(''); } })
+      .catch((err: unknown) => { if (!cancelled) setSearchError(err instanceof Error ? err.message : 'The search did not finish.'); })
+      .finally(() => { if (!cancelled) setSearching(false); });
+    return () => { cancelled = true; };
+  }, [filters.q]);
+
+  // The filter options are the catalog's. Without it the page still filters,
+  // on the values the roles themselves carry.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      api.get<readonly CatalogDomain[]>('/catalog/domains'),
+      api.get<readonly CatalogBand[]>('/catalog/experience-bands'),
+      api.get<readonly CatalogRegion[]>('/catalog/regions'),
+    ])
+      .then(([domains, bands, regions]) => { if (!cancelled) setCatalog({ domains, bands, regions }); })
+      .catch(() => { /* Options fall back to the values on the roles; nothing is lost. */ });
+    return () => { cancelled = true; };
+  }, []);
 
   // Metrics are the list's source of truth: the endpoint already scopes roles
   // and candidate counts the same way the sidebar pages do.
@@ -69,19 +139,47 @@ export function RolesList() {
     return () => { cancelled = true; };
   }, []);
 
-  const domains = useMemo(() => domainsFromRoles(roles), [roles]);
+  const domainOptions = useMemo(
+    () => mergeOptionNames(catalog.domains.map((d) => d.name), domainsFromRoles(roles)),
+    [catalog.domains, roles],
+  );
+  const bandOptions = useMemo(() => {
+    const names = new Map(catalog.bands.map((b) => [b.id, b.display]));
+    const extra = roles.flatMap((r) => (r.experienceBand && !names.has(r.experienceBand) ? [r.experienceBand] : []));
+    return [...catalog.bands.map((b) => ({ value: b.id, label: b.display })), ...[...new Set(extra)].map((id) => ({ value: id, label: id }))];
+  }, [catalog.bands, roles]);
+  const regionOptions = useMemo(() => {
+    const names = new Map(catalog.regions.map((r) => [r.code, r.name]));
+    const codes = mergeOptionNames(catalog.regions.map((r) => r.code), roles.flatMap((r) => (r.regionCode ? [r.regionCode] : [])));
+    return codes.map((code) => ({ value: code, label: names.get(code) ?? code })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [catalog.regions, roles]);
   const labelById = useMemo(() => {
     const labels = roleDisplayLabels(roles);
     return new Map(roles.map((role, index) => [role.id, labels[index]]));
   }, [roles]);
+  const { q, domain, band, region, status } = filters;
   const visible = useMemo(
-    () => sortRoles(filterRoles(roles, { query, status, domain: domain || undefined, metric }), sortKey, direction),
-    [roles, query, status, domain, metric, sortKey, direction],
+    () => sortRoles(filterRoles(roles, {
+      status,
+      domain,
+      experienceBand: band,
+      regionCode: region,
+      matchingIds: q ? matchingIds : null,
+      metric,
+    }), sortKey, direction),
+    [roles, q, status, domain, band, region, matchingIds, metric, sortKey, direction],
   );
+  const pending = isSearchPending({ draft, applied: q, loading: searching });
   const clearMetric = () => {
     const next = new URLSearchParams(params);
     next.delete('filter');
     setParams(next);
+  };
+  const clearFilters = () => {
+    setDraft('');
+    const next = filtersToParams(EMPTY_ROLE_FILTERS, params);
+    next.delete('filter');
+    setParams(next, { replace: true });
   };
 
   const setSort = (key: RoleSortKey) => {
@@ -119,28 +217,61 @@ export function RolesList() {
         </p>
       )}
 
+      {searchError && <Banner kind="error">The search did not finish. {searchError}</Banner>}
+
       <div className="card">
-        <div className="row spread" style={{ marginBottom: 12 }}>
-          <input
-            className="filter-input"
-            placeholder="Filter by title or level…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Filter roles"
-          />
-          <select value={status} onChange={(e) => setStatus(e.target.value as RoleStatusFilter)} aria-label="Filter role status">
-            <option value="all">Active roles</option>
-            <option value="draft">Draft</option>
-            <option value="approved">Approved</option>
-            <option value="archived">Archived</option>
-          </select>
-          <select value={domain} onChange={(e) => setDomain(e.target.value)} aria-label="Filter domain">
-            <option value="">All domains</option>
-            {domains.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <span className="muted small">
-            {visible.length === roles.length ? `${roles.length} role${roles.length === 1 ? '' : 's'}` : `${visible.length} of ${roles.length}`}
-          </span>
+        <div className="filter-bar" role="search" aria-label="Filter roles">
+          <div className="filter-field filter-field-search">
+            <label htmlFor={`${fieldId}-q`}>Search</label>
+            <input
+              id={`${fieldId}-q`}
+              type="search"
+              placeholder="Title, job description or scorecard…"
+              value={draft}
+              maxLength={MAX_ROLE_SEARCH_LENGTH}
+              onChange={(e) => setDraft(e.target.value)}
+              aria-describedby={`${fieldId}-count`}
+            />
+          </div>
+          <div className="filter-field">
+            <label htmlFor={`${fieldId}-domain`}>Domain</label>
+            <select id={`${fieldId}-domain`} value={domain} onChange={(e) => updateFilters({ domain: e.target.value })}>
+              <option value="">All</option>
+              {domainOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div className="filter-field">
+            <label htmlFor={`${fieldId}-band`}>Experience</label>
+            <select id={`${fieldId}-band`} value={band} onChange={(e) => updateFilters({ band: e.target.value })}>
+              <option value="">All</option>
+              {bandOptions.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+            </select>
+          </div>
+          <div className="filter-field">
+            <label htmlFor={`${fieldId}-region`}>Region</label>
+            <select id={`${fieldId}-region`} value={region} onChange={(e) => updateFilters({ region: e.target.value })}>
+              <option value="">All</option>
+              {regionOptions.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </div>
+          <div className="filter-field">
+            <label htmlFor={`${fieldId}-status`}>Status</label>
+            <select id={`${fieldId}-status`} value={status} onChange={(e) => updateFilters({ status: e.target.value as RoleStatusFilter })}>
+              <option value="all">Active roles</option>
+              <option value="draft">Draft</option>
+              <option value="approved">Approved</option>
+              <option value="archived">Archived</option>
+            </select>
+          </div>
+        </div>
+        <div className="filter-summary">
+          {/* Announced politely, and only when the text changes. */}
+          <span id={`${fieldId}-count`} className="muted small" role="status">{formatRoleCount(visible.length, roles.length)}</span>
+          {pending && <span className="muted small filter-searching">Searching…</span>}
+          {/* With no rows, the empty state below carries the same action. */}
+          {hasActiveFilters({ ...filters, q: draft }, metric) && visible.length > 0 && (
+            <button type="button" className="btn ghost sm" onClick={clearFilters}><Icon name="close" size={14} />Clear filters</button>
+          )}
         </div>
 
         {/* A failed load is not an empty tenant: the banner says what went wrong. */}
@@ -157,7 +288,7 @@ export function RolesList() {
             icon="search"
             title="No matches"
             message="No role matches the current filters."
-            action={<button type="button" className="btn secondary sm" onClick={() => { setQuery(''); setStatus('all'); setDomain(''); if (metric) clearMetric(); }}><Icon name="close" size={14} />Clear filters</button>}
+            action={<button type="button" className="btn secondary sm" onClick={clearFilters}><Icon name="close" size={14} />Clear filters</button>}
           />
         ) : (
           <>

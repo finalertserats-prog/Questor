@@ -242,23 +242,29 @@ export function RoleCreate() {
           </label>
         </fieldset>
 
-        <label htmlFor={`${fieldId}-domain`}>Domain</label>
-        <select id={`${fieldId}-domain`} required value={domainId} onChange={(e) => { setDomainId(e.target.value); setCatalogRoleId(''); }}>
-          <option value="">Choose a domain</option>
-          {domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-
-        <label htmlFor={`${fieldId}-experience`}>Experience</label>
-        <select id={`${fieldId}-experience`} required value={experienceBand} onChange={(e) => setExperienceBand(e.target.value)}>
-          <option value="">Choose an experience band</option>
-          {bands.map((b) => <option key={b.id} value={b.id}>{b.display}</option>)}
-        </select>
-
-        <label htmlFor={`${fieldId}-region`}>Region</label>
-        <select id={`${fieldId}-region`} required value={regionCode} onChange={(e) => setRegionCode(e.target.value)}>
-          <option value="">Choose a region</option>
-          {regions.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
-        </select>
+        <div className="field-grid">
+          <div>
+            <label htmlFor={`${fieldId}-domain`}>Domain</label>
+            <select id={`${fieldId}-domain`} required value={domainId} onChange={(e) => { setDomainId(e.target.value); setCatalogRoleId(''); }}>
+              <option value="">Choose a domain</option>
+              {domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor={`${fieldId}-experience`}>Experience</label>
+            <select id={`${fieldId}-experience`} required value={experienceBand} onChange={(e) => setExperienceBand(e.target.value)}>
+              <option value="">Choose an experience band</option>
+              {bands.map((b) => <option key={b.id} value={b.id}>{b.display}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor={`${fieldId}-region`}>Region</label>
+            <select id={`${fieldId}-region`} required value={regionCode} onChange={(e) => setRegionCode(e.target.value)}>
+              <option value="">Choose a region</option>
+              {regions.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
+            </select>
+          </div>
+        </div>
 
         <label htmlFor={`${fieldId}-title`}>Role title (optional)</label>
         <RoleTitleCombobox
