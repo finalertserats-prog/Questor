@@ -1,9 +1,9 @@
-import { brandedEmail, headerSafe } from './branding.js';
+import { brandedEmail, emailButton, headerSafe } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 function escapeHtml(s: string): string { return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`); }
 function p(text: string): string { return `<p style="margin:0 0 12px">${escapeHtml(text)}</p>`; }
-function link(href: string, label: string): string { return `<p style="margin:0 0 10px"><a href="${escapeHtml(href)}" style="display:inline-block;background:#2f2f7a;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">${escapeHtml(label)}</a></p>`; }
+function link(href: string, label: string): string { return emailButton(href, label); }
 
 export function renderDemoAccessEmail(opts: { to: string; name: string; linkUrl: string }): EmailMessage {
   const text = [`Hi ${opts.name},`, '', 'Here is your one-time Questor demo sign-in link. It opens your private sandbox and can be used once.', '', opts.linkUrl, '', 'The demo session lasts 45 minutes after you open it.'].join('\n');

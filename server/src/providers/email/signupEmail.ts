@@ -1,4 +1,4 @@
-import { brandedEmail, headerSafe } from './branding.js';
+import { brandedEmail, emailButton, headerSafe } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 function escapeHtml(s: string): string {
@@ -10,7 +10,7 @@ function p(text: string): string {
 }
 
 function link(href: string, label: string): string {
-  return `<p style="margin:0 0 10px"><a href="${escapeHtml(href)}" style="display:inline-block;background:#2f2f7a;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">${escapeHtml(label)}</a></p>`;
+  return emailButton(href, label);
 }
 
 

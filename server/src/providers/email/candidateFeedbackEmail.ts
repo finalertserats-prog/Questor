@@ -1,4 +1,4 @@
-import { brandedEmail, headerSafe } from './branding.js';
+import { brandedEmail, emailButton, headerSafe } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 /**
@@ -111,11 +111,7 @@ export function renderCandidateFeedbackEmail(opts: {
 <h2 style="font-size:17px;font-weight:600;margin:0 0 8px;color:#1a1a22">Would you like to speak to a person?</h2>
 <p style="margin:0 0 14px">If you would rather talk this through with someone on the hiring team than read it,
 you can ask for that here. It is one click, and nobody will call you unless you do.</p>
-<p style="margin:0 0 10px">
-  <a href="${escapeHtml(opts.talkUrl)}"
-     style="display:inline-block;background:#2f2f7a;color:#ffffff;text-decoration:none;
-            padding:11px 20px;border-radius:6px;font-weight:600">Yes, I'd like to speak to someone</a>
-</p>
+${emailButton(opts.talkUrl, "Yes, I'd like to speak to someone")}
 <p style="margin:0;color:#5a5a6e;font-size:12px">That link works for the next 30 days and only does this one thing.</p>`
     : '';
 

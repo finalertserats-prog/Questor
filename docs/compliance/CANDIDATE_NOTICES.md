@@ -15,9 +15,9 @@ This document contains four candidate-facing legal texts for the AI-driven first
 *To be displayed to candidates on a dedicated landing page before starting the interview.*
 
 > [!NOTE]
-> ### About Your Interview with Schranders
+> ### About Your Interview with [Interviewer Name]
 > 
-> You are about to take a first-round interview for the **[Job Title]** role. This interview is conducted by **Schranders**, the AI interviewer in Questor, rather than a live person.
+> You are about to take a first-round interview for the **[Job Title]** role. This interview is conducted by **[Interviewer Name]** (Avery, Maya, Adrian, Elena or Theo), an AI interviewer from Questor, rather than a live person.
 > 
 > * **How it works:** You can answer questions using either voice or text. Your answers are transcribed as you speak. No audio recording of the interview is kept — the written transcript is what the hiring team reads.
 > * **What it assesses:** The AI will evaluate your responses against a standard rubric for job-specific skills and competencies (such as **[Competency A]**, **[Competency B]**, and **[Competency C]**). It does **not** evaluate your body language, facial expressions, or voice tone.

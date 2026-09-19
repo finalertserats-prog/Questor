@@ -1,4 +1,4 @@
-import { brandedEmail, headerSafe } from './branding.js';
+import { brandedEmail, emailButton, headerSafe } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 /**
@@ -39,11 +39,7 @@ export function renderFeedbackOptInRequestEmail(opts: {
 <p style="margin:0 0 12px">Would you like written feedback on your interview by email? It would be a short note
 from the hiring team about what went well and what you could work on. It does not change any decision about your
 application.</p>
-<p style="margin:0 0 14px">
-  <a href="${escapeHtml(opts.consentUrl)}"
-     style="display:inline-block;background:#2f2f7a;color:#ffffff;text-decoration:none;
-            padding:11px 20px;border-radius:6px;font-weight:600">Choose yes or no</a>
-</p>
+${emailButton(opts.consentUrl, 'Choose yes or no')}
 <p style="margin:0 0 10px">If you do not answer, we will not send you any feedback. You can ignore this email.</p>
 <p style="margin:0;color:#5a5a6e;font-size:12px">The link works for ${opts.ttlDays} days and only records this one answer.</p>`;
 

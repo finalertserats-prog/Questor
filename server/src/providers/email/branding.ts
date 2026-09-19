@@ -36,6 +36,19 @@ ${message.html}
 }
 
 /**
+ * A button that still works when links do not. Gmail disables every link in a
+ * message it files as spam, and some company mail systems strip them; an
+ * address that lived only inside the button left a candidate with the words
+ * "Start or schedule your interview" and nothing to click or copy. So the
+ * address is always written out underneath as plain text.
+ */
+export function emailButton(href: string, label: string): string {
+  const url = escapeHtml(href);
+  return `<p style="margin:0 0 8px"><a href="${url}" style="display:inline-block;background:#2f2f7a;color:#ffffff;text-decoration:none;padding:11px 20px;border-radius:6px;font-weight:600">${escapeHtml(label)}</a></p>
+<p style="margin:0 0 14px;color:#5a5a6e;font-size:13px">If the button does not work, copy this link into your browser:<br><span style="color:#1a1a22;word-break:break-all">${url}</span></p>`;
+}
+
+/**
  * A mail header is a single line. Names and role titles typed by people reach
  * subject lines; a newline inside one would let a stranger append headers to
  * mail sent on Questor's behalf. Every control character becomes a space and

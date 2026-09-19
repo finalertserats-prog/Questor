@@ -2,7 +2,7 @@ import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { getEmail } from '../providers/email/index.js';
-import { brandedEmail, escapeHtml } from '../providers/email/branding.js';
+import { brandedEmail, emailButton, escapeHtml } from '../providers/email/branding.js';
 import { SOURCE_KEYS, type SourceKey } from './catalogRefreshState.js';
 
 /**
@@ -64,7 +64,7 @@ function render(to: string, summary: RefreshSummary) {
     text: [`The monthly catalog refresh found ${summary.total} ${noun} for the shared role catalog.`, '', ...lines, '', 'Nothing is added until you approve it.', `Review them: ${link}`].join('\n'),
     html: `<p>The monthly catalog refresh found <b>${summary.total}</b> ${noun} for the shared role catalog.</p>`
       + `<ul>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ul>`
-      + `<p>Nothing is added until you approve it.</p><p><a href="${escapeHtml(link)}">Review catalog proposals</a></p>`,
+      + `<p>Nothing is added until you approve it.</p>${emailButton(link, 'Review catalog proposals')}`,
   });
 }
 
