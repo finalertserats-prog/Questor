@@ -19,7 +19,9 @@ export default defineConfig({
   ],
   webServer: {
     command: 'node e2e/scripts/dev-server.mjs',
-    url: 'http://localhost:5173',
+    // The API behind Vite's proxy, not the page: the page answers first, and
+    // global setup's sign-in then met "We can't reach Questor right now".
+    url: 'http://localhost:5173/api/health',
     cwd: '..',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

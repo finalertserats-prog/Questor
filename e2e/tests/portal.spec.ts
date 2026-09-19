@@ -5,7 +5,7 @@ test('portal consent without voice capture starts typed mode and never asks for 
   const id = runId();
   const { name } = await createRoleAndCandidate(page, id);
 
-  await page.getByRole('tab', { name: 'Candidate Journey' }).click();
+  await page.getByRole('tab', { name: 'Candidate journey' }).click();
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
   await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
 

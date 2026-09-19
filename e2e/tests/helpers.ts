@@ -22,10 +22,22 @@ export async function dismissTour(page: Page) {
 export async function createRoleThroughUi(page: Page, title: string) {
   await page.goto('/roles/new');
   await dismissTour(page);
-  await expect(page.getByRole('heading', { name: 'New Role', exact: true })).toBeVisible();
-  // The form's labels are not bound to their fields, so the placeholders are
-  // the only user-visible handle on them.
-  await page.getByPlaceholder('Senior Data Engineer').fill(title);
+  await expect(page.getByRole('heading', { name: 'New role', exact: true })).toBeVisible();
+  // Domain, experience and region are required before a role can be created.
+  const pick = async (label: string) => {
+    const select = page.getByLabel(label, { exact: true });
+    await expect(select.locator('option').nth(1)).toBeAttached();
+    await select.selectOption({ index: 1 });
+  };
+  await pick('Domain');
+  await pick('Experience');
+  await pick('Region');
+  const titleBox = page.getByRole('combobox', { name: /Role title/ });
+  await titleBox.fill(title);
+  await titleBox.press('Escape');
+  // A test title must not be published to the shared catalog on every run.
+  const share = page.getByRole('checkbox', { name: /Add this title to the shared role catalog/ });
+  if (await share.isVisible().catch(() => false)) await share.uncheck();
   await page.getByPlaceholder(/Paste the full job description/).fill(jobDescription(title));
   await page.getByRole('button', { name: /^Create role$/ }).click();
   // Fairness warnings on the JD hold the page until someone moves on.
@@ -48,7 +60,7 @@ export async function approveRoleIfNeeded(page: Page) {
 export async function addCandidateThroughUi(page: Page, title: string, name: string, email: string) {
   await page.goto('/candidates/new');
   await dismissTour(page);
-  await expect(page.getByRole('heading', { name: 'Add Candidate', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Add candidate', exact: true })).toBeVisible();
   const form = page.locator('form.card');
   const roleSelect = form.getByRole('combobox');
   const roleValue = await roleSelect.locator('option').filter({ hasText: title }).first().getAttribute('value');

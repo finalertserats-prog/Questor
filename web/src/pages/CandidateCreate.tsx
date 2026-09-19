@@ -128,7 +128,7 @@ export function CandidateCreate() {
 
   return (
     <div>
-      <PageHeader icon="resume-upload" title="Add Candidate" />
+      <PageHeader icon="resume-upload" title="Add candidate" />
 
       {error && <Banner kind="error">{error}</Banner>}
       {/* Said plainly, because the form still looks unsubmitted: the person
