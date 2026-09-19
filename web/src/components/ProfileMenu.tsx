@@ -16,6 +16,7 @@ const MENU_ICONS: Record<string, IconName> = {
   admin: 'admin',
   signups: 'inbox',
   audit: 'audit',
+  'catalog-review': 'list',
   about: 'about',
   contact: 'contact',
   tour: 'tour',
@@ -91,7 +92,7 @@ export function ProfileMenu() {
     >
       {isOpen && (
         <div ref={menuRef} className="profile-menu-popover" role="menu" aria-label="Profile menu" onKeyDown={handleMenuKeyDown}>
-          {profileMenuItems(user.role).filter((item) => !(tenant?.isDemo && 'to' in item && demoHidesNavItem(item.to))).map((item) => (
+          {profileMenuItems(user.role, { platformOperator: user.platformOperator === true }).filter((item) => !(tenant?.isDemo && 'to' in item && demoHidesNavItem(item.to))).map((item) => (
             item.kind === 'link' ? (
               <Link key={item.key} to={item.to} role="menuitem" className="profile-menu-item" onClick={() => setIsOpen(false)}>
                 <Icon name={MENU_ICONS[item.key] ?? 'about'} size={16} />

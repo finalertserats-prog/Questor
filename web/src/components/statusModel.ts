@@ -70,6 +70,21 @@ const ROLE: StatusTable = {
   archived: ['neutral', 'lock'],
 };
 
+// Catalog refresh proposals. Superseded is neutral: nothing was wrong with it,
+// the catalog simply got the title another way first.
+const PROPOSAL: StatusTable = {
+  pending: ['hold', 'hourglass'],
+  approved: ['pass', 'check-circle'],
+  rejected: ['stop', 'x-circle'],
+  superseded: ['neutral', 'lock', 'Already in catalog'],
+};
+
+const REFRESH_RUN: StatusTable = {
+  running: ['info', 'refresh'],
+  completed: ['pass', 'check-circle'],
+  failed: ['stop', 'alert'],
+};
+
 const RECOMMENDATION: StatusTable = {
   PROCEED: ['pass', 'check-circle'],
   CONSIDER: ['hold', 'question'],
@@ -103,6 +118,8 @@ export const decisionStatus = (decision: string): StatusMeta => lookup(DECISION,
 export const roundStatus = (status: string): StatusMeta => lookup(ROUND, status);
 export const recommendationStatus = (rec: string): StatusMeta => lookup(RECOMMENDATION, rec);
 export const roleStatus = (status: string): StatusMeta => lookup(ROLE, status);
+export const proposalStatus = (status: string): StatusMeta => lookup(PROPOSAL, status);
+export const refreshRunStatus = (status: string): StatusMeta => lookup(REFRESH_RUN, status);
 
 export type BadgeKind = 'green' | 'amber' | 'red' | 'blue' | 'gray';
 

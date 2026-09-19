@@ -50,6 +50,18 @@ describe('profileMenuItems', () => {
     expect(routes).toEqual(['/settings', '/admin', '/admin/signups', '/audit', '/about', '/contact']);
   });
 
+  it('offers Catalog review to the platform owner, after the audit log', () => {
+    expect(profileMenuItems('admin', { platformOperator: true }).map((item) => item.key)).toEqual(['settings', 'admin', 'signups', 'audit', 'catalog-review', 'about', 'contact', 'tour']);
+  });
+
+  it('offers Catalog review to a platform owner whatever their organisation role', () => {
+    expect(profileMenuItems('recruiter', { platformOperator: true }).find((item) => item.key === 'catalog-review')).toEqual({ key: 'catalog-review', label: 'Catalog review', kind: 'link', to: '/catalog-review' });
+  });
+
+  it('hides Catalog review from everyone else, admins included', () => {
+    expect(profileMenuItems('admin').some((item) => item.key === 'catalog-review')).toBe(false);
+  });
+
   it('offers the tour to every role as an action rather than a page', () => {
     const tour = profileMenuItems('recruiter').find((item) => item.key === 'tour');
     expect(tour).toEqual({ key: 'tour', label: 'Take the tour', kind: 'action', action: 'start-tour' });

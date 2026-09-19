@@ -5,6 +5,7 @@ import { formatDate } from '../components/dateFormat';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
+import { CatalogAttribution } from '../components/CatalogAttribution';
 import { roleDetailLine, roleDisplayLabels } from '../components/roleLabelModel';
 import { PageSkeleton } from '../components/Skeleton';
 import { Banner } from '../components/ui';
@@ -345,6 +346,7 @@ export function RolesList() {
           </>
         )}
       </div>
+      <CatalogAttribution />
     </div>
   );
 }

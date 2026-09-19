@@ -18,6 +18,9 @@ const child = spawn('npm', ['run', 'dev'], {
     // Signup fails closed without someone to approve it. The console email
     // provider only logs the notice, so a placeholder address is enough here.
     SIGNUP_APPROVER_EMAIL: process.env.SIGNUP_APPROVER_EMAIL ?? 'approver@questor.local',
+    // The seeded admin is the platform owner here, so the catalog review spec
+    // can reach /catalog-review. Unset, nobody could (it fails closed).
+    PLATFORM_OPERATOR_EMAILS: process.env.PLATFORM_OPERATOR_EMAILS ?? 'demo@questor.local',
     EMAIL_PROVIDER: process.env.EMAIL_PROVIDER ?? 'console',
   },
   shell: true,
