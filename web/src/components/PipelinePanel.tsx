@@ -337,7 +337,7 @@ export function PipelinePanel(
 
       <ol className="stage-track">
         {pipeline.stages.map((stage, index) => (
-          <li key={stage.key} className={`stage stage-${states[index]}`} aria-current={states[index] === 'current' ? 'step' : undefined}>
+          <li key={stage.key} className={`pipeline-stage stage-${states[index]}`} aria-current={states[index] === 'current' ? 'step' : undefined}>
             <StageBadge stageKey={stage.key} />
             <span className="stage-label">{stage.label}</span>
             <span className="stage-caption">{stageCaption(stage.kind)}</span>

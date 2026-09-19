@@ -391,8 +391,10 @@ portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
     text: z.string().min(1).max(MAX_TURN_TEXT_CHARS),
     // Stored and shown to reviewers as when the answer was given; unbounded
     // numbers let a browser distort pacing and the transcript's timestamps.
-    startMs: z.number().int().min(0).max(MAX_TURN_MS).optional(),
-    endMs: z.number().int().min(0).max(MAX_TURN_MS).optional(),
+    // The room sends null when the moment is genuinely unknown (a typed
+    // answer); that means "no stamp", the same as leaving the field out.
+    startMs: z.number().int().min(0).max(MAX_TURN_MS).nullish().transform((v) => v ?? undefined),
+    endMs: z.number().int().min(0).max(MAX_TURN_MS).nullish().transform((v) => v ?? undefined),
   }).refine((b) => b.startMs === undefined || b.endMs === undefined || b.endMs >= b.startMs, { message: 'endMs must not be before startMs.' }).parse(req.body);
   const turn = await submitCandidateTurn(inv.sessionId, text, { startMs, endMs });
   let assessmentReady = false;

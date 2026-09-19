@@ -11,7 +11,9 @@
   list-style: none;
 }
 
-.stage {
+/* Not ".stage": the interview room owns that name, and sharing it painted
+   this card's light sheet behind the room's dark stage. */
+.pipeline-stage {
   display: flex;
   flex-direction: column;
   align-items: center;

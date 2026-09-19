@@ -268,6 +268,8 @@ export function InterviewRoom() {
       // that looks like success is the worst outcome in an interview.
       addMsg({ speaker: 'candidate', text });
       setTyped('');
+      // A retry that worked must not leave "your answer was not sent" on screen.
+      setErr('');
       addMsg({ speaker: 'agent', text: res.turn.text });
       sayAndListen(res.turn);
     } catch (e: unknown) {
@@ -488,8 +490,9 @@ export function InterviewRoom() {
           setShowTranscript(true);
           return;
         }
-        if (textMode) { setPhase('listening'); return; }
-        beginListening();
+        // beginListening handles typed mode too, and it records when this
+        // answer began; skipping it left typed answers without a start time.
+        void beginListening();
       },
     });
   }

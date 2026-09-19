@@ -48,5 +48,14 @@ test('portal consent without voice capture starts typed mode and never asks for 
     () => (window as unknown as { __e2eGetUserMediaCalls?: number }).__e2eGetUserMediaCalls ?? 0,
   );
   expect(micRequests).toBe(0);
+
+  // A typed answer must reach the server and bring the next question. Every
+  // typed answer once failed with "Invalid request" and this test never sent one.
+  const answer = portalPage.getByPlaceholder(/Type your answer/);
+  await answer.fill('I lead the data platform team and moved our nightly batch jobs to streaming pipelines.');
+  await portalPage.getByRole('button', { name: 'Send' }).click();
+  await expect(portalPage.getByText(/your answer was not sent/)).toHaveCount(0);
+  await expect(answer).toBeVisible({ timeout: 20_000 });
+  await expect(answer).toHaveValue('');
   await context.close();
 });
