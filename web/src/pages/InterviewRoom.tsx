@@ -195,7 +195,8 @@ export function InterviewRoom() {
       if (refusal === 'finished') { showFinished(); return; }
       if (refusal === 'stale') { void rejoin.catchUpAfterStale(text); return; }
       // Keep the text so they can retry rather than reconstruct what they said.
-      voice.turnClosedRef.current = false;
+      // The answer is open again, so switching back to speaking adds to it.
+      voice.reopenAnswer();
       mergeIntoDraft(text);
       setTextMode(true);
       setErr(`${errorMessage(e)} — your answer was not sent. It's in the box below; press Send to try again.`);
@@ -209,6 +210,8 @@ export function InterviewRoom() {
     addNudge: (text) => { addMsg({ speaker: 'agent', text, nudge: true }); },
     mergeIntoDraft,
     onMicDead: () => { meterRef.current?.stop(); meterRef.current = null; setMicOpen(false); },
+    // The pill follows capture itself, so it is back when speaking resumes.
+    onCaptureStarted: () => setMicOpen(true),
   });
   const { beginListening } = voice;
 
@@ -321,7 +324,7 @@ export function InterviewRoom() {
     // Their words stay on screen: typing, and not switched away by the next question.
     keepAnswer: (text) => { answerMode.choose(); mergeIntoDraft(text); setTextMode(true); },
     setErr,
-    reopenTurn: () => { voice.turnClosedRef.current = false; setPhase('listening'); },
+    reopenTurn: () => { voice.reopenAnswer(); setPhase('listening'); },
     stopAnswering: () => { voice.discardCapture(); voice.turnClosedRef.current = true; setInterim(''); },
     receiveTurn,
     currentTurnId: () => currentTurnRef.current?.turnId,
@@ -342,6 +345,21 @@ export function InterviewRoom() {
     currentTurnDone: () => currentTurnRef.current?.done === true,
     holdCapture: voice.holdCapture,
     beginListening: voice.beginListening,
+    answerInProgress: voice.answerInProgress,
+    reopenAnswer: voice.reopenAnswer,
+    clearReveal: () => setRevealing(null),
+    showLeft: () => {
+      // Ended from elsewhere (another tab): the room shows it has been left.
+      speechSeqRef.current += 1;
+      stopAllSpeech();
+      voice.discardCapture();
+      meterRef.current?.stop();
+      meterRef.current = null;
+      setMicOpen(false);
+      setErr('');
+      setWithdrawn(true);
+      setPhase('done');
+    },
     stopSpeech: () => { speechSeqRef.current += 1; stopAllSpeech(); },
     onLeft: (turn) => {
       voice.discardCapture();

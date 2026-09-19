@@ -13,8 +13,12 @@ vi.mock('../src/api/client', async (importOriginal) => {
 const { ApiError } = await import('../src/api/client');
 const { useLeave } = await import('../src/components/room/useLeave');
 
-function makeDeps(over: { done?: boolean; textMode?: boolean } = {}) {
+function makeDeps(over: { done?: boolean; textMode?: boolean; inProgress?: boolean } = {}) {
   return {
+    answerInProgress: () => over.inProgress ?? true,
+    reopenAnswer: vi.fn(),
+    clearReveal: vi.fn(),
+    showLeft: vi.fn(),
     token: 't',
     currentTurnDone: () => over.done ?? false,
     textModeRef: { current: over.textMode ?? false },
@@ -86,5 +90,57 @@ describe('Leave', () => {
     const { result } = renderHook(() => useLeave(deps));
     await act(() => result.current.leave());
     expect(deps.showFinished).toHaveBeenCalled();
+  });
+
+  it('reopens the answer in progress when leaving failed', async () => {
+    http.post.mockRejectedValue(new ApiError(500, 'Server error'));
+    const deps = makeDeps();
+    const { result } = renderHook(() => useLeave(deps));
+    await act(() => result.current.leave());
+    expect(deps.reopenAnswer).toHaveBeenCalled();
+  });
+
+  it('starts a fresh answer when leaving failed before one had begun', async () => {
+    http.post.mockRejectedValue(new ApiError(500, 'Server error'));
+    const deps = makeDeps({ inProgress: false });
+    const { result } = renderHook(() => useLeave(deps));
+    await act(() => result.current.leave());
+    expect(deps.beginListening).toHaveBeenCalledWith({});
+  });
+
+  it('stops revealing the question it cut off', async () => {
+    http.post.mockRejectedValue(new ApiError(500, 'Server error'));
+    const deps = makeDeps();
+    const { result } = renderHook(() => useLeave(deps));
+    await act(() => result.current.leave());
+    expect(deps.clearReveal).toHaveBeenCalled();
+  });
+
+  it('shows the ending when the interview had already stopped taking answers', async () => {
+    http.post
+      .mockRejectedValueOnce(new ApiError(409, 'This interview is no longer accepting answers.'))
+      .mockResolvedValueOnce({ turn: { turnId: 'x', text: 'bye', done: true, withdrawn: true } });
+    const deps = makeDeps();
+    const { result } = renderHook(() => useLeave(deps));
+    await act(() => result.current.leave());
+    expect(deps.showLeft).toHaveBeenCalled();
+  });
+
+  it('does not invite a retry that can only fail again', async () => {
+    http.post
+      .mockRejectedValueOnce(new ApiError(429, 'This interview has reached its maximum length.'))
+      .mockResolvedValueOnce({ turn: { turnId: 'x', text: 'bye', done: true, withdrawn: true } });
+    const deps = makeDeps();
+    const { result } = renderHook(() => useLeave(deps));
+    await act(() => result.current.leave());
+    expect(deps.setErr).not.toHaveBeenCalledWith("We couldn't end the interview — try again.");
+  });
+
+  it('does not treat a reply that is not the ending as having left', async () => {
+    http.post.mockResolvedValue({ turn: { turnId: 'x', text: 'Next question?', done: false } });
+    const deps = makeDeps();
+    const { result } = renderHook(() => useLeave(deps));
+    await act(() => result.current.leave());
+    expect(deps.onLeft).not.toHaveBeenCalled();
   });
 });

@@ -172,7 +172,9 @@ export function Composer(props: ComposerProps) {
               key={m.mode}
               type="button"
               aria-pressed={mode === m.mode}
-              disabled={m.mode === 'speak' && speakUnavailable !== null}
+              // Held still while an answer is being sent: a switch then would
+              // fold the in-flight words into the box and double them on retry.
+              disabled={phase === 'thinking' || (m.mode === 'speak' && speakUnavailable !== null)}
               title={m.mode === 'speak' && speakUnavailable ? speakUnavailable : undefined}
               onClick={() => props.onSelectMode(m.mode)}
             >

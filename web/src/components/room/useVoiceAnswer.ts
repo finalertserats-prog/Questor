@@ -40,6 +40,8 @@ export interface VoiceAnswerDeps {
   readonly mergeIntoDraft: (text: string) => void;
   /** Capture broke for good: the room stops showing the microphone as open. */
   readonly onMicDead: () => void;
+  /** The microphone is capturing again, so the capture indicator must show it. */
+  readonly onCaptureStarted?: () => void;
 }
 
 export function useVoiceAnswer(deps: VoiceAnswerDeps) {
@@ -51,6 +53,11 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
   const recognizerRef = useRef<Recognizer | null>(null);
   const recordingRef = useRef<Recording | null>(null);
   const recognizerFailedRef = useRef(false);
+  // Whether the capture under way has words we cannot trust to the browser:
+  // its recognizer failed, or there was none. Only then is a wordless
+  // recording sent to the server — otherwise no words means nothing was said
+  // (a pause), and transcribing silence would only use up the hourly limit.
+  const needsServerRef = useRef(false);
   // When the candidate was first able to answer the current question.
   const turnStartRef = useRef(0);
   // One answer per turn. The recognizer's end event and the "Done answering"
@@ -104,21 +111,29 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     const audio = recording ? await recording.stop() : null;
     // Audio is kept only where there are no words for it: the words are the
     // answer, and the audio is the fallback for when recognition failed.
-    heldRef.current = holdSegment(heldRef.current, heard, heard.trim() ? null : audio);
+    heldRef.current = holdSegment(heldRef.current, heard, keepAudio(heard, audio));
   }, [detachRecognizer]);
+
+  /** A recording is kept only for words the browser could not give us. */
+  function keepAudio(heard: string, audio: Blob | null): Blob | null {
+    return !heard.trim() && needsServerRef.current ? audio : null;
+  }
 
   /** Turn every wordless held segment into words, in place. */
   const transcribeHeld = useCallback(async (held: HeldAnswer): Promise<{ text: string; failed: boolean }> => {
     const missing = untranscribed(held);
     if (missing.length === 0) return { text: answerFromHeld(held, new Map()), failed: false };
-    const results = await Promise.all(missing.map(async (i) => {
+    // One upload at a time: each counts against the portal's hourly
+    // transcription limit, and a burst of them can use it up in one answer.
+    const transcripts = new Map<number, string>();
+    for (const i of missing) {
       try {
-        return [i, (await transcribeOnServer(depsRef.current.token, held.segments[i].audio as Blob)) ?? ''] as const;
+        const text = (await transcribeOnServer(depsRef.current.token, held.segments[i].audio as Blob)) ?? '';
+        if (text.trim()) transcripts.set(i, text);
       } catch {
-        return [i, ''] as const;
+        // Counted as failed below; the candidate is told.
       }
-    }));
-    const transcripts = new Map(results.filter(([, text]) => text.trim()));
+    }
     return { text: answerFromHeld(held, transcripts), failed: transcripts.size < missing.length };
   }, []);
 
@@ -172,7 +187,7 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     const rec = recordingRef.current;
     recordingRef.current = null;
     const audio = rec ? await rec.stop() : null;
-    const held = holdSegment(heldRef.current, recognised, recognised.trim() ? null : audio);
+    const held = holdSegment(heldRef.current, recognised, keepAudio(recognised, audio));
     heldRef.current = NOTHING_HELD;
 
     const needsServer = untranscribed(held).length > 0;
@@ -180,9 +195,9 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
       d.setPhase('thinking');
       d.setInterim('Transcribing your answer…');
     }
-    const { text } = await transcribeHeld(held);
+    const { text, failed } = await transcribeHeld(held);
     if (needsServer) d.setInterim('');
-    if (text) {
+    if (text && !failed) {
       recognizerFailedRef.current = false;
       answerOpenRef.current = false;
       d.submitAnswer(text);
@@ -190,6 +205,15 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     }
     turnClosedRef.current = false;
     d.setPhase('listening');
+    if (text) {
+      // Part of the answer could not be turned into words. Sending the rest
+      // would pass off half an answer as the whole of it; the candidate gets
+      // what was heard in the box and is asked to add the missing part.
+      d.setTextMode(true);
+      d.mergeIntoDraft(text);
+      d.setErr('We could not turn what you said into text — please type that part of your answer.');
+      return;
+    }
     if (needsServer) {
       // A failed transcription once left the room on "Transcribing your
       // answer…" for good, with nobody listening.
@@ -202,17 +226,23 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     d.setErr(recognizerFailedRef.current
       ? 'We could not hear that. Please try again, or type your answer instead.'
       : 'No speech detected. Please try again, or type your answer instead.');
+    // Listening again, so "please try again" is something they can do.
+    void beginListeningRef.current({ resume: true });
   }, [transcribeHeld]);
 
   /** Close the turn exactly once, whichever path got here first. */
   const closeTurn = useCallback((text: string) => {
     if (turnClosedRef.current) return;
     turnClosedRef.current = true;
+    // Its words are in `text` now; left attached, a later start would fold
+    // them into the answer a second time.
+    recognizerRef.current = null;
     clearWatchdog();
     void finishAnswer(text);
   }, [clearWatchdog, finishAnswer]);
 
   // Declared before use by the recognizer's handlers; assigned below.
+  const beginListeningRef = useRef<(opts?: { resume?: boolean }) => Promise<void>>(async () => undefined);
   const checkInRef = useRef<() => Promise<void>>(async () => undefined);
   const micDeadRef = useRef<() => void>(() => undefined);
 
@@ -223,9 +253,14 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     // A resumed answer (after a pause, check-in or repeat) keeps its start.
     if (!opts.resume) {
       turnStartRef.current = Date.now();
-      heldRef.current = holdSegment(NOTHING_HELD, carriedRef.current, null);
-      carriedRef.current = '';
+      heldRef.current = NOTHING_HELD;
       silenceCountRef.current = 0;
+    }
+    // Typed words carried in before listening started join the answer on
+    // every start, resumed or not — they must never wait for a later one.
+    if (carriedRef.current) {
+      heldRef.current = holdSegment(heldRef.current, carriedRef.current, null);
+      carriedRef.current = '';
     }
     answerOpenRef.current = true;
     turnClosedRef.current = false;
@@ -258,9 +293,11 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     if (earlier) heldRef.current = holdSegment(heldRef.current, earlier, null);
     void recordingRef.current?.stop();
     recordingRef.current = recording;
+    if (recording) d.onCaptureStarted?.();
 
     // Only the current recognizer speaks for the answer: a detached one still
     // fires its events.
+    needsServerRef.current = false;
     const rec: Recognizer | null = createRecognizer({
       onInterim: (t) => { if (recognizerRef.current === rec) d.setInterim(joinHeld(heldRef.current, t)); },
       onFinal: (t) => { if (recognizerRef.current === rec) closeTurn(t); },
@@ -269,6 +306,7 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
         // Not an error yet: if we captured audio, the server can still
         // transcribe it and the candidate never needs to know.
         recognizerFailedRef.current = true;
+        needsServerRef.current = true;
         if (!recordingRef.current) d.setErr(`Speech error: ${e}. You can type your answer instead.`);
       },
       // Long silence: the interviewer checks in, as a person would. The turn
@@ -278,6 +316,7 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
       onDead: () => { if (recognizerRef.current === rec) micDeadRef.current(); },
     });
     if (!rec) {
+      needsServerRef.current = true;
       // No browser recognition at all. Recording alone still works if the
       // server can transcribe; otherwise fall back to typing.
       if (!recordingRef.current) { d.setTextMode(true); d.setPhase('listening'); }
@@ -285,7 +324,9 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
     }
     recognizerRef.current = rec;
     rec.start();
+    d.onCaptureStarted?.();
   }, [closeTurn, detachRecognizer]);
+  beginListeningRef.current = beginListening;
 
   /**
    * The check-in after a long silence. Capture is held while the interviewer
@@ -316,6 +357,7 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
   micDeadRef.current = () => {
     const d = depsRef.current;
     recognizerFailedRef.current = true;
+    needsServerRef.current = true;
     d.setTextMode(true);
     d.onMicDead();
     d.setErr('Your microphone stopped working. Please type your answer below — nothing you have said so far is lost.');
@@ -343,6 +385,12 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
   /** A new question: the previous answer, if any, is over. */
   const endAnswer = useCallback(() => { answerOpenRef.current = false; }, []);
 
+  /** A send failed: the answer is open again, so switching modes keeps adding to it. */
+  const reopenAnswer = useCallback(() => {
+    answerOpenRef.current = true;
+    turnClosedRef.current = false;
+  }, []);
+
   useEffect(() => {
     unmountedRef.current = false;
     return () => {
@@ -362,7 +410,7 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
   return {
     turnStartRef, turnClosedRef,
     beginListening, holdCapture, releaseToTyping, discardCapture, carryIn, detachRecognizer,
-    doneAnswering, answerInProgress, endAnswer,
+    doneAnswering, answerInProgress, endAnswer, reopenAnswer,
   };
 }
 

@@ -91,6 +91,12 @@ describe('Composer', () => {
     expect(html).toContain('Continue</button>');
   });
 
+  it('holds the answer mode still while an answer is being sent', () => {
+    const html = renderToStaticMarkup(createElement(Composer, composerProps({ phase: 'thinking' })));
+    const seg = html.slice(html.indexOf('aria-label="Answer by"'), html.indexOf('room-hint'));
+    expect(seg.match(/disabled=""/g)).toHaveLength(3);
+  });
+
   it('pins the current question', () => {
     const html = renderToStaticMarkup(createElement(Composer, composerProps()));
     expect(html).toContain('Current question');
