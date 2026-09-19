@@ -32,6 +32,12 @@ const OPERATOR = 'operator@example.com';
 const VISITOR = { name: 'Asha Rao', email: 'asha@acme.test', company: 'Acme' };
 const DAY_MS = 86_400_000;
 
+/** The demo session travels only in the cookie; tests present it as a bearer. */
+function sessionOf(res: { headers: Record<string, unknown> }): string {
+  const cookies = (res.headers['set-cookie'] as string[] | undefined) ?? [];
+  return /^questor_token=([^;]+)/.exec(cookies.find((c) => c.startsWith('questor_token=')) ?? '')?.[1] ?? '';
+}
+
 function linkTokenFrom(msg: EmailMessage | undefined): string {
   const m = /\/demo\/([A-Za-z0-9_-]{24,128})/.exec(`${msg?.text ?? ''} ${msg?.html ?? ''}`);
   if (!m) throw new Error('no demo link in email');
@@ -126,7 +132,7 @@ describe('H3: requesting a demo after the sandbox was purged', () => {
     const first = latestLinkToVisitor();
     sent.length = 0;
 
-    await requestDemo();
+    await requestDemoAccess({ ...VISITOR, ip: '203.0.113.7', now: new Date(Date.now() + 11 * 60_000) });
 
     const second = latestLinkToVisitor();
     expect({ oldStatus: (await redeem(first)).status, newStatus: (await redeem(second)).status }).toEqual({ oldStatus: 410, newStatus: 200 });
@@ -136,7 +142,7 @@ describe('H3: requesting a demo after the sandbox was purged', () => {
     await requestDemo();
     sent.length = 0;
 
-    await requestDemo();
+    await requestDemoAccess({ ...VISITOR, ip: '203.0.113.7', now: new Date(Date.now() + 11 * 60_000) });
 
     expect(sent.map((m) => m.to)).toEqual([VISITOR.email]);
   });
@@ -210,26 +216,20 @@ describe('M5: an address that already has a real account', () => {
     return prisma.user.create({ data: { tenantId: tenant.id, email, name: 'Real', passwordHash: 'x', role: 'admin' } });
   }
 
-  it('builds no sandbox for it', async () => {
-    await realUser(VISITOR.email);
+  it("builds a sandbox without touching the real account", async () => {
+    const real = await realUser(VISITOR.email);
 
     await requestDemoAccess({ ...VISITOR, ip: '203.0.113.7' });
 
-    expect(await prisma.tenant.count({ where: { isDemo: true } })).toBe(0);
-  });
-
-  it('does not throw, and still answers 202 through the route', async () => {
-    await realUser(VISITOR.email);
-
-    const res = await requestDemo();
-
-    expect({ status: res.status, sentToVisitor: sent.some((m) => m.to === VISITOR.email) }).toEqual({ status: 202, sentToVisitor: false });
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: real.id } });
+    expect({ sandboxes: await prisma.tenant.count({ where: { isDemo: true } }), email: after.email, tenantId: after.tenantId }).toEqual({ sandboxes: 1, email: VISITOR.email, tenantId: real.tenantId });
   });
 });
 
 describe('M5: releaseDemoEmail', () => {
   it('frees the address held by a demo user so a real account can take it', async () => {
     await requestDemo();
+    await prisma.user.updateMany({ where: { tenant: { isDemo: true } }, data: { email: VISITOR.email } });
 
     await releaseDemoEmail(VISITOR.email);
 
@@ -240,6 +240,7 @@ describe('M5: releaseDemoEmail', () => {
 
   it('retires the sandbox that held the address', async () => {
     await requestDemo();
+    await prisma.user.updateMany({ where: { tenant: { isDemo: true } }, data: { email: VISITOR.email } });
 
     await releaseDemoEmail(VISITOR.email);
 
@@ -261,7 +262,7 @@ describe('M3: the demo request limiter', () => {
     const statuses = await withLimiterOn(async () => {
       await requestDemo();
       const session = await redeem(latestLinkToVisitor());
-      const auth = `Bearer ${session.body.token as string}`;
+      const auth = `Bearer ${sessionOf(session)}`;
       const out: number[] = [];
       for (let i = 0; i < 6; i += 1) out.push((await request(app).get('/api/demo/interview').set('Authorization', auth)).status);
       return out;
@@ -303,9 +304,9 @@ describe('L14: demo creation caps under concurrency', () => {
   it('lets no more creations through than the cap leaves room for when checks race', async () => {
     await requestDemo();
     const tenant = await prisma.tenant.findFirstOrThrow({ where: { isDemo: true } });
-    // The sandbox holds one role and the cap is three: two more may be made.
+    // The sandbox holds its sample role and the visitor may add three more.
     const results = await Promise.allSettled(Array.from({ length: 6 }, () => assertDemoCreationCap(tenant.id, 'roles')));
 
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
   });
 });

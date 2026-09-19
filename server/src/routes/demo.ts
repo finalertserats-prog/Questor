@@ -11,7 +11,12 @@ import { decideDemoAccess, expireDemoInterviewLinks, redeemDemoAccess, requestDe
 export const demoRouter = Router();
 export const demoDecisionRouter = Router();
 
-const requestSchema = z.object({ name: z.string().min(1).max(100), email: z.string().email().max(254), company: z.string().min(1).max(120) }).strict();
+// Name and company are mailed back as "Hi {name}" to whatever address was typed,
+// so they must be plain single-line text: no links, no addresses, no line breaks.
+const plainLine = (max: number) => z.string().trim().min(1).max(max)
+  .refine((v) => [...v].every((ch) => (ch.codePointAt(0) ?? 0) >= 32 && ch.codePointAt(0) !== 127), 'Use a single line.')
+  .refine((v) => !/@|:\/\/|www\.|\b[a-z0-9-]+\.(com|net|org|io|co|info|biz|xyz|ru|app|dev|link|example)\b/i.test(v), 'Links and email addresses are not allowed here.');
+const requestSchema = z.object({ name: plainLine(80), email: z.string().email().max(254), company: plainLine(120) }).strict();
 const tokenSchema = z.object({ token: z.string().min(24).max(128) }).strict();
 const decisionSchema = z.object({ decision: z.enum(['approve', 'decline']) }).strict();
 

@@ -57,6 +57,15 @@ export function isRoleName(v: string): v is RoleName {
   return (ROLES as readonly string[]).includes(v);
 }
 
+/**
+ * A demo sandbox's visitor: a hiring manager who may also add candidates, so
+ * the demo can show a pipeline filling up. Not in ROLES, so no admin can grant
+ * it to a real account; the admin area is closed to demo tenants separately.
+ */
+export const DEMO_ROLE = 'demo';
+const DEMO_CAPABILITIES: readonly Capability[] = [...CAPABILITIES.manager, 'candidate:create'];
+
 export function capabilitiesOf(role: string): readonly Capability[] {
+  if (role === DEMO_ROLE) return DEMO_CAPABILITIES;
   return isRoleName(role) ? CAPABILITIES[role] : [];
 }

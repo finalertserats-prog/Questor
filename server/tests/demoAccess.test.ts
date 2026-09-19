@@ -32,6 +32,12 @@ const app = createApp();
 const OPERATOR = 'operator@example.com';
 const VISITOR = { name: 'Asha Rao', email: 'asha@acme.test', company: 'Acme' };
 
+/** The demo session travels only in the cookie; tests present it as a bearer. */
+function sessionOf(res: { headers: Record<string, unknown> }): string {
+  const cookies = (res.headers['set-cookie'] as string[] | undefined) ?? [];
+  return /^questor_token=([^;]+)/.exec(cookies.find((c) => c.startsWith('questor_token=')) ?? '')?.[1] ?? '';
+}
+
 function linkTokenFrom(msg: EmailMessage | undefined): string {
   const m = /\/demo\/([A-Za-z0-9_-]{24,128})/.exec(`${msg?.text ?? ''} ${msg?.html ?? ''}`);
   if (!m) throw new Error('no demo link in email');
@@ -148,7 +154,7 @@ describe('POST /api/demo/redeem', () => {
   it('reports the demo and its end time on /api/auth/me', async () => {
     const token = await requestAndGetLink();
     const res = await request(app).post('/api/demo/redeem').send({ token });
-    const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${res.body.token}`);
+    const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${sessionOf(res)}`);
     expect({ isDemo: me.body.tenant.isDemo, ends: typeof me.body.tenant.sessionEndsAt }).toEqual({ isDemo: true, ends: 'string' });
   });
 
@@ -156,7 +162,7 @@ describe('POST /api/demo/redeem', () => {
     const token = await requestAndGetLink();
     const res = await request(app).post('/api/demo/redeem').send({ token });
     await prisma.demoGrant.updateMany({ data: { sessionEndsAt: new Date(Date.now() - 1000) } });
-    const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${res.body.token}`);
+    const me = await request(app).get('/api/auth/me').set('Authorization', `Bearer ${sessionOf(res)}`);
     expect(me.status).toBe(401);
   });
 });
@@ -179,7 +185,7 @@ describe('re-access through the operator', () => {
     const approve = await request(app).post(`/api/demo/decision/${decision}`).send({ decision: 'approve' });
     const again = await request(app).post(`/api/demo/decision/${decision}`).send({ decision: 'approve' });
 
-    expect({ approve: approve.status, again: again.status, toVisitor: sent.filter((m) => m.to === VISITOR.email).length }).toEqual({ approve: 200, again: 404, toVisitor: 1 });
+    expect({ approve: approve.status, again: again.status, toVisitor: sent.filter((m) => m.to === VISITOR.email).length }).toEqual({ approve: 200, again: 409, toVisitor: 1 });
   });
 
   it('emails the visitor when the operator declines', async () => {
@@ -199,7 +205,7 @@ describe('demo guardrails', () => {
   async function signedInDemo() {
     const token = await requestAndGetLink();
     const res = await request(app).post('/api/demo/redeem').send({ token });
-    return { auth: `Bearer ${res.body.token}`, tenantId: res.body.tenant.id as string };
+    return { auth: `Bearer ${sessionOf(res)}`, tenantId: res.body.tenant.id as string };
   }
 
   it('lets a demo sandbox email only the visitor', async () => {
@@ -252,7 +258,7 @@ describe('demo interview and role creation', () => {
   async function signedIn() {
     const token = await requestAndGetLink();
     const res = await request(app).post('/api/demo/redeem').send({ token });
-    return `Bearer ${res.body.token}`;
+    return `Bearer ${sessionOf(res)}`;
   }
 
   it('gives a signed-in demo the candidate link to its own sample interview', async () => {
@@ -283,7 +289,7 @@ describe('POST /api/demo/end', () => {
   it('ends the demo on the server so the session cannot be reused', async () => {
     const token = await requestAndGetLink();
     const res = await request(app).post('/api/demo/redeem').send({ token });
-    const auth = `Bearer ${res.body.token}`;
+    const auth = `Bearer ${sessionOf(res)}`;
 
     await request(app).post('/api/demo/end').set('Authorization', auth);
 
@@ -301,7 +307,7 @@ describe('demo security review fixes', () => {
 
   it('stops the sample interview link working once the demo ends', async () => {
     const res = await redeemed();
-    const auth = `Bearer ${res.body.token}`;
+    const auth = `Bearer ${sessionOf(res)}`;
     const { portalUrl } = (await request(app).get('/api/demo/interview').set('Authorization', auth)).body as { portalUrl: string };
     const portalToken = portalUrl.split('/portal/')[1];
 

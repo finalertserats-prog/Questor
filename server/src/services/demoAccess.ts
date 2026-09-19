@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DemoGrant, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
@@ -14,6 +14,8 @@ import { normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { DEMO_JD, DEMO_RESUME } from '../seed/demoData.js';
+import { slugifyCatalogName } from '../domain/catalogText.js';
+import { DEMO_ROLE } from '../domain/capabilities.js';
 import { renderDemoAccessEmail, renderDemoOperatorEmail, renderDemoDecisionEmail, renderDemoDeclinedEmail } from '../providers/email/demoEmail.js';
 
 const DAY_MS = 86_400_000;
@@ -24,7 +26,9 @@ const SESSION_TTL_SECONDS = 45 * 60;
 export { demoRecipientBlocked, isHeuristicOnlySession } from './demoPolicy.js';
 const DECISION_TTL_MS = 14 * DAY_MS;
 /** How long an operator's decline stands before the visitor may ask again. */
-const DECLINE_COOLDOWN_MS = 30 * DAY_MS;
+const DECLINE_COOLDOWN_MS = 7 * DAY_MS;
+/** A lost link is re-sent at most this often. */
+const RESEND_EVERY_MS = 10 * 60_000;
 /** How long a creation slot is held: longer than any one create request takes. */
 const CAP_SLOT_HOLD_MS = 2 * 60_000;
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{24,128}$/;
@@ -53,7 +57,12 @@ async function uniqueTenantSlug(tx: PrismaClient, name: string): Promise<string>
 }
 /** The catalog's Data Engineer role, so the demo shows a role linked the way new roles are. */
 async function demoCatalogRole(tx: PrismaClient): Promise<string | null> {
-  const role = await tx.catalogRole.findFirst({ where: { normalizedTitle: 'data engineer', status: 'active' }, select: { id: true } });
+  // The seeded entry in the data domain, never an org-added namesake elsewhere.
+  const role = await tx.catalogRole.findFirst({
+    where: { normalizedTitle: 'data engineer', status: 'active', source: 'seed', domain: { slug: slugifyCatalogName('Data, Analytics & Decision Science') } },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true },
+  });
   return role?.id ?? null;
 }
 
@@ -64,7 +73,9 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
   return prisma.$transaction(async (tx) => {
     // Default policy and persona: the demo shows the product as a customer gets it.
     const tenant = await tx.tenant.create({ data: { name: `${input.company} (demo)`, slug: await uniqueTenantSlug(tx as PrismaClient, input.company), isDemo: true, demoExpiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });
-    const user = await tx.user.create({ data: { tenantId: tenant.id, email: input.email, name: input.name, passwordHash: hashPassword(randomBytes(32).toString('base64url')), role: 'manager', tourCompletedAt: null } });
+    // The visitor's address stays on the grant and the sample candidate; the
+    // login gets its own, so a demo never holds (or collides with) a real account's address.
+    const user = await tx.user.create({ data: { tenantId: tenant.id, email: demoLoginEmail(), name: input.name, passwordHash: hashPassword(randomBytes(32).toString('base64url')), role: DEMO_ROLE, tourCompletedAt: null } });
     const extraction = extractRoleHeuristic(DEMO_JD, 'Senior Data Engineer');
     const role = await tx.role.create({ data: { tenantId: tenant.id, catalogRoleId: await demoCatalogRole(tx as PrismaClient), title: extraction.title, level: extraction.level, location: extraction.location, employmentType: extraction.employmentType, sourceType: 'paste', sourceText: DEMO_JD, status: 'approved', createdById: user.id } });
     const scorecard = await tx.roleScorecardVersion.create({ data: { roleId: role.id, version: 1, status: 'approved', profileJson: JSON.stringify(extraction.profile), approvedById: user.id, approvedAt: now } });
@@ -86,15 +97,15 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
   });
 }
 
+/** A login address no real person can hold, so a sandbox user never takes the visitor's. */
+function demoLoginEmail(): string { return `demo+${randomBytes(8).toString('hex')}@demo.questor.invalid`; }
+
 /**
- * True when a real (non-demo) account already holds this address. User.email is
- * unique across the whole deployment, so a sandbox user for it cannot exist;
- * trying anyway used to throw inside provisioning and be swallowed.
+ * What a purged grant keeps of the address: a keyed hash, so one grant per
+ * address still holds without keeping the address itself.
  */
-async function realAccountHolds(email: string): Promise<boolean> {
-  const user = await prisma.user.findUnique({ where: { email }, select: { tenant: { select: { isDemo: true } } } });
-  return !!user && !user.tenant.isDemo;
-}
+function anonymisedEmail(email: string): string { return `anon:${createHmac('sha256', config.authSecret).update(`demo-grant:${email}`).digest('hex')}`; }
+function isAnonymised(grant: Pick<DemoGrant, 'email'>): boolean { return grant.email.startsWith('anon:'); }
 
 type SandboxOwner = Pick<DemoGrant, 'tenantId' | 'userId' | 'name' | 'email' | 'company'>;
 
@@ -109,7 +120,6 @@ async function ensureSandbox(owner: SandboxOwner, now: Date): Promise<{ tenantId
     const kept = await prisma.tenant.updateMany({ where: { id: owner.tenantId, isDemo: true }, data: { demoExpiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });
     if (kept.count === 1) return { tenantId: owner.tenantId, userId: owner.userId, provisioned: false };
   }
-  if (await realAccountHolds(owner.email)) throw new HttpError(409, 'This address now has a Questor account, so a demo cannot be set up for it.');
   const provisioned = await provisionDemoTenant({ name: owner.name, email: owner.email, company: owner.company, now });
   return { tenantId: provisioned.tenantId, userId: provisioned.userId, provisioned: true };
 }
@@ -154,13 +164,16 @@ async function reissueLink(grant: DemoGrant, now: Date): Promise<void> {
 export async function requestDemoAccess(input: { name: string; email: string; company: string; ip: string; now?: Date }): Promise<void> {
   const now = input.now ?? new Date();
   const email = input.email.trim().toLowerCase();
-  if (await realAccountHolds(email)) {
-    // The route answers 202 either way; the address is not echoed into logs.
-    logger.info('Demo requested for an address that already has an account; no sandbox built');
-    return;
-  }
-  const existing = await prisma.demoGrant.findUnique({ where: { email } });
+  const found = await prisma.demoGrant.findFirst({ where: { email: { in: [email, anonymisedEmail(email)] } } });
+  // A purged grant kept only a hash of the address; the visitor has just told
+  // us who they are again, so the grant can reach them again.
+  const existing = found && isAnonymised(found)
+    ? await prisma.demoGrant.update({ where: { id: found.id }, data: { email, name: input.name, company: input.company } })
+    : found;
   if (existing?.status === 'sent') {
+    // A lost link is re-sent (as a new one), but at most once in ten minutes.
+    const live = existing.linkExpiresAt && existing.linkExpiresAt > now && existing.tenantId;
+    if (live && existing.updatedAt.getTime() > now.getTime() - RESEND_EVERY_MS) return;
     await reissueLink(existing, now);
     return;
   }
@@ -172,7 +185,7 @@ export async function requestDemoAccess(input: { name: string; email: string; co
   const provisioned = await provisionDemoTenant({ name: input.name, email, company: input.company, now });
   let grant;
   try {
-    grant = await prisma.demoGrant.create({ data: { name: input.name, email, company: input.company, status: 'sent', linkTokenHash: hashDemoToken(token), linkExpiresAt: new Date(now.getTime() + LINK_TTL_MS), tenantId: provisioned.tenantId, userId: provisioned.userId, requestIpHash: hashRequestIp(input.ip) } });
+    grant = await prisma.demoGrant.create({ data: { name: input.name, email, company: input.company, status: 'sent', linkTokenHash: hashDemoToken(token), linkExpiresAt: new Date(now.getTime() + LINK_TTL_MS), tenantId: provisioned.tenantId, userId: provisioned.userId, requestIpHash: '' } });
   } catch (err) {
     // Two requests for one address raced and the other won: this sandbox is
     // surplus, so hand it to the purge job and send nothing.
@@ -203,14 +216,15 @@ export async function redeemDemoAccess(token: string, res: import('express').Res
   if (consumed.count === 0) throw await redeemGone(tokenHash, now);
   const grant = await prisma.demoGrant.findUnique({ where: { linkTokenHash: tokenHash }, include: { tenant: true, user: true } });
   if (!grant?.tenant || !grant.user || !grant.sessionEndsAt || !matchHash(grant.linkTokenHash, tokenHash)) throw new HttpError(410, 'This demo link cannot be used.', 'unknown');
-  await prisma.user.update({ where: { id: grant.user.id }, data: { tourCompletedAt: null } });
+  await prisma.user.update({ where: { id: grant.user.id }, data: { tourCompletedAt: null, role: DEMO_ROLE } });
   // The sample interview's candidate link lives exactly as long as the demo:
   // a copied link must not keep a sandbox interview (and its speech) running.
   await expireDemoInterviewLinks(grant.tenant.id, grant.sessionEndsAt);
-  const claims: AuthClaims = { userId: grant.user.id, tenantId: grant.tenant.id, role: grant.user.role, email: grant.user.email, demo: true, demoGrantId: grant.id };
-  const sessionToken = issueSession(res, claims, { ttlSeconds: SESSION_TTL_SECONDS });
+  const claims: AuthClaims = { userId: grant.user.id, tenantId: grant.tenant.id, role: DEMO_ROLE, email: grant.user.email, demo: true, demoGrantId: grant.id };
+  // Cookie only: a bearer token in the body is readable by any script on the page.
+  issueSession(res, claims, { ttlSeconds: SESSION_TTL_SECONDS });
   await logAudit({ tenantId: grant.tenant.id, actorType: 'system', actorId: grant.user.id, action: 'demo.redeemed', entityType: 'DemoGrant', entityId: grant.id });
-  return { token: sessionToken, user: { id: grant.user.id, name: grant.user.name, email: grant.user.email, role: grant.user.role, tourCompletedAt: null }, tenant: { id: grant.tenant.id, name: grant.tenant.name, region: grant.tenant.region, slug: grant.tenant.slug, isDemo: true }, sessionEndsAt: grant.sessionEndsAt.toISOString() };
+  return { user: { id: grant.user.id, name: grant.user.name, email: grant.user.email, role: DEMO_ROLE, tourCompletedAt: null }, tenant: { id: grant.tenant.id, name: grant.tenant.name, region: grant.tenant.region, slug: grant.tenant.slug, isDemo: true }, sessionEndsAt: grant.sessionEndsAt.toISOString() };
 }
 
 async function redeemGone(tokenHash: string, now: Date): Promise<HttpError> {
@@ -230,7 +244,7 @@ export async function requestDemoReaccess(input: { token: string; now?: Date }):
     // Never used: a fresh link is the visitor's to have, not the operator's to
     // grant. Nothing to do while the link they hold still works.
     if (grant.linkExpiresAt && grant.linkExpiresAt > now && sandboxAlive(grant.tenant, now)) return;
-    if (await realAccountHolds(grant.email)) return;
+    if (isAnonymised(grant)) return;
     const { tenant: _tenant, ...row } = grant;
     await reissueLink(row, now);
     return;
@@ -272,9 +286,10 @@ export async function decideDemoAccess(opts: { token: string; decision: Decision
   const row = await resolveDemoDecision(opts.token, now);
   if (row.status !== 'reaccess_requested') return false;
   if (opts.decision === 'decline') {
-    // With no decision token, decisionExpiresAt marks when the decline lapses
-    // and the visitor may ask the operator again.
-    const changed = await prisma.demoGrant.updateMany({ where: { id: row.id, status: 'reaccess_requested' }, data: { status: 'declined', decisionTokenHash: null, decisionExpiresAt: new Date(now.getTime() + DECLINE_COOLDOWN_MS) } });
+    // The decision token is kept so the operator's page can show "decided";
+    // decisionExpiresAt now marks when the decline lapses and the visitor may
+    // ask the operator again.
+    const changed = await prisma.demoGrant.updateMany({ where: { id: row.id, status: 'reaccess_requested' }, data: { status: 'declined', decisionExpiresAt: new Date(now.getTime() + DECLINE_COOLDOWN_MS) } });
     if (changed.count !== 1) return false;
     await getEmail().send(renderDemoDeclinedEmail({ to: row.email, name: row.name }));
     if (row.tenantId) await logAudit({ tenantId: row.tenantId, actorType: 'system', actorId: 'demo-decision', action: 'demo.declined', entityType: 'DemoGrant', entityId: row.id });
@@ -282,7 +297,7 @@ export async function decideDemoAccess(opts: { token: string; decision: Decision
   }
   const linkToken = mintDemoToken();
   const sandbox = await ensureSandbox(row, now);
-  const changed = await prisma.demoGrant.updateMany({ where: { id: row.id, status: 'reaccess_requested' }, data: { status: 'sent', linkTokenHash: hashDemoToken(linkToken), linkExpiresAt: new Date(now.getTime() + LINK_TTL_MS), consumedAt: null, sessionEndsAt: null, decisionTokenHash: null, decisionExpiresAt: null, tenantId: sandbox.tenantId, userId: sandbox.userId } });
+  const changed = await prisma.demoGrant.updateMany({ where: { id: row.id, status: 'reaccess_requested' }, data: { status: 'sent', linkTokenHash: hashDemoToken(linkToken), linkExpiresAt: new Date(now.getTime() + LINK_TTL_MS), consumedAt: null, sessionEndsAt: null, tenantId: sandbox.tenantId, userId: sandbox.userId } });
   if (changed.count !== 1) {
     if (sandbox.provisioned) await retireSurplusSandbox(sandbox.tenantId, now);
     return false;
@@ -315,6 +330,17 @@ export async function releaseDemoEmail(email: string, now = new Date()): Promise
   return true;
 }
 
+/**
+ * The expiry for an invitation sent from this session: unchanged for a real
+ * organisation, never later than the demo session's end for a demo.
+ */
+export async function demoInvitationExpiry(auth: Pick<AuthClaims, 'demo' | 'demoGrantId'>, proposed: Date): Promise<Date> {
+  if (auth.demo !== true || !auth.demoGrantId) return proposed;
+  const grant = await prisma.demoGrant.findUnique({ where: { id: auth.demoGrantId }, select: { sessionEndsAt: true } });
+  const ends = grant?.sessionEndsAt ?? new Date();
+  return ends < proposed ? ends : proposed;
+}
+
 /** Candidate links in a sandbox stop working at `at`. */
 export async function expireDemoInterviewLinks(tenantId: string, at: Date): Promise<void> {
   await prisma.invitation.updateMany({ where: { session: { tenantId, tenant: { isDemo: true } } }, data: { expiresAt: at } });
@@ -335,15 +361,17 @@ export async function assertNotDemoTenant(tenantId: string, message = 'Not avail
 export async function assertDemoCreationCap(tenantId: string, kind: 'roles' | 'candidates' | 'interviews'): Promise<void> {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isDemo: true } });
   if (!tenant?.isDemo) return;
-  const caps = { roles: 3, candidates: 5, interviews: 5 };
+  // The sandbox starts with one sample of each; the visitor may add this many more.
+  const added = { roles: 3, candidates: 5, interviews: 5 };
+  const caps = { roles: added.roles + 1, candidates: added.candidates + 1, interviews: added.interviews + 1 };
   const count = kind === 'roles' ? await prisma.role.count({ where: { tenantId } }) : kind === 'candidates' ? await prisma.candidate.count({ where: { tenantId } }) : await prisma.interviewSession.count({ where: { tenantId } });
-  if (count >= caps[kind]) throw new HttpError(409, `Demo limit reached: at most ${caps[kind]} ${kind} are available in the demo.`);
+  if (count >= caps[kind]) throw new HttpError(409, `Demo limit reached: you can add at most ${added[kind]} ${kind} in the demo.`);
   for (let slot = count; slot < caps[kind]; slot += 1) {
     const verdict = await consume('demo-cap', `${tenantId}:${kind}:${slot}`, CAP_SLOT_HOLD_MS, 1, { failClosed: true });
     if (verdict.allowed) return;
     if (verdict.reason === 'unavailable') throw new HttpError(503, 'The demo is briefly unavailable. Please try again shortly.');
   }
-  throw new HttpError(409, `Demo limit reached: at most ${caps[kind]} ${kind} are available in the demo. If one is still being created, try again in a moment.`);
+  throw new HttpError(409, `Demo limit reached: you can add at most ${added[kind]} ${kind} in the demo. If one is still being created, try again in a moment.`);
 }
 
 export async function purgeExpiredDemoTenants(now = new Date()): Promise<number> {
@@ -351,6 +379,16 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
   const tenantIds = tenants.map((t) => t.id);
   if (tenantIds.length === 0) return 0;
   await prisma.$transaction(async (tx) => {
+    // The visitor's details go with the sandbox. Kept only where they are still
+    // needed to reach the visitor: a grant awaiting the operator's decision, and
+    // an unused link that still works (asking again from it re-issues by email).
+    const grants = await tx.demoGrant.findMany({
+      where: { tenantId: { in: tenantIds }, status: { not: 'reaccess_requested' }, NOT: { status: 'sent', linkExpiresAt: { gt: now } } },
+      select: { id: true, email: true },
+    });
+    for (const g of grants) {
+      if (!g.email.startsWith('anon:')) await tx.demoGrant.update({ where: { id: g.id }, data: { name: '', company: '', email: anonymisedEmail(g.email), requestIpHash: '' } });
+    }
     await tx.demoGrant.updateMany({ where: { tenantId: { in: tenantIds } }, data: { tenantId: null, userId: null } });
     const sessions = await tx.interviewSession.findMany({ where: { tenantId: { in: tenantIds } }, select: { id: true } });
     const sessionIds = sessions.map((s) => s.id);
