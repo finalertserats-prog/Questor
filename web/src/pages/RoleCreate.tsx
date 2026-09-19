@@ -9,6 +9,7 @@ import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
 import { catalogLinkFields, missingRoleFields, parseTechStackInput, shouldOfferCatalogAdd } from '../components/catalogModel';
+import { appendTechStack, jdOriginForSubmit, nextDraftState, previewLines, shouldPollDraft, type DraftPanelState, type LintHit } from '../components/jdDraftModel';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
@@ -56,6 +57,13 @@ export function RoleCreate() {
   // Set once the role exists: the warnings are shown against it, and the way on
   // is a button rather than a timer.
   const [createdRoleId, setCreatedRoleId] = useState<string | null>(null);
+  const [draftState, setDraftState] = useState<DraftPanelState>({ kind: 'idle' });
+  const [usedDraftId, setUsedDraftId] = useState('');
+  const [usedDraftText, setUsedDraftText] = useState('');
+  const [describedUsed, setDescribedUsed] = useState(false);
+  const [describeOpen, setDescribeOpen] = useState(false);
+  const [description, setDescription] = useState('');
+  const [describeBusy, setDescribeBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +72,37 @@ export function RoleCreate() {
       .catch((err: unknown) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Could not load catalog fields.'); });
     return () => { cancelled = true; };
   }, [catalogAttempt]);
+
+
+
+  useEffect(() => {
+    if (source !== 'paste' || !catalogRoleId || !experienceBand || !regionCode) {
+      setDraftState({ kind: 'idle' });
+      return undefined;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+    const load = () => {
+      setDraftState((state) => state.kind === 'idle' ? nextDraftState(state, { type: 'request' }) : state);
+      const qs = new URLSearchParams({ catalogRoleId, experienceBand, regionCode });
+      api.get<{ status: string; id?: string; text: string; lint: LintHit[]; generator: string; message?: string }>(`/jd-drafts?${qs.toString()}`)
+        .then((data) => {
+          if (cancelled) return;
+          if (data.status === 'ready' && data.id) setDraftState(nextDraftState({ kind: 'idle' }, { type: 'ready', id: data.id, text: data.text, lint: data.lint, generator: data.generator }));
+          else if (data.status === 'failed') setDraftState(nextDraftState({ kind: 'idle' }, { type: 'failed', message: data.message }));
+          else setDraftState((state) => {
+            const next = nextDraftState(state, { type: 'pending', now: startedAt });
+            if (next.kind === 'pending' && shouldPollDraft(next, Date.now() - startedAt)) timer = window.setTimeout(load, next.delayMs);
+            else return { kind: 'failed', message: 'Still working. You can paste your own job description and come back later.', liveMessage: 'The suggested job description is still working.' };
+            return next;
+          });
+        })
+        .catch((err: unknown) => { if (!cancelled) setDraftState(nextDraftState({ kind: 'idle' }, { type: 'failed', message: err instanceof Error ? err.message : 'Could not load the suggested draft.' })); });
+    };
+    load();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [source, catalogRoleId, experienceBand, regionCode, catalogAttempt]);
 
   const selectedDomain = domains.find((d) => d.id === domainId);
   const sourceReady = source === 'ats' ? isAtsId(requisitionId.trim()) : Boolean(sourceText.trim());
@@ -96,6 +135,8 @@ export function RoleCreate() {
         regionCode: regionCode || undefined,
         techStack: [...techStack],
         addToCatalog: offerCatalogAdd ? addToCatalog : false,
+        jdDraftId: usedDraftId || undefined,
+        jdOrigin: jdOriginForSubmit({ source, sourceText, draftText: usedDraftText, describedUsed }),
       };
       const resp = await api.post<CreateResp>('/roles', source === 'ats'
         ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title.trim() || undefined, useLlm, ...catalogFields }
@@ -116,6 +157,39 @@ export function RoleCreate() {
       if (err instanceof ApiError) setError(atsErrorMessage(err, user?.role === 'admin'));
       else setError(err instanceof Error ? err.message : 'Could not create this role.');
       setSubmitting(false);
+    }
+  };
+
+
+
+  const replaceJd = (text: string) => {
+    if (sourceText.trim() && !window.confirm('Replace the job description you have already entered?')) return false;
+    setSourceText(text);
+    return true;
+  };
+
+  const useSuggestedDraft = () => {
+    if (draftState.kind !== 'ready') return;
+    if (!replaceJd(appendTechStack(draftState.text, techStack))) return;
+    setUsedDraftId(draftState.id);
+    setUsedDraftText(draftState.text);
+    setDescribedUsed(false);
+  };
+
+  const draftFromMyDescription = async () => {
+    setDescribeBusy(true);
+    setError('');
+    try {
+      const resp = await api.post<{ text: string; lint: LintHit[]; generator: string }>('/jd-drafts/describe', { title: title.trim() || undefined, description, experienceBand, regionCode, domainId: domainId || undefined });
+      if (replaceJd(appendTechStack(resp.text, techStack))) {
+        setUsedDraftId('');
+        setUsedDraftText('');
+        setDescribedUsed(true);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not draft from that description.');
+    } finally {
+      setDescribeBusy(false);
     }
   };
 
@@ -214,6 +288,34 @@ export function RoleCreate() {
             <input type="checkbox" checked={addToCatalog} onChange={(e) => setAddToCatalog(e.target.checked)} />
             Add this title to the shared role catalog (visible to all organisations)
           </label>
+        )}
+
+
+        {source === 'paste' && catalogRoleId && experienceBand && regionCode && (
+          <section className="card" aria-labelledby={`${fieldId}-suggested-title`} style={{ marginTop: 16, borderStyle: 'solid' }}>
+            <div id={`${fieldId}-suggested-status`} className="sr-only" aria-live="polite">{'liveMessage' in draftState ? draftState.liveMessage : ''}</div>
+            <h3 id={`${fieldId}-suggested-title`} style={{ marginTop: 0 }}>Suggested job description</h3>
+            {(draftState.kind === 'loading' || draftState.kind === 'pending') && <p className="muted small">Preparing a suggested draft. You can keep typing or paste your own JD.</p>}
+            {draftState.kind === 'ready' && (
+              <>
+                <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: draftState.expanded ? undefined : 360 }}>{previewLines(draftState.text, draftState.expanded)}</pre>
+                {draftState.text.split('\n').length > 12 && <button type="button" className="link-button" onClick={() => setDraftState(nextDraftState(draftState, { type: 'toggle' }))}>{draftState.expanded ? 'Show less' : 'Show all'}</button>}
+                {draftState.lint.length > 0 && <p className="small">Consider rewording: {draftState.lint.map((l) => `${l.term} (${l.suggestion})`).join('; ')}</p>}
+                <div className="row">
+                  <button type="button" className="btn secondary" onClick={useSuggestedDraft}>Use this draft</button>
+                  <button type="button" className="btn secondary" onClick={() => setDescribeOpen((v) => !v)}>Describe the role instead</button>
+                </div>
+              </>
+            )}
+            {draftState.kind === 'failed' && <p className="muted small">{draftState.message} <button type="button" className="link-button" onClick={() => setCatalogAttempt((n) => n + 1)}>Try again</button></p>}
+            {(describeOpen || draftState.kind === 'failed') && (
+              <div style={{ marginTop: 12 }}>
+                <label htmlFor={`${fieldId}-describe`}>Describe the role</label>
+                <textarea id={`${fieldId}-describe`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="In a few sentences: what will this person own, who do they work with, what does success look like?" style={{ minHeight: 120 }} />
+                <button type="button" className="btn secondary" disabled={describeBusy || description.trim().length < 40} onClick={draftFromMyDescription}>Draft from my description</button>
+              </div>
+            )}
+          </section>
         )}
 
         {source === 'ats' ? (

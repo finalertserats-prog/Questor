@@ -67,6 +67,8 @@ const createSchema = z.object({
   experienceBand: z.enum(BANDS.map((b) => b.id) as [string, ...string[]]).optional(),
   regionCode: z.string().optional(),
   techStack: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
+  jdDraftId: z.string().cuid().optional(),
+  jdOrigin: z.enum(['draft', 'described', 'pasted', 'ats', '']).default(''),
 });
 
 // Create a role from JD / ATS + auto-extract a draft scorecard (FR-001..004)
@@ -94,6 +96,11 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   if (body.regionCode) {
     const region = await prisma.catalogRegion.findFirst({ where: { code: body.regionCode, status: 'active' }, select: { code: true } });
     if (!region) throw new HttpError(400, 'Unknown or inactive catalog region.');
+  }
+  if (body.jdDraftId) {
+    const draft = await prisma.catalogJdDraft.findUnique({ where: { id: body.jdDraftId }, select: { id: true, catalogRoleId: true } });
+    if (!draft) throw new HttpError(400, 'Unknown JD draft.');
+    if (body.catalogRoleId && draft.catalogRoleId !== body.catalogRoleId) throw new HttpError(400, 'JD draft does not match the selected catalog role.');
   }
 
   // From the caller's own ATS only. This used to read any requisition id from
@@ -130,7 +137,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
           tenantId: auth.tenantId, title: extraction.title, level: extraction.level,
           location: extraction.location, employmentType: extraction.employmentType,
           sourceType: body.sourceType, sourceText, status: 'draft', createdById: auth.userId,
-          catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, techStackJson: JSON.stringify(body.techStack),
+          catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, techStackJson: JSON.stringify(body.techStack), jdDraftId: body.jdDraftId, jdOrigin: body.jdOrigin,
         },
       });
       // With scoping in force an unassigned role is admin-only, so without this
@@ -165,7 +172,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   const fullCreatedRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   await logAudit({
     tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user', action: 'role.created', entityType: 'Role', entityId: role.id,
-    after: { title: role.title, ...(ats ? { source: 'ats' } : {}) },
+    after: { title: role.title, jdOrigin: body.jdOrigin, ...(ats ? { source: 'ats' } : {}) },
   });
 
   res.status(201).json({ role: shapeRole(fullCreatedRole), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings });
@@ -333,7 +340,7 @@ const roleShapeInclude = { catalogRole: { include: { domain: true } } } as const
 type ShapedRole = {
   readonly id: string; readonly title: string; readonly level: string; readonly location: string; readonly employmentType: string;
   readonly status: string; readonly sourceType: string; readonly updatedAt: Date; readonly experienceBand: string | null;
-  readonly regionCode: string | null; readonly techStackJson: string;
+  readonly regionCode: string | null; readonly techStackJson: string; readonly jdDraftId: string | null; readonly jdOrigin: string;
   readonly catalogRole: { readonly id: string; readonly title: string; readonly domain: { readonly id: string; readonly name: string } } | null;
 };
 
@@ -342,7 +349,7 @@ function shapeCatalogRole(role: ShapedRole['catalogRole']) {
 }
 
 function shapeRole(r: ShapedRole) {
-  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }) };
+  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }), jdDraftId: r.jdDraftId, jdOrigin: r.jdOrigin }; 
 }
 function shapeScorecard(s: { readonly id: string; readonly version: number; readonly status: string; readonly profileJson: string; readonly approvedAt: Date | null }) {
   return { id: s.id, version: s.version, status: s.status, profile: parseJsonStrict(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' }), approvedAt: s.approvedAt };

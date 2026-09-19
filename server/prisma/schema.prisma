@@ -85,6 +85,7 @@ model CatalogRegion {
   status    String   @default("active")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  jdDrafts  CatalogJdDraft[]
 }
 
 model CatalogRole {
@@ -105,10 +106,34 @@ model CatalogRole {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   roles             Role[]
+  jdDrafts          CatalogJdDraft[]
   aliases           CatalogRoleAlias[]
 
   @@unique([domainId, normalizedTitle])
   @@index([normalizedTitle])
+}
+
+model CatalogJdDraft {
+  id             String   @id @default(cuid())
+  catalogRoleId  String
+  catalogRole    CatalogRole @relation(fields: [catalogRoleId], references: [id])
+  experienceBand String
+  regionCode     String
+  region         CatalogRegion @relation(fields: [regionCode], references: [code])
+  status         String   @default("pending")
+  text           String   @default("")
+  generator      String   @default("")
+  model          String   @default("")
+  promptVersion  String   @default("")
+  lintJson       String   @default("[]")
+  attempts       Int      @default(0)
+  lastError      String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  roles          Role[]
+
+  @@unique([catalogRoleId, experienceBand, regionCode])
+  @@index([status, updatedAt])
 }
 
 model CatalogRoleAlias {
@@ -142,6 +167,9 @@ model Role {
   employmentType String  @default("")
   sourceType    String   @default("paste") // paste | file | ats | form
   sourceText    String   @default("")
+  jdDraftId     String?
+  jdDraft       CatalogJdDraft? @relation(fields: [jdDraftId], references: [id], onDelete: SetNull)
+  jdOrigin      String   @default("")
   status        String   @default("draft")  // draft | approved | archived
   createdById   String?
   createdAt     DateTime @default(now())

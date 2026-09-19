@@ -17,6 +17,7 @@ import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
 import { roleStatusRouter } from './routes/roleStatus.js';
 import { catalogRouter } from './routes/catalog.js';
+import { jdDraftsRouter } from './routes/jdDrafts.js';
 import { candidatesRouter } from './routes/candidates.js';
 import { interviewsRouter } from './routes/interviews.js';
 import { portalRouter } from './routes/portal.js';
@@ -202,6 +203,7 @@ export function createApp() {
   );
   app.use('/api/auth', authRouter);
   app.use('/api/catalog', catalogRouter);
+  app.use('/api/jd-drafts', jdDraftsRouter);
   app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);

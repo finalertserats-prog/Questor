@@ -46,7 +46,7 @@ const BEHAVIORAL: Array<Omit<Competency, 'id' | 'weight' | 'sourceText' | 'confi
   },
 ];
 
-const EXCLUSIONARY_TERMS: Array<{ re: RegExp; suggestion: string }> = [
+export const EXCLUSIONARY_TERMS: Array<{ re: RegExp; suggestion: string }> = [
   { re: /\b(young|energetic recent graduate|digital native)\b/i, suggestion: 'Avoid age-coded language; describe the skill instead.' },
   { re: /\b(rockstar|ninja|guru)\b/i, suggestion: 'Replace hype terms with concrete competencies.' },
   { re: /\b(native (english )?speaker)\b/i, suggestion: 'Use "professional working proficiency" if communication is job-essential.' },

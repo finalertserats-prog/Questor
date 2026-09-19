@@ -114,6 +114,7 @@ export async function wipe(): Promise<void> {
   await prisma.candidate.deleteMany();
   await prisma.roleScorecardVersion.deleteMany();
   await prisma.role.deleteMany();
+  await prisma.catalogJdDraft.deleteMany();
   await prisma.modelExecution.deleteMany();
   await prisma.auditEvent.deleteMany();
   await prisma.signupRequest.deleteMany();
