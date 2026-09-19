@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { approvePayload, archiveAction, isCurrentResponse } from '../src/components/roleDetailModel';
+import { approvePayload, archiveAction, isCurrentResponse, isRoleOpen } from '../src/components/roleDetailModel';
 import { canApproveRoles } from '../src/components/profileMenuModel';
 
 describe('approvePayload', () => {
@@ -47,5 +47,11 @@ describe('canApproveRoles', () => {
 
   it('does not let a recruiter approve', () => {
     expect(canApproveRoles('recruiter')).toBe(false);
+  });
+});
+
+describe('isRoleOpen', () => {
+  it('treats an archived role as closed and every other status as open', () => {
+    expect([isRoleOpen('archived'), isRoleOpen('approved'), isRoleOpen('draft')]).toEqual([false, true, true]);
   });
 });

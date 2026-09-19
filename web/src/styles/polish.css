@@ -249,6 +249,10 @@ td a:not(.btn) {
 /* --- tables that stay inside their card on a phone ---------------------- */
 
 .table-scroll {
+  /* The containing block for anything absolutely positioned inside the table
+     (visually-hidden header text, badges). Without it those escape the
+     scroll clip and widen the whole page on a phone. */
+  position: relative;
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -301,6 +305,9 @@ td a:not(.btn) {
 .candidate-profile-tab,
 .alternative-role-list {
   display: grid;
+  /* An explicit shrinkable column: the implicit 'auto' track grew to the fit
+     table's 560px minimum and pushed every card off a phone screen. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
 }

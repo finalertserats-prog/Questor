@@ -39,3 +39,12 @@ export interface LoadTicket {
 export function isCurrentResponse(response: LoadTicket, latest: LoadTicket): boolean {
   return response.id === latest.id && response.seq === latest.seq;
 }
+
+/**
+ * Whether new candidates, interviews and scorecard changes may attach to a
+ * role. The server refuses them for an archived role (409 role_archived); the
+ * UI stops offering them so nobody meets that refusal by following a link.
+ */
+export function isRoleOpen(status: string | undefined): boolean {
+  return status !== 'archived';
+}

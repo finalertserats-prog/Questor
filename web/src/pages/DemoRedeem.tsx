@@ -51,7 +51,7 @@ export function DemoRedeem() {
     }
   };
 
-  return <div className="public-shell"><PublicBar /><main className="public-body"><div className="card auth-card" style={{ maxWidth: 520, margin: '0 auto' }}>
+  return <div className="public-shell"><PublicBar /><main className="public-body"><div className="card auth-card" style={{ width: '100%', maxWidth: 520, margin: '0 auto' }}>
     <h1>Questor demo</h1>{err && <Banner kind="error">{err}</Banner>}
     {reason ? (
       <>
@@ -72,7 +72,7 @@ export function DemoRedeem() {
 
 /** Where a demo lands when it ends, by the button or the clock. */
 export function DemoEnded() {
-  return <div className="public-shell"><PublicBar /><main className="public-body"><div className="card auth-card" style={{ maxWidth: 520, margin: '0 auto' }}>
+  return <div className="public-shell"><PublicBar /><main className="public-body"><div className="card auth-card" style={{ width: '100%', maxWidth: 520, margin: '0 auto' }}>
     <h1>Thanks for trying Questor</h1>
     <p className="muted">Your demo has ended and you have been signed out. Your sandbox is kept for a few days, then deleted.</p>
     <p>Want to see more, or talk through your hiring? <Link to="/signup">Ask for an account</Link> and we will be in touch.</p>

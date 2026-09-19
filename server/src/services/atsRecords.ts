@@ -7,6 +7,7 @@ import type { AuthClaims } from './auth.js';
 import { assertCanAccessCandidate, assertCanAccessRole, assignCandidate } from './access.js';
 import { atsFailure, requireTenantAts, type TenantAts } from './atsConnections.js';
 import { logAudit } from './audit.js';
+import { assertRoleOpen } from './roleOpen.js';
 
 /**
  * What came from an organisation's ATS, and which ATS record a Questor
@@ -127,6 +128,7 @@ const importedContactSchema = z.object({
  */
 export async function importCandidate(o: { auth: AuthClaims; externalCandidateId: string; roleId: string; requestId?: string }) {
   await assertCanAccessRole(o.auth, o.roleId);
+  await assertRoleOpen(o.roleId);
   const { connection, client } = await requireTenantAts(o.auth.tenantId);
   const tenantId = o.auth.tenantId;
 

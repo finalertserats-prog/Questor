@@ -6,7 +6,7 @@ import { Badge, Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
 import { humanise } from '../components/statusModel';
 import { canApproveRoles } from '../components/profileMenuModel';
-import { approvePayload, archiveAction, isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
+import { approvePayload, archiveAction, isCurrentResponse, isRoleOpen, type LoadTicket } from '../components/roleDetailModel';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
@@ -267,7 +267,7 @@ export function RoleDetail() {
             <button
               className="btn secondary"
               onClick={save}
-              disabled={saving || !dirty || weightsError !== null}
+              disabled={saving || !dirty || weightsError !== null || !isRoleOpen(role.status)}
               title={weightsError ?? (dirty ? undefined : 'No changes to save')}
             >
               <Icon name={saving ? 'hourglass' : 'save'} size={16} />
@@ -280,7 +280,7 @@ export function RoleDetail() {
             <button
               className="btn"
               onClick={approve}
-              disabled={approved || dirty || approving}
+              disabled={approved || dirty || approving || !isRoleOpen(role.status)}
               title={dirty ? 'Save your changes first — approving would approve the saved version, not these edits.' : undefined}
             >
               <Icon name={approving ? 'hourglass' : 'check-circle'} size={16} />
@@ -299,7 +299,10 @@ export function RoleDetail() {
       {actionError && <Banner kind="error">{actionError}</Banner>}
       {notice && <Banner kind="ok">{notice}</Banner>}
       {dirty && <p className="muted small">Unsaved changes — they are lost if you leave this page.</p>}
-      {approved && (
+      {approved && !isRoleOpen(role.status) && (
+        <Banner kind="info">This role is archived. Restore it to add candidates, interview or change the scorecard.</Banner>
+      )}
+      {approved && isRoleOpen(role.status) && (
         <Banner kind="ok">
           Scorecard approved — ready to interview candidates.{' '}
           <Link className="link-action" to="/candidates/new"><Icon name="add-candidate" size={15} />Add a candidate</Link>

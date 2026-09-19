@@ -22,6 +22,7 @@ import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
+import { assertRoleOpen } from '../services/roleOpen.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -108,6 +109,7 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
   // to someone else's requisition would otherwise plant a record inside a
   // pipeline the caller cannot see but the role's owners can.
   await assertCanAccessRole(req.auth!, body.roleId);
+  await assertRoleOpen(body.roleId);
   const candidate = await prisma.candidate.create({
     data: { tenantId: req.auth!.tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, phone: body.phone ?? '' },
   });

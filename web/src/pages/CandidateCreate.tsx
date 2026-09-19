@@ -9,6 +9,7 @@ import { PageSkeleton } from '../components/Skeleton';
 import { EMPTY_RESUME, ResumeFields, uploadResume, type ResumeValue } from '../components/ResumeFields';
 import { atsErrorMessage } from '../components/atsModel';
 import { roleDisplayLabels } from '../components/roleLabelModel';
+import { isRoleOpen } from '../components/roleDetailModel';
 import {
   addCandidateBlocker,
   hasResume,
@@ -51,7 +52,8 @@ export function CandidateCreate() {
   useEffect(() => {
     api.get<{ roles: Role[] }>('/roles')
       .then((d) => {
-        const approved = (d.roles ?? []).filter((r) => r.latestScorecard?.status === 'approved');
+        // Archived roles are closed to new candidates; the server refuses them too.
+        const approved = (d.roles ?? []).filter((r) => r.latestScorecard?.status === 'approved' && isRoleOpen(r.status));
         setRoles(approved);
         if (approved[0]) setRoleId(approved[0].id);
       })

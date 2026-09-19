@@ -16,6 +16,7 @@ import { normalizeTitle } from '../domain/catalogText.js';
 import type { AuthClaims } from '../services/auth.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
 import { BANDS } from '../engines/experienceBands.js';
+import { assertRoleOpen } from '../services/roleOpen.js';
 
 export const rolesRouter = Router();
 rolesRouter.use(authenticate);
@@ -222,6 +223,7 @@ const updateScorecardSchema = z.object({ profile: roleSuccessProfileSchema });
 // Edit the draft scorecard (calibrate competencies/weights) — creates a new version if approved one exists
 rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
+  await assertRoleOpen(role.id);
   const { profile } = updateScorecardSchema.parse(req.body);
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to update');
@@ -251,6 +253,7 @@ const approveScorecardSchema = z.object({
 
 rolesRouter.post('/:id/approve', requireCapability('role:approve_scorecard'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
+  await assertRoleOpen(role.id);
   const reviewed = approveScorecardSchema.parse(req.body ?? {});
   const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
   if (!latest) throw new HttpError(404, 'No scorecard to approve');

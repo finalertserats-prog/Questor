@@ -25,6 +25,7 @@ import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
 import { invitationLink, invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
+import { assertRoleOpen } from '../services/roleOpen.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -68,6 +69,7 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   // enough to start one. Throws 404 when out of scope.
   const candidate = await assertCanAccessCandidate(req.auth!, body.candidateId);
   if (!candidate.roleId) throw new HttpError(404, 'Candidate or role not found');
+  await assertRoleOpen(candidate.roleId);
 
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: candidate.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
   if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
@@ -269,6 +271,7 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
 // Send invitation (FR-012)
 interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
+  await assertRoleOpen(session.roleId);
   const invitation = await inviteSession(req, session);
   res.json({ invitation });
 }));
@@ -338,6 +341,7 @@ const SCHEDULABLE_STATES: ReadonlySet<string> = new Set([...RESENDABLE_STATES, '
 interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   await assertDemoCreationCap(req.auth!.tenantId, 'interviews');
   const original = await getSession(req, req.params.id);
+  await assertRoleOpen(original.roleId);
   const { reason } = z.object({ reason: z.string().min(10, 'Say why this candidate is being offered a retake.') }).parse(req.body);
 
   if (original.state !== 'INCOMPLETE' && original.state !== 'TECHNICAL_FAILURE') {
