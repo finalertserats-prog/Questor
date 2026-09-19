@@ -68,6 +68,15 @@ describe('jobs while shutting down', () => {
     expect(lease.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
+  it('releases a lease taken by a run of this instance, which carries a per-run token', async () => {
+    await prisma.jobLease.create({ data: { name: 'held-token', holder: `${INSTANCE_ID}#abc123`, expiresAt: new Date(Date.now() + 600_000) } });
+
+    await releaseHeldLeases();
+
+    const lease = await prisma.jobLease.findUniqueOrThrow({ where: { name: 'held-token' } });
+    expect(lease.expiresAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
   it('leaves another instance\'s lease alone', async () => {
     const until = new Date(Date.now() + 600_000);
     await prisma.jobLease.create({ data: { name: 'theirs', holder: 'other-host:1:abc', expiresAt: until } });

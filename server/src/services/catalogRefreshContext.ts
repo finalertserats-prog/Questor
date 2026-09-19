@@ -2,6 +2,7 @@ import { prisma } from '../db.js';
 import { normalizeTitle } from '../domain/catalogText.js';
 import { buildCatalogIndex, type CatalogIndex, type CatalogRoleForMatch } from '../domain/catalogMatch.js';
 import { familiesByDomain, type AllowedClassificationIds } from '../domain/catalogClassification.js';
+import type { SpendLimits } from './catalogRefreshRun.js';
 
 /**
  * Everything a run compares candidates against, loaded once per run (and once
@@ -19,6 +20,8 @@ export interface RunContext {
   readonly names: { readonly domains: ReadonlyMap<string, string>; readonly families: ReadonlyMap<string, string> };
   /** Active roles in a stable order, for the ESCO lookups' cursor. */
   readonly rolesById: readonly CatalogRoleForMatch[];
+  /** How far this run may spend on model and research calls. */
+  readonly limits: SpendLimits;
 }
 
 async function loadRoles() {
@@ -28,7 +31,7 @@ async function loadRoles() {
   });
 }
 
-export async function loadRunContext(runId: string): Promise<RunContext> {
+export async function loadRunContext(runId: string, limits: SpendLimits): Promise<RunContext> {
   const [roles, domains, families] = await Promise.all([
     loadRoles(),
     prisma.catalogDomain.findMany({ where: { status: 'active' }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true } }),
@@ -49,6 +52,7 @@ export async function loadRunContext(runId: string): Promise<RunContext> {
     domains,
     names: { domains: new Map(domains.map((d) => [d.id, d.name])), families: new Map(families.map((f) => [f.id, f.name])) },
     rolesById: active,
+    limits,
   };
 }
 

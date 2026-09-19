@@ -6,7 +6,7 @@ export class AnthropicLlmProvider implements LlmProvider {
   enabled = true;
   constructor(private apiKey: string, private model: string) {}
 
-  async generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number }): Promise<LlmResult> {
+  async generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number; timeoutMs?: number }): Promise<LlmResult> {
     const started = Date.now();
     const system = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
     const convo = messages
@@ -15,6 +15,7 @@ export class AnthropicLlmProvider implements LlmProvider {
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
       headers: {
         'content-type': 'application/json',
         'x-api-key': this.apiKey,

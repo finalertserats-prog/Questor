@@ -22,11 +22,23 @@ export const INSTANCE_ID = `${os.hostname()}:${process.pid}:${randomBytes(3).toS
 export type JobOutcome = 'ran' | 'skipped' | 'failed';
 
 /**
+ * The lease one run holds. The holder column carries this instance plus a
+ * token minted per acquisition: when a run's lease lapses and another run in
+ * the SAME process takes it, the first can no longer renew or release it, so
+ * two runs can never both believe they hold the job.
+ */
+export interface LeaseHandle {
+  readonly holder: string;
+  /** Push the expiry out; false once this run no longer holds the lease. */
+  renew(ttlMs: number): Promise<boolean>;
+}
+
+/**
  * Run `fn` if this instance can take the lease for `name`; otherwise skip.
  * Records a JobRun either way it runs. Never throws: a job's failure is logged,
  * recorded and alerted, and the caller's interval keeps ticking.
  */
-export async function runExclusive(name: string, ttlMs: number, fn: () => Promise<string | void>): Promise<JobOutcome> {
+export async function runExclusive(name: string, ttlMs: number, fn: (lease: LeaseHandle) => Promise<string | void>): Promise<JobOutcome> {
   // A process that is shutting down must not start work it may not finish;
   // the next instance will take the lease on its own first tick.
   if (stopped) return 'skipped';
@@ -38,13 +50,31 @@ export async function runExclusive(name: string, ttlMs: number, fn: () => Promis
   }
 }
 
-async function runUnderLease(name: string, ttlMs: number, fn: () => Promise<string | void>): Promise<JobOutcome> {
-  const held = await acquireLease(name, ttlMs);
+function mintHolder(): string {
+  return `${INSTANCE_ID}#${randomBytes(6).toString('hex')}`;
+}
+
+function leaseHandle(name: string, holder: string): LeaseHandle {
+  return {
+    holder,
+    renew: async (ttlMs) => {
+      const renewed = await prisma.jobLease.updateMany({
+        where: { name, holder, expiresAt: { gt: new Date() } },
+        data: { expiresAt: new Date(Date.now() + ttlMs) },
+      });
+      return renewed.count === 1;
+    },
+  };
+}
+
+async function runUnderLease(name: string, ttlMs: number, fn: (lease: LeaseHandle) => Promise<string | void>): Promise<JobOutcome> {
+  const holder = mintHolder();
+  const held = await acquireLease(name, ttlMs, holder);
   if (!held) return 'skipped';
 
   const run = await prisma.jobRun.create({ data: { name, holder: INSTANCE_ID } });
   try {
-    const note = (await fn()) ?? '';
+    const note = (await fn(leaseHandle(name, holder))) ?? '';
     await prisma.jobRun.update({ where: { id: run.id }, data: { finishedAt: new Date(), ok: true, note: note.slice(0, 500) } });
     return 'ran';
   } catch (err) {
@@ -55,7 +85,7 @@ async function runUnderLease(name: string, ttlMs: number, fn: () => Promise<stri
     await alertOperator(name, message);
     return 'failed';
   } finally {
-    await releaseLease(name);
+    await releaseLease(name, holder);
   }
 }
 
@@ -101,6 +131,11 @@ export function stopAllJobs(): void {
   timers.clear();
 }
 
+/** Whether this process has stopped scheduling work (it is shutting down). */
+export function jobsStopped(): boolean {
+  return stopped;
+}
+
 /** Job runs still in progress, which a drain waits for. */
 export function runningJobCount(): number {
   return running;
@@ -109,10 +144,13 @@ export function runningJobCount(): number {
 /**
  * Hand back every lease this instance holds, as the last step before exit, so
  * the next instance can run the job at once instead of waiting out the TTL.
- * Scoped to this holder: another instance's lease is never touched.
+ * Scoped to this instance: another instance's lease is never touched.
  */
 export async function releaseHeldLeases(): Promise<void> {
-  await prisma.jobLease.updateMany({ where: { holder: INSTANCE_ID }, data: { expiresAt: new Date(0) } });
+  await prisma.jobLease.updateMany({
+    where: { OR: [{ holder: INSTANCE_ID }, { holder: { startsWith: `${INSTANCE_ID}#` } }] },
+    data: { expiresAt: new Date(0) },
+  });
 }
 
 /** Test hook: undo stopAllJobs and forget running counts. */
@@ -122,20 +160,20 @@ export function _resetJobsForTest(): void {
   running = 0;
 }
 
-async function acquireLease(name: string, ttlMs: number): Promise<boolean> {
+async function acquireLease(name: string, ttlMs: number, holder: string): Promise<boolean> {
   const now = new Date();
   const expiresAt = new Date(now.getTime() + ttlMs);
   // Take an expired lease with a conditional update; only one caller's update
   // can match the old expiry, so only one wins.
   const taken = await prisma.jobLease.updateMany({
     where: { name, expiresAt: { lt: now } },
-    data: { holder: INSTANCE_ID, expiresAt },
+    data: { holder, expiresAt },
   });
   if (taken.count === 1) return true;
   const existing = await prisma.jobLease.findUnique({ where: { name } });
   if (existing) return false;
   try {
-    await prisma.jobLease.create({ data: { name, holder: INSTANCE_ID, expiresAt } });
+    await prisma.jobLease.create({ data: { name, holder, expiresAt } });
     return true;
   } catch {
     // Someone else created it between the lookup and the insert.
@@ -143,24 +181,10 @@ async function acquireLease(name: string, ttlMs: number): Promise<boolean> {
   }
 }
 
-/**
- * Push this instance's lease further out, for work that runs in chunks longer
- * in total than the TTL (the monthly catalog refresh). False when another
- * instance holds it now: the caller must stop, because that instance will
- * resume the same work.
- */
-export async function renewLease(name: string, ttlMs: number): Promise<boolean> {
-  const renewed = await prisma.jobLease.updateMany({
-    where: { name, holder: INSTANCE_ID, expiresAt: { gt: new Date() } },
-    data: { expiresAt: new Date(Date.now() + ttlMs) },
-  });
-  return renewed.count === 1;
-}
-
-async function releaseLease(name: string): Promise<void> {
-  // Only the holder releases; a lease that expired and was taken by another
-  // instance mid-run must not be released by the slow one finishing late.
-  await prisma.jobLease.updateMany({ where: { name, holder: INSTANCE_ID }, data: { expiresAt: new Date(0) } }).catch(() => undefined);
+async function releaseLease(name: string, holder: string): Promise<void> {
+  // Only this run's holder token releases: a lease that lapsed and was taken
+  // by another run (in any process) must not be released by the slow one.
+  await prisma.jobLease.updateMany({ where: { name, holder }, data: { expiresAt: new Date(0) } }).catch(() => undefined);
 }
 
 // One alert per job per hour. A job failing every five minutes is one problem,

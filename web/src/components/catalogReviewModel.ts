@@ -30,6 +30,8 @@ export interface CatalogProposalView {
   readonly sources: readonly CatalogSourceLink[];
   readonly reviewerNote: string;
   readonly createdAt: string;
+  /** The version shown; sent back on approve so a changed proposal is not approved blind. */
+  readonly updatedAt?: string;
 }
 
 export interface CatalogReviewFilters {
@@ -189,6 +191,8 @@ export interface DecisionError {
 }
 
 export function decisionErrorMessage(err: DecisionError, title: string): string {
+  if (err.code === 'changed') return `"${title}" changed while you were looking at it. The list now shows the latest version; review it again.`;
+  if (err.code === 'too_soon') return err.message;
   if (err.code === 'superseded') return `Not added: ${err.message} The proposal is marked superseded.`;
   if (err.code === 'not_pending') return `"${title}" was already reviewed. The list is up to date.`;
   return `${title}: ${err.message}`;
@@ -251,8 +255,29 @@ export function runStatusLine(run: CatalogRunView): string {
   ];
   const line = parts.join(' · ');
   if (run.status === 'running') return `Running · ${line}`;
-  if (run.status === 'failed') return `Stopped: ${run.error || 'unknown error'} · ${line}`;
+  if (run.status === 'failed') return `${runErrorText(run.error)} · ${line}`;
   return line;
+}
+
+const RUN_ERRORS: Record<string, string> = {
+  abandoned: 'Stopped and not resumed within 7 days; a fresh run started instead.',
+};
+
+/**
+ * The run row keeps a short code; details stay in the server log. Anything
+ * unrecognised gets the generic sentence rather than being shown as it came.
+ */
+export function runErrorText(code: string): string {
+  return RUN_ERRORS[code] ?? 'Stopped on an unexpected error; the next run resumes it.';
+}
+
+/**
+ * Run now stays off while the lease is held AND while the newest run is still
+ * marked running: a lapsed lease does not mean that run is over, and the
+ * schedule resumes it.
+ */
+export function runNowDisabled(runs: readonly CatalogRunView[], leaseActive: boolean): boolean {
+  return leaseActive || runs[0]?.status === 'running';
 }
 
 export interface PageMeta {

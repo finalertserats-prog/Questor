@@ -6,10 +6,11 @@ export class OpenAiLlmProvider implements LlmProvider {
   enabled = true;
   constructor(private apiKey: string, private model: string) {}
 
-  async generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number }): Promise<LlmResult> {
+  async generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number; timeoutMs?: number }): Promise<LlmResult> {
     const started = Date.now();
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
+      signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${this.apiKey}`,

@@ -1,15 +1,18 @@
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import type { CatalogCandidate } from '../domain/catalogMatch.js';
-import { acceptDrafts, capOverflow, draftsForCandidate, type ProposalDraft } from '../domain/catalogProposalPlan.js';
+import { acceptDrafts, draftsForCandidate, type ProposalDraft } from '../domain/catalogProposalPlan.js';
 import { classifyTitles, type ClassificationModel } from './catalogClassify.js';
 import type { RunContext } from './catalogRefreshContext.js';
-import { bumpSourceStats, SOURCE_KEYS, type RefreshCursor, type RefreshStats, type SourceKey } from './catalogRefreshState.js';
+import { bumpSourceStats, type RefreshCursor, type RefreshStats, type SourceKey } from './catalogRefreshState.js';
 
 /**
- * One chunk of candidates → proposals in the review queue. Every chunk ends
- * with the run's cap enforced over everything it has queued so far, so the cap
- * is global to the run however many chunks and sources feed it.
+ * One chunk of candidates → proposals in the review queue.
+ *
+ * The per-run cap is enforced BEFORE anything is inserted, from the counts
+ * the run has already queued: a proposal the owner may be looking at is never
+ * removed again. Alternative titles may take only part of the cap, so new
+ * roles always get room; within a chunk the most confident go first.
  */
 
 export interface RunState {
@@ -19,6 +22,8 @@ export interface RunState {
   readonly researchCalls: number;
   /** Normalised titles pending, recently rejected, or already proposed in this run. */
   readonly blocked: ReadonlySet<string>;
+  /** What this run has queued so far, for the cap. */
+  readonly queued: { readonly aliases: number; readonly roles: number };
 }
 
 export interface ChunkModel {
@@ -26,8 +31,12 @@ export interface ChunkModel {
   readonly modelAvailable: boolean;
 }
 
-async function classifyDrafts(ctx: RunContext, state: RunState, drafts: readonly ProposalDraft[], model: ChunkModel): Promise<{ drafts: ProposalDraft[]; modelCalls: number }> {
-  const unclassified = drafts.filter((d) => d.kind === 'new_role' && d.domainId === null);
+function byConfidence(a: ProposalDraft, b: ProposalDraft): number {
+  return b.confidence - a.confidence;
+}
+
+async function classifyRoleDrafts(ctx: RunContext, state: RunState, drafts: readonly ProposalDraft[], model: ChunkModel): Promise<{ drafts: ProposalDraft[]; modelCalls: number }> {
+  const unclassified = drafts.filter((d) => d.domainId === null);
   if (unclassified.length === 0) return { drafts: [...drafts], modelCalls: 0 };
   const { byTitle, modelCalls } = await classifyTitles(unclassified.map((d) => ({ title: d.title, description: d.summary || undefined })), {
     index: ctx.index,
@@ -35,58 +44,88 @@ async function classifyDrafts(ctx: RunContext, state: RunState, drafts: readonly
     names: ctx.names,
     model: model.model,
     modelAvailable: model.modelAvailable,
-    maxCalls: Math.max(0, config.catalogRefresh.maxLlmCalls - state.llmCalls),
+    maxCalls: Math.max(0, ctx.limits.llmCalls - state.llmCalls),
   });
   const classified = drafts.map((draft) => {
-    const found = draft.kind === 'new_role' && draft.domainId === null ? byTitle.get(draft.normalizedTitle) : undefined;
+    const found = draft.domainId === null ? byTitle.get(draft.normalizedTitle) : undefined;
     return found ? { ...draft, domainId: found.domainId, familyId: found.familyId, confidence: found.confidence } : draft;
   });
   return { drafts: classified, modelCalls };
 }
 
-async function insertProposals(runId: string, drafts: readonly ProposalDraft[]): Promise<void> {
-  if (drafts.length === 0) return;
-  await prisma.catalogProposal.createMany({
-    data: drafts.map((d) => ({
-      runId, kind: d.kind, status: 'pending', title: d.title, normalizedTitle: d.normalizedTitle, domainId: d.domainId, familyId: d.familyId,
-      summary: d.summary, targetRoleId: d.targetRoleId, sourcesJson: JSON.stringify(d.sources), confidence: d.confidence,
-    })),
-  });
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && (err as { readonly code?: string }).code === 'P2002';
 }
 
-function firstSource(sourcesJson: string): SourceKey | null {
-  try {
-    const parsed: unknown = JSON.parse(sourcesJson);
-    const source = Array.isArray(parsed) && typeof parsed[0] === 'object' && parsed[0] !== null ? (parsed[0] as { source?: unknown }).source : null;
-    return SOURCE_KEYS.find((key) => key === source) ?? null;
-  } catch { return null; }
-}
-
-/** Remove this run's pending proposals beyond the cap; returns how many per source. */
-export async function enforceRunCap(runId: string, max: number): Promise<Partial<Record<SourceKey, number>>> {
-  const rows = await prisma.catalogProposal.findMany({ where: { runId, status: 'pending' }, select: { id: true, kind: true, confidence: true, createdAt: true, sourcesJson: true } });
-  const overflow = new Set(capOverflow(rows, max));
-  if (overflow.size === 0) return {};
-  await prisma.catalogProposal.deleteMany({ where: { id: { in: [...overflow] }, status: 'pending' } });
-  return rows.filter((row) => overflow.has(row.id)).reduce<Partial<Record<SourceKey, number>>>((acc, row) => {
-    const source = firstSource(row.sourcesJson);
-    return source ? { ...acc, [source]: (acc[source] ?? 0) + 1 } : acc;
-  }, {});
-}
-
-function applyTrim(stats: RefreshStats, trimmed: Partial<Record<SourceKey, number>>): RefreshStats {
-  return Object.entries(trimmed).reduce((acc, [source, count]) => bumpSourceStats(acc, source as SourceKey, { proposed: -(count ?? 0), skipped: count ?? 0 }), stats);
+function rowOf(runId: string, d: ProposalDraft) {
+  return {
+    runId, kind: d.kind, status: 'pending', title: d.title, normalizedTitle: d.normalizedTitle, domainId: d.domainId, familyId: d.familyId,
+    summary: d.summary, targetRoleId: d.targetRoleId, sourcesJson: JSON.stringify(d.sources), confidence: d.confidence,
+  };
 }
 
 /**
- * Skipped: unmatched candidates that did not become a new-role proposal
- * (no confident domain, a duplicate, an unusable title), plus alias drafts
- * refused as duplicates. Each unmatched candidate yields at most one role draft.
+ * Insert, returning what was actually inserted. A unique index on pending
+ * proposals (Postgres) is the backstop against a second writer; a clash means
+ * someone queued the same title meanwhile, which is a skip, not a failure.
  */
-function countSkipped(candidates: number, matched: number, drafts: readonly ProposalDraft[], accepted: readonly ProposalDraft[]): number {
-  const acceptedRoles = accepted.filter((d) => d.kind === 'new_role').length;
-  const refusedAliases = drafts.filter((d) => d.kind === 'new_alias').length - accepted.filter((d) => d.kind === 'new_alias').length;
-  return candidates - matched - acceptedRoles + refusedAliases;
+async function insertProposals(runId: string, drafts: readonly ProposalDraft[]): Promise<ProposalDraft[]> {
+  if (drafts.length === 0) return [];
+  try {
+    await prisma.catalogProposal.createMany({ data: drafts.map((d) => rowOf(runId, d)) });
+    return [...drafts];
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
+  }
+  const inserted: ProposalDraft[] = [];
+  for (const draft of drafts) {
+    try {
+      await prisma.catalogProposal.create({ data: rowOf(runId, draft) });
+      inserted.push(draft);
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+  return inserted;
+}
+
+interface Room {
+  readonly aliases: number;
+  readonly total: number;
+}
+
+function roomLeft(state: RunState): Room {
+  const max = config.catalogRefresh.maxProposals;
+  const aliasCap = Math.floor(max * config.catalogRefresh.maxAliasShare);
+  const total = Math.max(0, max - state.queued.aliases - state.queued.roles);
+  return { aliases: Math.min(total, Math.max(0, aliasCap - state.queued.aliases)), total };
+}
+
+/** The drafts that fit, aliases first; new roles are classified only if room is left for them. */
+async function selectDrafts(ctx: RunContext, state: RunState, drafted: readonly ProposalDraft[], model: ChunkModel) {
+  const room = roomLeft(state);
+  const rules = { known: ctx.index.known, blocked: state.blocked, minConfidence: config.catalogRefresh.minConfidence };
+  const aliases = acceptDrafts(drafted.filter((d) => d.kind === 'new_alias'), rules).accepted.sort(byConfidence).slice(0, room.aliases);
+  const roleRoom = room.total - aliases.length;
+  const roleDrafts = drafted.filter((d) => d.kind === 'new_role');
+  if (roleRoom <= 0 || roleDrafts.length === 0) return { selected: aliases, modelCalls: 0 };
+  // Classify only titles that could still be queued: a full run spends nothing.
+  const candidates = roleDrafts.filter((d) => !ctx.index.known.has(d.normalizedTitle) && !state.blocked.has(d.normalizedTitle));
+  const { drafts, modelCalls } = await classifyRoleDrafts(ctx, state, candidates, model);
+  const blocked = new Set([...state.blocked, ...aliases.map((d) => d.normalizedTitle)]);
+  const roles = acceptDrafts(drafts, { ...rules, blocked }).accepted.sort(byConfidence).slice(0, roleRoom);
+  return { selected: [...aliases, ...roles], modelCalls };
+}
+
+/**
+ * Skipped: unmatched candidates that did not become a new-role proposal (no
+ * confident domain, a duplicate, an unusable title, no room), plus alias
+ * drafts not queued. Each unmatched candidate yields at most one role draft.
+ */
+function countSkipped(candidates: number, matched: number, drafted: readonly ProposalDraft[], inserted: readonly ProposalDraft[]): number {
+  const insertedRoles = inserted.filter((d) => d.kind === 'new_role').length;
+  const refusedAliases = drafted.filter((d) => d.kind === 'new_alias').length - inserted.filter((d) => d.kind === 'new_alias').length;
+  return candidates - matched - insertedRoles + refusedAliases;
 }
 
 export async function processCandidates(
@@ -100,16 +139,17 @@ export async function processCandidates(
   const plans = candidates.map((candidate) => draftsForCandidate(candidate, ctx.index, { aliasesOnly: opts.aliasesOnly }));
   const matchedExisting = plans.filter((plan) => plan.matchedExisting).length;
   const drafted = plans.flatMap((plan) => plan.drafts);
-  const { drafts, modelCalls } = await classifyDrafts(ctx, state, drafted, model);
-  const { accepted } = acceptDrafts(drafts, { known: ctx.index.known, blocked: state.blocked, minConfidence: config.catalogRefresh.minConfidence });
-  await insertProposals(ctx.runId, accepted);
-  const trimmed = await enforceRunCap(ctx.runId, config.catalogRefresh.maxProposals);
-  const skipped = countSkipped(candidates.length, matchedExisting, drafts, accepted);
-  const stats = applyTrim(bumpSourceStats(state.stats, source, { fetched: candidates.length, matchedExisting, proposed: accepted.length, skipped }), trimmed);
+  const { selected, modelCalls } = await selectDrafts(ctx, state, drafted, model);
+  const inserted = await insertProposals(ctx.runId, selected);
+  const skipped = countSkipped(candidates.length, matchedExisting, drafted, inserted);
+  const insertedAliases = inserted.filter((d) => d.kind === 'new_alias').length;
   return {
     ...state,
-    stats,
+    stats: bumpSourceStats(state.stats, source, { fetched: candidates.length, matchedExisting, proposed: inserted.length, skipped }),
     llmCalls: state.llmCalls + modelCalls,
-    blocked: new Set([...state.blocked, ...accepted.map((d) => d.normalizedTitle)]),
+    // Every selected title is blocked for the rest of the run, including one a
+    // concurrent writer beat us to: it is pending either way.
+    blocked: new Set([...state.blocked, ...selected.map((d) => d.normalizedTitle)]),
+    queued: { aliases: state.queued.aliases + insertedAliases, roles: state.queued.roles + inserted.length - insertedAliases },
   };
 }

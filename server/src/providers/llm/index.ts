@@ -44,6 +44,8 @@ export async function generateJson<T>(opts: {
   sessionId?: string;
   temperature?: number;
   maxTokens?: number;
+  /** Bound the model call; unset keeps the provider default. */
+  timeoutMs?: number;
 }): Promise<T | null> {
   const llm = getLlm();
   if (!llm.enabled) return null;
@@ -55,7 +57,7 @@ export async function generateJson<T>(opts: {
     { role: 'user', content: opts.user },
   ];
   try {
-    const result = await llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens });
+    const result = await llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens, timeoutMs: opts.timeoutMs });
     const parsed = parseJsonLoose(result.text);
     const validated = opts.validate(parsed);
     await logModelExecution({

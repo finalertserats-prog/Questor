@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { normalizeTitle } from '../domain/catalogText.js';
 import type { CatalogIndex } from '../domain/catalogMatch.js';
@@ -49,6 +50,8 @@ export const defaultClassificationModel: ClassificationModel = (request) => gene
   validate: (raw) => replySchema.parse(raw),
   maxTokens: 3000,
   temperature: 0,
+  // A background job's model call must end; a hung one would hold the run.
+  timeoutMs: config.catalogRefresh.classifyTimeoutMs,
 });
 
 /** Whether the default model would actually be called (generateJson returns null otherwise). */

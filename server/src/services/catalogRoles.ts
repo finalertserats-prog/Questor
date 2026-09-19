@@ -33,9 +33,7 @@ export type AddCatalogRoleResult =
  * Add a title to the shared catalog, or report the role it already matches.
  * Validation is the caller's job (catalogTitleProblem). Two organisations adding
  * the same title at once both end up with the one row: the loser of the unique
- * race is told about the winner. The platform owner approving an automated
- * proposal uses the same path with source 'automation': the role then belongs
- * to the platform, not to the approver's organisation.
+ * race is told about the winner.
  */
 export async function addCatalogRole(opts: {
   readonly auth: AuthClaims;
@@ -43,8 +41,6 @@ export async function addCatalogRole(opts: {
   readonly title: string;
   readonly familyId?: string;
   readonly techStack?: readonly string[];
-  readonly source?: 'org' | 'automation';
-  readonly summary?: string;
 }): Promise<AddCatalogRoleResult> {
   const existing = await findCatalogMatch(opts.domainId, opts.title);
   if (existing) return { kind: 'existing', role: existing };
@@ -57,16 +53,15 @@ export async function addCatalogRole(opts: {
         title,
         normalizedTitle: normalizeTitle(title),
         techStackJson: JSON.stringify(opts.techStack ?? []),
-        summary: opts.summary ?? '',
-        source: opts.source ?? 'org',
-        createdByTenantId: opts.source === 'automation' ? null : opts.auth.tenantId,
+        source: 'org',
+        createdByTenantId: opts.auth.tenantId,
         createdById: opts.auth.userId,
       },
       select: { id: true },
     });
     await logAudit({
       tenantId: opts.auth.tenantId, actorId: opts.auth.userId, actorType: 'user', action: 'catalog.role.created',
-      entityType: 'CatalogRole', entityId: created.id, after: { title, domainId: opts.domainId, source: opts.source ?? 'org' },
+      entityType: 'CatalogRole', entityId: created.id, after: { title, domainId: opts.domainId },
     });
     return { kind: 'created', id: created.id };
   } catch (err) {

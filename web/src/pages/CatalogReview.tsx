@@ -13,7 +13,7 @@ import { LatestRunLine, RecentRuns } from '../components/CatalogReviewRuns';
 import { useCatalogReviewData } from '../components/useCatalogReviewData';
 import { BulkBar } from '../components/CatalogReviewBulkBar';
 import {
-  BULK_MAX, bulkOutcome, decisionErrorMessage, DEFAULT_CATALOG_REVIEW_FILTERS, hasActiveFilters, paginationLabel, selectablePendingIds,
+  BULK_MAX, bulkOutcome, runNowDisabled, decisionErrorMessage, DEFAULT_CATALOG_REVIEW_FILTERS, hasActiveFilters, paginationLabel, selectablePendingIds,
   toggleAll, toggleSelection, type BulkItemResult, type CatalogProposalView, type CatalogReviewFilters,
 } from '../components/catalogReviewModel';
 
@@ -68,11 +68,12 @@ export function CatalogReview() {
   const decide = async (proposal: CatalogProposalView, action: BulkAction) => {
     markBusy(proposal.id, true);
     try {
-      await api.post(`/catalog-review/proposals/${proposal.id}/${action}`, {});
+      // Approve names the version on screen, so an edit made meanwhile is not approved blind.
+      await api.post(`/catalog-review/proposals/${proposal.id}/${action}`, action === 'approve' && proposal.updatedAt ? { updatedAt: proposal.updatedAt } : {});
       setNotice({ kind: 'ok', text: action === 'approve' ? `Approved "${proposal.title}". It is now in the shared catalog.` : `Rejected "${proposal.title}".` });
     } catch (err: unknown) {
       const apiErr = err instanceof ApiError ? err : null;
-      setNotice({ kind: apiErr?.code === 'superseded' ? 'info' : 'error', text: decisionErrorMessage({ status: apiErr?.status, code: apiErr?.code, message: err instanceof Error ? err.message : 'Could not record that decision.' }, proposal.title) });
+      setNotice({ kind: apiErr?.code === 'superseded' || apiErr?.code === 'changed' ? 'info' : 'error', text: decisionErrorMessage({ status: apiErr?.status, code: apiErr?.code, message: err instanceof Error ? err.message : 'Could not record that decision.' }, proposal.title) });
     } finally {
       markBusy(proposal.id, false);
       setSelected((current) => new Set([...current].filter((id) => id !== proposal.id)));
@@ -119,8 +120,11 @@ export function CatalogReview() {
       await api.post('/catalog-review/runs', {});
       setNotice({ kind: 'ok', text: 'Catalog refresh started. It runs in the background; this page updates when it finishes.' });
     } catch (err: unknown) {
-      const busy = err instanceof ApiError && err.status === 409;
-      setNotice({ kind: busy ? 'info' : 'error', text: busy ? 'A catalog refresh is already running.' : err instanceof Error ? err.message : 'The refresh could not start.' });
+      const apiErr = err instanceof ApiError ? err : null;
+      const text = apiErr?.code === 'too_soon' ? decisionErrorMessage({ code: 'too_soon', message: apiErr.message }, 'Run now')
+        : apiErr?.status === 409 ? 'A catalog refresh is already running.'
+          : err instanceof Error ? err.message : 'The refresh could not start.';
+      setNotice({ kind: apiErr?.status === 409 ? 'info' : 'error', text });
     } finally {
       setStarting(false);
       await data.loadRuns();
@@ -134,8 +138,8 @@ export function CatalogReview() {
         title="Catalog review"
         subtitle="New roles and alternative titles found by the monthly refresh. Nothing enters the shared catalog until you approve it."
         actions={(
-          <button type="button" className="btn" onClick={() => void runNow()} disabled={starting || runActive} aria-describedby="catalog-latest-run">
-            <Icon name="refresh" size={16} />{runActive ? 'Running…' : starting ? 'Starting…' : 'Run now'}
+          <button type="button" className="btn" onClick={() => void runNow()} disabled={starting || runNowDisabled(runs, runActive)} aria-describedby="catalog-latest-run">
+            <Icon name="refresh" size={16} />{runNowDisabled(runs, runActive) ? 'Running…' : starting ? 'Starting…' : 'Run now'}
           </button>
         )}
       />

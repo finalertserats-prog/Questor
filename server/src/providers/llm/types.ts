@@ -15,5 +15,6 @@ export interface LlmProvider {
   name: string;
   /** true when a real remote model is configured; false for the built-in heuristic path. */
   enabled: boolean;
-  generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number }): Promise<LlmResult>;
+  /** timeoutMs bounds the call; unset keeps the provider's default (no timeout). */
+  generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number; timeoutMs?: number }): Promise<LlmResult>;
 }

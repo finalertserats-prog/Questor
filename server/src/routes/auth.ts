@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
-import { isPlatformOperator } from '../middleware/platformOperator.js';
+import { isPlatformOperator, isReservedOperatorEmail } from '../middleware/platformOperator.js';
 import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
 import { logAudit } from '../services/audit.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
@@ -73,7 +73,8 @@ authRouter.post('/register', asyncHandler(async (req, res) => {
     throw new HttpError(403, 'Self-registration is disabled. Ask an administrator for an account.');
   }
   const body = registerSchema.parse(req.body);
-  if (await findUserByEmail(body.email)) throw new HttpError(409, 'Email already registered');
+  // A platform-owner address is never self-registered: the account would carry the owner's standing.
+  if (isReservedOperatorEmail(body.email) || await findUserByEmail(body.email)) throw new HttpError(409, 'Email already registered');
   const tenant = await prisma.tenant.create({ data: { name: body.tenantName ?? `${body.name}'s Org` } });
   const user = await prisma.user.create({
     data: { email: body.email, name: body.name, passwordHash: hashPassword(body.password), role: 'admin', tenantId: tenant.id },

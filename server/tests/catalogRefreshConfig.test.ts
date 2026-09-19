@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCommaList, parseFractionSetting, parsePositiveIntSetting } from '../src/config.js';
+import { parseCommaList, parseFractionSetting, parsePositiveIntSetting, parseTimeoutMsSetting } from '../src/config.js';
 
 /**
  * The catalog refresh reads several caps from the environment. A typo must
@@ -41,6 +41,18 @@ describe('catalog refresh settings', () => {
 
   it('refuses a fraction above 1', () => {
     expect(() => parseFractionSetting('CATALOG_REFRESH_MIN_CONFIDENCE', '65', 0.5)).toThrow(/CATALOG_REFRESH_MIN_CONFIDENCE/);
+  });
+
+  it('uses the fallback for an unset timeout', () => {
+    expect(parseTimeoutMsSetting('CATALOG_FETCH_TIMEOUT_MS', undefined, 60_000)).toBe(60_000);
+  });
+
+  it('refuses a timeout under one second, which would fail every request', () => {
+    expect(() => parseTimeoutMsSetting('CATALOG_FETCH_TIMEOUT_MS', '60', 60_000)).toThrow(/CATALOG_FETCH_TIMEOUT_MS/);
+  });
+
+  it('reads a timeout of a second or more', () => {
+    expect(parseTimeoutMsSetting('CATALOG_RESEARCH_TIMEOUT_MS', '1000', 60_000)).toBe(1000);
   });
 
   it('refuses a fraction that is not a number', () => {

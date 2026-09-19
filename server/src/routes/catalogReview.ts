@@ -38,6 +38,8 @@ const editSchema = z.object({
 }).strict().refine((body) => Object.keys(body).length > 0, { message: 'Nothing to change.' });
 
 const decisionSchema = z.object({ note }).strict();
+// The version the operator was looking at; approving a newer one is refused.
+const approveSchema = z.object({ note, updatedAt: z.string().datetime().optional() }).strict();
 const bulkSchema = z.object({ ids: z.array(id).min(1).max(BULK_REVIEW_MAX), action: z.enum(['approve', 'reject']), note }).strict();
 
 // A manual run reads public sources and may spend on a model: a handful an hour is plenty.
@@ -72,8 +74,8 @@ catalogReviewRouter.post('/proposals/bulk', asyncHandler(async (req, res) => {
 }));
 
 catalogReviewRouter.post('/proposals/:id/approve', asyncHandler(async (req, res) => {
-  const body = decisionSchema.parse(req.body ?? {});
-  sendDecision(res, await approveProposal(id.parse(req.params.id), req.auth!, body.note));
+  const body = approveSchema.parse(req.body ?? {});
+  sendDecision(res, await approveProposal(id.parse(req.params.id), req.auth!, body.note, body.updatedAt ? new Date(body.updatedAt) : undefined));
 }));
 
 catalogReviewRouter.post('/proposals/:id/reject', asyncHandler(async (req, res) => {
@@ -92,6 +94,12 @@ catalogReviewRouter.get('/runs', asyncHandler(async (_req, res) => {
 catalogReviewRouter.post('/runs', manualRunLimit, asyncHandler(async (req, res) => {
   const started = await startManualCatalogRefresh(req.auth!.userId);
   if (started.kind === 'busy') throw new HttpError(409, 'A catalog refresh is already running.', 'already_running');
+  if (started.kind === 'too_soon') {
+    // Each manual run reads the sources again; they are spaced out so a few
+    // clicks cannot multiply a month's reads and model spend.
+    res.status(409).json({ error: `A manual run started recently. The next one can start after ${started.retryAt.toISOString().slice(11, 16)} UTC.`, code: 'too_soon', retryAt: started.retryAt.toISOString() });
+    return;
+  }
   if (started.kind === 'failed') throw new HttpError(500, 'The catalog refresh could not start. See the server log.');
   // 202: the run continues in the background; GET /runs shows its progress.
   res.status(202).json({ runId: started.runId });

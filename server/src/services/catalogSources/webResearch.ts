@@ -13,8 +13,8 @@ import { fetchWithRetry, type SourceHttp } from './http.js';
 const RESPONSES_URL = 'https://api.openai.com/v1/responses';
 const MIN_DISTINCT_HOSTS = 2;
 const MAX_EXCLUDED_TITLES = 300;
-// A paid call: one retry for a blip, not a loop.
-const RESEARCH_ATTEMPTS = 2;
+// A paid call: one attempt, so every call made is a call counted against the cap.
+const RESEARCH_ATTEMPTS = 1;
 
 export interface ResearchOptions {
   readonly apiKey: string;
@@ -98,7 +98,9 @@ function citationsFor(text: string, titles: readonly string[], index: number, ci
 function toCandidates(items: readonly z.infer<typeof itemSchema>[], text: string, citations: readonly Citation[], domainId: string): CatalogCandidate[] {
   const titles = items.map((item) => item.title);
   return items.flatMap((item, index) => {
-    const evidence = [...new Set([...item.evidenceUrls, ...citationsFor(text, titles, index, citations)].map(webUrl).filter((u): u is string => u !== null))];
+    // Only the web_search tool's own citations count: links the model writes
+    // into its answer are claims, not evidence.
+    const evidence = [...new Set(citationsFor(text, titles, index, citations).map(webUrl).filter((u): u is string => u !== null))];
     if (new Set(evidence.map(hostKey)).size < MIN_DISTINCT_HOSTS) return [];
     return [{ title: item.title, description: item.oneLineSummary || undefined, alternateTitles: [], ref: evidence[0], url: evidence[0], evidence, source: 'web' as const, domainId }];
   });

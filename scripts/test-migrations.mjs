@@ -10,6 +10,7 @@
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { unexpectedMigrationSql } from './migrationDiff.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const schema = join(root, 'server', 'prisma', 'postgres', 'schema.prisma');
@@ -53,15 +54,6 @@ function run(command, args, options = {}) {
   return result;
 }
 
-function hasSql(sql) {
-  return sql
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith('--'))
-    .join('\n')
-    .trim().length > 0;
-}
-
 run('node', [join(root, 'scripts', 'generate-postgres-schema.mjs')], { stdio: 'inherit' });
 run('npx', ['prisma', 'migrate', 'reset', '--force', '--skip-seed', '--schema', schema], { stdio: 'inherit' });
 
@@ -73,9 +65,12 @@ const diff = run('npx', [
   '--script',
 ]);
 
-if (hasSql(diff.stdout)) {
+// Hand-written partial indexes (scripts/migrationDiff.mjs) are expected to
+// be missing from schema.prisma; any other difference fails the check.
+const unexpected = unexpectedMigrationSql(diff.stdout);
+if (unexpected) {
   console.error('Committed Postgres migrations do not match server/prisma/schema.prisma. Diff:');
-  process.stderr.write(diff.stdout);
+  process.stderr.write(`${unexpected}\n`);
   process.exit(1);
 }
 

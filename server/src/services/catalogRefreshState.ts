@@ -35,7 +35,8 @@ const statsSchema = z.object({
 
 const cursorSchema = z.object({
   onet: z.object({ offset: count, done: z.boolean().catch(false) }).catch({ offset: 0, done: false }).default({ offset: 0, done: false }),
-  esco: z.object({ offset: count, pages: count, done: z.boolean().catch(false) }).catch({ offset: 0, pages: 0, done: false }).default({ offset: 0, pages: 0, done: false }),
+  // ESCO's search offset is a page index, so the cursor keeps the page.
+  esco: z.object({ page: count, pages: count, done: z.boolean().catch(false) }).catch({ page: 0, pages: 0, done: false }).default({ page: 0, pages: 0, done: false }),
   escoRoles: z.object({ offset: count, lookups: count, done: z.boolean().catch(false) }).catch({ offset: 0, lookups: 0, done: false }).default({ offset: 0, lookups: 0, done: false }),
   web: z.object({ domainIndex: count, calls: count, done: z.boolean().catch(false) }).catch({ domainIndex: 0, calls: 0, done: false }).default({ domainIndex: 0, calls: 0, done: false }),
 });
@@ -71,7 +72,7 @@ export function nextRunCursor(previous: RefreshCursor | null): RefreshCursor {
   if (!previous) return fresh;
   return {
     ...fresh,
-    esco: { offset: previous.esco.offset, pages: 0, done: false },
+    esco: { page: previous.esco.page, pages: 0, done: false },
     escoRoles: { offset: previous.escoRoles.offset, lookups: 0, done: false },
   };
 }

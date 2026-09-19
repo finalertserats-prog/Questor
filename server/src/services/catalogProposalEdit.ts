@@ -66,9 +66,14 @@ export async function editProposal(id: string, edit: ProposalEdit, reviewer: Aut
   if (problem) throw new HttpError(400, problem);
   const fields = row.kind === 'new_alias' ? await aliasFields(row, edit) : await roleFields(row, edit);
   const data = { ...fields, title, normalizedTitle: normalizeTitle(title), ...(edit.summary !== undefined ? { summary: edit.summary.trim() } : {}) };
-  // Conditional on still pending: an edit racing an approval must not rewrite a decided proposal.
-  const updated = await prisma.catalogProposal.updateMany({ where: { id, status: 'pending' }, data });
-  if (updated.count !== 1) throw new HttpError(409, 'Only a pending proposal can be edited.', 'not_pending');
+  // Conditional on the version read: an edit racing an approval (or another
+  // edit) must not rewrite a decided proposal or silently undo the other edit.
+  const updated = await prisma.catalogProposal.updateMany({ where: { id, status: 'pending', updatedAt: row.updatedAt }, data });
+  if (updated.count !== 1) {
+    const now = await prisma.catalogProposal.findUnique({ where: { id }, select: { status: true } });
+    if (now?.status === 'pending') throw new HttpError(409, 'This proposal changed while you were editing. Reload it and try again.', 'changed');
+    throw new HttpError(409, 'Only a pending proposal can be edited.', 'not_pending');
+  }
   await logAudit({
     tenantId: reviewer.tenantId, actorId: reviewer.userId, actorType: 'user', action: 'catalog.proposal.edited', entityType: 'CatalogProposal', entityId: id,
     before: { title: row.title, domainId: row.domainId, familyId: row.familyId, targetRoleId: row.targetRoleId }, after: data,

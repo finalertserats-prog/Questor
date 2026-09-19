@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma, parseJsonStrict, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
+import { isPlatformOperator, isReservedOperatorEmail } from '../middleware/platformOperator.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
@@ -595,6 +596,9 @@ adminRouter.post('/users', requireCapability('admin:manage'), asyncHandler(async
   // Case-insensitive, so a mixed-case row stored before normalisation still
   // counts as the same mailbox.
   if (await findUserByEmail(body.email)) throw new HttpError(409, 'Email already registered');
+  // An account for a platform-owner address makes its holder the owner. Only
+  // an owner may create one; to anyone else it looks like any taken address.
+  if (isReservedOperatorEmail(body.email) && !isPlatformOperator(req.auth)) throw new HttpError(409, 'Email already registered');
 
   const user = await prisma.user.create({
     data: {

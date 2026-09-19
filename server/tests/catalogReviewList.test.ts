@@ -141,7 +141,7 @@ describe('starting a run by hand over HTTP', () => {
 
   it('answers 202 with the run id', async () => {
     const res = await start();
-    expect({ status: res.status, hasId: typeof res.body.runId === 'string' }).toEqual({ status: 202, hasId: true });
+    expect({ status: res.status, body: res.body.code, hasId: typeof res.body.runId === 'string' }).toEqual({ status: 202, body: undefined, hasId: true });
   });
 
   it('answers before the run finishes', async () => {
@@ -165,6 +165,15 @@ describe('starting a run by hand over HTTP', () => {
     await prisma.jobLease.create({ data: { name: CATALOG_REFRESH_LEASE.name, holder: 'other-host:1:abc', expiresAt: new Date(Date.now() + 60_000) } });
     const res = await start();
     expect({ status: res.status, code: res.body.code }).toEqual({ status: 409, code: 'already_running' });
+  });
+
+  it('answers 409 with the time a second manual run may start', async () => {
+    config.catalogRefresh.manualRunGapMs = 60 * 60_000;
+    await start();
+    await _catalogRefreshSettled();
+    const res = await start();
+    config.catalogRefresh.manualRunGapMs = 0;
+    expect({ status: res.status, code: res.body.code, hasTime: typeof res.body.retryAt === 'string' }).toEqual({ status: 409, code: 'too_soon', hasTime: true });
   });
 
   it('is rate limited', async () => {

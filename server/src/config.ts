@@ -104,6 +104,16 @@ export function parsePositiveIntSetting(variable: string, raw: string | undefine
   return value;
 }
 
+/**
+ * A request timeout. Under a second no real request can finish, so a value
+ * like "60" (meant as seconds) would fail every call; it stops the process.
+ */
+export function parseTimeoutMsSetting(variable: string, raw: string | undefined, fallback: number): number {
+  const value = parseDurationMsSetting(variable, raw, fallback);
+  if (value < 1000) throw new Error(`${variable} must be at least 1000 milliseconds (got "${raw}").`);
+  return value;
+}
+
 /** A threshold between 0 and 1. "65" meant as a percentage must not pass as 65. */
 export function parseFractionSetting(variable: string, raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -189,7 +199,16 @@ export const config = {
     minConfidence: parseFractionSetting('CATALOG_REFRESH_MIN_CONFIDENCE', process.env.CATALOG_REFRESH_MIN_CONFIDENCE, 0.5),
     researchModel: env('CATALOG_RESEARCH_MODEL', 'gpt-5.5'),
     researchMaxCalls: parsePositiveIntSetting('CATALOG_RESEARCH_MAX_CALLS', process.env.CATALOG_RESEARCH_MAX_CALLS, 35),
-    researchTimeoutMs: parseDurationMsSetting('CATALOG_RESEARCH_TIMEOUT_MS', process.env.CATALOG_RESEARCH_TIMEOUT_MS, 120_000),
+    researchTimeoutMs: parseTimeoutMsSetting('CATALOG_RESEARCH_TIMEOUT_MS', process.env.CATALOG_RESEARCH_TIMEOUT_MS, 120_000),
+    /** Model calls (classification) and research calls allowed over any 30 days, all runs together. */
+    llmCallsPer30Days: parsePositiveIntSetting('CATALOG_REFRESH_LLM_CALLS_PER_30_DAYS', process.env.CATALOG_REFRESH_LLM_CALLS_PER_30_DAYS, 150),
+    researchCallsPer30Days: parsePositiveIntSetting('CATALOG_RESEARCH_CALLS_PER_30_DAYS', process.env.CATALOG_RESEARCH_CALLS_PER_30_DAYS, 35),
+    /** At most this share of a run's proposals may be alternative titles, so new roles always get room. */
+    maxAliasShare: parseFractionSetting('CATALOG_REFRESH_MAX_ALIAS_SHARE', process.env.CATALOG_REFRESH_MAX_ALIAS_SHARE, 0.6),
+    /** Minimum gap between two manual runs. */
+    manualRunGapMs: parseDurationMsSetting('CATALOG_MANUAL_RUN_GAP_MS', process.env.CATALOG_MANUAL_RUN_GAP_MS, 60 * 60_000),
+    /** Timeout for the classification model call. */
+    classifyTimeoutMs: parseTimeoutMsSetting('CATALOG_CLASSIFY_TIMEOUT_MS', process.env.CATALOG_CLASSIFY_TIMEOUT_MS, 60_000),
     /** ESCO occupations per page; one page is one chunk. */
     escoLimit: parsePositiveIntSetting('CATALOG_ESCO_LIMIT', process.env.CATALOG_ESCO_LIMIT, 25),
     escoPagesPerRun: parsePositiveIntSetting('CATALOG_ESCO_PAGES_PER_RUN', process.env.CATALOG_ESCO_PAGES_PER_RUN, 8),
@@ -197,7 +216,7 @@ export const config = {
     escoRoleLookupsPerRun: parsePositiveIntSetting('CATALOG_ESCO_ROLE_LOOKUPS_PER_RUN', process.env.CATALOG_ESCO_ROLE_LOOKUPS_PER_RUN, 40),
     /** Pause between ESCO requests: a free public API, asked politely and one at a time. */
     escoDelayMs: parseDurationMsSetting('CATALOG_ESCO_DELAY_MS', process.env.CATALOG_ESCO_DELAY_MS, 500),
-    fetchTimeoutMs: parseDurationMsSetting('CATALOG_FETCH_TIMEOUT_MS', process.env.CATALOG_FETCH_TIMEOUT_MS, 60_000),
+    fetchTimeoutMs: parseTimeoutMsSetting('CATALOG_FETCH_TIMEOUT_MS', process.env.CATALOG_FETCH_TIMEOUT_MS, 60_000),
   },
 };
 

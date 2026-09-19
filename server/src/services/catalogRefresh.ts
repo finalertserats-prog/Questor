@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { renewLease, runExclusive, startJob, type JobOutcome } from './jobs.js';
+import { jobsStopped, runExclusive, startJob, type JobOutcome, type LeaseHandle } from './jobs.js';
+import { isDraining } from './drainState.js';
 import { inDemoContext } from './demoPolicy.js';
 import { realSleep, type SourceHttp } from './catalogSources/http.js';
 import { defaultClassificationModel, defaultModelAvailable, type ClassificationModel } from './catalogClassify.js';
@@ -10,14 +11,14 @@ import type { RunState } from './catalogRefreshChunk.js';
 import { notifyOperators } from './catalogRefreshEmail.js';
 import { parseCursor, parseStats, type SourceKey } from './catalogRefreshState.js';
 import {
-  CATALOG_REFRESH_LEASE, claimRun, failRun, finishRun, isCatalogRefreshActive, saveRunProgress, shouldRunScheduledCatalogRefresh,
-  type ClaimedRun, type RunTrigger,
+  CATALOG_REFRESH_LEASE, claimRun, failRun, finishRun, isCatalogRefreshActive, manualRunAllowedAt, queuedCounts, saveRunProgress,
+  shouldRunScheduledCatalogRefresh, spendLimits, type ClaimedRun, type RunTrigger,
 } from './catalogRefreshRun.js';
 
 /**
  * The monthly shared-catalog refresh: read outside sources, queue proposals,
  * tell the owner. Nothing reaches the catalog here; approval does that
- * (services/catalogProposals.ts).
+ * (services/catalogProposalReview.ts).
  */
 
 export { isCatalogRefreshActive, shouldRunScheduledCatalogRefresh } from './catalogRefreshRun.js';
@@ -33,12 +34,20 @@ export interface CatalogRefreshDeps {
   readonly demo: boolean;
   readonly now: () => Date;
   readonly onetChunkSize: number;
+  readonly leaseTtlMs: number;
+  /** How often the lease is renewed while work is in flight, chunk or not. */
+  readonly heartbeatMs: number;
   /** Test hook: runs after each chunk is saved; throwing simulates a crash. */
   readonly afterChunk?: (source: SourceKey) => Promise<void>;
 }
 
-class LeaseLostError extends Error {
-  constructor() { super('Catalog refresh lease was lost to another instance; stopping so it can resume the run.'); }
+/**
+ * Thrown at a checkpoint when this process must stop without failing the run:
+ * the lease went to another holder, or the process is draining. The run row
+ * stays 'running' and the next holder resumes it from the saved cursor.
+ */
+class StopForResume extends Error {
+  constructor(readonly reason: 'lease_lost' | 'draining') { super(`Catalog refresh stopped for resume: ${reason}`); }
 }
 
 let testOverrides: Partial<CatalogRefreshDeps> | null = null;
@@ -49,6 +58,7 @@ export function _setCatalogRefreshDepsForTest(overrides: Partial<CatalogRefreshD
 }
 
 function resolveDeps(overrides: Partial<CatalogRefreshDeps> = {}): CatalogRefreshDeps {
+  const leaseTtlMs = overrides.leaseTtlMs ?? testOverrides?.leaseTtlMs ?? CATALOG_REFRESH_LEASE.ttlMs;
   const defaults: CatalogRefreshDeps = {
     http: { fetch: globalThis.fetch, sleep: realSleep, timeoutMs: config.catalogRefresh.fetchTimeoutMs },
     model: defaultClassificationModel,
@@ -57,6 +67,8 @@ function resolveDeps(overrides: Partial<CatalogRefreshDeps> = {}): CatalogRefres
     demo: inDemoContext(),
     now: () => new Date(),
     onetChunkSize: ONET_CHUNK_SIZE,
+    leaseTtlMs,
+    heartbeatMs: Math.max(10, Math.floor(leaseTtlMs / 3)),
   };
   return { ...defaults, ...testOverrides, ...overrides };
 }
@@ -68,28 +80,52 @@ async function initialState(run: ClaimedRun, now: Date): Promise<RunState> {
     llmCalls: run.llmCalls,
     researchCalls: run.researchCalls,
     blocked: await loadBlockedTitles(now),
+    queued: await queuedCounts(run.id),
   };
 }
 
-async function executeRun(run: ClaimedRun, deps: CatalogRefreshDeps): Promise<string> {
-  const ctx = await loadRunContext(run.id);
+/**
+ * Renew the lease on a timer for as long as the run works, so a chunk slower
+ * than the TTL (a stalled source, a slow model) never lets a second executor
+ * take the same run. A failed renewal is remembered and ends the run at the
+ * next checkpoint.
+ */
+function startHeartbeat(lease: LeaseHandle, deps: CatalogRefreshDeps) {
+  let lost = false;
+  const timer = setInterval(() => {
+    lease.renew(deps.leaseTtlMs)
+      .then((held) => { if (!held) lost = true; })
+      .catch((err: unknown) => logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Catalog refresh lease renewal failed'));
+  }, deps.heartbeatMs);
+  timer.unref?.();
+  return { lost: () => lost, stop: () => clearInterval(timer) };
+}
+
+async function executeRun(run: ClaimedRun, lease: LeaseHandle, deps: CatalogRefreshDeps): Promise<string> {
+  const limits = await spendLimits(run, deps.now());
+  const ctx = await loadRunContext(run.id, limits);
+  const heartbeat = startHeartbeat(lease, deps);
   const checkpoint = async (state: RunState, source: SourceKey) => {
+    // Another holder has the run now: saving would overwrite its progress.
+    if (heartbeat.lost() || !(await lease.renew(deps.leaseTtlMs))) throw new StopForResume('lease_lost');
     await saveRunProgress(run.id, state);
-    // Long runs outlive the lease TTL; renewing after each chunk keeps a
-    // second instance from starting the same run alongside this one.
-    if (!(await renewLease(CATALOG_REFRESH_LEASE.name, CATALOG_REFRESH_LEASE.ttlMs))) throw new LeaseLostError();
+    if (isDraining() || jobsStopped()) throw new StopForResume('draining');
     await deps.afterChunk?.(source);
   };
-  const final = await runAllSources({
-    ctx, http: deps.http, onetChunkSize: deps.onetChunkSize, checkpoint,
-    model: { model: deps.model, modelAvailable: deps.modelAvailable },
-    research: { apiKey: deps.researchKey, demo: deps.demo },
-  }, await initialState(run, deps.now()));
-  await saveRunProgress(run.id, final);
-  await finishRun(run.id, deps.now());
-  await notifyOperators(run.id);
-  const proposed = final.stats.onet.proposed + final.stats.esco.proposed + final.stats.web.proposed;
-  return `catalog refresh ${run.id}: ${proposed} proposals`;
+  try {
+    const final = await runAllSources({
+      ctx, http: deps.http, onetChunkSize: deps.onetChunkSize, checkpoint,
+      model: { model: deps.model, modelAvailable: deps.modelAvailable },
+      research: { apiKey: deps.researchKey, demo: deps.demo },
+    }, await initialState(run, deps.now()));
+    await saveRunProgress(run.id, final);
+    await finishRun(run.id, deps.now());
+    await notifyOperators(run.id);
+    const proposed = final.stats.onet.proposed + final.stats.esco.proposed + final.stats.web.proposed;
+    return `catalog refresh ${run.id}: ${proposed} proposals`;
+  } finally {
+    heartbeat.stop();
+  }
 }
 
 export interface RunCatalogRefreshOptions {
@@ -100,26 +136,44 @@ export interface RunCatalogRefreshOptions {
   readonly onStarted?: (runId: string) => void;
 }
 
+// One executor per process, whatever the lease says: if a lease lapsed while
+// this process was still working, its own next attempt must not start a
+// second executor on the same run.
+let executing = false;
+
+async function runUnderLease(opts: RunCatalogRefreshOptions, deps: CatalogRefreshDeps, lease: LeaseHandle, setRunId: (id: string) => void): Promise<string> {
+  const run = await claimRun(opts.trigger, opts.triggeredById, deps.now());
+  setRunId(run.id);
+  opts.onStarted?.(run.id);
+  try {
+    return await executeRun(run, lease, deps);
+  } catch (err) {
+    if (err instanceof StopForResume) {
+      logger.warn({ runId: run.id, reason: err.reason }, 'Catalog refresh stopped; the next run resumes it');
+      return `catalog refresh ${run.id}: stopped for resume (${err.reason})`;
+    }
+    logger.error({ runId: run.id, err: err instanceof Error ? err.message : String(err), stack: err instanceof Error ? err.stack : undefined }, 'Catalog refresh failed');
+    await failRun(run.id, 'unexpected_error', deps.now());
+    throw err;
+  }
+}
+
 /**
  * One run under the 'catalog-refresh' lease: a second caller while one is
  * running gets 'skipped'. Never throws; a failure is recorded on the run (so
  * the next attempt resumes it) and on the job log, which alerts the operator.
  */
 export async function runCatalogRefresh(opts: RunCatalogRefreshOptions): Promise<{ readonly outcome: JobOutcome; readonly runId?: string }> {
-  const deps = resolveDeps(opts.deps);
-  let runId: string | undefined;
-  const outcome = await runExclusive(CATALOG_REFRESH_LEASE.name, CATALOG_REFRESH_LEASE.ttlMs, async () => {
-    const run = await claimRun(opts.trigger, opts.triggeredById, deps.now());
-    runId = run.id;
-    opts.onStarted?.(run.id);
-    try {
-      return await executeRun(run, deps);
-    } catch (err) {
-      if (!(err instanceof LeaseLostError)) await failRun(run.id, err instanceof Error ? err.message : String(err), deps.now());
-      throw err;
-    }
-  });
-  return { outcome, runId };
+  if (executing) return { outcome: 'skipped' };
+  executing = true;
+  try {
+    const deps = resolveDeps(opts.deps);
+    let runId: string | undefined;
+    const outcome = await runExclusive(CATALOG_REFRESH_LEASE.name, deps.leaseTtlMs, (lease) => runUnderLease(opts, deps, lease, (id) => { runId = id; }));
+    return { outcome, runId };
+  } finally {
+    executing = false;
+  }
 }
 
 let inFlight: Promise<unknown> = Promise.resolve();
@@ -129,14 +183,22 @@ export function _catalogRefreshSettled(): Promise<unknown> {
   return inFlight;
 }
 
-export type ManualStart = { readonly kind: 'started'; readonly runId: string } | { readonly kind: 'busy' } | { readonly kind: 'failed' };
+export type ManualStart =
+  | { readonly kind: 'started'; readonly runId: string }
+  | { readonly kind: 'busy' }
+  | { readonly kind: 'too_soon'; readonly retryAt: Date }
+  | { readonly kind: 'failed' };
 
 /**
  * Start a manual run in the background and resolve as soon as it has a run
  * id, so the HTTP request is not held for a run that can take many minutes.
+ * Manual runs are spaced out: each one reads the sources again.
  */
 export async function startManualCatalogRefresh(triggeredById: string, deps?: Partial<CatalogRefreshDeps>): Promise<ManualStart> {
-  if (await isCatalogRefreshActive(new Date())) return { kind: 'busy' };
+  const now = new Date();
+  if (executing || await isCatalogRefreshActive(now)) return { kind: 'busy' };
+  const allowedAt = await manualRunAllowedAt(now);
+  if (allowedAt) return { kind: 'too_soon', retryAt: allowedAt };
   return new Promise<ManualStart>((resolve) => {
     const run = runCatalogRefresh({ trigger: 'manual', triggeredById, deps, onStarted: (runId) => resolve({ kind: 'started', runId }) })
       // No run id: either another run held the lease, or the run could not even be recorded.

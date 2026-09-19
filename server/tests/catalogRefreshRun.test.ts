@@ -139,29 +139,45 @@ describe('deduplication', () => {
 });
 
 describe('the per-run proposal cap', () => {
-  it('keeps aliases before new roles across all sources', async () => {
-    configureCatalogRefresh({ maxProposals: 3 });
+  it('reserves part of the cap for new roles', async () => {
+    configureCatalogRefresh({ maxProposals: 3, maxAliasShare: 0.6 });
     await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}).deps });
-    expect((await prisma.catalogProposal.findMany({ select: { kind: true } })).map((p) => p.kind)).toEqual(['new_alias', 'new_alias', 'new_alias']);
+    expect(await proposalTitles()).toEqual(['Software Developers', 'Software Quality Engineer']);
   });
 
-  it('keeps the most confident proposals when capped', async () => {
-    configureCatalogRefresh({ maxProposals: 2 });
+  it('keeps the most confident aliases within their share', async () => {
+    configureCatalogRefresh({ maxProposals: 4, maxAliasShare: 0.6 });
     await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}).deps });
-    expect(await proposalTitles()).toEqual(['Application Developer', 'Software Developers']);
+    expect(await proposalTitles()).toEqual(['Application Developer', 'Software Developers', 'Software Quality Engineer']);
   });
 
   it('applies one cap to the whole run, not to each chunk', async () => {
-    configureCatalogRefresh({ maxProposals: 2 });
+    configureCatalogRefresh({ maxProposals: 2, maxAliasShare: 1 });
     await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}, { onetChunkSize: 1 }).deps });
     expect(await prisma.catalogProposal.count()).toBe(2);
   });
 
   it('counts capped proposals as skipped', async () => {
-    configureCatalogRefresh({ maxProposals: 2 });
+    configureCatalogRefresh({ maxProposals: 2, maxAliasShare: 0.6 });
     await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}).deps });
     const stats = JSON.parse((await latestRun()).statsJson) as { onet: { proposed: number; skipped: number } };
     expect(stats.onet).toMatchObject({ proposed: 2, skipped: 3 });
+  });
+
+  it('never deletes a proposal once it is in the queue', async () => {
+    configureCatalogRefresh({ maxProposals: 2, maxAliasShare: 0.6 });
+    let firstIds: string[] = [];
+    const remember = async () => { if (firstIds.length === 0) firstIds = (await prisma.catalogProposal.findMany({ select: { id: true } })).map((p) => p.id); };
+    await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}, { onetChunkSize: 1, afterChunk: remember }).deps });
+    const still = await prisma.catalogProposal.count({ where: { id: { in: firstIds } } });
+    expect({ kept: still, had: firstIds.length }).toEqual({ kept: 1, had: 1 });
+  });
+
+  it('stops classifying once the run is full', async () => {
+    configureCatalogRefresh({ maxProposals: 2, maxAliasShare: 1 });
+    const model = vi.fn(async () => []);
+    await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}, { model, modelAvailable: true, onetChunkSize: 1 }).deps });
+    expect(model).not.toHaveBeenCalled();
   });
 });
 
@@ -223,7 +239,7 @@ describe('ESCO', () => {
     await runCatalogRefresh({ trigger: 'manual', deps });
     await runCatalogRefresh({ trigger: 'manual', deps });
     const offsets = requests.filter((r) => r.includes('/search') && r.includes('text=&')).map((r) => new URL(r).searchParams.get('offset'));
-    expect(offsets).toEqual(['0', '10']);
+    expect(offsets).toEqual(['0', '1']);
   });
 
   it('wraps to the start after the last page', async () => {
@@ -232,7 +248,7 @@ describe('ESCO', () => {
     await runCatalogRefresh({ trigger: 'manual', deps });
     await runCatalogRefresh({ trigger: 'manual', deps });
     const offsets = requests.filter((r) => r.includes('/search') && r.includes('text=&')).map((r) => new URL(r).searchParams.get('offset'));
-    expect(offsets).toEqual(['0', '25', '0', '25']);
+    expect(offsets).toEqual(['0', '1', '0', '1']);
   });
 
   it('looks up existing roles by title and proposes their alternative labels', async () => {
