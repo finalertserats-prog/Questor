@@ -15,6 +15,7 @@ import { addCatalogRole, catalogTitleProblem, findCatalogMatch } from '../servic
 import { normalizeTitle } from '../domain/catalogText.js';
 import type { AuthClaims } from '../services/auth.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
+import { findRoleIdsMatching } from '../services/roleSearch.js';
 import { BANDS } from '../engines/experienceBands.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
 
@@ -39,11 +40,20 @@ rolesRouter.get('/', requireCapability('role:read'), asyncHandler(async (req, re
   })) });
 }));
 
-const metricsQuerySchema = z.object({}).strict();
+const metricsQuerySchema = z.object({
+  // The roles page search: title, job description and scorecard. It narrows
+  // `roles` only; the summaries beside it describe every role in scope.
+  q: z.string().trim().min(1).max(200).optional(),
+}).strict();
 
 rolesRouter.get('/metrics', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
-  metricsQuerySchema.parse(req.query);
-  res.json(await getRoleMetrics(req.auth!));
+  const { q } = metricsQuerySchema.parse(req.query);
+  if (!q) {
+    res.json(await getRoleMetrics(req.auth!));
+    return;
+  }
+  const [metrics, matching] = await Promise.all([getRoleMetrics(req.auth!), findRoleIdsMatching(req.auth!, q)]);
+  res.json({ ...metrics, roles: metrics.roles.filter((role) => matching.has(role.id)) });
 }));
 
 const createSchema = z.object({
