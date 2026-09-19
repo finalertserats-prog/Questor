@@ -4,8 +4,9 @@ import {
   axisLabelStride,
   clampLabelCenter,
   estimateTextWidth,
-  horizontalBarLayout,
+  chooseBarLayout,
   truncateToWidth,
+  wrapToLines,
 } from '../src/components/dashboardModel';
 
 // A fixed-pitch stand-in for canvas measureText: 7px per character.
@@ -18,6 +19,20 @@ describe('estimateTextWidth', () => {
 
   it('is zero for an empty string', () => {
     expect(estimateTextWidth('', 12)).toBe(0);
+  });
+});
+
+describe('wrapToLines', () => {
+  it('keeps a line that fits', () => {
+    expect(wrapToLines('Senior Engineer', 200, measure, 2)).toEqual(['Senior Engineer']);
+  });
+
+  it('breaks at spaces', () => {
+    expect(wrapToLines('Senior Backend Engineer', 60, measure, 2)).toEqual(['Senior', 'Backend…']);
+  });
+
+  it('breaks a single word too long for a line', () => {
+    expect(wrapToLines('Supercalifragilistic', 70, measure, 3).every((line) => measure(line) <= 70)).toBe(true);
   });
 });
 
@@ -39,50 +54,90 @@ describe('truncateToWidth', () => {
   });
 });
 
-describe('horizontalBarLayout', () => {
+describe('chooseBarLayout', () => {
   const values = [3, 12];
+  const long = 'Senior Backend Engineer (Payments) · Senior · IN';
 
-  it('sizes the label column from the longest label when labels are short', () => {
-    const layout = horizontalBarLayout(['QA', 'Design'], values, 480, measure, measure);
+  it('keeps labels beside the bars when every label fits', () => {
+    expect(chooseBarLayout(['QA', 'Design'], values, 480, measure, measure).mode).toBe('inline');
+  });
+
+  it('sizes the inline label column from the longest label', () => {
+    const layout = chooseBarLayout(['QA', 'Design'], values, 480, measure, measure);
     expect(layout.labelW).toBe(measure('Design') + BAR_LAYOUT.labelGap);
   });
 
-  it('keeps short labels whole', () => {
-    const layout = horizontalBarLayout(['QA', 'Design'], values, 480, measure, measure);
-    expect(layout.labels).toEqual(['QA', 'Design']);
+  it('never truncates an inline label', () => {
+    expect(chooseBarLayout(['QA', 'Design'], values, 480, measure, measure).labelLines).toEqual([['QA'], ['Design']]);
   });
 
-  it('caps the label column at 40% of the width for long labels', () => {
-    const long = 'Senior Backend Engineer (Payments) · Senior · IN';
-    const layout = horizontalBarLayout([long, 'QA'], values, 400, measure, measure);
-    expect(layout.labelW).toBeLessThanOrEqual(160);
+  it('stacks the label above the bar when a label would not fit beside it', () => {
+    expect(chooseBarLayout([long, 'QA'], values, 600, measure, measure).mode).toBe('stacked');
   });
 
-  it('truncates a long label to fit its column', () => {
-    const long = 'Senior Backend Engineer (Payments) · Senior · IN';
-    const layout = horizontalBarLayout([long, 'QA'], values, 400, measure, measure);
-    expect(measure(layout.labels[0])).toBeLessThanOrEqual(layout.labelW - BAR_LAYOUT.labelGap);
+  it('keeps a long label on one line when it fits the full width', () => {
+    expect(chooseBarLayout([long, 'QA'], values, 600, measure, measure).labelLines[0]).toEqual([long]);
   });
 
-  it('keeps the widest value text inside the svg width', () => {
-    const layout = horizontalBarLayout(['A long role title for a narrow card', 'B'], [1234, 5], 400, measure, measure);
+  it('stacks at phone width', () => {
+    expect(chooseBarLayout(['Senior Backend Engineer', 'QA'], values, 300, measure, measure).mode).toBe('stacked');
+  });
+
+  it('gives a stacked bar the full width left of the value column', () => {
+    const layout = chooseBarLayout([long], [12], 400, measure, measure);
+    expect(layout.labelW + layout.plotW + layout.valueW).toBe(400);
+  });
+
+  it('wraps a stacked label that is wider than the chart onto a second line', () => {
+    const layout = chooseBarLayout([long], [12], 200, measure, measure);
+    expect(layout.labelLines[0].join(' ')).toBe(long);
+  });
+
+  it('never draws a wrapped line wider than the chart', () => {
+    const layout = chooseBarLayout([long], [12], 200, measure, measure);
+    expect(Math.max(...layout.labelLines[0].map(measure))).toBeLessThanOrEqual(200);
+  });
+
+  it('gives a two-line label a taller row', () => {
+    const layout = chooseBarLayout([long, 'QA'], [12, 1], 200, measure, measure);
+    expect(layout.rowTops[1]).toBeGreaterThan(layout.rowHeight);
+  });
+
+  it('ellipsises only what would need a third line', () => {
+    const huge = `${long} ${long} ${long}`;
+    const layout = chooseBarLayout([huge], [12], 200, measure, measure);
+    expect(layout.labelLines[0].length === 2 && layout.labelLines[0][1].endsWith('…')).toBe(true);
+  });
+
+  it('adds the rows up to the chart height', () => {
+    const layout = chooseBarLayout([long, 'QA'], [12, 1], 200, measure, measure);
+    expect(layout.height).toBe(layout.rowTops[1] + layout.rowHeight);
+  });
+
+  it('ends the widest value at least 8px inside the svg when inline', () => {
+    const layout = chooseBarLayout(['QA', 'B'], [1234, 5], 400, measure, measure);
     const valueRight = layout.labelW + layout.plotW + BAR_LAYOUT.valueGap + measure('1234');
-    expect(valueRight).toBeLessThanOrEqual(400);
+    expect(valueRight).toBeLessThanOrEqual(400 - 8);
   });
 
-  it('keeps the value text inside a narrow phone-width chart', () => {
-    const layout = horizontalBarLayout(['Senior Backend Engineer', 'QA'], [987, 5], 120, measure, measure);
+  it('ends the widest value at least 8px inside the svg when stacked', () => {
+    const layout = chooseBarLayout([long], [987], 390, measure, measure);
     const valueRight = layout.labelW + layout.plotW + BAR_LAYOUT.valueGap + measure('987');
-    expect(valueRight).toBeLessThanOrEqual(120);
+    expect(valueRight).toBeLessThanOrEqual(390 - 8);
   });
 
   it('never gives the plot a negative width when the chart is tiny', () => {
-    const layout = horizontalBarLayout(['Senior Backend Engineer'], [987654], 40, measure, measure);
-    expect(layout.plotW).toBeGreaterThanOrEqual(0);
+    expect(chooseBarLayout(['Senior Backend Engineer'], [987654], 40, measure, measure).plotW).toBeGreaterThanOrEqual(0);
   });
 
   it('handles an empty list', () => {
-    expect(horizontalBarLayout([], [], 300, measure, measure).labels).toEqual([]);
+    expect(chooseBarLayout([], [], 300, measure, measure).labelLines).toEqual([]);
+  });
+
+  it('gives stacked rows room for a label line above the bar', () => {
+    const stacked = chooseBarLayout([long], [1], 400, measure, measure);
+    const inline = chooseBarLayout(['QA'], [1], 400, measure, measure);
+    expect(stacked.rowHeight).toBeGreaterThan(inline.rowHeight);
   });
 });
 

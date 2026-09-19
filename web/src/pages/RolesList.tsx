@@ -28,9 +28,9 @@ const COLUMNS: ReadonlyArray<{ key: RoleSortKey; label: string }> = [
   { key: 'title', label: 'Role' },
   { key: 'applied', label: 'Applied' },
   { key: 'interviewed', label: 'Interviewed' },
-  { key: 'awaitingReview', label: 'Awaiting review' },
+  { key: 'awaitingReview', label: 'Interviews awaiting review' },
   { key: 'advanceRate', label: 'Advance rate' },
-  { key: 'medianInviteToCompleteHours', label: 'Invite→complete' },
+  { key: 'medianInviteToCompleteHours', label: 'Invite → completed (median)' },
   { key: 'lastActivityAt', label: 'Last activity' },
 ];
 

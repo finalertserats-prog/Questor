@@ -74,7 +74,7 @@ function interviewDate(row: Metrics['recentInterviews'][number]): { label: strin
 /** Ranked roles as bars, with same-titled roles told apart by their labels. */
 function toRoleBars(roles: readonly TopRole[], tone: string): BarItem[] {
   const labels = roleDisplayLabels(roles);
-  return roles.map((r, index) => ({ key: r.id, label: labels[index], count: r.count, tone }));
+  return roles.map((r, index) => ({ key: r.id, label: labels[index], count: r.count, tone, to: `/roles/${r.id}` }));
 }
 
 export function Dashboard() {
@@ -161,7 +161,7 @@ export function Dashboard() {
                   for someone to discover by counting rows. */}
               <Kpi icon="schedule" label="Scheduled" value={k.scheduledNext7Days} to="/interviews" hint="AI interviews and human rounds, next 7 days" />
               <Kpi icon="check-circle" label="Completed" value={k.completedLast30Days} hint="AI interviews and human rounds, last 30 days" />
-              <Kpi icon="human-review" label="Awaiting review" value={k.awaitingReview} to="/interviews" hint="AI interviews ready for a person" spark />
+              <Kpi icon="human-review" label="Interviews awaiting review" value={k.awaitingReview} to="/interviews?state=review" hint="AI interviews ready for a person" spark />
               <Kpi
                 icon="user-x"
                 label="Stopped"
@@ -171,7 +171,7 @@ export function Dashboard() {
               />
               {/* It measures invitation to COMPLETED interview, which is a
                   longer thing than the old label described. */}
-              <Kpi icon="clock" label="Invite to completed" value={formatHours(k.avgInviteToCompleteHours)} hint="Average, last 90 days" />
+              <Kpi icon="clock" label="Invite → completed (average)" value={formatHours(k.avgInviteToCompleteHours)} hint="Mean time, last 90 days" />
               <Kpi
                 icon="decision"
                 label="Approved"
@@ -182,7 +182,7 @@ export function Dashboard() {
                 <>
                   <Kpi icon="role" label="Active roles" value={metrics.roles.kpis.activeRoles} to="/roles" hint="Draft or approved" />
                   <Kpi icon="inbox" label="Roles with no candidates" value={metrics.roles.kpis.rolesWithoutCandidates} to="/roles?filter=no-candidates" hint="Active roles" />
-                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles?filter=awaiting-review" hint="At least one review-ready interview" />
+                  <Kpi icon="eye" label="Roles awaiting review" value={metrics.roles.kpis.rolesWithReviewBacklog} to="/roles?filter=awaiting-review" hint="Roles with at least one review-ready interview" />
                 </>
               )}
             </ul>
@@ -237,8 +237,8 @@ export function Dashboard() {
             {metrics.roles && (
               <div className="grid cols-2">
                 <div className="card">
-                  <div className="spread row" style={{ marginBottom: 8 }}>
-                    <h3 style={{ margin: 0 }}>Top roles by candidates</h3>
+                  <div className="chart-card-head">
+                    <h3>Top roles by candidates</h3>
                     <Link className="btn sm secondary" to="/roles">View all roles</Link>
                   </div>
                   {topRoleApplied.length === 0 ? (
@@ -248,8 +248,8 @@ export function Dashboard() {
                   )}
                 </div>
                 <div className="card">
-                  <div className="spread row" style={{ marginBottom: 8 }}>
-                    <h3 style={{ margin: 0 }}>Top roles by completed interviews</h3>
+                  <div className="chart-card-head">
+                    <h3>Top roles by completed interviews</h3>
                     <Link className="btn sm secondary" to="/roles">View all roles</Link>
                   </div>
                   {topRoleInterviewed.length === 0 ? (

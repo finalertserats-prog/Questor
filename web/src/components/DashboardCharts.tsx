@@ -1,11 +1,14 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   axisLabelStride,
+  BAR_LAYOUT,
+  BAR_ROW,
   barRadius,
+  chooseBarLayout,
   clampLabelCenter,
   countAxis,
   estimateTextWidth,
-  horizontalBarLayout,
   niceCeiling,
   scaleLength,
   shortDate,
@@ -241,72 +244,104 @@ export interface BarItem {
   readonly count: number;
   /** CSS modifier for the bar's fill, e.g. 'tone-pass'. */
   readonly tone?: string;
+  /** In-app route the row opens, e.g. /roles/:id. */
+  readonly to?: string;
 }
 
-const ROW_H = 30;
 const BAR_FALLBACK_WIDTH = 480;
+const BAR_THICKNESS = 16;
 
-/** Horizontal bars with the label and value printed on each row. */
+/**
+ * Horizontal bars with the label and value printed on each row.
+ *
+ * Labels sit beside the bars when they all fit; otherwise each label takes its
+ * own full-width line above its bar (chooseBarLayout). A row with a route is a
+ * link, so the chart is a way into the thing it counts.
+ */
 export function HorizontalBarChart({ items, title, summary }: { items: readonly BarItem[]; title: string; summary: string }) {
   const id = useId();
+  const navigate = useNavigate();
   const { ref, width } = useMeasuredWidth(BAR_FALLBACK_WIDTH);
-  const patternId = `ruled-${id.replace(/:/g, '')}`;
   const max = niceCeiling(Math.max(0, ...items.map((i) => i.count)));
   const measureLabel = useMemo(() => textMeasurer('--font-ui', 12.5), []);
   const measureValue = useMemo(() => textMeasurer('--font-data', 11, 600), []);
-  const { labelW, plotW, labels } = horizontalBarLayout(
-    items.map((i) => i.label), items.map((i) => i.count), width, measureLabel, measureValue,
-  );
-  const height = Math.max(ROW_H, items.length * ROW_H);
+  const layout = chooseBarLayout(items.map((i) => i.label), items.map((i) => i.count), width, measureLabel, measureValue);
+  const { labelW, plotW, rowHeight, labelLines, rowTops, height } = layout;
+  const stacked = layout.mode === 'stacked';
+  const linked = items.some((i) => i.to);
 
   return (
-    <figure className="chart" ref={ref}>
+    <figure className={`chart chart-bars chart-bars--${layout.mode}`} ref={ref}>
       <svg
         viewBox={`0 0 ${width} ${height}`}
         width={width}
         height={height}
-        role="img"
+        // With links inside, the chart is a group of rows a keyboard can reach;
+        // an img would hide them from assistive technology.
+        role={linked ? 'group' : 'img'}
         aria-labelledby={`${id}-t ${id}-d`}
         className="chart-svg"
       >
-        <ChartDefs patternId={patternId} />
         <title id={`${id}-t`}>{title}</title>
         <desc id={`${id}-d`}>{`${summary} ${items.map((i) => `${i.label}: ${i.count}.`).join(' ')}`}</desc>
         {items.map((item, index) => {
-          const y = index * ROW_H;
+          const top = rowTops[index];
+          const lines = labelLines[index];
+          const labelBlock = stacked ? lines.length * BAR_ROW.stackedLabel : 0;
+          const thisRow = stacked ? labelBlock + BAR_ROW.stackedBar : rowHeight;
+          const barTop = stacked ? top + labelBlock + (BAR_ROW.stackedBar - BAR_THICKNESS) / 2 : top + (rowHeight - BAR_THICKNESS) / 2;
+          const barMid = barTop + BAR_THICKNESS / 2;
           const w = scaleLength(item.count, max, plotW);
-          return (
-            <g key={item.key}>
-              {/* Long titles are cut to the column with an ellipsis; the full
-                  title stays in the tooltip and in the chart's description. */}
-              <text x={labelW - 10} y={y + ROW_H / 2 + 4} textAnchor="end" className="chart-label">
+          const row = (
+            <>
+              {/* Catches the pointer across the whole row and carries the focus ring. */}
+              <rect x={1} y={top + 1} width={Math.max(0, width - 2)} height={thisRow - 2} rx={4} className="chart-row-hit" />
+              <text
+                x={stacked ? 0 : labelW - 10}
+                y={stacked ? top + 13 : barMid + 4}
+                textAnchor={stacked ? 'start' : 'end'}
+                className="chart-label"
+              >
                 <title>{item.label}</title>
-                {labels[index]}
+                {lines.map((line, n) => (
+                  <tspan key={n} x={stacked ? 0 : labelW - 10} dy={n === 0 ? 0 : BAR_ROW.stackedLabel}>{line}</tspan>
+                ))}
               </text>
               {/* No channel behind the bar. A full-width track is what makes a
-                  bar chart read as a progress meter, and at 1px it was also
-                  bleeding into the card on dark. The end tick marks where the
-                  scale finishes; every row prints its own number. */}
+                  bar chart read as a progress meter. The end tick marks where
+                  the scale finishes; every row prints its own number. */}
               <line
                 x1={labelW + plotW} x2={labelW + plotW}
-                y1={y + 8} y2={y + ROW_H - 8}
+                y1={barTop + 1} y2={barTop + BAR_THICKNESS - 1}
                 className="chart-tick" shapeRendering="crispEdges"
               />
               <rect
-                x={labelW} y={y + 7} width={w} height={ROW_H - 14}
-                rx={barRadius(w, ROW_H - 14)} ry={barRadius(w, ROW_H - 14)}
+                x={labelW} y={barTop} width={w} height={BAR_THICKNESS}
+                rx={barRadius(w, BAR_THICKNESS)} ry={barRadius(w, BAR_THICKNESS)}
                 className={`chart-bar chart-grow ${item.tone ?? 'tone-accent'}`}
               />
               {item.count === 0 && (
                 <line
                   x1={labelW} x2={labelW}
-                  y1={y + 8} y2={y + ROW_H - 8}
+                  y1={barTop + 1} y2={barTop + BAR_THICKNESS - 1}
                   className="chart-witness" shapeRendering="crispEdges"
                 />
               )}
-              <text x={labelW + w + 6} y={y + ROW_H / 2 + 4} className="chart-value">{item.count}</text>
-            </g>
+              <text x={labelW + w + BAR_LAYOUT.valueGap} y={barMid + 4} className="chart-value">{item.count}</text>
+            </>
           );
+          const to = item.to;
+          return to ? (
+            <a
+              key={item.key}
+              href={to}
+              className="chart-row-link"
+              aria-label={`${item.label}: ${item.count}`}
+              onClick={(event) => { event.preventDefault(); navigate(to); }}
+            >
+              {row}
+            </a>
+          ) : <g key={item.key}>{row}</g>;
         })}
       </svg>
     </figure>

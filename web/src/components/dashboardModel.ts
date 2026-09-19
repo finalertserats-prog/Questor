@@ -214,6 +214,48 @@ export function truncateToWidth(text: string, maxWidth: number, measure: Measure
   return lo === 0 ? ELLIPSIS : text.slice(0, lo).trimEnd() + ELLIPSIS;
 }
 
+/** The longest prefix of `text` (at least one character) that measures within `width`. */
+function fittingPrefix(text: string, width: number, measure: MeasureText): number {
+  let lo = 1;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (measure(text.slice(0, mid)) <= width) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
+}
+
+/**
+ * `text` wrapped at spaces into at most `maxLines` lines no wider than
+ * `width`. A word longer than a line is broken inside itself; whatever would
+ * need a line beyond the last is cut with an ellipsis on the last line.
+ */
+export function wrapToLines(text: string, width: number, measure: MeasureText, maxLines: number): string[] {
+  const lines: string[] = [];
+  let rest = text.trim();
+  while (rest && lines.length < maxLines - 1 && measure(rest) > width) {
+    const words = rest.split(' ');
+    let line = '';
+    let used = 0;
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (measure(candidate) > width) break;
+      line = candidate;
+      used += 1;
+    }
+    if (!line) {
+      const cut = fittingPrefix(rest, width, measure);
+      lines.push(rest.slice(0, cut));
+      rest = rest.slice(cut).trim();
+    } else {
+      lines.push(line);
+      rest = words.slice(used).join(' ');
+    }
+  }
+  return rest ? [...lines, truncateToWidth(rest, width, measure)] : lines;
+}
+
 export const BAR_LAYOUT = {
   /** Space between the end of a label and the start of its bar. */
   labelGap: 10,
@@ -225,40 +267,85 @@ export const BAR_LAYOUT = {
   axisLabelGap: 8,
 } as const;
 
+/** How a bar chart places its labels: beside the bars, or on a line above each. */
+export type BarLayoutMode = 'inline' | 'stacked';
+
+/** Row heights per mode: a stacked row is a label line plus a bar line. */
+export const BAR_ROW = { inline: 30, stackedLabel: 18, stackedBar: 22 } as const;
+/** A stacked label may take this many lines before it is cut. */
+const MAX_LABEL_LINES = 2;
+
+// Room kept between the end of the widest value and the svg's right edge, so
+// a number never sits against the card's border.
+const VALUE_EDGE_MARGIN = 8;
+// Beside-the-bar labels are only worth it while the bars keep this much room.
+const MIN_INLINE_PLOT = 80;
+
 export interface HorizontalBarLayout {
-  /** Width of the label column, gap included. Bars start here. */
+  readonly mode: BarLayoutMode;
+  /** Width of the label column, gap included; 0 when stacked. Bars start here. */
   readonly labelW: number;
   /** Length of a full-scale bar. */
   readonly plotW: number;
-  /** Room reserved to the right of the plot for the widest value. */
+  /** Room reserved to the right of the plot for the widest value and the edge margin. */
   readonly valueW: number;
-  /** Each label as drawn: whole when it fits, ellipsised when it does not. */
-  readonly labels: readonly string[];
+  /** Height of a one-line row. A stacked row with a wrapped label is taller. */
+  readonly rowHeight: number;
+  /** Each label as drawn, one entry per line. */
+  readonly labelLines: readonly (readonly string[])[];
+  /** Where each row starts, in px from the top. */
+  readonly rowTops: readonly number[];
+  /** Total height of all rows. */
+  readonly height: number;
+}
+
+function stackRows(lineCounts: readonly number[], rowHeight: number, extraPerLine: number): { rowTops: number[]; height: number } {
+  const rowTops: number[] = [];
+  let y = 0;
+  for (const lines of lineCounts) {
+    rowTops.push(y);
+    y += rowHeight + (lines - 1) * extraPerLine;
+  }
+  return { rowTops, height: Math.max(rowHeight, y) };
 }
 
 /**
  * Geometry for a horizontal bar chart `width` px wide.
  *
- * The label column is as wide as the longest label needs, up to 40% of the
- * chart, so short labels do not waste the plot and long ones cannot push the
- * bars off the card. The value column is sized from the widest printed value,
- * so a full-scale bar's number still ends inside the svg.
+ * Labels sit beside the bars only when every one of them fits a column of at
+ * most 40% of the chart with the bars still readable; otherwise each label
+ * gets its own line across the full width, above its bar. Nothing is cut
+ * short to make the side-by-side layout work: a truncated role title is a
+ * title nobody can identify. The value column is sized from the widest value
+ * plus an edge margin, so every number ends inside the svg.
  */
-export function horizontalBarLayout(
+export function chooseBarLayout(
   labels: readonly string[],
   values: readonly number[],
   width: number,
   measureLabel: MeasureText,
   measureValue: MeasureText,
 ): HorizontalBarLayout {
+  const safeWidth = Math.max(0, width);
   const longest = Math.max(0, ...labels.map(measureLabel));
   const widestValue = Math.max(0, ...values.map((v) => measureValue(String(v))));
-  const valueW = Math.ceil(widestValue + BAR_LAYOUT.valueGap);
-  const cap = Math.floor(Math.max(0, width) * BAR_LAYOUT.maxLabelShare);
-  const labelW = Math.min(Math.ceil(longest + BAR_LAYOUT.labelGap), cap);
-  const plotW = Math.max(0, width - labelW - valueW);
-  const room = Math.max(0, labelW - BAR_LAYOUT.labelGap);
-  return { labelW, plotW, valueW, labels: labels.map((l) => truncateToWidth(l, room, measureLabel)) };
+  const valueW = Math.ceil(widestValue + BAR_LAYOUT.valueGap + VALUE_EDGE_MARGIN);
+  const inlineLabelW = Math.ceil(longest + BAR_LAYOUT.labelGap);
+  const fitsInline = inlineLabelW <= Math.floor(safeWidth * BAR_LAYOUT.maxLabelShare)
+    && safeWidth - inlineLabelW - valueW >= MIN_INLINE_PLOT;
+  if (fitsInline) {
+    return {
+      mode: 'inline', labelW: inlineLabelW, plotW: safeWidth - inlineLabelW - valueW, valueW,
+      rowHeight: BAR_ROW.inline, labelLines: labels.map((l) => [l]),
+      ...stackRows(labels.map(() => 1), BAR_ROW.inline, 0),
+    };
+  }
+  const labelLines = labels.map((l) => wrapToLines(l, safeWidth, measureLabel, MAX_LABEL_LINES));
+  const rowHeight = BAR_ROW.stackedLabel + BAR_ROW.stackedBar;
+  return {
+    mode: 'stacked', labelW: 0, plotW: Math.max(0, safeWidth - valueW), valueW, rowHeight, labelLines,
+    ...stackRows(labelLines.map((lines) => lines.length), rowHeight, BAR_ROW.stackedLabel),
+  };
 }
 
 /**
