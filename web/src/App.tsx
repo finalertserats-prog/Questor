@@ -16,6 +16,7 @@ import {
   shellClassName,
   sidebarToggleLabel,
   toggleSidebarMode,
+  railToggleTurned,
   writeSidebarMode,
   type SidebarMode,
 } from './components/sidebarModel';
@@ -290,7 +291,7 @@ function Layout({ children }: { children: React.ReactNode }) {
                 title={sidebarToggleLabel(railMode)}
                 onClick={toggleRail}
               >
-                <Icon name={railMode === 'collapsed' ? 'sidebar-expand' : 'sidebar-collapse'} />
+                <Icon name="sidebar-collapse" className={`rail-toggle-icon${railToggleTurned(railMode) ? ' is-turned' : ''}`} />
               </button>
             </div>
             {/* The ticked rule is the instrument's edge; it recurs under every

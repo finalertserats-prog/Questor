@@ -24,12 +24,28 @@
   border: var(--hair) solid transparent;
   border-radius: var(--radius);
   background: transparent;
-  color: var(--ink-3);
+  /* Brand indigo in light, lavender in dark: the collapse/show icons are drawn
+     in the brand colour, not the grey of passive chrome. */
+  color: var(--accent);
   cursor: pointer;
 }
 .rail-toggle:hover {
-  color: var(--ink);
+  color: var(--accent);
   background: var(--sheet-sunk);
+}
+/* One arrow that turns: toward the menu while open (collapse), a half turn to
+   point away from it once collapsed (show). */
+.rail-toggle-icon {
+  transform-origin: 50% 50%;
+  transition: transform 280ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.rail-toggle-icon.is-turned {
+  transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rail-toggle-icon {
+    transition: none;
+  }
 }
 
 .nav-backdrop {

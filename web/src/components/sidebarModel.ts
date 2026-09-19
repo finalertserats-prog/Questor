@@ -124,3 +124,13 @@ export function sidebarToggleLabel(mode: SidebarMode): string {
 export function navItemTooltip(mode: SidebarMode, label: string): string | undefined {
   return mode === 'collapsed' ? label : undefined;
 }
+
+/**
+ * The toggle draws one icon, "|<-" (arrow toward the menu: collapse), and turns
+ * it half a circle once the rail is collapsed, which reads as "->|" (arrow away
+ * from the menu: show). One drawing turning, rather than two swapped, is what
+ * lets the change animate.
+ */
+export function railToggleTurned(mode: SidebarMode): boolean {
+  return mode === 'collapsed';
+}

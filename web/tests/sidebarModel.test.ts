@@ -6,6 +6,7 @@ import {
   readSidebarMode,
   shellClassName,
   sidebarToggleLabel,
+  railToggleTurned,
   toggleSidebarMode,
   writeSidebarMode,
   type SidebarMode,
@@ -194,5 +195,11 @@ describe('navItemTooltip', () => {
 
   it('adds no tooltip when the label is already readable', () => {
     expect(navItemTooltip('expanded', 'Dashboard')).toBeUndefined();
+  });
+});
+
+describe('railToggleTurned', () => {
+  it('shows the collapse arrow (toward the menu) while open and turns it half a circle once collapsed', () => {
+    expect([railToggleTurned('expanded'), railToggleTurned('collapsed')]).toEqual([false, true]);
   });
 });
