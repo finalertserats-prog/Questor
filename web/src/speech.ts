@@ -9,6 +9,25 @@ import type { PreviewDeps, PreviewSource } from './components/voicePreviewModel'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const AnyWindow = window as any;
 
+/**
+ * What the interviewer's voice is doing, for the room's speaking ring and the
+ * word-by-word reveal of its text. One listener at a time: the room.
+ */
+export type SpeechActivity =
+  | { readonly type: 'start'; readonly text: string; readonly audio: HTMLAudioElement | null }
+  | { readonly type: 'boundary'; readonly charIndex: number }
+  | { readonly type: 'end' };
+
+let activityListener: ((event: SpeechActivity) => void) | null = null;
+
+export function onSpeechActivity(listener: ((event: SpeechActivity) => void) | null): void {
+  activityListener = listener;
+}
+
+function emitActivity(event: SpeechActivity): void {
+  activityListener?.(event);
+}
+
 export function ttsSupported(): boolean {
   return typeof window !== 'undefined' && 'speechSynthesis' in window;
 }
@@ -42,7 +61,11 @@ export function speak(text: string, onDone?: () => void, voiceHint?: string): vo
   u.rate = 1.02;
   u.pitch = 1.0;
   let fired = false;
-  const finish = () => { if (fired) return; fired = true; onDone?.(); };
+  const finish = () => { if (fired) return; fired = true; emitActivity({ type: 'end' }); onDone?.(); };
+  u.onstart = () => emitActivity({ type: 'start', text, audio: null });
+  // Word boundaries are the browser voice's only progress signal; many voices
+  // never send them, and the room estimates from the text instead.
+  u.onboundary = (e) => { if (e.name === 'word') emitActivity({ type: 'boundary', charIndex: e.charIndex }); };
   u.onend = finish;
   u.onerror = finish;
   // Watchdog: some browsers never fire onend when synthesis silently fails.
@@ -243,10 +266,12 @@ export async function speakTurn(o: {
     stopSpeaking();
     const audio = new Audio(url);
     currentAudio = audio;
+    emitActivity({ type: 'start', text: o.text, audio });
     let fired = false;
     const finish = () => {
       if (fired) return;
       fired = true;
+      emitActivity({ type: 'end' });
       URL.revokeObjectURL(url);
       if (currentAudio === audio) currentAudio = null;
       o.onDone?.();
@@ -263,7 +288,7 @@ export async function speakTurn(o: {
 
 export function stopAllSpeech(): void {
   stopSpeaking();
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; emitActivity({ type: 'end' }); }
 }
 
 // ---------------------------------------------------------------------------
@@ -393,9 +418,10 @@ export async function speakNudge(token: string, index: number, voiceHint?: strin
     stopSpeaking();
     const audio = new Audio(url);
     currentAudio = audio;
+    emitActivity({ type: 'start', text, audio });
     await new Promise<void>((done) => {
       let fired = false;
-      const finish = () => { if (fired) return; fired = true; URL.revokeObjectURL(url); done(); };
+      const finish = () => { if (fired) return; fired = true; emitActivity({ type: 'end' }); URL.revokeObjectURL(url); done(); };
       audio.onended = finish;
       audio.onerror = finish;
       void audio.play().catch(finish);

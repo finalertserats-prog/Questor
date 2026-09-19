@@ -52,6 +52,10 @@ test('portal consent without voice capture starts typed mode and never asks for 
   // No listening controls: those only render while the room is capturing voice.
   await expect(portalPage.getByRole('button', { name: 'Done answering' })).toHaveCount(0);
   await expect(portalPage.getByRole('button', { name: 'Voice' })).toHaveCount(0);
+  // Speaking is shown, but closed, and the room says why.
+  await expect(portalPage.getByRole('button', { name: 'Speak', exact: true })).toBeDisabled();
+  await expect(portalPage.getByText(/voice capture wasn't agreed at the start/)).toBeVisible();
+  await expect(portalPage.getByRole('button', { name: /Speaking unavailable/ })).toHaveAttribute('aria-disabled', 'true');
   await expect(portalPage.getByText('MIC OPEN')).toHaveCount(0);
   await expect(portalPage.getByText('LIVE TRANSCRIPTION')).toHaveCount(0);
   const micRequests = await portalPage.evaluate(
@@ -59,10 +63,8 @@ test('portal consent without voice capture starts typed mode and never asks for 
   );
   expect(micRequests).toBe(0);
 
-  // What the interviewer is saying, without the name label in front of it.
-  const captionLine = () => portalPage.locator('.captions p').evaluate((p) => Array.from(p.childNodes)
-    .filter((n) => !(n instanceof HTMLElement && n.classList.contains('cap-who')))
-    .map((n) => n.textContent ?? '').join('').trim());
+  // The question the next answer replies to, as the room shows it.
+  const captionLine = () => portalPage.getByTestId('room-current-question').evaluate((p) => (p.textContent ?? '').trim());
   await expect.poll(captionLine).not.toBe('');
 
   // A reload before answering puts the opening's question again, without the
