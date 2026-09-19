@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { candidateScope, roleScope } from './access.js';
 import type { AuthClaims } from './auth.js';
+import type { RoleTopItem } from './roleMetrics.js';
 import { DEFAULT_STAGES } from '../domain/pipelineStages.js';
 import { EXCEPTION_STATES } from '../domain/stateMachine.js';
 
@@ -49,7 +50,8 @@ export interface DashboardMetrics {
   readonly stateCounts: Readonly<Record<string, number>>;
   readonly recentInterviews: ReadonlyArray<{
     id: string; state: string; createdAt: Date; scheduledAt: Date | null; completedAt: Date | null;
-    candidate: { id: string; name: string }; role: { id: string; title: string };
+    candidate: { id: string; name: string };
+    role: { id: string; title: string; level: string; regionCode: string | null; experienceBand: string | null; createdAt: string };
   }>;
   /** Added by the dashboard route from the role metrics service. */
   readonly roles?: {
@@ -58,8 +60,8 @@ export interface DashboardMetrics {
       readonly rolesWithoutCandidates: number;
       readonly rolesWithReviewBacklog: number;
     };
-    readonly topByApplied: ReadonlyArray<{ readonly id: string; readonly title: string; readonly count: number }>;
-    readonly topByInterviewed: ReadonlyArray<{ readonly id: string; readonly title: string; readonly count: number }>;
+    readonly topByApplied: ReadonlyArray<RoleTopItem>;
+    readonly topByInterviewed: ReadonlyArray<RoleTopItem>;
     readonly minSample: number;
   };
 }
@@ -161,7 +163,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
       select: {
         id: true, state: true, createdAt: true, scheduledAt: true, completedAt: true,
         candidate: { select: { id: true, fullName: true } },
-        role: { select: { id: true, title: true } },
+        role: { select: { id: true, title: true, level: true, regionCode: true, experienceBand: true, createdAt: true } },
       },
     }),
   ]);
@@ -227,7 +229,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
     recentInterviews: recentRows.map((s) => ({
       id: s.id, state: s.state, createdAt: s.createdAt, scheduledAt: s.scheduledAt, completedAt: s.completedAt,
       candidate: { id: s.candidate.id, name: s.candidate.fullName },
-      role: { id: s.role.id, title: s.role.title },
+      role: { id: s.role.id, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt.toISOString() },
     })),
   };
 }

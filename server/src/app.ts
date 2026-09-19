@@ -15,6 +15,7 @@ import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
 import { roundMeetingsRouter } from './routes/roundMeetings.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
+import { roleStatusRouter } from './routes/roleStatus.js';
 import { catalogRouter } from './routes/catalog.js';
 import { candidatesRouter } from './routes/candidates.js';
 import { interviewsRouter } from './routes/interviews.js';
@@ -167,7 +168,11 @@ export function createApp() {
   app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), signupDecisionRouter);
   app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10, failClosed: true }), signupRouter);
   app.use('/api/demo/decision', rateLimit({ name: 'demo-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), demoDecisionRouter);
-  app.use('/api/demo', rateLimit({ name: 'demo', windowMs: 60 * 60_000, max: 5, failClosed: true }), demoRouter);
+  // Only the two public forms that build sandboxes or send email draw on this
+  // budget. A signed-in demo's own calls (the sample interview, End demo) must
+  // never be throttled by it: five an hour ended demos mid-tour.
+  app.use(['/api/demo/request', '/api/demo/reaccess'], rateLimit({ name: 'demo', windowMs: 60 * 60_000, max: 5, failClosed: true }));
+  app.use('/api/demo', demoRouter);
 
   // The candidate's consent link for an AI observer on a human round. Public
   // and token-gated like the feedback link, and keyed on IP for the same
@@ -197,6 +202,7 @@ export function createApp() {
   );
   app.use('/api/auth', authRouter);
   app.use('/api/catalog', catalogRouter);
+  app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidateAtsRouter);

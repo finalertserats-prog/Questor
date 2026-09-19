@@ -47,7 +47,9 @@ orgsRouter.get('/', asyncHandler(async (req, res) => {
   // folds ASCII case and Postgres's startsWith does not.
   const needle = parsed.data.toLowerCase();
   const candidates = await prisma.tenant.findMany({
-    where: { slug: { not: null } },
+    // Demo sandboxes are nobody's organisation to sign in to, and their names
+    // ("<company> (demo)") would disclose who asked for a demo.
+    where: { slug: { not: null }, isDemo: false },
     select: { name: true, slug: true },
     orderBy: { name: 'asc' },
   });
@@ -60,7 +62,7 @@ orgsRouter.get('/', asyncHandler(async (req, res) => {
 orgsRouter.get('/:slug', asyncHandler(async (req, res) => {
   const parsed = z.string().regex(ORG_SLUG).safeParse(req.params.slug);
   const tenant = parsed.success
-    ? await prisma.tenant.findUnique({ where: { slug: parsed.data }, select: { name: true, slug: true } })
+    ? await prisma.tenant.findFirst({ where: { slug: parsed.data, isDemo: false }, select: { name: true, slug: true } })
     : null;
   if (!tenant?.slug) throw new HttpError(404, 'Organization not found');
   res.json({ org: { name: tenant.name, slug: tenant.slug } });

@@ -12,6 +12,7 @@ import { ATS_EXTERNAL_ID } from '../providers/ats/index.js';
 import { existingImport, lookupRequisition, type RequisitionLookup } from '../services/atsRecords.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { addCatalogRole, catalogTitleProblem, findCatalogMatch } from '../services/catalogRoles.js';
+import { normalizeTitle } from '../domain/catalogText.js';
 import type { AuthClaims } from '../services/auth.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
 import { BANDS } from '../engines/experienceBands.js';
@@ -56,9 +57,12 @@ const createSchema = z.object({
   useLlm: z.boolean().default(true),
   catalogRoleId: z.string().cuid().optional(),
   // The catalog domain a new title belongs to. With no catalogRoleId, the
-  // role's final title (typed, or inferred from the JD / requisition) is found
-  // in or added to the shared catalog under this domain.
+  // role's final title (typed, or inferred from the JD / requisition) is linked
+  // to an existing active entry in this domain, or left unlinked.
   domainId: z.string().cuid().optional(),
+  // The person chose "add this title to the shared catalog". Honoured only for a
+  // title they typed: an inferred or requisition title is never published.
+  addToCatalog: z.boolean().optional(),
   experienceBand: z.enum(BANDS.map((b) => b.id) as [string, ...string[]]).optional(),
   regionCode: z.string().optional(),
   techStack: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
@@ -108,7 +112,12 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
 
   const extraction = body.useLlm ? await extractRole(sourceText, titleHint) : extractRoleHeuristic(sourceText, titleHint);
   const ats = lookup?.kind === 'new' ? lookup.ats : null;
-  const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(auth, body.domainId, extraction.title, body.techStack) : undefined);
+  const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(body.domainId, extraction.title) : undefined);
+  // Published only by a person's explicit choice, for the title they typed, and
+  // only once the role exists: a failed create must leave no catalog row.
+  const typedTitle = (body.title ?? '').trim();
+  const publishTo = !catalogRoleId && body.domainId && body.addToCatalog === true && typedTitle && normalizeTitle(typedTitle) === normalizeTitle(extraction.title)
+    ? body.domainId : undefined;
 
   let created;
   try {
@@ -148,6 +157,10 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
     return;
   }
   const { role, scorecard } = created;
+  if (publishTo) {
+    const publishedId = await publishCatalogRole(auth, publishTo, extraction.title, body.techStack);
+    if (publishedId) await prisma.role.update({ where: { id: role.id }, data: { catalogRoleId: publishedId } });
+  }
   const fullCreatedRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
   await logAudit({
     tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user', action: 'role.created', entityType: 'Role', entityId: role.id,
@@ -158,18 +171,25 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
 }));
 
 /**
- * The catalog role a new role's title belongs to: the existing active match, or
- * a new shared entry. A title the shared catalog must not hold (an email, a
- * link, a long number) or one the owner retired leaves the role unlinked
- * rather than refusing it — the organisation's own role is still valid.
+ * The existing active catalog entry (title or alias) a new role's title matches
+ * in this domain, or undefined. Creating a role never adds to the shared catalog
+ * by itself: every organisation reads it, so a title is published only when a
+ * person explicitly adds it (publishCatalogRole, or POST /api/catalog/roles).
  */
-async function linkCatalogRole(auth: AuthClaims, domainId: string, title: string, techStack: readonly string[]): Promise<string | undefined> {
+async function linkCatalogRole(domainId: string, title: string): Promise<string | undefined> {
   if (catalogTitleProblem(title)) return undefined;
-  // A demo may use the shared catalog but never add to it.
-  if (auth.demo === true) {
-    const match = await findCatalogMatch(domainId, title);
-    return match?.status === 'active' ? match.id : undefined;
-  }
+  const match = await findCatalogMatch(domainId, title);
+  return match?.status === 'active' ? match.id : undefined;
+}
+
+/**
+ * Add a typed title to the shared catalog at the person's request. A title the
+ * catalog must not hold (an email, a link, a long number) or one the owner
+ * retired leaves the role unlinked rather than refusing it; a demo may use the
+ * catalog but never add to it.
+ */
+async function publishCatalogRole(auth: AuthClaims, domainId: string, title: string, techStack: readonly string[]): Promise<string | undefined> {
+  if (auth.demo === true || catalogTitleProblem(title)) return undefined;
   const result = await addCatalogRole({ auth, domainId, title, techStack });
   if (result.kind === 'created') return result.id;
   return result.role.status === 'active' ? result.role.id : undefined;

@@ -22,6 +22,16 @@ export function runAsDemo<T>(fn: () => T): T {
   return demoContext.run({ heuristicOnly: true }, fn);
 }
 
+/**
+ * Whether a demo session token is still good: the same test `authenticate`
+ * applies to HTTP, for transports (the interview socket) that check it themselves.
+ */
+export async function demoSessionLive(claims: { demo?: boolean; demoGrantId?: string; userId: string; tenantId: string }): Promise<boolean> {
+  if (claims.demo !== true) return true;
+  const grant = await prisma.demoGrant.findUnique({ where: { id: claims.demoGrantId ?? '' }, select: { sessionEndsAt: true, userId: true, tenantId: true } });
+  return !!grant && grant.userId === claims.userId && grant.tenantId === claims.tenantId && !!grant.sessionEndsAt && grant.sessionEndsAt.getTime() > Date.now();
+}
+
 export function inDemoContext(): boolean {
   return demoContext.getStore()?.heuristicOnly === true;
 }
@@ -46,7 +56,12 @@ export async function isHeuristicOnlySession(sessionId: string | undefined): Pro
 export async function demoRecipientBlocked(tenantId: string, to: string): Promise<boolean> {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isDemo: true } });
   if (!tenant?.isDemo) return false;
-  const visitor = await prisma.user.findFirst({ where: { tenantId, email: to.trim().toLowerCase() }, select: { id: true } });
+  // The visitor's address lives on the grant; the demo login has its own.
+  const address = to.trim().toLowerCase();
+  const grant = await prisma.demoGrant.findFirst({ where: { tenantId, email: address }, select: { id: true } });
+  if (grant) return false;
+  // Sandboxes made before that change kept the address on the user.
+  const visitor = await prisma.user.findFirst({ where: { tenantId, email: address }, select: { id: true } });
   return !visitor;
 }
 

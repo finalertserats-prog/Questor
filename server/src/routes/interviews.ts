@@ -16,7 +16,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
-import { assertDemoCreationCap } from '../services/demoAccess.js';
+import { assertDemoCreationCap, demoInvitationExpiry } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, transitionIfInState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
@@ -134,7 +134,7 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   });
   res.json({ sessions: sessions.map((s) => ({
     id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt,
-    candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title },
+    candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
     recommendation: s.assessments[0]?.recommendation ?? null, assessmentId: s.assessments[0]?.id ?? null,
     invited: !!s.invitation, createdAt: s.createdAt,
   })) });
@@ -669,7 +669,7 @@ async function inviteSession(req: Request, session: InvitableSession) {
   if (await demoRecipientBlocked(req.auth!.tenantId, candidate.email)) throw new HttpError(403, 'In the demo, email goes only to you. Use your own address for the candidate, or copy the interview link.');
   const token = mintInvitationToken();
   const secret = invitationSecretColumns(token);
-  const expiresAt = new Date(Date.now() + 14 * 24 * 3600 * 1000);
+  const expiresAt = await demoInvitationExpiry(req.auth!, new Date(Date.now() + 14 * 24 * 3600 * 1000));
   const invitation = await prisma.invitation.upsert({
     where: { sessionId: session.id },
     create: { sessionId: session.id, ...secret, status: 'sent', sentAt: new Date(), expiresAt, eventsJson: JSON.stringify([{ type: 'sent', at: new Date().toISOString() }]) },

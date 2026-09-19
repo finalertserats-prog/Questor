@@ -8,13 +8,19 @@ import { COMPLETED_STATES } from './dashboardMetrics.js';
  * Role metrics contract:
  * - `applied`: candidates whose `Candidate.roleId` is the role.
  * - `interviewInvited`: distinct candidates with at least one session for the role that has an
- *   invitation; a provisioned session nobody was invited to is not counted. Retakes count once.
+ *   invitation or reached a completed state (a completed interview was put to the candidate
+ *   however it started); a provisioned session nobody was invited to is not counted. Retakes
+ *   count once. So `interviewed` <= `interviewInvited` always.
  * - `interviewed`: distinct candidates with at least one completed-state session for the role.
  * - `awaitingReview`: sessions for the role in `REVIEW_READY`.
  * - `decisions`: decided pipeline rows by APPROVED / REJECTED / WITHDRAWN.
  * - `advanceRate`: APPROVED / (APPROVED + REJECTED), WITHDRAWN excluded; null below `MIN_SAMPLE`.
  * - `medianInviteToCompleteHours`: median completion minus invitation sent/created in the last 90 days; null below `MIN_SAMPLE`.
- * - `lastActivityAt`: latest session creation time for the role.
+ * - `lastActivityAt`: latest session or candidate (application) creation time for the role.
+ *
+ * Row ceilings: roles, the per-(role, candidate) invited/interviewed groups and
+ * the turnaround samples are each read up to `rowLimit` rows; reaching any of
+ * them sets `truncated`. The per-role groupBys return at most one row per role.
  *
  * Roles come from `roleScope(auth)`. Every candidate-derived count is also
  * restricted through `candidateScope(auth)` so an assigned role never leaks
@@ -47,6 +53,18 @@ export interface RoleFunnel {
   readonly medianInviteToCompleteHours: number | null;
   readonly lastActivityAt: string | null;
   readonly updatedAt: string;
+  readonly createdAt: string;
+}
+
+/** A chart item; level, region, band and creation time tell same-titled roles apart. */
+export interface RoleTopItem {
+  readonly id: string;
+  readonly title: string;
+  readonly level: string;
+  readonly regionCode: string | null;
+  readonly experienceBand: string | null;
+  readonly createdAt: string;
+  readonly count: number;
 }
 
 export interface RoleMetrics {
@@ -59,8 +77,8 @@ export interface RoleMetrics {
     readonly rolesWithoutCandidates: number;
     readonly rolesWithReviewBacklog: number;
   };
-  readonly topByApplied: readonly { readonly id: string; readonly title: string; readonly count: number }[];
-  readonly topByInterviewed: readonly { readonly id: string; readonly title: string; readonly count: number }[];
+  readonly topByApplied: readonly RoleTopItem[];
+  readonly topByInterviewed: readonly RoleTopItem[];
 }
 
 export interface RoleMetricsOptions {
@@ -94,12 +112,12 @@ function rate(approved: number, rejected: number): number | null {
   return total < MIN_SAMPLE ? null : Math.round((approved / total) * 1000) / 1000;
 }
 
-function top(roles: readonly RoleFunnel[], key: 'applied' | 'interviewed') {
+function top(roles: readonly RoleFunnel[], key: 'applied' | 'interviewed'): RoleTopItem[] {
   return [...roles]
     .filter((r) => r[key] > 0)
     .sort((a, b) => b[key] - a[key] || a.title.localeCompare(b.title))
     .slice(0, 10)
-    .map((r) => ({ id: r.id, title: r.title, count: r[key] }));
+    .map((r) => ({ id: r.id, title: r.title, level: r.level, regionCode: r.regionCode, experienceBand: r.experienceBand, createdAt: r.createdAt, count: r[key] }));
 }
 
 export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptions = {}): Promise<RoleMetrics> {
@@ -115,7 +133,7 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
 
   const roles = await prisma.role.findMany({
     where: role,
-    select: { id: true, title: true, level: true, status: true, updatedAt: true, regionCode: true, experienceBand: true, catalogRole: { select: { domain: { select: { name: true } } } } },
+    select: { id: true, title: true, level: true, status: true, updatedAt: true, createdAt: true, regionCode: true, experienceBand: true, catalogRole: { select: { domain: { select: { name: true } } } } },
     orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
     take: rowLimit,
   });
@@ -127,18 +145,23 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
   const turnaroundSince = new Date(now.getTime() - TURNAROUND_WINDOW_DAYS * DAY_MS);
 
   const [
-    appliedRows, invitedRows, interviewedRows, awaitingRows, decisionRows, lastRows, turnaroundRows,
-  ] = roles.length === 0 ? [[], [], [], [], [], [], []] : await Promise.all([
+    appliedRows, invitedRows, interviewedRows, awaitingRows, decisionRows, lastRows, turnaroundRows, lastAppliedRows,
+  ] = roles.length === 0 ? [[], [], [], [], [], [], [], []] : await Promise.all([
     prisma.candidate.groupBy({ by: ['roleId'], where: candidateRoleWhere, _count: { _all: true } }),
     prisma.interviewSession.groupBy({
       by: ['roleId', 'candidateId'],
-      where: { ...sessionWhere, invitation: { isNot: null } },
+      where: { ...sessionWhere, OR: [{ invitation: { isNot: null } }, { state: { in: [...COMPLETED_STATES] } }] },
       _count: { _all: true },
+      // One row per (role, candidate), so bounded like every other row read here.
+      orderBy: [{ roleId: 'asc' }, { candidateId: 'asc' }],
+      take: rowLimit,
     }),
     prisma.interviewSession.groupBy({
       by: ['roleId', 'candidateId'],
       where: { ...sessionWhere, state: { in: [...COMPLETED_STATES] } },
       _count: { _all: true },
+      orderBy: [{ roleId: 'asc' }, { candidateId: 'asc' }],
+      take: rowLimit,
     }),
     prisma.interviewSession.groupBy({
       by: ['roleId'],
@@ -168,6 +191,7 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
       orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
       take: rowLimit,
     }),
+    prisma.candidate.groupBy({ by: ['roleId'], where: candidateRoleWhere, _max: { createdAt: true } }),
   ]);
 
   const applied = countMap(appliedRows);
@@ -185,6 +209,12 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
   }
 
   const lastActivity = new Map(lastRows.flatMap((r) => (r._max.createdAt ? [[r.roleId, r._max.createdAt] as const] : [])));
+  for (const r of lastAppliedRows) {
+    const at = r._max.createdAt;
+    if (!r.roleId || !at) continue;
+    const seen = lastActivity.get(r.roleId);
+    if (!seen || at > seen) lastActivity.set(r.roleId, at);
+  }
   const turnaround = new Map<string, number[]>();
   for (const row of turnaroundRows) {
     const invitedAt = row.invitation?.sentAt ?? row.invitation?.createdAt;
@@ -213,12 +243,13 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
       medianInviteToCompleteHours: median(turnaround.get(r.id) ?? []),
       lastActivityAt: lastActivity.get(r.id)?.toISOString() ?? null,
       updatedAt: r.updatedAt.toISOString(),
+      createdAt: r.createdAt.toISOString(),
     };
   });
 
   return {
     generatedAt: now.toISOString(),
-    truncated: roles.length >= rowLimit || turnaroundRows.length >= rowLimit,
+    truncated: roles.length >= rowLimit || turnaroundRows.length >= rowLimit || invitedRows.length >= rowLimit || interviewedRows.length >= rowLimit,
     minSample: MIN_SAMPLE,
     roles: funnels,
     kpis: {

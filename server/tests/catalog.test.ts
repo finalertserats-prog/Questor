@@ -258,11 +258,11 @@ describe('catalog review fixes, round 2', () => {
     return request(app).post('/api/roles').set('Authorization', `Bearer ${token}`).send({ sourceType: 'paste', sourceText: JD, useLlm: false, experienceBand: 'senior', ...body });
   }
 
-  it('adds a typed title to the shared catalog and links the role when only a domain is chosen', async () => {
+  it('adds a typed title to the shared catalog and links the role when the person chooses to add it', async () => {
     const { user } = await makeTenantUser('typed@catalog.local');
     const d = await prisma.catalogDomain.create({ data: { slug: 'cloud', name: 'Cloud', sortOrder: 1 } });
 
-    const res = await postRole(user.token, { domainId: d.id, title: 'Estate Reliability Engineer' });
+    const res = await postRole(user.token, { domainId: d.id, title: 'Estate Reliability Engineer', addToCatalog: true });
 
     const linked = await prisma.role.findUniqueOrThrow({ where: { id: res.body.role.id }, include: { catalogRole: true } });
     expect(linked.catalogRole?.title).toBe('Estate Reliability Engineer');
@@ -278,15 +278,24 @@ describe('catalog review fixes, round 2', () => {
     expect(res.body.role.catalogRole?.id).toBe(existing.id);
   });
 
-  it('still infers the title from the JD when it is left blank, and links what it inferred', async () => {
+  it('still infers the title from the JD when it is left blank, and never publishes what it inferred', async () => {
     const { user } = await makeTenantUser('inferred@catalog.local');
     const d = await prisma.catalogDomain.create({ data: { slug: 'cloud3', name: 'Cloud Three', sortOrder: 1 } });
 
+    const res = await postRole(user.token, { domainId: d.id, addToCatalog: true });
+
+    expect({ status: res.status, catalogRoles: await prisma.catalogRole.count({ where: { domainId: d.id } }) }).toEqual({ status: 201, catalogRoles: 0 });
+  });
+
+  it('links an inferred title to an existing catalog entry that matches it', async () => {
+    const { user } = await makeTenantUser('inferred-match@catalog.local');
+    const d = await prisma.catalogDomain.create({ data: { slug: 'cloud5', name: 'Cloud Five', sortOrder: 1 } });
+    const inferred = (await postRole(user.token, {})).body.role.title as string;
+    const existing = await createCatalogRole(d.id, inferred);
+
     const res = await postRole(user.token, { domainId: d.id });
 
-    expect(res.status).toBe(201);
-    const linked = await prisma.role.findUniqueOrThrow({ where: { id: res.body.role.id }, include: { catalogRole: true } });
-    expect(linked.catalogRole?.normalizedTitle).toBe(normalizeTitle(linked.title));
+    expect(res.body.role.catalogRole?.id).toBe(existing.id);
   });
 
   it('treats a whitespace-only title as blank and infers the title from the JD', async () => {
