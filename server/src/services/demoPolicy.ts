@@ -22,6 +22,16 @@ export function runAsDemo<T>(fn: () => T): T {
   return demoContext.run({ heuristicOnly: true }, fn);
 }
 
+/**
+ * Whether a demo session token is still good: the same test `authenticate`
+ * applies to HTTP, for transports (the interview socket) that check it themselves.
+ */
+export async function demoSessionLive(claims: { demo?: boolean; demoGrantId?: string; userId: string; tenantId: string }): Promise<boolean> {
+  if (claims.demo !== true) return true;
+  const grant = await prisma.demoGrant.findUnique({ where: { id: claims.demoGrantId ?? '' }, select: { sessionEndsAt: true, userId: true, tenantId: true } });
+  return !!grant && grant.userId === claims.userId && grant.tenantId === claims.tenantId && !!grant.sessionEndsAt && grant.sessionEndsAt.getTime() > Date.now();
+}
+
 export function inDemoContext(): boolean {
   return demoContext.getStore()?.heuristicOnly === true;
 }

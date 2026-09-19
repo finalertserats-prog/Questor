@@ -13,6 +13,7 @@ import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { HttpError } from '../middleware/index.js';
 import { isDraining, SERVER_RESTARTING_MESSAGE } from '../services/drainState.js';
 import { beginRequest, holdCandidateSocket, UNDER_WAY_STATES } from './liveSessions.js';
+import { demoSessionLive } from '../services/demoPolicy.js';
 
 // The credential is kept after the handshake, not just the identity it proved:
 // a socket can stay open for days, outliving the 12h recruiter JWT, and an
@@ -168,6 +169,8 @@ export async function authorizeSession(
   const claims = verifyToken(auth.token);
   if (!claims) return null;
   if (!requestedSessionId) return null;
+  // Checked on every event, so End demo and the 45-minute limit cut a live socket too.
+  if (!(await demoSessionLive(claims))) return null;
 
   const capabilities = capabilitiesOf(claims.role);
   const needed = intent === 'drive' ? 'interview:drive' : 'candidate:read';
