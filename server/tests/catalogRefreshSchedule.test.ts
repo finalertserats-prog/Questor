@@ -130,9 +130,9 @@ describe('starting a run by hand', () => {
     expect(started).toEqual({ kind: 'failed' });
   });
 
-  it('uses this instance id for the lease it holds', async () => {
+  it('holds the lease under this instance id plus a per-run token', async () => {
     let holder = '';
     await runCatalogRefresh({ trigger: 'manual', deps: testDeps({}, { afterChunk: async () => { holder = (await prisma.jobLease.findUniqueOrThrow({ where: { name: CATALOG_REFRESH_LEASE.name } })).holder; } }).deps });
-    expect(holder).toBe(INSTANCE_ID);
+    expect(holder.startsWith(`${INSTANCE_ID}#`)).toBe(true);
   });
 });

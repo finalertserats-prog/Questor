@@ -124,6 +124,37 @@ describe('when a matching role appeared meanwhile', () => {
   });
 });
 
+describe('approving what the operator actually saw', () => {
+  it('refuses an approval of a version that was edited since', async () => {
+    const p = await proposal(world, { title: 'Agent Reliability Engineer' });
+    const seen = p.updatedAt.toISOString();
+    await request(app).patch(`/api/catalog-review/proposals/${p.id}`).set('Authorization', bearer(world.operator.token)).send({ title: 'Agent Reliability Lead' });
+    const res = await approve(p.id, { updatedAt: seen });
+    const roles = await prisma.catalogRole.count({ where: { normalizedTitle: { startsWith: 'agent reliability' } } });
+    expect({ status: res.status, code: res.body.code, roles }).toEqual({ status: 409, code: 'changed', roles: 0 });
+  });
+
+  it('approves the version the operator saw', async () => {
+    const p = await proposal(world, { title: 'Agent Reliability Engineer' });
+    expect((await approve(p.id, { updatedAt: p.updatedAt.toISOString() })).status).toBe(200);
+  });
+});
+
+describe('when the catalog write fails', () => {
+  it('leaves the proposal pending, to be approved again', async () => {
+    // A trigger stands in for any failure between claiming the proposal and creating the role.
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER IF NOT EXISTS "fail_role_insert" BEFORE INSERT ON "CatalogRole" WHEN NEW."title" = 'Boom Title' BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+    try {
+      const p = await proposal(world, { title: 'Boom Title' });
+      const res = await approve(p.id);
+      const row = await prisma.catalogProposal.findUniqueOrThrow({ where: { id: p.id } });
+      expect({ status: res.status, proposal: row.status, reviewedAt: row.reviewedAt }).toEqual({ status: 500, proposal: 'pending', reviewedAt: null });
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS "fail_role_insert"');
+    }
+  });
+});
+
 describe('two operators approving at once', () => {
   it('creates exactly one role', async () => {
     const p = await proposal(world, { title: 'Agent Reliability Engineer' });

@@ -104,14 +104,36 @@ function escoResponse(url: URL, sources: FakeSources): Response {
   const all = sources.esco ?? [];
   if (url.pathname.endsWith('/search')) {
     const text = (url.searchParams.get('text') ?? '').toLowerCase();
-    const offset = Number(url.searchParams.get('offset'));
+    // As the live API does (checked 2026-09-19): offset is a PAGE index, and
+    // _links.next points at offset + 1 whatever the page size.
+    const page = Number(url.searchParams.get('offset'));
     const limit = Number(url.searchParams.get('limit'));
     const hits = text ? all.filter((o) => o.title.toLowerCase() === text || (o.alternatives ?? []).some((a) => a.toLowerCase() === text)) : all;
-    return Response.json({ total: hits.length, _embedded: { results: hits.slice(offset, offset + limit).map((o) => ({ uri: o.uri, title: o.title })) } });
+    const next = new URL(url.toString());
+    next.searchParams.set('offset', String(page + 1));
+    return Response.json({
+      total: hits.length, offset: page, limit,
+      _links: { self: { href: url.toString() }, next: { href: next.toString() } },
+      _embedded: { results: hits.slice(page * limit, page * limit + limit).map((o) => ({ uri: o.uri, title: o.title })) },
+    });
   }
   const found = all.find((o) => o.uri === url.searchParams.get('uri'));
   if (!found) return new Response('', { status: 404 });
   return Response.json({ title: found.title, alternativeLabel: { en: found.alternatives ?? [] }, description: { en: { literal: found.description ?? '' } } });
+}
+
+/**
+ * The web_search tool's url_citation annotations for a scripted reply: each
+ * item's evidenceUrls, cited at the item's title, as the tool would.
+ */
+function citationsFor(text: string) {
+  let items: unknown;
+  try { items = JSON.parse(text); } catch { return []; }
+  if (!Array.isArray(items)) return [];
+  return items.flatMap((item: { title?: string; evidenceUrls?: string[] }) => {
+    const at = item.title ? text.indexOf(item.title) : -1;
+    return at < 0 ? [] : (item.evidenceUrls ?? []).map((url) => ({ type: 'url_citation', url, start_index: at, end_index: at + 3 }));
+  });
 }
 
 export function fakeSourceHttp(sources: FakeSources) {
@@ -128,7 +150,8 @@ export function fakeSourceHttp(sources: FakeSources) {
       if (url.toString().startsWith(ESCO_BASE)) return escoResponse(url, sources);
       if (url.hostname === 'api.openai.com') {
         if (typeof sources.research === 'number') return new Response('', { status: sources.research });
-        return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text: sources.research ?? '[]', annotations: [] }] }] });
+        const text = sources.research ?? '[]';
+        return Response.json({ output: [{ type: 'message', content: [{ type: 'output_text', text, annotations: citationsFor(text) }] }] });
       }
       throw new Error(`unexpected request in test: ${url.toString()}`);
     },
@@ -145,6 +168,10 @@ export function configureCatalogRefresh(overrides: Partial<typeof config.catalog
     escoBaseUrl: ESCO_BASE,
     maxLlmCalls: 10,
     maxProposals: 200,
+    maxAliasShare: 0.6,
+    llmCallsPer30Days: 1000,
+    researchCallsPer30Days: 1000,
+    manualRunGapMs: 0,
     minConfidence: 0.5,
     researchMaxCalls: 5,
     escoLimit: 25,

@@ -1,5 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { config } from '../config.js';
+import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 import type { AuthClaims } from '../services/auth.js';
 
 /**
@@ -33,4 +35,27 @@ export function requirePlatformOperator(req: Request, res: Response, next: NextF
     return;
   }
   next();
+}
+
+/**
+ * Whether an address belongs to the platform owner. Operator standing is
+ * keyed on the address, so whoever creates the account for it becomes the
+ * owner: no tenant admin, applicant or self-registration may create one.
+ */
+export function isReservedOperatorEmail(email: string): boolean {
+  return operatorEmails().has(email.trim().toLowerCase());
+}
+
+/**
+ * At start-up: an operator address with no account is an open door until the
+ * owner claims it (and the owner cannot sign in). Logged loudly, per address.
+ */
+export async function reportMissingOperatorAccounts(): Promise<void> {
+  const wanted = [...operatorEmails()];
+  if (wanted.length === 0) return;
+  const users = await prisma.user.findMany({ select: { email: true } });
+  const present = new Set(users.map((u) => u.email.trim().toLowerCase()));
+  for (const email of wanted.filter((e) => !present.has(e))) {
+    logger.error({ email }, 'PLATFORM_OPERATOR_EMAILS names an address with no account; create it from an existing operator session or remove it');
+  }
 }

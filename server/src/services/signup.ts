@@ -7,6 +7,7 @@ import { HttpError } from '../middleware/index.js';
 import { hashPassword } from './auth.js';
 import { logAudit } from './audit.js';
 import { getEmail } from '../providers/email/index.js';
+import { isReservedOperatorEmail } from '../middleware/platformOperator.js';
 import { renderSignupAcknowledgementEmail, renderSignupOperatorEmail, renderSignupWelcomeEmail } from '../providers/email/signupEmail.js';
 
 export const SIGNUP_DECISION_TTL_DAYS = 14;
@@ -203,6 +204,12 @@ export async function decideSignupRequest(opts: {
     });
     if (claimed.count === 0) return false;
 
+    // An applicant must never get a platform-owner address: the account would carry the owner's standing.
+    if (isReservedOperatorEmail(row.email)) {
+      declinedReason = 'email_reserved';
+      await tx.signupRequest.update({ where: { id: row.id }, data: { status: 'DECLINED' } });
+      return true;
+    }
     const existing = await tx.user.findUnique({ where: { email: row.email }, select: { id: true } });
     if (existing) {
       declinedReason = 'email_already_registered';

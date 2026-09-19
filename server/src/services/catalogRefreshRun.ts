@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { config } from '../config.js';
 import { nextRunCursor, parseCursor, type RefreshCursor, type RefreshStats } from './catalogRefreshState.js';
 
 /**
@@ -53,7 +54,7 @@ export async function claimRun(trigger: RunTrigger, triggeredById: string | unde
     return { ...unfinished, resumed: true };
   }
   // Anything older than the window is abandoned as failed so it stops looking live.
-  await prisma.catalogRefreshRun.updateMany({ where: { status: 'running' }, data: { status: 'failed', finishedAt: now, error: 'Abandoned: not resumed within 7 days.' } });
+  await prisma.catalogRefreshRun.updateMany({ where: { status: 'running' }, data: { status: 'failed', finishedAt: now, error: 'abandoned' } });
   const created = await prisma.catalogRefreshRun.create({
     data: { trigger, triggeredById: triggeredById ?? null, status: 'running', startedAt: now, cursorJson: JSON.stringify(nextRunCursor(await previousCursor())) },
   });
@@ -71,8 +72,12 @@ export async function finishRun(runId: string, now: Date): Promise<void> {
   await prisma.catalogRefreshRun.update({ where: { id: runId }, data: { status: 'completed', finishedAt: now, error: '' } });
 }
 
-export async function failRun(runId: string, message: string, now: Date): Promise<void> {
-  await prisma.catalogRefreshRun.update({ where: { id: runId }, data: { status: 'failed', finishedAt: now, error: message.slice(0, 1000) } });
+/**
+ * The row keeps a short code; the details go to the server log, since the
+ * review page is no place for stack messages or database errors.
+ */
+export async function failRun(runId: string, code: string, now: Date): Promise<void> {
+  await prisma.catalogRefreshRun.update({ where: { id: runId }, data: { status: 'failed', finishedAt: now, error: code } });
 }
 
 /** True while some instance holds the refresh lease, which is what "running" means. */
@@ -90,4 +95,48 @@ export async function shouldRunScheduledCatalogRefresh(now: Date): Promise<boole
   if (await resumableRun(now)) return true;
   const last = await prisma.catalogRefreshRun.findFirst({ where: { status: 'completed' }, orderBy: { finishedAt: 'desc' }, select: { finishedAt: true } });
   return !last?.finishedAt || now.getTime() - last.finishedAt.getTime() >= MONTHLY_INTERVAL_MS;
+}
+
+export const SPEND_WINDOW_MS = 30 * 24 * 60 * 60_000;
+
+export interface SpendLimits {
+  /** The run's llmCalls may not pass this. */
+  readonly llmCalls: number;
+  /** The run's researchCalls may not pass this. */
+  readonly researchCalls: number;
+}
+
+/**
+ * How far this run may spend: its per-run cap, and whatever the last 30 days
+ * of runs left of the rolling budget. Without the rolling budget every manual
+ * run would bring a fresh per-run allowance.
+ */
+export async function spendLimits(run: { readonly id: string; readonly llmCalls: number; readonly researchCalls: number }, now: Date): Promise<SpendLimits> {
+  const others = await prisma.catalogRefreshRun.aggregate({
+    where: { id: { not: run.id }, startedAt: { gte: new Date(now.getTime() - SPEND_WINDOW_MS) } },
+    _sum: { llmCalls: true, researchCalls: true },
+  });
+  const cfg = config.catalogRefresh;
+  const room = (own: number, perRun: number, perWindow: number, spentElsewhere: number) => own + Math.max(0, Math.min(perRun - own, perWindow - spentElsewhere - own));
+  return {
+    llmCalls: room(run.llmCalls, cfg.maxLlmCalls, cfg.llmCallsPer30Days, others._sum.llmCalls ?? 0),
+    researchCalls: room(run.researchCalls, cfg.researchMaxCalls, cfg.researchCallsPer30Days, others._sum.researchCalls ?? 0),
+  };
+}
+
+/** Proposals this run has already queued, by kind, whatever has happened to them since. */
+export async function queuedCounts(runId: string): Promise<{ readonly aliases: number; readonly roles: number }> {
+  const rows = await prisma.catalogProposal.groupBy({ by: ['kind'], where: { runId }, _count: { _all: true } });
+  const count = (kind: string) => rows.find((r) => r.kind === kind)?._count._all ?? 0;
+  return { aliases: count('new_alias'), roles: count('new_role') };
+}
+
+/** When the next manual run may start, or null if it may start now. */
+export async function manualRunAllowedAt(now: Date): Promise<Date | null> {
+  const gap = config.catalogRefresh.manualRunGapMs;
+  if (gap <= 0) return null;
+  const last = await prisma.catalogRefreshRun.findFirst({ where: { trigger: 'manual' }, orderBy: { startedAt: 'desc' }, select: { startedAt: true } });
+  if (!last) return null;
+  const allowedAt = new Date(last.startedAt.getTime() + gap);
+  return allowedAt.getTime() > now.getTime() ? allowedAt : null;
 }

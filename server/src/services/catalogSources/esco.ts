@@ -35,18 +35,19 @@ interface SearchHit {
   readonly title: string;
 }
 
-function searchUrl(baseUrl: string, text: string, limit: number, offset: number): string {
+/** `page` is ESCO's `offset`: a page index, not an item offset (checked against the live API). */
+function searchUrl(baseUrl: string, text: string, limit: number, page: number): string {
   const url = new URL(`${baseUrl.replace(/\/+$/, '')}/search`);
   url.searchParams.set('type', 'occupation');
   url.searchParams.set('language', 'en');
   url.searchParams.set('text', text);
   url.searchParams.set('limit', String(limit));
-  url.searchParams.set('offset', String(offset));
+  url.searchParams.set('offset', String(page));
   return url.toString();
 }
 
-async function search(http: SourceHttp, baseUrl: string, text: string, limit: number, offset: number): Promise<{ hits: SearchHit[]; total: number }> {
-  const response = await fetchWithRetry(searchUrl(baseUrl, text, limit, offset), http);
+async function search(http: SourceHttp, baseUrl: string, text: string, limit: number, page: number): Promise<{ hits: SearchHit[]; total: number }> {
+  const response = await fetchWithRetry(searchUrl(baseUrl, text, limit, page), http);
   const parsed = searchSchema.safeParse(await response.json());
   if (!parsed.success) return { hits: [], total: 0 };
   return { hits: parsed.data._embedded.results.map((row) => ({ uri: row.uri, title: row.title.trim() })), total: parsed.data.total };
@@ -76,9 +77,9 @@ async function fetchDetail(http: SourceHttp, baseUrl: string, uri: string): Prom
 
 export async function fetchEscoPage(
   http: SourceHttp,
-  opts: { readonly baseUrl: string; readonly offset: number; readonly limit: number; readonly delayMs: number },
+  opts: { readonly baseUrl: string; readonly page: number; readonly limit: number; readonly delayMs: number },
 ): Promise<EscoPage> {
-  const { hits, total } = await search(http, opts.baseUrl, '', opts.limit, opts.offset);
+  const { hits, total } = await search(http, opts.baseUrl, '', opts.limit, opts.page);
   const candidates: CatalogCandidate[] = [];
   const errors: string[] = [];
   for (const hit of hits) {

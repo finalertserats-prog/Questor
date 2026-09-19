@@ -54,14 +54,14 @@ async function runOnet(runner: SourceRunner, start: RunState): Promise<RunState>
 }
 
 async function applyEscoPage(runner: SourceRunner, state: RunState, page: EscoPage): Promise<RunState> {
-  const { offset, pages } = state.cursor.esco;
+  const { page: current, pages } = state.cursor.esco;
   const processed = await processCandidates(runner.ctx, state, 'esco', page.candidates, runner.model);
   const withErrors = page.errors.reduce((acc, message) => ({ ...acc, stats: addSourceError(acc.stats, 'esco', message) }), processed);
-  const next = offset + config.catalogRefresh.escoLimit;
+  const next = current + 1;
   // Past the end: start again from the top next time, and stop for this run.
-  const wrapped = page.candidates.length === 0 || next >= page.total;
+  const wrapped = page.candidates.length === 0 || next * config.catalogRefresh.escoLimit >= page.total;
   const reachedCap = pages + 1 >= config.catalogRefresh.escoPagesPerRun;
-  return { ...withErrors, cursor: { ...withErrors.cursor, esco: { offset: wrapped ? 0 : next, pages: pages + 1, done: wrapped || reachedCap } } };
+  return { ...withErrors, cursor: { ...withErrors.cursor, esco: { page: wrapped ? 0 : next, pages: pages + 1, done: wrapped || reachedCap } } };
 }
 
 async function runEscoPages(runner: SourceRunner, start: RunState): Promise<RunState> {
@@ -70,7 +70,7 @@ async function runEscoPages(runner: SourceRunner, start: RunState): Promise<RunS
   while (!state.cursor.esco.done) {
     let page: EscoPage;
     try {
-      page = await fetchEscoPage(runner.http, { baseUrl: escoBaseUrl, offset: state.cursor.esco.offset, limit: escoLimit, delayMs: escoDelayMs });
+      page = await fetchEscoPage(runner.http, { baseUrl: escoBaseUrl, page: state.cursor.esco.page, limit: escoLimit, delayMs: escoDelayMs });
     } catch (err) {
       state = { ...state, stats: addSourceError(state.stats, 'esco', messageOf(err)), cursor: { ...state.cursor, esco: { ...state.cursor.esco, done: true } } };
       await runner.checkpoint(state, 'esco');
@@ -120,8 +120,9 @@ function existingTitlesFor(ctx: RunContext, domainId: string): string[] {
 async function webStep(runner: SourceRunner, state: RunState): Promise<RunState> {
   const { domainIndex, calls } = state.cursor.web;
   const domain = runner.ctx.domains[domainIndex];
-  // A resumed run may find fewer active domains than when it stopped.
-  if (!domain) return { ...state, cursor: { ...state.cursor, web: { ...state.cursor.web, done: true } } };
+  // A resumed run may find fewer active domains than when it stopped, and the
+  // research budget (per run and over 30 days) may already be spent.
+  if (!domain || state.researchCalls >= runner.ctx.limits.researchCalls) return { ...state, cursor: { ...state.cursor, web: { ...state.cursor.web, done: true } } };
   const result = await researchEmergingTitles(runner.http, {
     apiKey: runner.research.apiKey, demo: runner.research.demo, model: config.catalogRefresh.researchModel, timeoutMs: config.catalogRefresh.researchTimeoutMs,
     domainId: domain.id, domainName: domain.name, existingTitles: existingTitlesFor(runner.ctx, domain.id),
@@ -134,7 +135,7 @@ async function webStep(runner: SourceRunner, state: RunState): Promise<RunState>
   }
   const withError = result.skipped ? { ...counted, stats: addSourceError(counted.stats, 'web', `${domain.name}: ${result.skipped}`) } : counted;
   const processed = await processCandidates(runner.ctx, withError, 'web', result.candidates, runner.model);
-  const done = cursorAfter.domainIndex >= runner.ctx.domains.length || cursorAfter.calls >= config.catalogRefresh.researchMaxCalls;
+  const done = cursorAfter.domainIndex >= runner.ctx.domains.length || processed.researchCalls >= runner.ctx.limits.researchCalls;
   return { ...processed, cursor: { ...processed.cursor, web: { ...cursorAfter, done } } };
 }
 

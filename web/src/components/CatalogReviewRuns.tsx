@@ -1,6 +1,6 @@
 import { StatusBadge } from './StatusBadge';
 import { formatDateTime } from './dateFormat';
-import { runStatusLine, runTotals, type CatalogRunView } from './catalogReviewModel';
+import { runErrorText, runStatusLine, runTotals, type CatalogRunView } from './catalogReviewModel';
 
 /** The newest run, in one line under the page header. */
 export function LatestRunLine({ run }: { readonly run: CatalogRunView | undefined }) {
@@ -35,7 +35,7 @@ export function RecentRuns({ runs }: { readonly runs: readonly CatalogRunView[] 
             <tbody>
               {runs.map((run) => {
                 const totals = runTotals(run);
-                const problems = [...(run.error ? [run.error] : []), ...errorsOf(run)];
+                const problems = [...(run.error ? [runErrorText(run.error)] : []), ...errorsOf(run)];
                 return (
                   <tr key={run.id}>
                     <td className="small">{formatDateTime(run.startedAt)}</td>

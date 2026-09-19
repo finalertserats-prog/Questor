@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bulkOutcome, confidenceLabel, confidencePercent, decisionErrorMessage, DEFAULT_CATALOG_REVIEW_FILTERS, draftFrom, editPatch, familiesFor,
   filtersToQuery, hasActiveFilters, kindLabel, paginationLabel, placementLabel, pruneSelection, runStatusLine, runTotals, selectablePendingIds,
-  sourceLinks, titleProblem, toggleAll, toggleSelection, validateEdit,
+  runErrorText, runNowDisabled, sourceLinks, titleProblem, toggleAll, toggleSelection, validateEdit,
   type CatalogProposalView, type CatalogRunView, type EditOptions,
 } from '../src/components/catalogReviewModel';
 import { proposalStatus, refreshRunStatus } from '../src/components/statusModel';
@@ -173,6 +173,14 @@ describe('decision messages', () => {
     expect(decisionErrorMessage({ status: 409, code: 'superseded', message: '"Data Scientist" is already in the catalog.' }, 'Data Scientist')).toBe('Not added: "Data Scientist" is already in the catalog. The proposal is marked superseded.');
   });
 
+  it('explains a proposal that changed while the operator looked at it', () => {
+    expect(decisionErrorMessage({ status: 409, code: 'changed', message: 'x' }, 'Data Scientist')).toBe('"Data Scientist" changed while you were looking at it. The list now shows the latest version; review it again.');
+  });
+
+  it('explains a manual run that is too soon', () => {
+    expect(decisionErrorMessage({ status: 409, code: 'too_soon', message: 'A manual run started recently. The next one can start after 14:05 UTC.' }, 'Run now')).toBe('A manual run started recently. The next one can start after 14:05 UTC.');
+  });
+
   it('explains a proposal someone else already decided', () => {
     expect(decisionErrorMessage({ status: 409, code: 'not_pending', message: 'x' }, 'Data Scientist')).toBe('"Data Scientist" was already reviewed. The list is up to date.');
   });
@@ -201,8 +209,28 @@ describe('runs', () => {
     expect(runStatusLine(run())).toBe('15 read · 4 proposed · 2 skipped · 1 error · web research skipped (no OpenAI key)');
   });
 
-  it('describes a failed run with its error', () => {
-    expect(runStatusLine(run({ status: 'failed', error: 'database unavailable' }))).toContain('database unavailable');
+  it('describes a failed run in plain words, never with server internals', () => {
+    expect(runStatusLine(run({ status: 'failed', error: 'unexpected_error' }))).toMatch(/^Stopped on an unexpected error; the next run resumes it. · /);
+  });
+
+  it('never shows an unknown error text as it came', () => {
+    expect(runErrorText('PrismaClientKnownRequestError: connection refused at 10.0.0.5')).toBe('Stopped on an unexpected error; the next run resumes it.');
+  });
+
+  it('explains an abandoned run', () => {
+    expect(runErrorText('abandoned')).toBe('Stopped and not resumed within 7 days; a fresh run started instead.');
+  });
+
+  it('keeps Run now disabled while the latest run is still marked running', () => {
+    expect(runNowDisabled([run({ status: 'running', finishedAt: null })], false)).toBe(true);
+  });
+
+  it('keeps Run now disabled while the lease is held', () => {
+    expect(runNowDisabled([run()], true)).toBe(true);
+  });
+
+  it('enables Run now when nothing is running', () => {
+    expect(runNowDisabled([run()], false)).toBe(false);
   });
 
   it('describes a run in progress', () => {

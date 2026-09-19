@@ -5,7 +5,7 @@ describe('refresh cursor', () => {
   it('starts every source from the beginning when nothing is stored', () => {
     expect(parseCursor('{}')).toEqual({
       onet: { offset: 0, done: false },
-      esco: { offset: 0, pages: 0, done: false },
+      esco: { page: 0, pages: 0, done: false },
       escoRoles: { offset: 0, lookups: 0, done: false },
       web: { domainIndex: 0, calls: 0, done: false },
     });
@@ -20,10 +20,10 @@ describe('refresh cursor', () => {
   });
 
   it('carries the ESCO positions into the next run, resetting per-run counts', () => {
-    const previous = { ...parseCursor('{}'), esco: { offset: 200, pages: 8, done: true }, escoRoles: { offset: 40, lookups: 40, done: true }, onet: { offset: 900, done: true } };
+    const previous = { ...parseCursor('{}'), esco: { page: 8, pages: 8, done: true }, escoRoles: { offset: 40, lookups: 40, done: true }, onet: { offset: 900, done: true } };
     const next = nextRunCursor(previous);
     expect({ esco: next.esco, escoRoles: next.escoRoles, onet: next.onet }).toEqual({
-      esco: { offset: 200, pages: 0, done: false },
+      esco: { page: 8, pages: 0, done: false },
       escoRoles: { offset: 40, lookups: 0, done: false },
       onet: { offset: 0, done: false },
     });

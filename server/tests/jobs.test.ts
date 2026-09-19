@@ -15,7 +15,7 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
 
 import { prisma } from '../src/db.js';
 import { config } from '../src/config.js';
-import { runExclusive, latestJobRuns, renewLease, _resetJobAlerts } from '../src/services/jobs.js';
+import { runExclusive, latestJobRuns, _resetJobAlerts } from '../src/services/jobs.js';
 
 /**
  * Background work under a database lease. Two instances, or one restarting
@@ -73,25 +73,61 @@ describe('running a job under a lease', () => {
 });
 
 describe('renewing a lease during long work', () => {
-  it('extends the lease for the instance holding it', async () => {
+  it('extends the lease for the run holding it', async () => {
     let renewed = false;
-    await runExclusive('long-job', 1_000, async () => { renewed = await renewLease('long-job', 60_000); });
+    await runExclusive('long-job', 1_000, async (lease) => { renewed = await lease.renew(60_000); });
     expect(renewed).toBe(true);
   });
 
   it('pushes the expiry out while the work runs', async () => {
     let expiresInMs = 0;
-    await runExclusive('long-job', 1_000, async () => {
-      await renewLease('long-job', 60_000);
-      const lease = await prisma.jobLease.findUniqueOrThrow({ where: { name: 'long-job' } });
-      expiresInMs = lease.expiresAt.getTime() - Date.now();
+    await runExclusive('long-job', 1_000, async (lease) => {
+      await lease.renew(60_000);
+      const row = await prisma.jobLease.findUniqueOrThrow({ where: { name: 'long-job' } });
+      expiresInMs = row.expiresAt.getTime() - Date.now();
     });
     expect(expiresInMs).toBeGreaterThan(30_000);
   });
 
+  it('refuses to renew once another run took the lease, even in this same instance', async () => {
+    // The first run's lease lapses mid-work and a second run in this process
+    // takes it. A lease keyed only on the instance would let both renew and
+    // both carry on; each acquisition has its own token instead.
+    let firstRenewed: boolean | null = null;
+    let secondRan = false;
+    await runExclusive('shared-job', 60_000, async (first) => {
+      await prisma.jobLease.update({ where: { name: 'shared-job' }, data: { expiresAt: new Date(Date.now() - 1) } });
+      await runExclusive('shared-job', 60_000, async () => { secondRan = true; });
+      // The second run released its lease on finishing; take it again as a third holder.
+      await runExclusive('shared-job', 60_000, async () => {
+        firstRenewed = await first.renew(60_000);
+      });
+    });
+    expect({ secondRan, firstRenewed }).toEqual({ secondRan: true, firstRenewed: false });
+  });
+
+  it('never releases a lease a later run of this instance now holds', async () => {
+    let heldBySecond = false;
+    await runExclusive('release-job', 60_000, async () => {
+      await prisma.jobLease.update({ where: { name: 'release-job' }, data: { expiresAt: new Date(Date.now() - 1) } });
+      void runExclusive('release-job', 60_000, async () => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    const row = await prisma.jobLease.findUniqueOrThrow({ where: { name: 'release-job' } });
+    heldBySecond = row.expiresAt.getTime() > Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(heldBySecond).toBe(true);
+  });
+
   it('refuses to renew a lease another instance holds', async () => {
-    await prisma.jobLease.create({ data: { name: 'theirs', holder: 'other-host:1:abc', expiresAt: new Date(Date.now() + 60_000) } });
-    expect(await renewLease('theirs', 60_000)).toBe(false);
+    let renewed: boolean | null = null;
+    await runExclusive('theirs-later', 60_000, async (lease) => {
+      await prisma.jobLease.update({ where: { name: 'theirs-later' }, data: { holder: 'other-host:1:abc#zz' } });
+      renewed = await lease.renew(60_000);
+    });
+    expect(renewed).toBe(false);
   });
 });
 

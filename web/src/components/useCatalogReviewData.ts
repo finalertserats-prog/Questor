@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api/client';
 import {
-  filtersToQuery, pruneSelection,
+  filtersToQuery, pruneSelection, runNowDisabled,
   type CatalogProposalView, type CatalogReviewFilters, type CatalogRunView, type EditOptions, type PageMeta,
 } from './catalogReviewModel';
 
@@ -78,9 +78,10 @@ export function useCatalogReviewData(filters: CatalogReviewFilters, page: number
   const wasActive = useRef(false);
   useEffect(() => {
     if (!enabled) return undefined;
-    if (wasActive.current && !runActive) void loadProposals();
-    wasActive.current = runActive;
-    if (!runActive) return undefined;
+    const busy = runNowDisabled(runs, runActive);
+    if (wasActive.current && !busy) void loadProposals();
+    wasActive.current = busy;
+    if (!busy) return undefined;
     const timer = setTimeout(() => { void loadRuns(); }, RUN_POLL_MS);
     return () => clearTimeout(timer);
   }, [enabled, runActive, runs, loadRuns, loadProposals]);
