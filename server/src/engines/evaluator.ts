@@ -9,6 +9,7 @@ import {
 } from './evidenceExtractor.js';
 import { validateNoProtectedInference } from './policyEngine.js';
 import { generateJson, getLlm } from '../providers/llm/index.js';
+import { inDemoContext, isHeuristicOnlySession } from '../services/demoPolicy.js';
 
 // Independent post-interview evaluator (BRD FR-035, 16.1). Scores each approved
 // competency against the rubric using ONLY transcript evidence and the rubric —
@@ -207,7 +208,10 @@ async function scoreCompetency(o: {
     };
   }
 
-  const graded = await gradeAgainstRubric({ competency: c, evidence, sessionId: o.sessionId });
+  // A demo interview never reaches a paid model (the model layer answers null
+  // for it), so its null is not an outage: it takes the heuristic grader below.
+  const heuristicOnly = inDemoContext() || (await isHeuristicOnlySession(o.sessionId));
+  const graded = heuristicOnly ? null : await gradeAgainstRubric({ competency: c, evidence, sessionId: o.sessionId });
   if (graded) {
     return {
       ...base,
@@ -223,7 +227,7 @@ async function scoreCompetency(o: {
   // it is a weaker signal, mixing the two produces incoherent reports, and a
   // candidate could otherwise force the weaker path by injecting instructions.
   // Withhold the score and route to a human instead.
-  if (getLlm().enabled) {
+  if (getLlm().enabled && !heuristicOnly) {
     return {
       ...base, level: null, confidence: 0.2, notEnoughEvidence: true, gradingUnavailable: true,
       rationale: 'Rubric grading could not be completed for this competency, so no score was produced. This requires human review — it is not a judgement about the candidate.',
