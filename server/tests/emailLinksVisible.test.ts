@@ -104,7 +104,7 @@ describe('the invitation reads like a real invitation', () => {
   });
 
   it('says how long the interview takes', async () => {
-    expect(visibleText((await invite()).html)).toContain('About 30 minutes');
+    expect(visibleText((await invite()).html)).toContain('about 30 minutes');
   });
 
   it('says they can speak or type their answers', async () => {
@@ -112,11 +112,21 @@ describe('the invitation reads like a real invitation', () => {
   });
 
   it('says when the link expires', async () => {
-    expect(visibleText((await invite()).html)).toMatch(/link works until \w+,? \d{1,2} \w+ \d{4}/);
+    expect(visibleText((await invite()).html)).toMatch(/link is open until \w+,? \d{1,2} \w+ \d{4}/);
   });
 
-  it('offers a person instead of the AI interviewer', async () => {
-    expect(visibleText((await invite()).html)).toMatch(/interview with a person/i);
+  it('never mentions AI, in either body', async () => {
+    const message = await invite();
+    expect([/\bAI\b|artificial/i.test(message.text), /\bAI\b|artificial/i.test(visibleText(message.html))]).toEqual([false, false]);
+  });
+
+  it('puts the company name at the top instead of the Questor logo', async () => {
+    const html = (await invite()).html;
+    expect([html.includes('questor-wordmark'), visibleText(html).trim().startsWith(company)]).toEqual([false, true]);
+  });
+
+  it('tells the candidate they can ask for adjustments', async () => {
+    expect(visibleText((await invite()).html)).toMatch(/adjustment/i);
   });
 
   it('is signed by the company hiring team, not a generic team', async () => {
@@ -126,7 +136,7 @@ describe('the invitation reads like a real invitation', () => {
 
   it('keeps the plain-text body in step with the HTML body', async () => {
     const message = await invite();
-    expect([message.text.includes('About 30 minutes'), /speak or type/i.test(message.text)]).toEqual([true, true]);
+    expect([message.text.includes('about 30 minutes'), /speak or type/i.test(message.text)]).toEqual([true, true]);
   });
 });
 

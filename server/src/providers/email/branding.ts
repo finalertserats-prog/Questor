@@ -36,6 +36,24 @@ ${message.html}
 }
 
 /**
+ * Mail a candidate receives from the company that is hiring. It reads as a note
+ * from that company's hiring team, so it carries the company's name at the top
+ * instead of the product's mark and no product tagline. Laid out as a table
+ * with inline styles because that is what mail clients reliably render.
+ */
+export function companyEmail(message: EmailMessage, companyName: string): EmailMessage {
+  const company = escapeHtml(companyName);
+  const html = `<div style="background:#f4f4f7;padding:24px 12px;font-family:Segoe UI,system-ui,-apple-system,Helvetica,Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e3e3ea;border-radius:10px;border-collapse:separate">
+<tr><td style="padding:22px 28px 6px;font-size:18px;font-weight:600;color:#1a1a22;border-bottom:1px solid #eeeef3">${company}</td></tr>
+<tr><td style="padding:18px 28px 26px;font-size:15px;line-height:1.6;color:#1a1a22">${message.html}</td></tr>
+</table>
+<p style="max-width:560px;margin:12px auto 0;font-size:12px;color:#8a8a9a;text-align:center">Sent on behalf of ${company}.</p>
+</div>`;
+  return { ...message, html };
+}
+
+/**
  * A button that still works when links do not. Gmail disables every link in a
  * message it files as spam, and some company mail systems strip them; an
  * address that lived only inside the button left a candidate with the words

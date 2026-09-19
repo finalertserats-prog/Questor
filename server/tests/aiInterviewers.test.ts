@@ -157,16 +157,18 @@ describe('Tone is independent of the interviewer', () => {
 });
 
 describe('invitation and retake', () => {
-  it('names the interviewer in the invitation email', async () => {
+  // The invitation reads as a note from the hiring team. The AI disclosure is
+  // made on the page the link opens, before the interview and before consent.
+  it('does not describe the interview as AI-led in the invitation email', async () => {
     const created = await createInterview({ interviewer: 'elena' });
     await request(app).post(`/api/interviews/${created.body.session.id}/invite`).set('Authorization', bearer).send({});
-    expect(sent.messages.at(-1)?.text).toContain('conducted by Elena, an AI voice interviewer');
+    expect(/\bAI\b/.test(sent.messages.at(-1)?.text ?? '')).toBe(false);
   });
 
-  it('names the interviewer in the HTML invitation too', async () => {
+  it('does not describe the interview as AI-led in the HTML invitation either', async () => {
     const created = await createInterview({ interviewer: 'elena' });
     await request(app).post(`/api/interviews/${created.body.session.id}/invite`).set('Authorization', bearer).send({});
-    expect(sent.messages.at(-1)?.html).toContain('<b>Elena</b>, an AI voice interviewer');
+    expect(/\bAI\b/.test(sent.messages.at(-1)?.html ?? '')).toBe(false);
   });
 
   it('keeps the original interviewer on a retake', async () => {

@@ -11,7 +11,7 @@ import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/
 import { assertTransition } from '../domain/stateMachine.js';
 import { getEmail } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
-import { brandedEmail, emailButton, headerSafe, escapeHtml } from '../providers/email/branding.js';
+import { brandedEmail, companyEmail, emailButton, headerSafe, escapeHtml } from '../providers/email/branding.js';
 import { firstName } from '../engines/openingModel.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { config } from '../config.js';
@@ -33,20 +33,17 @@ import { assertRoleOpen } from '../services/roleOpen.js';
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
 
-/** The invitation a candidate receives. Kept in one place so the plain-text and
- *  HTML bodies cannot drift apart: a candidate whose mail client strips HTML (or
- *  disables links, as Gmail does in spam) must still get the same facts and a
- *  link they can copy. It reads as a message from the hiring company, not from
- *  a tool: who is inviting them, what to expect, how long it takes, and that a
- *  person is available instead. The interviewer's name is the one that greets
- *  them in the room, and naming it as an AI interviewer here is the advance
- *  notice some jurisdictions require before an AI-assessed interview. */
+/** The invitation a candidate receives. It reads as a note from the company's
+ *  hiring team: what the next step is, how long it takes, and the link. How the
+ *  interview works, including that the interviewer is an AI, is explained on the
+ *  page the link opens, before the interview starts and before consent is asked.
+ *  Plain-text and HTML bodies are built from the same facts, and the link is
+ *  also written out, because some mail clients (Gmail in spam) disable links. */
 interface InviteDetails {
   readonly candidateName: string;
   readonly roleTitle: string;
   readonly companyName: string;
   readonly portalUrl: string;
-  readonly personaName: string | null;
   readonly durationMinutes: number;
   readonly expiresAt: Date | null;
 }
@@ -55,45 +52,43 @@ const INVITE_DATE = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'nu
 
 function buildInvite(d: InviteDetails) {
   const first = firstName(d.candidateName) || 'there';
-  const interviewer = d.personaName ? `${d.personaName}, an AI interviewer` : 'an AI interviewer';
-  const expires = d.expiresAt ? `The link works until ${INVITE_DATE.format(d.expiresAt)}.` : '';
-  const points = [
-    `About ${d.durationMinutes} minutes, with ${interviewer}. A person on our hiring team reviews every interview.`,
-    'Speak or type your answers, whichever you prefer. Answers are turned into text as you go; no audio recording is kept.',
-    'A quiet place and a laptop or phone is all you need. A microphone helps, but you can type instead.',
+  const intro = `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you can do online, whenever it suits you. It takes about ${d.durationMinutes} minutes.`;
+  const tips = [
+    'Find a quiet spot. A laptop or a phone both work.',
+    'Speak or type your answers, whichever you prefer.',
+    'If you need any adjustments, you can ask for them when you open the link.',
   ];
+  const until = d.expiresAt ? `The link is open until ${INVITE_DATE.format(d.expiresAt)}. You can start straight away or pick a time from the same link.` : 'You can start straight away or pick a time from the same link.';
   const text = [
     `Hi ${first},`,
     '',
-    `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. The next step is a first-round interview you can take online, at a time that suits you.`,
+    intro,
     '',
-    'What to expect:',
-    ...points.map((point) => `- ${point}`),
+    `Start your interview: ${d.portalUrl}`,
     '',
-    `Start or schedule your interview here: ${d.portalUrl}`,
-    expires,
+    'A few things that help:',
+    ...tips.map((tip) => `- ${tip}`),
     '',
-    'Before you begin you will see how your information is used. If you would rather have an interview with a person, or need any adjustment, you can ask for that on the same page.',
+    until,
     '',
     'Best regards,',
     `The ${d.companyName} hiring team`,
-  ].filter((line, i, all) => line !== '' || all[i - 1] !== '').join('\n');
+  ].join('\n');
   const html = [
-    `<p>Hi ${escapeHtml(first)},</p>`,
-    `<p>Thank you for applying for the <b>${escapeHtml(d.roleTitle)}</b> role at ${escapeHtml(d.companyName)}. The next step is a first-round interview you can take online, at a time that suits you.</p>`,
-    '<p style="margin:0 0 6px"><b>What to expect</b></p>',
-    `<ul style="margin:0 0 16px;padding-left:20px">${points.map((point) => `<li style="margin:0 0 6px">${escapeHtml(point)}</li>`).join('')}</ul>`,
-    emailButton(d.portalUrl, 'Start or schedule your interview'),
-    expires ? `<p style="margin:0 0 14px;color:#5a5a6e;font-size:13px">${escapeHtml(expires)}</p>` : '',
-    '<p>Before you begin you will see how your information is used. If you would rather have an interview with a person, or need any adjustment, you can ask for that on the same page.</p>',
-    `<p>Best regards,<br>The ${escapeHtml(d.companyName)} hiring team</p>`,
-  ].join('');
-  return brandedEmail({
+    `<p style="margin:0 0 14px">Hi ${escapeHtml(first)},</p>`,
+    `<p style="margin:0 0 18px">${escapeHtml(intro)}</p>`,
+    emailButton(d.portalUrl, 'Start your interview'),
+    '<p style="margin:4px 0 6px;font-weight:600">A few things that help</p>',
+    `<ul style="margin:0 0 16px;padding-left:20px">${tips.map((tip) => `<li style="margin:0 0 6px">${escapeHtml(tip)}</li>`).join('')}</ul>`,
+    `<p style="margin:0 0 18px;color:#5a5a6e;font-size:14px">${escapeHtml(until)}</p>`,
+    `<p style="margin:0">Best regards,<br>The ${escapeHtml(d.companyName)} hiring team</p>`,
+  ].join('\n');
+  return companyEmail({
     to: '',
-    subject: `Your first-round interview for ${headerSafe(d.roleTitle)} at ${headerSafe(d.companyName)}`,
+    subject: `Your interview for ${headerSafe(d.roleTitle)} at ${headerSafe(d.companyName)}`,
     text,
     html,
-  });
+  }, d.companyName);
 }
 
 const createSchema = z.object({
@@ -538,7 +533,7 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
 
   try {
     const tenant = await prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } });
-    await email.send({ ...buildInvite({ candidateName: candidate!.fullName, roleTitle: role!.title, companyName: tenant?.name ?? 'our', portalUrl, personaName: personaNameOf(session.personaJson, session.id), durationMinutes: session.durationMinutes, expiresAt: invitation.expiresAt }), to: candidate!.email });
+    await email.send({ ...buildInvite({ candidateName: candidate!.fullName, roleTitle: role!.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt: invitation.expiresAt }), to: candidate!.email });
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation resend failed');
     throw new HttpError(502, 'The email could not be sent. Copy the link and send it yourself, or try again.');
@@ -761,7 +756,7 @@ async function inviteSession(req: Request, session: InvitableSession) {
   const portalUrl = `${config.webOrigin}/portal/${token}`;
   const email = getEmail();
   const tenant = await prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } });
-  const invite = buildInvite({ candidateName: candidate.fullName, roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, personaName: personaNameOf(session.personaJson, session.id), durationMinutes: session.durationMinutes, expiresAt });
+  const invite = buildInvite({ candidateName: candidate.fullName, roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt });
 
   // Delivery is reported honestly, and a failure never loses the invitation.
   // The link is the valuable artefact — a recruiter who can see it can send it
