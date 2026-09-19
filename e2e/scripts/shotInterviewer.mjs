@@ -45,6 +45,20 @@ const created = await (await hr.request.post('/api/interviews', { headers, data:
 const invite = await (await hr.request.post(`/api/interviews/${created.session.id}/invite`, { headers, data: {} })).json();
 const portalUrl = invite.invitation.portalUrl;
 
+// The consent screen, before anything is agreed: what to expect, then consent.
+for (const [name, width] of sizes) {
+  for (const theme of themes) {
+    const cctx = await browser.newContext({ viewport: { width, height: 900 }, storageState: { cookies: [], origins: [] } });
+    await cctx.addInitScript((t) => { localStorage.setItem('questor-theme', t); }, theme);
+    const cpage = await cctx.newPage();
+    await cpage.goto(portalUrl, { waitUntil: 'networkidle' });
+    await cpage.screenshot({ path: resolve(out, `consent-review-${name}-${theme}.png`), fullPage: true });
+    await cpage.getByRole('button', { name: 'Continue' }).click();
+    await cpage.screenshot({ path: resolve(out, `consent-step-${name}-${theme}.png`), fullPage: true });
+    await cctx.close();
+  }
+}
+
 // One candidate visit (consent is recorded once), then every size and theme.
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, storageState: { cookies: [], origins: [] } });
 await ctx.addInitScript(() => {

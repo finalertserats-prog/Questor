@@ -17,9 +17,9 @@ import { EXCLUSIONARY_TERMS } from './roleIntelligence.js';
  * on Tone: the content is the role's, the same for everyone.
  */
 
-/** The first question, asked as part of the opening. */
+/** The first question, asked as part of the opening; lower-case because it always follows a lead-in. */
 export const WARMUP_QUESTION =
-  'Could you briefly tell me about your current role and the project you\'ve worked on that\'s most relevant to this position?';
+  'could you briefly tell me about your current role and the project you\'ve worked on that\'s most relevant to this position?';
 
 const MAX_FOCUS_AREAS = 3;
 

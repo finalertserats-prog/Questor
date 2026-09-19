@@ -30,10 +30,12 @@ test('portal consent without voice capture starts typed mode and never asks for 
   await instrumentCandidateBrowser(context, portalPage);
   await portalPage.goto(portalUrl);
   await expect(portalPage.getByText(`Hello ${name}.`, { exact: false })).toBeVisible();
+  // The AI disclosure is on this screen, before the interview, naming the interviewer.
+  await expect(portalPage.getByTestId('interviewer-notice')).toHaveText('Your interviewer today is Maya, an AI interviewer from Questor. A person on the hiring team reviews the interview.');
   await portalPage.getByRole('button', { name: 'Continue' }).click();
 
   // Leave the voice-capture consent unticked, and accept only the AI/human-review consent.
-  await portalPage.getByLabel(/I understand this first round/).check();
+  await portalPage.getByLabel(/I understand this first round is conducted by Maya, an AI interviewer/).check();
   await expect(portalPage.getByLabel(/I consent to my voice being captured/)).not.toBeChecked();
   await portalPage.getByRole('button', { name: /I consent/ }).click();
   await expect(portalPage.getByRole('heading', { name: 'Quick audio check' })).toBeVisible();
@@ -42,10 +44,11 @@ test('portal consent without voice capture starts typed mode and never asks for 
 
   await expect(portalPage.getByPlaceholder(/Type your answer/)).toBeVisible({ timeout: 20_000 });
   await expect(portalPage.getByText('Typing', { exact: true })).toBeVisible();
-  // The room names the chosen interviewer and always says it is an AI.
+  // The room shows just the chosen interviewer's name, as on a real call.
   const roomInterviewer = portalPage.getByTestId('room-interviewer');
-  await expect(roomInterviewer).toContainText('Maya');
-  await expect(roomInterviewer).toContainText('AI Interviewer');
+  await expect(roomInterviewer).toHaveText(/^M\s*Maya$/);
+  // The interview opens with a greeting, not a read-out disclosure.
+  await expect(portalPage.getByText(/I'm Maya — thanks for making the time today\./).first()).toBeVisible();
   // No listening controls: those only render while the room is capturing voice.
   await expect(portalPage.getByRole('button', { name: 'Done answering' })).toHaveCount(0);
   await expect(portalPage.getByRole('button', { name: 'Voice' })).toHaveCount(0);

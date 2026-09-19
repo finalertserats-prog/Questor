@@ -506,7 +506,7 @@ async function composeUtterance(opts: UtteranceOptions): Promise<AgentUtterance>
   // here too; this is reached only by a session whose opening predates that.
   if (blockId === '__warmup__') {
     return {
-      text: `Great. To start, ${WARMUP_QUESTION.charAt(0).toLowerCase()}${WARMUP_QUESTION.slice(1)}`,
+      text: `Great. To start, ${WARMUP_QUESTION}`,
       competencyId: blockId,
       kind: 'question',
     };

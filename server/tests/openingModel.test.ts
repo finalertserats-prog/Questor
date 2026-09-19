@@ -93,7 +93,7 @@ describe('buildOpeningGreeting', () => {
   });
 
   it('ends by starting the interview with the warm-up question', () => {
-    expect(opening.endsWith(`Let's start — ${WARMUP_QUESTION}`)).toBe(true);
+    expect(opening.endsWith("Let's start — could you briefly tell me about your current role and the project you've worked on that's most relevant to this position?")).toBe(true);
   });
 
   it('does not read out the AI disclosure, which the consent screen carries', () => {

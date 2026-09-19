@@ -51,7 +51,7 @@ describe('the spoken opening', () => {
   it('says what the role is mainly looking for and starts with the warm-up question', async () => {
     await setSession({ interviewerId: 'maya', name: 'Maya', tone: 'warm' }, `${consentIntro('Maya')} ${DISCLOSURE}`);
     const line = await openingLine();
-    expect([line.includes("role, we're mainly looking for strength in"), line.endsWith(`Let's start — ${WARMUP_QUESTION}`)]).toEqual([true, true]);
+    expect([line.includes("role, we're mainly looking for strength in"), line.endsWith(`Let's start — ${WARMUP_QUESTION.charAt(0).toLowerCase()}${WARMUP_QUESTION.slice(1)}`)]).toEqual([true, true]);
   });
 
   it('does not read out the AI disclosure, which the consent screen carried', async () => {
