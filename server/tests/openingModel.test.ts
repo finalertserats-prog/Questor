@@ -5,6 +5,7 @@ import {
   firstName,
   focusAreas,
   openingQuestion,
+  spokenRoleTitle,
 } from '../src/engines/openingModel.js';
 import type { Competency, RoleSuccessProfile } from '../src/domain/types.js';
 
@@ -51,6 +52,34 @@ describe('firstName', () => {
 
   it('is empty for a missing name', () => {
     expect(firstName('   ')).toBe('');
+  });
+
+  it.each([
+    ['Dr. Priya Sharma', 'Priya'],
+    ['Mr Arjun Rao', 'Arjun'],
+    ['Ms. Elena Petrova', 'Elena'],
+    ['Mrs Anita Desai', 'Anita'],
+    ['Prof. Kwame Mensah', 'Kwame'],
+    ['SHARMA, Priya', 'Priya'],
+    ['Sharma, Priya K.', 'Priya'],
+  ])('greets "%s" as %s', (full, expected) => {
+    expect(firstName(full)).toBe(expected);
+  });
+});
+
+describe('spokenRoleTitle', () => {
+  it.each([
+    ['Senior Data Engineer', 'Senior Data Engineer'],
+    ['Senior Data Engineer role', 'Senior Data Engineer'],
+    ['Data Analyst Position', 'Data Analyst'],
+    ['Backend Engineer (Payments)', 'Backend Engineer'],
+    ['Site Reliability Engineer - Bengaluru', 'Site Reliability Engineer'],
+  ])('says "%s" as "%s"', (title, expected) => {
+    expect(spokenRoleTitle(title)).toBe(expected);
+  });
+
+  it('keeps the raw title when cleaning would leave nothing', () => {
+    expect(spokenRoleTitle('(Contract)')).toBe('(Contract)');
   });
 });
 
@@ -120,6 +149,10 @@ describe('buildOpeningGreeting', () => {
 
   it('names two focus areas with "and"', () => {
     expect(buildOpeningGreeting({ ...base, focus: ['Python', 'SQL'] })).toContain('strength in Python and SQL.');
+  });
+
+  it('never says "role role" when the title already ends in "role"', () => {
+    expect(buildOpeningGreeting({ ...base, roleTitle: 'Senior Data Engineer role' })).toContain('For this Senior Data Engineer role,');
   });
 
   it('says "this role" when the title is missing', () => {

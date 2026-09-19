@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'node:crypto';
 import { config } from '../src/config.js';
 import {
   INTERVIEWER_DELIVERY,
@@ -119,6 +120,16 @@ describe('cache keys per voice', () => {
     await synthesizeServerSpeech(TEXT, openai('marin'));
     await synthesizeServerSpeech(TEXT, openai('cedar'));
     expect(calls.map((c) => c.body.voice)).toEqual(['marin', 'cedar']);
+  });
+
+  it('keys the ETag with a server secret, so a client cannot work out which voice produced it', () => {
+    const fields = ['openai', 'gpt-4o-mini-tts', 'marin', TEXT].join(String.fromCharCode(0));
+    const plain = createHash('sha256').update(fields).digest('hex').slice(0, 32);
+    expect(speechEtag(TEXT, openai('marin'))).not.toBe(`"${plain}"`);
+  });
+
+  it('keeps the ETag stable for the same voice and text', () => {
+    expect(speechEtag(TEXT, openai('marin'))).toBe(speechEtag(TEXT, openai('marin')));
   });
 
   it('serves a repeat for the same voice from cache', async () => {

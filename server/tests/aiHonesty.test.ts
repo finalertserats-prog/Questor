@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Competency, DirectorSignal, RoleSuccessProfile, TurnRecord } from '../src/domain/types.js';
-import { detectAiIdentityQuestion } from '../src/engines/policyEngine.js';
+import { detectAiIdentityQuestion, detectRepeatRequest } from '../src/engines/policyEngine.js';
 import { AI_IDENTITY_ANSWER, nextUtterance } from '../src/engines/conversationRuntime.js';
 import { buildInterviewPlan } from '../src/engines/interviewPlanner.js';
 import { directorDecide } from '../src/engines/interviewDirector.js';
@@ -42,6 +42,13 @@ describe('detectAiIdentityQuestion', () => {
     'Sorry — is this an actual person or a machine?',
     'Am I speaking with a recording or a real interviewer?',
     'Are you a robot?',
+    'Are you real?',
+    "You're not a real person, are you?",
+    'Is this automated?',
+    'Is there a human on the other end?',
+    'Are you ChatGPT?',
+    'Who am I talking to?',
+    "Hang on, you're a bot, right?",
   ])('recognises "%s"', (text) => {
     expect(detectAiIdentityQuestion(text)).toBe(true);
   });
@@ -51,6 +58,10 @@ describe('detectAiIdentityQuestion', () => {
     'We used the Bot Framework for the support channel.',
     'A real person on my team reviewed every change.',
     'Are you able to repeat the question?',
+    'Is it a human-centred design role?',
+    'Is that the person who approves the budget?',
+    'I automated the billing reconciliation last year.',
+    'Our chatbot is a real product used by millions.',
   ])('ignores "%s"', (text) => {
     expect(detectAiIdentityQuestion(text)).toBe(false);
   });
@@ -87,7 +98,46 @@ describe('the interviewer answers truthfully', () => {
   });
 });
 
+describe('detectRepeatRequest', () => {
+  it.each(['Sorry, could you repeat that?', 'Can you say that again?', 'Pardon?', 'What was the question?', 'Come again?'])('recognises "%s"', (text) => {
+    expect(detectRepeatRequest(text)).toBe(true);
+  });
+
+  it('ignores an answer that mentions repeating something', () => {
+    expect(detectRepeatRequest('We had to repeat the backfill twice before the numbers matched.')).toBe(false);
+  });
+});
+
 describe('the combined opening', () => {
+  function afterOpening(reply: string): TurnRecord[] {
+    return [
+      { id: 'a', index: 0, speaker: 'agent', text: 'Hi Priya, I\'m Maya — …', startMs: 0, endMs: 1, confidence: 1, competencyId: '__process__' },
+      { id: 'b', index: 1, speaker: 'candidate', text: reply, startMs: 1, endMs: 2, confidence: 1, competencyId: '__process__' },
+    ];
+  }
+
+  it('does not count a request to repeat as the warm-up answer', () => {
+    expect(directorDecide({ plan: PLAN, turns: afterOpening('Sorry, could you repeat that?'), elapsedMinutes: 1 }).nextCompetencyId).toBe('__process__');
+  });
+
+  it('does not count "are you an AI?" as the warm-up answer', () => {
+    expect(directorDecide({ plan: PLAN, turns: afterOpening('Wait — are you an AI?'), elapsedMinutes: 1 }).nextCompetencyId).toBe('__process__');
+  });
+
+  it('puts the opening question again without greeting a second time', async () => {
+    const turns = afterOpening('Sorry, could you repeat that?');
+    const signal = directorDecide({ plan: PLAN, turns, elapsedMinutes: 1 });
+    const u = await nextUtterance({ plan: PLAN, signal, turns, role: ROLE, persona: { name: 'Maya', tone: 'warm' } });
+    expect(u.text).toBe("Could you briefly tell me about your current role and the project you've worked on that's most relevant to this position?");
+  });
+
+  it('answers the identity question, then puts the opening question again', async () => {
+    const turns = afterOpening('Wait — are you an AI?');
+    const signal = directorDecide({ plan: PLAN, turns, elapsedMinutes: 1 });
+    const u = await nextUtterance({ plan: PLAN, signal, turns, role: ROLE, persona: { name: 'Maya', tone: 'warm' } });
+    expect(u.text).toBe(`${AI_IDENTITY_ANSWER} Could you briefly tell me about your current role and the project you've worked on that's most relevant to this position?`);
+  });
+
   it('counts the answer to the opening as the warm-up answer, so the warm-up is not asked twice', () => {
     const answered: TurnRecord[] = [
       { id: 'a', index: 0, speaker: 'agent', text: 'Hi Priya, I\'m Maya — …', startMs: 0, endMs: 1, confidence: 1, competencyId: '__process__' },

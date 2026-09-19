@@ -6,6 +6,7 @@ import {
   listActiveInterviewers,
   assignInterviewer,
   voiceForInterviewer,
+  sharedVoices,
 } from '../src/services/interviewers.js';
 import { HttpError } from '../src/middleware/index.js';
 
@@ -65,11 +66,26 @@ describe('applyVoiceProfileOverrides', () => {
     expect([voice.provider, voice.providerVoiceId]).toEqual(['elevenlabs', 'envVoice123']);
   });
 
-  it('leaves profiles without an override alone', async () => {
+  it('records the configured provider default for profiles without an override', async () => {
     await seedInterviewers('openai');
-    await applyVoiceProfileOverrides({ VOICE_PROFILE_02: 'elevenlabs:envVoice123' });
+    await applyVoiceProfileOverrides({ VOICE_PROFILE_02: 'elevenlabs:envVoice123' }, 'openai');
     const voice = await prisma.voiceProfile.findUniqueOrThrow({ where: { id: 'voice_03' } });
     expect([voice.provider, voice.providerVoiceId]).toEqual(['openai', 'cedar']);
+  });
+
+  it('reverts a profile to the configured default once its override is unset', async () => {
+    await seedInterviewers('openai');
+    await applyVoiceProfileOverrides({ VOICE_PROFILE_02: 'elevenlabs:envVoice123' }, 'openai');
+    await applyVoiceProfileOverrides({}, 'openai');
+    const voice = await prisma.voiceProfile.findUniqueOrThrow({ where: { id: 'voice_02' } });
+    expect([voice.provider, voice.providerVoiceId]).toEqual(['openai', 'marin']);
+  });
+
+  it('follows a later switch of the configured provider, not the seed', async () => {
+    await seedInterviewers('webspeech');
+    await applyVoiceProfileOverrides({}, 'openai');
+    const voice = await prisma.voiceProfile.findUniqueOrThrow({ where: { id: 'voice_04' } });
+    expect([voice.provider, voice.providerVoiceId]).toEqual(['openai', 'coral']);
   });
 
   it('ignores a malformed value and names the variable', async () => {
@@ -132,7 +148,33 @@ describe('assignInterviewer', () => {
 describe('voiceForInterviewer', () => {
   it('resolves the interviewer to its voice profile', async () => {
     await seedInterviewers('openai');
-    expect(await voiceForInterviewer('adrian')).toEqual({ provider: 'openai', voiceId: 'cedar' });
+    expect(await voiceForInterviewer('adrian', { provider: 'openai', env: {} })).toEqual({ provider: 'openai', voiceId: 'cedar' });
+  });
+
+  it('gives each interviewer its own voice after a first boot on browser speech and a later switch to OpenAI', async () => {
+    await seedInterviewers('webspeech');
+    const voices = await Promise.all(['avery', 'maya', 'adrian', 'elena', 'theo'].map((id) => voiceForInterviewer(id, { provider: 'openai', env: {} })));
+    expect(new Set(voices.map((v) => v?.voiceId)).size).toBe(5);
+  });
+
+  it('follows a switch to ElevenLabs instead of keeping the seeded OpenAI voice', async () => {
+    await seedInterviewers('openai');
+    expect(await voiceForInterviewer('adrian', { provider: 'elevenlabs', env: {} })).toEqual({ provider: 'elevenlabs', voiceId: '' });
+  });
+
+  it('honours an explicit override for another provider', async () => {
+    await seedInterviewers('openai');
+    expect(await voiceForInterviewer('adrian', { provider: 'openai', env: { VOICE_PROFILE_03: 'elevenlabs:adrianVoice1' } })).toEqual({ provider: 'elevenlabs', voiceId: 'adrianVoice1' });
+  });
+
+  it('warns about active interviewers that would share one voice', async () => {
+    await seedInterviewers('elevenlabs');
+    expect((await sharedVoices({ provider: 'elevenlabs', env: {} })).length).toBeGreaterThan(0);
+  });
+
+  it('finds no shared voices with the OpenAI defaults', async () => {
+    await seedInterviewers('openai');
+    expect(await sharedVoices({ provider: 'openai', env: {} })).toEqual([]);
   });
 
   it('returns null for a disabled voice profile', async () => {

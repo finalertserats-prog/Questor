@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 
@@ -515,6 +515,11 @@ const KEY_FIELD_SEPARATOR = String.fromCharCode(0);
  * Cache key must cover everything that changes the audio, or a voice/model swap
  * — or a different interviewer — would keep serving the previous rendering
  * under the same ETag.
+ *
+ * Keyed with a server secret (HMAC), not a plain hash: the key is sent to the
+ * browser as the ETag, and a plain SHA-256 of provider, model, voice and text
+ * could be recomputed for each candidate voice to learn which provider voice
+ * an interviewer uses — backend configuration that is never to be exposed.
  */
 function speechKey(text: string, voice?: VoiceSelection | null): string {
   const configured = config.tts.provider;
@@ -524,7 +529,7 @@ function speechKey(text: string, voice?: VoiceSelection | null): string {
       // Providers with no connector never reach synthesis, so their key only
       // has to stay distinct from the two that do.
       : { provider: configured, model: '', voice: '' });
-  return createHash('sha256').update([target.provider, target.model, target.voice, text].join(KEY_FIELD_SEPARATOR)).digest('hex').slice(0, 32);
+  return createHmac('sha256', config.authSecret).update([target.provider, target.model, target.voice, text].join(KEY_FIELD_SEPARATOR)).digest('hex').slice(0, 32);
 }
 
 // Every synthesis is billed, and an interview replays the same handful of

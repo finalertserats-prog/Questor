@@ -112,24 +112,6 @@ export function detectDistress(text: string): boolean {
  * construction, so that describing a past decision — "we decided to stop the
  * rollout", "I want to quit that habit" — does not end the interview.
  */
-/**
- * The candidate is asking whether they are talking to an AI, a bot or a real
- * person. The opening does not announce the AI any more (the consent screen
- * does, before the interview), so this question must always get a truthful
- * answer. Anchored on a question addressed to the interviewer ("are you",
- * "am I talking to", "is this"), so describing an AI project or a real person
- * on the candidate's team does not trip it.
- */
-export function detectAiIdentityQuestion(text: string): boolean {
-  const t = text.toLowerCase();
-  const subject = /\b(an?\s+)?(ai|a\.i\.|bot|chat ?bot|robot|machine|computer|recording|real person|actual person|real human|human|person|real interviewer)\b/;
-  const addressed = /\b(?:are you|r u|am i (?:talking|speaking|chatting) (?:to|with)|is this|is that|is it)\b([^.?!]{0,40})/g;
-  for (const m of t.matchAll(addressed)) {
-    if (subject.test(m[1] ?? '')) return true;
-  }
-  return false;
-}
-
 export function detectWithdrawal(text: string): boolean {
   const t = text.trim().toLowerCase();
   return (
@@ -140,5 +122,54 @@ export function detectWithdrawal(text: string): boolean {
     /\bi\s+don'?t\s+want\s+to\s+(do|continue|carry on)\b/.test(t) ||
     /^(no,?\s+)?(i'?m\s+)?done\b/.test(t) ||
     /\b(can we|let'?s)\s+(stop|end|finish)\b/.test(t)
+  );
+}
+
+// What "an AI or a person?" is asked about. Deliberately no bare "human" or
+// "person": "a human-centred role" and "the person who approves" are job talk.
+const MACHINE = String.raw`(?:an?\s+)?(?:ai|a\.i\.|bot|chat ?bot|robot|machine|computer|recording|pre-?recorded|automated|chatgpt|gpt|program)`;
+const HUMAN = String.raw`(?:a\s+|an\s+)?(?:real|human|live|actual)(?:\s+(?:person|human|interviewer|being|someone))?|(?:a\s+)?human being|(?:a\s+)?person`;
+
+const AI_IDENTITY_QUESTIONS: readonly RegExp[] = [
+  // "Are you an AI / real / human / ChatGPT?" — the subject straight after.
+  new RegExp(String.raw`\b(?:are|r)\s+(?:you|u)\s+(?:${MACHINE}|${HUMAN})\b`),
+  // "Am I talking to a bot / a real person / a recording?"
+  new RegExp(String.raw`\bam i\s+(?:talking|speaking|chatting)\s+(?:to|with)\s+(?:${MACHINE}|${HUMAN})\b`),
+  // "Who am I talking to?"
+  /\bwho am i\s+(?:talking|speaking|chatting)\s+(?:to|with)\b/,
+  // "Is this automated / an AI / a real person?" — only "this"/"that"/"it"
+  // directly followed by the subject, so "is it a human-centred role" is not.
+  new RegExp(String.raw`\bis\s+(?:this|that|it)\s+(?:${MACHINE}|(?:a\s+|an\s+)?(?:real|actual)\s+(?:person|human|interviewer)|(?:a\s+)?human being)\b`),
+  // "Is there a human / someone real on the other end?"
+  /\bis there\s+(?:a\s+|an\s+)?(?:real\s+)?(?:human|person|someone|anyone|somebody)\b[^.?!]{0,30}\b(?:other end|there|listening|on the line)\b/,
+  // Tag questions: "you're not a real person, are you?" / "you're a bot, right?"
+  new RegExp(String.raw`\byou(?:'| a)?re\s+(?:not\s+)?(?:${MACHINE}|${HUMAN})\b[^.?!]{0,20}(?:are you|aren'?t you|right|isn'?t it)\s*\?`),
+];
+
+/**
+ * The candidate is asking whether they are talking to an AI, a bot or a real
+ * person. The opening does not announce the AI any more (the consent screen
+ * does, before the interview), so this question must always get a truthful
+ * answer. Each pattern needs the question to be addressed to the interviewer
+ * with the subject right after it, so describing an AI project, an automated
+ * job or a person on the candidate's team does not trip it.
+ */
+export function detectAiIdentityQuestion(text: string): boolean {
+  const t = text.toLowerCase().replace(/[’]/g, "'");
+  return AI_IDENTITY_QUESTIONS.some((re) => re.test(t));
+}
+
+/**
+ * The candidate asked for the question again rather than answering it. Such a
+ * turn must not count as the answer (see interviewDirector coverageState).
+ */
+export function detectRepeatRequest(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[’]/g, "'");
+  return (
+    /\b(?:can|could|would) you\s+(?:please\s+)?(?:repeat|say (?:that|it) again|rephrase)\b/.test(t) ||
+    /\b(?:repeat|say)\s+(?:that|the question|it)\s+again\b/.test(t) ||
+    /\bwhat was the question\b/.test(t) ||
+    /^(?:sorry|pardon|come again|what)\s*[?!.]*$/.test(t) ||
+    /^(?:sorry,?\s+)?(?:pardon|come again)\b/.test(t)
   );
 }

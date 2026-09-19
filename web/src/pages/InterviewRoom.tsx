@@ -91,12 +91,14 @@ function SpeakingRings({ active, level }: { active: boolean; level: number }) {
  * 'mic'          — the mic is open for the level meter only (typed answers), so
  *                  nothing is being transcribed and it must not claim otherwise.
  */
-function CaptureIndicator({ mode, stt }: { mode: 'transcribing' | 'mic'; stt: SttCapability }) {
-  const detail = mode === 'transcribing'
+function CaptureIndicator({ mode, stt, aiFact }: { mode: 'transcribing' | 'mic'; stt: SttCapability; aiFact: string }) {
+  // The AI fact rides with what is captured, so it stays reachable during the
+  // interview even though the name on screen carries no label.
+  const detail = (mode === 'transcribing'
     ? `Your voice is captured while you answer and transcribed to text. ${transcriptionProcessorSentence(stt)} `
       + 'No audio file is stored — the written transcript is what is kept and reviewed.'
     : 'Your microphone is open so the level meter can show you it is working. You are answering by '
-      + 'typing, so no audio is being transcribed and none is stored.';
+      + 'typing, so no audio is being transcribed and none is stored.') + ` ${aiFact}`;
   return (
     <span className="rec-pill" title={detail}>
       <i />{mode === 'transcribing' ? 'LIVE TRANSCRIPTION' : 'MIC OPEN'}
@@ -736,7 +738,7 @@ export function InterviewRoom() {
             <span className="room-interviewer-name">{header.name}</span>
           </div>
           {live && micOpen && (
-            <CaptureIndicator mode={textMode ? 'mic' : 'transcribing'} stt={info.speech.stt} />
+            <CaptureIndicator mode={textMode ? 'mic' : 'transcribing'} stt={info.speech.stt} aiFact={roomAiFact(info.persona?.name)} />
           )}
           <span className="room-timer"><Elapsed since={startTimeRef.current} /></span>
         </div>

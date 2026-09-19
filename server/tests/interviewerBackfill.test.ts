@@ -61,6 +61,14 @@ describe('backfillLegacyInterviewers', () => {
     expect((await stored()).consent.disclosureText).toBe(LEGACY_DISCLOSURE);
   });
 
+  it('keeps the recorded name for a candidate who already consented, whatever the state', async () => {
+    // Consent does not always move the state on; the consent record is what
+    // says the candidate agreed to be interviewed by this name.
+    await makeLegacy('ACCEPTED', true);
+    await backfillLegacyInterviewers(() => 1);
+    expect((await stored()).persona).toEqual({ name: RETIRED, tone: 'formal' });
+  });
+
   it('keeps the recorded name on a finished interview', async () => {
     await makeLegacy('REVIEW_READY', true);
     await backfillLegacyInterviewers(() => 1);

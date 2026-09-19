@@ -162,6 +162,63 @@ export function composeDisclosure(name: string | null | undefined, disclosureTex
 }
 
 /**
+ * True when a disclosure starts by naming the AI interviewer (consentIntro).
+ * Consent is refused without it: a candidate must never agree to an interview
+ * on a page that did not tell them it is run by an AI.
+ */
+export function hasConsentIntro(disclosureText: string): boolean {
+  return LEADING_CONSENT_INTRO.test(disclosureText);
+}
+
+/**
+ * A different interviewer named later in a disclosure — typically tenant
+ * wording written for a persona that no longer exists ("I'm Alex, …"). The
+ * introduction replaces a LEADING self-introduction, so one mid-text survives
+ * and would contradict the name the candidate is given. Returned so it can be
+ * logged for the tenant to fix; null when there is none.
+ */
+export function otherInterviewerNamed(disclosureText: string, name: string): string | null {
+  const body = disclosureText.replace(LEADING_CONSENT_INTRO, '');
+  for (const m of body.matchAll(/\bI['’]m ([A-Z][a-z]{1,30})\b/g)) {
+    if (m[1] !== name.trim()) return m[1];
+  }
+  return null;
+}
+
+export interface ResolvedVoice {
+  readonly provider: string;
+  readonly voiceId: string;
+}
+
+/**
+ * The voice a profile speaks with, decided at run time rather than frozen at
+ * seed time: an explicit VOICE_PROFILE_0N wins (even for another provider);
+ * otherwise the CONFIGURED provider with its default voice for this profile.
+ * A first boot on browser speech followed by a switch to OpenAI therefore
+ * gives each interviewer its own OpenAI voice, and unsetting an override
+ * reverts to the default.
+ */
+export function resolveProfileVoice(
+  profileId: string,
+  env: Readonly<Record<string, string | undefined>>,
+  configuredProvider: string,
+): ResolvedVoice {
+  const override = voiceOverridesFromEnv(env).overrides.find((o) => o.profileId === profileId);
+  if (override) return { provider: override.provider, voiceId: override.voiceId };
+  return { provider: configuredProvider, voiceId: defaultVoiceFor(profileId, configuredProvider) };
+}
+
+/** Groups of profiles that resolve to one provider voice — interviewers who would sound identical. */
+export function duplicateVoices(resolved: ReadonlyArray<ResolvedVoice & { readonly profileId: string }>): string[][] {
+  const byVoice = new Map<string, string[]>();
+  for (const r of resolved) {
+    const key = `${r.provider}:${r.voiceId}`;
+    byVoice.set(key, [...(byVoice.get(key) ?? []), r.profileId]);
+  }
+  return [...byVoice.values()].filter((ids) => ids.length > 1);
+}
+
+/**
  * One entry, uniformly at random. `randomInt(max)` returns an integer in
  * [0, max) — crypto.randomInt in production, a fixed function in tests.
  */

@@ -1,4 +1,5 @@
 import type { DirectorSignal, InterviewPlan, PlanBlock, TurnRecord } from '../domain/types.js';
+import { detectAiIdentityQuestion, detectRepeatRequest } from './policyEngine.js';
 
 // Interview Director (BRD 14.2, 16.2). Authoritative controller of time,
 // coverage and depth. It does NOT speak — it emits signals the Conversation
@@ -37,11 +38,20 @@ export function answerQuality(text: string): { score: number; hasSituation: bool
   return { score: Math.min(100, score), hasSituation, hasAction, hasResult, specific };
 }
 
+/**
+ * "Pardon?" or "are you an AI?" in reply to the opening is not the warm-up
+ * answer. Counting it closed the warm-up with nothing said, so the candidate's
+ * first real answer landed on a competency question they had not been asked.
+ */
+function isNonAnswerToOpening(t: TurnRecord): boolean {
+  return t.competencyId === '__process__' && (detectRepeatRequest(t.text) || detectAiIdentityQuestion(t.text));
+}
+
 export function coverageState(plan: InterviewPlan, turns: TurnRecord[]): Record<string, number> {
   const state: Record<string, number> = {};
   for (const b of plan.blocks) state[b.competencyId] = 0;
   for (const t of turns) {
-    if (t.speaker === 'candidate' && t.competencyId) {
+    if (t.speaker === 'candidate' && t.competencyId && !isNonAnswerToOpening(t)) {
       state[t.competencyId] = (state[t.competencyId] ?? 0) + 1;
     }
   }

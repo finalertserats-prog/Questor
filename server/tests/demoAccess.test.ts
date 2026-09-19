@@ -108,7 +108,10 @@ describe('sandbox provisioning', () => {
   it('leaves the interview for the visitor to consent to, as a real candidate would', async () => {
     const p = await provisionDemoTenant({ ...VISITOR });
     const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: p.sessionId } });
-    expect({ state: session.state, consented: session.recordingConsent, consent: session.consentJson }).toEqual({ state: 'INVITED', consented: false, consent: '{}' });
+    // Not consented — but carrying the named AI disclosure the visitor is shown.
+    const consent = JSON.parse(session.consentJson) as { consentedAt?: string; disclosureText?: string };
+    expect({ state: session.state, consented: session.recordingConsent, consentedAt: consent.consentedAt, named: /^Your interviewer today is \w+, an AI interviewer/.test(consent.disclosureText ?? '') })
+      .toEqual({ state: 'INVITED', consented: false, consentedAt: undefined, named: true });
   });
 
   it('links the demo role to the catalog data engineering role when the catalog has one', async () => {

@@ -7,10 +7,13 @@ import type { VoiceSelection } from '../providers/speech.js';
 import {
   INTERVIEWER_CATALOGUE,
   VOICE_PROFILE_CATALOGUE,
+  DEFAULT_DISCLOSURE_BODY,
   composeDisclosure,
   defaultVoiceFor,
+  duplicateVoices,
   needsInterviewerBackfill,
   pickInterviewer,
+  resolveProfileVoice,
   voiceOverridesFromEnv,
 } from '../domain/interviewerModel.js';
 
@@ -55,24 +58,33 @@ export async function ensureInterviewers(): Promise<void> {
   if (await prisma.aIInterviewer.count() < INTERVIEWER_CATALOGUE.length) await seedInterviewers();
 }
 
+type Env = Readonly<Record<string, string | undefined>>;
+
+/** Where voices are resolved from; the process environment and config unless a caller says otherwise. */
+export interface VoiceContext {
+  readonly env?: Env;
+  readonly provider?: string;
+}
+
 /**
- * VOICE_PROFILE_01..05 (`provider:voiceId`) onto the voice profiles.
- *
- * Unlike seeding this DOES overwrite: an environment variable is an explicit
- * operator decision, and it is how a voice moves providers with no code change.
+ * Record on each voice profile the voice it will actually use: the
+ * VOICE_PROFILE_0N override when set, otherwise the configured provider's
+ * default. Rewritten on every boot, so unsetting an override or switching
+ * TTS_PROVIDER takes effect; the rows are a record for operators, and speech
+ * itself resolves at run time (voiceForInterviewer), never from what was
+ * seeded.
  */
-export async function applyVoiceProfileOverrides(env: Readonly<Record<string, string | undefined>> = process.env): Promise<{ applied: number; invalid: string[] }> {
+export async function applyVoiceProfileOverrides(env: Env = process.env, provider: string = config.tts.provider): Promise<{ applied: number; invalid: string[] }> {
   const { overrides, invalid } = voiceOverridesFromEnv(env);
   if (invalid.length) logger.warn({ variables: invalid }, 'Ignoring malformed voice profile override (expected provider:voiceId)');
-  let applied = 0;
-  for (const override of overrides) {
-    const { count } = await prisma.voiceProfile.updateMany({
-      where: { id: override.profileId },
-      data: { provider: override.provider, providerVoiceId: override.voiceId },
+  for (const profile of VOICE_PROFILE_CATALOGUE) {
+    const resolved = resolveProfileVoice(profile.id, env, provider);
+    await prisma.voiceProfile.updateMany({
+      where: { id: profile.id },
+      data: { provider: resolved.provider, providerVoiceId: resolved.voiceId },
     });
-    applied += count;
   }
-  return { applied, invalid };
+  return { applied: overrides.length, invalid };
 }
 
 export async function listActiveInterviewers(): Promise<PublicInterviewer[]> {
@@ -107,10 +119,21 @@ async function interviewerWithVoice(interviewerId: string | null | undefined) {
 }
 
 /** The provider voice for an interviewer, or null when it has none enabled (the default voice then speaks). */
-export async function voiceForInterviewer(interviewerId: string | null | undefined): Promise<VoiceSelection | null> {
+export async function voiceForInterviewer(interviewerId: string | null | undefined, ctx: VoiceContext = {}): Promise<VoiceSelection | null> {
   const row = await interviewerWithVoice(interviewerId);
   if (!row || !row.voiceProfile.enabled) return null;
-  return { provider: row.voiceProfile.provider, voiceId: row.voiceProfile.providerVoiceId };
+  // Resolved now, from the environment and the configured provider — not
+  // read back from the row, which would freeze whatever provider was
+  // configured the first time the catalogue was seeded.
+  return resolveProfileVoice(row.voiceProfileId, ctx.env ?? process.env, ctx.provider ?? config.tts.provider);
+}
+
+/** Groups of active interviewers' voice profiles that would sound identical. */
+export async function sharedVoices(ctx: VoiceContext = {}): Promise<string[][]> {
+  const active = await prisma.aIInterviewer.findMany({ where: { active: true, voiceProfile: { enabled: true } }, select: { voiceProfileId: true } });
+  const env = ctx.env ?? process.env;
+  const provider = ctx.provider ?? config.tts.provider;
+  return duplicateVoices(active.map((a) => ({ profileId: a.voiceProfileId, ...resolveProfileVoice(a.voiceProfileId, env, provider) })));
 }
 
 /** The browser-voice hint for an interviewer; '' when unknown. Safe to send to a browser. */
@@ -147,20 +170,26 @@ async function backfillSession(session: BackfillCandidate, randomInt: RandomInt)
   if (!NOT_STARTED_STATES.includes(session.state)) return false;
   const persona = parseJsonOptional<Record<string, unknown>>(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' });
   if (!needsInterviewerBackfill(persona)) return false;
+  const consent = parseJsonOptional<Record<string, unknown>>(session.consentJson, {}, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
+  // Consent does not always move the state on, so the consent record — not
+  // the state — decides: a candidate who agreed to be interviewed under a name
+  // keeps that name.
+  if (consent.consentedAt) return false;
   const assigned = await assignInterviewer('random', randomInt);
   // Tone is carried over exactly as stored; the interviewer never sets it.
   const nextPersona = { ...persona, interviewerId: assigned.interviewerId, name: assigned.name };
 
-  const consent = parseJsonOptional<Record<string, unknown>>(session.consentJson, {}, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
-  // A disclosure the candidate has not yet agreed to is re-introduced with the
-  // new name. One they HAVE agreed to is left as the record of what they
-  // agreed to; the spoken opening is composed from the name at speaking time.
-  const rewriteDisclosure = typeof consent.disclosureText === 'string' && consent.disclosureText.length > 0 && !consent.consentedAt;
-  const nextConsent = rewriteDisclosure ? { ...consent, disclosureText: composeDisclosure(assigned.name, consent.disclosureText as string) } : null;
+  // The disclosure the candidate will consent to is introduced with the new
+  // name; a session that never had one (an older demo sandbox) gets the
+  // standard one, since consent is refused without it.
+  const existing = typeof consent.disclosureText === 'string' ? consent.disclosureText : '';
+  const nextConsent = { ...consent, disclosureText: composeDisclosure(assigned.name, existing || DEFAULT_DISCLOSURE_BODY) };
 
+  // Conditional on the row being exactly as read, persona AND consent, so a
+  // consent recorded between the read and this write is never overwritten.
   const { count } = await prisma.interviewSession.updateMany({
-    where: { id: session.id, state: session.state, personaJson: session.personaJson },
-    data: { personaJson: JSON.stringify(nextPersona), ...(nextConsent ? { consentJson: JSON.stringify(nextConsent) } : {}) },
+    where: { id: session.id, state: session.state, personaJson: session.personaJson, consentJson: session.consentJson },
+    data: { personaJson: JSON.stringify(nextPersona), consentJson: JSON.stringify(nextConsent) },
   });
   return count === 1;
 }
@@ -174,7 +203,9 @@ export async function ensureSessionInterviewer(sessionId: string, randomInt: Ran
 /** Every not-yet-started session from before the catalogue. Returns how many changed. */
 export async function backfillLegacyInterviewers(randomInt: RandomInt = cryptoRandomInt): Promise<number> {
   const sessions = await prisma.interviewSession.findMany({
-    where: { state: { in: NOT_STARTED_STATES } },
+    // Rows that already name an interviewer are left out at the query, so a
+    // boot does not read every session ever created.
+    where: { state: { in: NOT_STARTED_STATES }, NOT: { personaJson: { contains: '"interviewerId"' } } },
     select: { id: true, state: true, personaJson: true, consentJson: true },
   });
   let changed = 0;
@@ -188,6 +219,14 @@ export async function backfillLegacyInterviewers(randomInt: RandomInt = cryptoRa
 export async function initInterviewers(): Promise<void> {
   await seedInterviewers();
   await applyVoiceProfileOverrides();
+  // Only meaningful with a server voice: in the browser each interviewer gets
+  // a different system voice from its hint instead.
+  if (config.tts.provider === 'openai' || config.tts.provider === 'elevenlabs') {
+    const shared = await sharedVoices();
+    if (shared.length) {
+      logger.warn({ profiles: shared }, 'AI interviewers share a voice; set VOICE_PROFILE_0N=provider:voiceId so each sounds different');
+    }
+  }
   const changed = await backfillLegacyInterviewers();
   if (changed) logger.info({ sessions: changed }, 'Assigned AI interviewers to sessions created before the interviewer catalogue');
 }

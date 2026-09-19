@@ -56,7 +56,10 @@ interviewersRouter.get('/:id/preview', requireCapability('interview:create'), pr
 
   const etag = speechEtag(text, voice);
   res.setHeader('ETag', etag);
-  res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
+  // Revalidated every time rather than kept for a day: an operator changing a
+  // VOICE_PROFILE must be heard in the next preview. The ETag makes a repeat a
+  // cheap 304 with no synthesis.
+  res.setHeader('Cache-Control', 'private, no-cache');
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
   let speech: Awaited<ReturnType<typeof synthesizeServerSpeech>>;

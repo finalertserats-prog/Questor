@@ -5,7 +5,11 @@ import {
   composeDisclosure,
   consentIntro,
   defaultVoiceFor,
+  duplicateVoices,
+  hasConsentIntro,
   needsInterviewerBackfill,
+  otherInterviewerNamed,
+  resolveProfileVoice,
   parseVoiceOverride,
   pickInterviewer,
   voiceOverridesFromEnv,
@@ -172,5 +176,64 @@ describe('needsInterviewerBackfill', () => {
 
   it('leaves an assigned interviewer alone', () => {
     expect(needsInterviewerBackfill({ interviewerId: 'maya', name: 'Maya', tone: 'formal' })).toBe(false);
+  });
+});
+
+describe('resolveProfileVoice', () => {
+  it('uses the configured provider default when there is no override', () => {
+    expect(resolveProfileVoice('voice_03', {}, 'openai')).toEqual({ provider: 'openai', voiceId: 'cedar' });
+  });
+
+  it('follows a switch of the configured provider, whatever was seeded', () => {
+    expect(resolveProfileVoice('voice_03', {}, 'elevenlabs')).toEqual({ provider: 'elevenlabs', voiceId: '' });
+  });
+
+  it('honours an explicit VOICE_PROFILE_0N override, even for another provider', () => {
+    expect(resolveProfileVoice('voice_03', { VOICE_PROFILE_03: 'elevenlabs:abc123' }, 'openai')).toEqual({ provider: 'elevenlabs', voiceId: 'abc123' });
+  });
+
+  it('ignores a malformed override and falls back to the configured default', () => {
+    expect(resolveProfileVoice('voice_03', { VOICE_PROFILE_03: 'nonsense' }, 'openai')).toEqual({ provider: 'openai', voiceId: 'cedar' });
+  });
+});
+
+describe('duplicateVoices', () => {
+  it('names profiles that resolve to the same provider voice', () => {
+    expect(duplicateVoices([
+      { profileId: 'voice_01', provider: 'elevenlabs', voiceId: '' },
+      { profileId: 'voice_02', provider: 'elevenlabs', voiceId: '' },
+      { profileId: 'voice_03', provider: 'openai', voiceId: 'cedar' },
+    ])).toEqual([['voice_01', 'voice_02']]);
+  });
+
+  it('is empty when every profile has its own voice', () => {
+    expect(duplicateVoices([
+      { profileId: 'voice_01', provider: 'openai', voiceId: 'sage' },
+      { profileId: 'voice_02', provider: 'openai', voiceId: 'marin' },
+    ])).toEqual([]);
+  });
+});
+
+describe('hasConsentIntro', () => {
+  it('recognises a disclosure that names the AI interviewer up front', () => {
+    expect(hasConsentIntro(composeDisclosure('Maya', 'Your voice is transcribed.'))).toBe(true);
+  });
+
+  it('refuses an empty disclosure', () => {
+    expect(hasConsentIntro('')).toBe(false);
+  });
+
+  it('refuses a disclosure that never says who the interviewer is', () => {
+    expect(hasConsentIntro('Your voice is transcribed.')).toBe(false);
+  });
+});
+
+describe('otherInterviewerNamed', () => {
+  it('flags tenant wording that introduces a different interviewer mid-text', () => {
+    expect(otherInterviewerNamed(composeDisclosure('Maya', "So you know: I'm Alex and I'll ask the questions."), 'Maya')).toBe('Alex');
+  });
+
+  it('is null when the only name is the session interviewer', () => {
+    expect(otherInterviewerNamed(composeDisclosure('Maya', "I'm Maya, and I'll ask about your experience."), 'Maya')).toBe(null);
   });
 });

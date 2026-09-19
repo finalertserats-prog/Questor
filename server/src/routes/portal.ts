@@ -27,6 +27,8 @@ import { hasObserverNotice } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
 import { ensureSessionInterviewer, interviewerIdOf, voiceForInterviewer, voiceHintForInterviewer } from '../services/interviewers.js';
 import { findInvitationByToken } from '../services/invitations.js';
+import { openingQuestion } from '../engines/openingModel.js';
+import { hasConsentIntro } from '../domain/interviewerModel.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
 import { serverSpeechAllowed } from '../services/demoPolicy.js';
@@ -208,7 +210,13 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
   // the first time it is opened for the interview. Finished ones are left as
   // they were recorded (see services/interviewers.ts).
   const needsInterviewer = !interviewerIdOf(loaded.session.personaJson, loaded.sessionId);
-  if (needsInterviewer) await ensureSessionInterviewer(loaded.sessionId);
+  if (needsInterviewer) {
+    // Never a reason to refuse the page: with no interviewer active (an
+    // operator turned them all off) the candidate still sees their invitation.
+    await ensureSessionInterviewer(loaded.sessionId).catch((err: unknown) => {
+      logger.warn({ sessionId: loaded.sessionId, err: err instanceof Error ? err.message : String(err) }, 'Could not assign an AI interviewer on first open');
+    });
+  }
   const inv = needsInterviewer ? await loadByToken(req.params.token) : loaded;
   const s = inv.session;
   const interviewerId = interviewerIdOf(s.personaJson, s.id);
@@ -390,6 +398,14 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   // Strict because it is written back: a damaged record would be replaced by
   // a consent to an empty disclosure, destroying the evidence of the original.
   const consent = parseJsonStrict<StoredConsent>(inv.session.consentJson, { model: 'InterviewSession', id: inv.sessionId, field: 'consentJson' });
+  // Fail closed. The interview no longer announces the AI aloud, so this page
+  // is the one place the candidate is told; a session whose disclosure does
+  // not open by naming the AI interviewer (empty, damaged, or from a path that
+  // never wrote one) must not collect a consent that would claim otherwise.
+  if (!hasConsentIntro(typeof consent.disclosureText === 'string' ? consent.disclosureText : '')) {
+    logger.error({ sessionId: inv.sessionId }, 'Consent refused: the stored disclosure does not name the AI interviewer');
+    throw new HttpError(409, 'This interview is not ready yet. Please contact the hiring team, who can send you a fresh link.', 'disclosure_missing');
+  }
   // Record what the candidate was actually shown. Without this there is no
   // durable proof browser monitoring was disclosed, and switching monitoring on
   // later would silently extend to people who consented before it existed.
@@ -527,18 +543,17 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
     throw new HttpError(404, 'No matching interviewer turn for this session');
   }
 
-  // What is spoken: the stored turn, or — when the room puts only the end of
-  // it again, as a rejoin does with the opening's question — that tail. The
-  // tail is still text the server wrote into this session's transcript, so
-  // this is no looser than speaking the row; anything else in the body is
-  // ignored and the stored row is spoken.
-  const requested = body.turnId && body.text ? body.text.trim() : '';
-  const spoken = requested && turn.text.toLowerCase().endsWith(requested.toLowerCase()) ? requested : turn.text;
+  // What is spoken: the stored turn — or, when a rejoin puts only an opening's
+  // question again, that question as the SERVER derives it from the stored
+  // turn. The request only chooses between the two; the words synthesised
+  // are always server-written, and anything else in the body is ignored.
+  const question = openingQuestion(turn.text);
+  const spoken = body.turnId && body.text && question !== turn.text && body.text.trim() === question ? question : turn.text;
 
   // A stored turn longer than the cap is legitimate content, not an attack, so
   // fall back to browser speech rather than failing the interview over it.
   if (spoken.length > MAX_SPEAK_TEXT_CHARS) {
-    logger.warn({ sessionId: inv.sessionId, turnId: turn.id, chars: turn.text.length }, 'Agent turn exceeds TTS cap; falling back to browser speech');
+    logger.warn({ sessionId: inv.sessionId, turnId: turn.id, chars: spoken.length }, 'Agent turn exceeds TTS cap; falling back to browser speech');
     return res.status(204).end();
   }
 

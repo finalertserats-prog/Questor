@@ -82,7 +82,8 @@ describe('the interviewer name the portal shows', () => {
   });
 
   it('assigns a catalogue interviewer when a not-yet-started session has none', async () => {
-    await prisma.interviewSession.update({ where: { id: sessionId }, data: { personaJson: '{}' } });
+    // Not yet consented: a candidate who consented keeps the name they agreed to.
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { personaJson: '{}', consentJson: JSON.stringify({ disclosureText: 'Your voice is transcribed.' }) } });
 
     const res = await summary();
 

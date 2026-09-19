@@ -43,6 +43,17 @@ describe('live interviewer prompt', () => {
     expect(captured.systems.at(-1)).toContain('If the candidate asks whether they are talking to an AI, a bot or a real person, say truthfully that you are an AI interviewer and that a person on the hiring team reviews the interview, then continue.');
   });
 
+  it('tells the model the identity question is already answered, so it is not answered twice', async () => {
+    const asked: TurnRecord[] = [turns[0], { ...turns[1], text: 'Are you an AI? Anyway, I built the billing pipeline on Airflow.' }];
+    await nextUtterance({ plan: buildInterviewPlan({ role: ROLE, durationMinutes: 45 }), signal, turns: asked, role: ROLE, persona: { name: 'Maya', tone: 'warm' } });
+    expect(captured.systems.at(-1)).toContain('ALREADY ANSWERED');
+  });
+
+  it('says nothing about it when the candidate did not ask', async () => {
+    await nextUtterance({ plan: buildInterviewPlan({ role: ROLE, durationMinutes: 45 }), signal, turns, role: ROLE, persona: { name: 'Maya', tone: 'warm' } });
+    expect(captured.systems.at(-1)).not.toContain('ALREADY ANSWERED');
+  });
+
   it('forbids claiming to be human', async () => {
     await nextUtterance({ plan: buildInterviewPlan({ role: ROLE, durationMinutes: 45 }), signal, turns, role: ROLE, persona: { name: 'Maya', tone: 'warm' } });
     expect(captured.systems.at(-1)).toContain('NEVER claim or imply that you are human.');

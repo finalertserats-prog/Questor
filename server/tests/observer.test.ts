@@ -27,7 +27,8 @@ async function silverRound(ids: Awaited<ReturnType<typeof seeded>>, { consented 
     // The seeded demo interview is already consented; model a freshly invited one.
     await prisma.interviewSession.update({
       where: { id: ids.sessionId },
-      data: { state: 'INVITED', consentJson: JSON.stringify({ disclosureText: 'Hello, I am an AI interviewer for this first-round conversation.' }) },
+      // Consent is refused unless the disclosure names the AI interviewer.
+      data: { state: 'INVITED', consentJson: JSON.stringify({ disclosureText: 'Your interviewer today is Maya, an AI interviewer from Questor. A person on the hiring team reviews the interview.' }) },
     });
   }
   const created = await request(app).post('/api/pipelines').set('Authorization', ids.auth).send({ candidateId: ids.candidateId });

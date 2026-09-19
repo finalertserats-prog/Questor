@@ -27,8 +27,31 @@ const MAX_FOCUS_AREAS = 3;
 // when saying what the role is "mainly looking for".
 const ROLE_SPECIFIC: ReadonlySet<Competency['category']> = new Set(['technical', 'domain', 'situational']);
 
+const HONORIFIC = /^(dr|mr|mrs|ms|mx|miss|prof|professor)\.?$/i;
+
+/**
+ * The name to greet someone by: the given name, without a title, and from
+ * "SURNAME, Given" records as ATS exports often write them.
+ */
 export function firstName(fullName: string | null | undefined): string {
-  return (fullName ?? '').trim().split(/\s+/)[0] ?? '';
+  const raw = (fullName ?? '').trim();
+  const comma = raw.indexOf(',');
+  const given = comma > 0 ? raw.slice(comma + 1) : raw;
+  const words = given.trim().split(/\s+/).filter((w) => w && !HONORIFIC.test(w));
+  return words[0] ?? '';
+}
+
+/**
+ * The role title as it is said aloud in "For this <title> role": without a
+ * trailing "role" or "position" (no "role role"), and without the qualifiers
+ * titles carry after "(" or " - " (a team, a city, a contract type). Falls
+ * back to the raw title when cleaning would leave nothing.
+ */
+export function spokenRoleTitle(title: string | null | undefined): string {
+  const raw = (title ?? '').trim();
+  const cut = raw.split(/\s*\(|\s+-\s+/)[0] ?? '';
+  const cleaned = cut.replace(/\s+(role|position)$/i, '').trim();
+  return cleaned || raw;
 }
 
 /**
@@ -91,7 +114,7 @@ export function buildOpeningGreeting(input: OpeningInput): string {
     : who ? `Hi ${who}`
       : me ? `Hi, I'm ${me}`
         : 'Hi';
-  const title = (input.roleTitle ?? '').trim();
+  const title = spokenRoleTitle(input.roleTitle);
   const forRole = title ? `For this ${title} role` : 'For this role';
   const looking = input.focus.length
     ? `${forRole}, we're mainly looking for strength in ${listOf(input.focus)}.`

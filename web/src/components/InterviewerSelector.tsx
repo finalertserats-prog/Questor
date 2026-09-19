@@ -84,7 +84,9 @@ export function InterviewerSelector({ value, onChange }: InterviewerSelectorProp
                   type="button"
                   className="btn secondary sm interviewer-preview"
                   aria-pressed={playing}
-                  aria-label={playing ? `Stop ${choice.label} voice preview` : `Preview ${choice.label} voice`}
+                  // One signal for the state: aria-pressed. The name stays
+                  // fixed so a screen reader does not hear it change as well.
+                  aria-label={`Preview ${choice.label} voice`}
                   onClick={() => togglePreview(choice.value)}
                 >
                   {playing ? '■ Stop' : '▶ Preview voice'}

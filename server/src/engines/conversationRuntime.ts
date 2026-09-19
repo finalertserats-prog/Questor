@@ -5,7 +5,7 @@ import { buildWorkSample, shouldOfferWorkSample } from './workSample.js';
 import { generateJson } from '../providers/llm/index.js';
 import { templateAllowedForBand } from './bandCalibration.js';
 import { bandById, type Abstraction, type BandId } from './experienceBands.js';
-import { WARMUP_QUESTION, buildOpeningGreeting, focusAreas } from './openingModel.js';
+import { WARMUP_QUESTION, buildOpeningGreeting, focusAreas, openingQuestion } from './openingModel.js';
 
 export interface AgentUtterance {
   text: string;
@@ -419,16 +419,18 @@ export interface UtteranceOptions {
 export const AI_IDENTITY_ANSWER = "Yes — I'm an AI interviewer; a person on the hiring team reviews everything.";
 
 export async function nextUtterance(opts: UtteranceOptions): Promise<AgentUtterance> {
-  const utterance = await composeUtterance(opts);
   const lastCandidate = [...opts.turns].reverse().find((t) => t.speaker === 'candidate');
+  const askedIfAi = !!lastCandidate && detectAiIdentityQuestion(lastCandidate.text);
+  // The model is told the question is answered, so it does not answer it again
+  // in its own words after the fixed answer below.
+  const utterance = await composeUtterance({ ...opts, identityAnswered: askedIfAi });
   // Stopping outranks everything, including this: a candidate who asks and
   // withdraws in one breath gets the withdrawal, not a lecture.
-  if (!lastCandidate || utterance.kind === 'withdrawn' || utterance.kind === 'safety') return utterance;
-  if (!detectAiIdentityQuestion(lastCandidate.text)) return utterance;
+  if (!askedIfAi || utterance.kind === 'withdrawn' || utterance.kind === 'safety') return utterance;
   return { ...utterance, text: `${AI_IDENTITY_ANSWER} ${utterance.text}` };
 }
 
-async function composeUtterance(opts: UtteranceOptions): Promise<AgentUtterance> {
+async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: boolean }): Promise<AgentUtterance> {
   const { plan, signal, turns, role, persona } = opts;
   const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate');
   const lastText = lastCandidate?.text ?? '';
@@ -487,6 +489,15 @@ async function composeUtterance(opts: UtteranceOptions): Promise<AgentUtterance>
   // the consent screen before the interview (see engines/openingModel.ts).
   // Built from the role's own scorecard, so it is the same for every
   // interviewer apart from the name, and Tone does not touch it.
+  // Already greeted (the candidate asked for a repeat, or whether this is an
+  // AI): put the question again without a second greeting.
+  const greeted = turns.find((t) => t.speaker === 'agent' && t.competencyId === '__process__');
+  if (blockId === '__process__' && greeted) {
+    const question = openingQuestion(greeted.text);
+    // An opening without the usual lead (an older one) still gets the warm-up.
+    const text = question === greeted.text ? `${WARMUP_QUESTION.charAt(0).toUpperCase()}${WARMUP_QUESTION.slice(1)}` : question;
+    return { text, competencyId: blockId, kind: 'clarify' };
+  }
   if (blockId === '__process__') {
     return {
       text: buildOpeningGreeting({
@@ -603,7 +614,7 @@ function finish(text: string, correction: Correction | null): string {
 }
 
 async function tryLlmUtterance(
-  opts: { role: RoleSuccessProfile; sessionId?: string },
+  opts: { role: RoleSuccessProfile; sessionId?: string; identityAnswered?: boolean },
   competencyName: string,
   block: PlanBlock | undefined,
   lastText: string,
@@ -676,6 +687,9 @@ async function tryLlmUtterance(
       // direct question must always be answered, and answered truthfully.
       'If the candidate asks whether they are talking to an AI, a bot or a real person, say truthfully that you are an AI interviewer and that a person on the hiring team reviews the interview, then continue. ' +
       'NEVER claim or imply that you are human. ' +
+      (opts.identityAnswered
+        ? 'The candidate\'s question about whether you are an AI is ALREADY ANSWERED just before your question; do not answer or mention it again. '
+        : '') +
       'Output JSON: {"question": "..."}.',
     user:
       `Target competency: ${competencyName}\n` +

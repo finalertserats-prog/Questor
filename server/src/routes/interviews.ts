@@ -22,7 +22,7 @@ import { startInterview, submitCandidateTurn, finalizeInterview, withdrawIntervi
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
-import { DEFAULT_DISCLOSURE_BODY, composeDisclosure } from '../domain/interviewerModel.js';
+import { DEFAULT_DISCLOSURE_BODY, composeDisclosure, needsInterviewerBackfill, otherInterviewerNamed } from '../domain/interviewerModel.js';
 import { assignInterviewer } from '../services/interviewers.js';
 import { invitationLink, invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
@@ -114,6 +114,11 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   // true and more useful than the flag ever was. The named introduction goes
   // in front of whichever disclosure applies, never instead of it.
   const baseDisclosureText = composeDisclosure(interviewer.name, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
+  // Tenant wording written for an old persona ("I'm Alex, …") would give the
+  // candidate two names. Not rewritten — it is the tenant's legal text — but
+  // flagged so an operator can fix the policy.
+  const strayName = otherInterviewerNamed(baseDisclosureText, interviewer.name);
+  if (strayName) logger.warn({ tenantId: req.auth!.tenantId, strayName }, 'Tenant disclosure names a different interviewer; update the disclosure policy');
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   const session = await prisma.interviewSession.create({
@@ -372,7 +377,16 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const originalModules = originalPlan
     ? parseJsonStrict<{ modules?: string[] }>(originalPlan.planJson, { model: 'InterviewPlanVersion', id: originalPlan.id, field: 'planJson' }).modules ?? []
     : [];
-  const personaName = personaNameOf(original.personaJson, original.id);
+  // The retake keeps the original's interviewer. A session from before the
+  // catalogue has none — only the retired default name — so the retake gets a
+  // real interviewer now rather than inviting the candidate to meet a name
+  // that no longer exists; its tone is carried over unchanged.
+  const originalPersona = parseJsonOptional<Record<string, unknown>>(original.personaJson, {}, { model: 'InterviewSession', id: original.id, field: 'personaJson' });
+  const replacement = needsInterviewerBackfill(originalPersona) ? await assignInterviewer('random') : null;
+  const retakePersonaJson = replacement
+    ? JSON.stringify({ ...originalPersona, interviewerId: replacement.interviewerId, name: replacement.name })
+    : original.personaJson;
+  const personaName = replacement ? replacement.name : personaNameOf(original.personaJson, original.id);
 
   const candidate = await assertCanAccessCandidate(req.auth!, original.candidateId);
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: original.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
@@ -409,7 +423,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
       data: {
         tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: original.roleId, scorecardId: scorecard.id,
         state: 'PROVISIONED', provider: original.provider, language: original.language, durationMinutes: original.durationMinutes,
-        personaJson: original.personaJson,
+        personaJson: retakePersonaJson,
         // Consent is captured fresh for the new session — it is a new interview,
         // not a continuation, and re-showing disclosure is cheap insurance
         // against relying on a consent event that belongs to a different session.

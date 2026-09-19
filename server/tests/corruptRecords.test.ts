@@ -123,13 +123,14 @@ describe('an unreadable interviewer persona', () => {
   beforeEach(() => { warn = vi.spyOn(logger, 'warn'); });
   afterEach(() => { warn.mockRestore(); });
 
-  it('still serves the portal page with the default interviewer name', async () => {
+  it('still serves the portal page, without inventing an interviewer name', async () => {
+    // There is no default name any more; the page shows "your interviewer".
     const ids = await seeded();
     await corruptSession(ids.sessionId, { personaJson: CORRUPT });
 
     const res = await request(app).get(`/api/portal/${ids.token}`);
 
-    expect(res.body.persona.name).toEqual(expect.any(String));
+    expect([res.status, res.body.persona.name]).toEqual([200, null]);
   });
 
   it('logs the record id and field, never the content', async () => {

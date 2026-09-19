@@ -17,6 +17,7 @@ import { DEMO_JD, DEMO_RESUME } from '../seed/demoData.js';
 import { slugifyCatalogName } from '../domain/catalogText.js';
 import { DEMO_ROLE } from '../domain/capabilities.js';
 import { assignInterviewer } from './interviewers.js';
+import { DEFAULT_DISCLOSURE_BODY, composeDisclosure } from '../domain/interviewerModel.js';
 import { renderDemoAccessEmail, renderDemoOperatorEmail, renderDemoDecisionEmail, renderDemoDeclinedEmail } from '../providers/email/demoEmail.js';
 
 const DAY_MS = 86_400_000;
@@ -89,8 +90,15 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
     await tx.candidateProfileVersion.create({ data: { candidateId: candidate.id, version: 1, rawText: resume, profileJson: JSON.stringify(profile), fitScoreJson: JSON.stringify(fit) } });
     const plan = buildInterviewPlan({ role: extraction.profile, fit, durationMinutes: 45, language: 'en', modules: [] });
     // INVITED with no consent recorded: the visitor meets the consent step exactly
-    // as a candidate would, which is part of what the demo is showing.
-    const session = await tx.interviewSession.create({ data: { tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'INVITED', provider: 'hosted', language: 'en', durationMinutes: 45, personaJson: JSON.stringify({ interviewerId: interviewer.interviewerId, name: interviewer.name, tone: 'warm' }) } });
+    // as a candidate would, which is part of what the demo is showing — including
+    // the named AI disclosure, without which consent is refused.
+    const session = await tx.interviewSession.create({
+      data: {
+        tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'INVITED', provider: 'hosted', language: 'en', durationMinutes: 45,
+        personaJson: JSON.stringify({ interviewerId: interviewer.interviewerId, name: interviewer.name, tone: 'warm' }),
+        consentJson: JSON.stringify({ disclosureText: composeDisclosure(interviewer.name, DEFAULT_DISCLOSURE_BODY), recordingRequested: false, humanReviewRequired: true }),
+      },
+    });
     await tx.interviewPlanVersion.create({ data: { sessionId: session.id, version: 1, planJson: JSON.stringify(plan) } });
     const invitationToken = mintInvitationToken();
     await tx.invitation.create({ data: { sessionId: session.id, ...invitationSecretColumns(invitationToken), status: 'sent', sentAt: now, expiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });

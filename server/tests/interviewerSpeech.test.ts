@@ -7,6 +7,7 @@ import { wipe, createDemoData, type DemoIds } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
 import { seedInterviewers } from '../src/services/interviewers.js';
 import type { SynthesizedSpeech, VoiceSelection } from '../src/providers/speech.js';
+import { buildOpeningGreeting, openingQuestion } from '../src/engines/openingModel.js';
 
 // Every spoken turn, nudge and preview uses the session's (or the previewed)
 // interviewer's voice, and cache keys never let one voice's audio stand in for
@@ -90,16 +91,31 @@ describe('portal speech uses the session interviewer voice', () => {
     expect(first).not.toBe(second);
   });
 
-  it('speaks only the tail of a stored turn when that is all the room puts again', async () => {
+  async function openingTurnId(): Promise<string> {
+    const text = buildOpeningGreeting({ candidateName: 'Priya', interviewerName: 'Maya', roleTitle: 'Data Engineer', focus: ['SQL'], durationMinutes: 45 });
+    return (await prisma.turn.create({ data: { sessionId: ids.sessionId, index: 1, speaker: 'agent', text, competencyId: '__process__', metaJson: JSON.stringify({ kind: 'opening' }) } })).id;
+  }
+
+  it('speaks just the opening question when a rejoin puts it again', async () => {
     tts.ready = true;
-    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId: agentTurnId, text: 'Tell me about a pipeline you owned.'.slice(8) });
-    expect(tts.texts.at(-1)).toBe('about a pipeline you owned.');
+    const turnId = await openingTurnId();
+    const opening = (await prisma.turn.findUniqueOrThrow({ where: { id: turnId } })).text;
+    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId, text: openingQuestion(opening) });
+    expect(tts.texts.at(-1)).toBe(openingQuestion(opening));
   });
 
-  it('matches the tail regardless of the case of its first letter', async () => {
+  it('speaks the whole opening for any other tail of it', async () => {
     tts.ready = true;
-    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId: agentTurnId, text: 'About a pipeline you owned.' });
-    expect(tts.texts.at(-1)).toBe('About a pipeline you owned.');
+    const turnId = await openingTurnId();
+    const opening = (await prisma.turn.findUniqueOrThrow({ where: { id: turnId } })).text;
+    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId, text: opening.slice(-20) });
+    expect(tts.texts.at(-1)).toBe(opening);
+  });
+
+  it('speaks the whole stored turn for a tail of an ordinary question', async () => {
+    tts.ready = true;
+    await request(app).post(`/api/portal/${ids.token}/speak`).send({ turnId: agentTurnId, text: 'about a pipeline you owned.' });
+    expect(tts.texts.at(-1)).toBe('Tell me about a pipeline you owned.');
   });
 
   it('still speaks the stored turn, never request text that is not part of it', async () => {
@@ -164,6 +180,12 @@ describe('GET /api/interviewers/:id/preview', () => {
   it('refuses an unknown interviewer', async () => {
     const res = await preview('nobody');
     expect(res.status).toBe(404);
+  });
+
+  it('asks the browser to revalidate rather than keep a preview for a day', async () => {
+    tts.ready = true;
+    const res = await preview('maya');
+    expect(res.headers['cache-control']).toBe('private, no-cache');
   });
 
   it('answers a repeat with 304 without synthesising again', async () => {
