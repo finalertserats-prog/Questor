@@ -6,6 +6,9 @@ test('portal consent without voice capture starts typed mode and never asks for 
   const { name } = await createRoleAndCandidate(page, id);
 
   await page.getByRole('tab', { name: 'Candidate journey' }).click();
+  // Random is the default; pick one by name so the room can be checked for it.
+  await expect(page.getByRole('radio', { name: 'Random — Recommended' })).toBeChecked();
+  await page.getByRole('radio', { name: 'Maya', exact: true }).check();
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
   await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
 
@@ -39,6 +42,10 @@ test('portal consent without voice capture starts typed mode and never asks for 
 
   await expect(portalPage.getByPlaceholder(/Type your answer/)).toBeVisible({ timeout: 20_000 });
   await expect(portalPage.getByText('Typing', { exact: true })).toBeVisible();
+  // The room names the chosen interviewer and always says it is an AI.
+  const roomInterviewer = portalPage.getByTestId('room-interviewer');
+  await expect(roomInterviewer).toContainText('Maya');
+  await expect(roomInterviewer).toContainText('AI Interviewer');
   // No listening controls: those only render while the room is capturing voice.
   await expect(portalPage.getByRole('button', { name: 'Done answering' })).toHaveCount(0);
   await expect(portalPage.getByRole('button', { name: 'Voice' })).toHaveCount(0);

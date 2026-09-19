@@ -730,14 +730,14 @@ export function InterviewRoom() {
           <BrandLogo variant="lockup" size={22} surfaceTone="dark" className="candidate-logo" />
           <span className="room-role">{info.roleTitle}</span>
         </div>
-        <div className="room-interviewer" data-testid="room-interviewer">
-          <span className="room-interviewer-avatar" aria-hidden="true">{header.initial}</span>
-          <span className="room-interviewer-text">
-            <span className="room-interviewer-name">{header.name}</span>
-            <span className="room-interviewer-role">{header.role}</span>
-          </span>
-        </div>
-        <div className="row" style={{ gap: 12, alignItems: 'center' }}>
+        <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'nowrap' }}>
+          <div className="room-interviewer" data-testid="room-interviewer">
+            <span className="room-interviewer-avatar" aria-hidden="true">{header.initial}</span>
+            <span className="room-interviewer-text">
+              <span className="room-interviewer-name">{header.name}</span>
+              <span className="room-interviewer-role">{header.role}</span>
+            </span>
+          </div>
           {live && micOpen && (
             <CaptureIndicator mode={textMode ? 'mic' : 'transcribing'} stt={info.speech.stt} />
           )}
@@ -745,7 +745,7 @@ export function InterviewRoom() {
         </div>
       </header>
 
-      <main className="stage">
+      <main className="room-stage">
         <div className={`tile ${speaking ? 'is-active' : ''}`}>
           <SpeakingRings active={speaking} level={0.35} />
           <div className="tile-avatar agent-avatar">{header.initial}</div>

@@ -1293,8 +1293,11 @@ tr.in-flight td:first-child {
   }
 }
 
-/* --- stage / participant tiles --- */
-.stage {
+/* --- stage / participant tiles ---
+   `room-stage`, not `stage`: pipeline.css styles its stage-track items as
+   `.stage`, loads later, and was turning this grid into a white bordered
+   column in the light theme. */
+.room-stage {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 18px;
@@ -1608,10 +1611,14 @@ tr.in-flight td:first-child {
 }
 
 @media (max-width: 760px) {
-  .stage {
+  .room-stage {
     grid-template-columns: 1fr;
     gap: 12px;
     padding: 14px;
+    /* Two stacked tiles can be taller than a phone's stage row; scroll them
+       rather than let the lower tile slide under the captions. */
+    overflow-y: auto;
+    align-content: start;
   }
   .tile {
     aspect-ratio: 16 / 11;
