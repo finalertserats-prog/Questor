@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
+import { isPlatformOperator } from '../middleware/platformOperator.js';
 import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
 import { logAudit } from '../services/audit.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
@@ -95,7 +96,7 @@ authRouter.get('/me', authenticate, asyncHandler(async (req, res) => {
   if (!user) throw new HttpError(404, 'User not found');
   const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId } });
   const grant = tenant?.isDemo ? await prisma.demoGrant.findFirst({ where: { tenantId: tenant.id, userId: user.id, status: 'consumed' }, orderBy: { consumedAt: 'desc' }, select: { sessionEndsAt: true } }) : null;
-  res.json({ user: publicUser(user), tenant: { id: tenant?.id, name: tenant?.name, region: tenant?.region, slug: tenant?.slug ?? null, ...(tenant?.isDemo ? { isDemo: true, sessionEndsAt: grant?.sessionEndsAt?.toISOString() ?? null } : {}) } });
+  res.json({ user: { ...publicUser(user), platformOperator: isPlatformOperator(req.auth) }, tenant: { id: tenant?.id, name: tenant?.name, region: tenant?.region, slug: tenant?.slug ?? null, ...(tenant?.isDemo ? { isDemo: true, sessionEndsAt: grant?.sessionEndsAt?.toISOString() ?? null } : {}) } });
 }));
 
 // Marks the guided tour finished (or skipped) for the caller — and only the

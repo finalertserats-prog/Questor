@@ -8,8 +8,16 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { normalizeTitle } from '../domain/catalogText.js';
 import { addCatalogRole, catalogTitleProblem } from '../services/catalogRoles.js';
 import { assertNotDemoTenant } from '../services/demoAccess.js';
+import { CATALOG_ATTRIBUTIONS } from '../domain/catalogAttribution.js';
 
 export const catalogRouter = Router();
+
+// Public, before authenticate: the O*NET licence (CC BY 4.0) requires the
+// attribution wherever its data is shown, including to visitors not signed in.
+catalogRouter.get('/sources', (_req, res) => {
+  res.json({ sources: CATALOG_ATTRIBUTIONS });
+});
+
 catalogRouter.use(authenticate);
 
 const roleQuerySchema = z.object({

@@ -143,6 +143,20 @@ async function acquireLease(name: string, ttlMs: number): Promise<boolean> {
   }
 }
 
+/**
+ * Push this instance's lease further out, for work that runs in chunks longer
+ * in total than the TTL (the monthly catalog refresh). False when another
+ * instance holds it now: the caller must stop, because that instance will
+ * resume the same work.
+ */
+export async function renewLease(name: string, ttlMs: number): Promise<boolean> {
+  const renewed = await prisma.jobLease.updateMany({
+    where: { name, holder: INSTANCE_ID, expiresAt: { gt: new Date() } },
+    data: { expiresAt: new Date(Date.now() + ttlMs) },
+  });
+  return renewed.count === 1;
+}
+
 async function releaseLease(name: string): Promise<void> {
   // Only the holder releases; a lease that expired and was taken by another
   // instance mid-run must not be released by the slow one finishing late.

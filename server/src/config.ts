@@ -87,6 +87,31 @@ export function parseV1SignatureSetting(raw: string): V1SignatureSetting {
   );
 }
 
+/** A comma-separated list with blanks dropped, for address lists in env vars. */
+export function parseCommaList(raw: string): string[] {
+  return raw.split(',').map((value) => value.trim()).filter((value) => value.length > 0);
+}
+
+/**
+ * A cap such as "at most 200 proposals per run". Refused rather than guessed
+ * when malformed: `Number("2.5")` or a zero would quietly remove the cap that
+ * keeps a monthly job from flooding the owner's queue or a paid API.
+ */
+export function parsePositiveIntSetting(variable: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw.trim());
+  if (!Number.isInteger(value) || value < 1) throw new Error(`${variable} must be a positive whole number (got "${raw}").`);
+  return value;
+}
+
+/** A threshold between 0 and 1. "65" meant as a percentage must not pass as 65. */
+export function parseFractionSetting(variable: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw.trim());
+  if (!Number.isFinite(value) || value < 0 || value > 1) throw new Error(`${variable} must be a number between 0 and 1 (got "${raw}").`);
+  return value;
+}
+
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: parsePortSetting('PORT', env('PORT', '4000')),
@@ -103,6 +128,7 @@ export const config = {
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
   webhookV1Signature: parseV1SignatureSetting(env('WEBHOOK_V1_SIGNATURE')),
   signupApproverEmail: env('SIGNUP_APPROVER_EMAIL'),
+  platformOperatorEmails: parseCommaList(env('PLATFORM_OPERATOR_EMAILS')).map((email) => email.toLowerCase()),
   /**
    * How long a stopping process waits for interviews it is serving to end
    * before it exits anyway. pm2's kill timeout must be longer than this, or
@@ -149,6 +175,29 @@ export const config = {
   },
   meeting: {
     provider: env('MEETING_PROVIDER', 'hosted'),
+  },
+  /**
+   * The monthly shared-catalog refresh. Every cap is per run, so a restart or
+   * a manual run can never multiply what one month may cost or propose.
+   */
+  catalogRefresh: {
+    onetBaseUrl: env('CATALOG_ONET_BASE_URL', 'https://www.onetcenter.org/dl_files/database/db_31_0_csv'),
+    escoBaseUrl: env('CATALOG_ESCO_BASE_URL', 'https://ec.europa.eu/esco/api'),
+    maxLlmCalls: parsePositiveIntSetting('CATALOG_REFRESH_MAX_LLM_CALLS', process.env.CATALOG_REFRESH_MAX_LLM_CALLS, 150),
+    maxProposals: parsePositiveIntSetting('CATALOG_REFRESH_MAX_PROPOSALS', process.env.CATALOG_REFRESH_MAX_PROPOSALS, 200),
+    /** A new role below this classification confidence is skipped, not queued. */
+    minConfidence: parseFractionSetting('CATALOG_REFRESH_MIN_CONFIDENCE', process.env.CATALOG_REFRESH_MIN_CONFIDENCE, 0.5),
+    researchModel: env('CATALOG_RESEARCH_MODEL', 'gpt-5.5'),
+    researchMaxCalls: parsePositiveIntSetting('CATALOG_RESEARCH_MAX_CALLS', process.env.CATALOG_RESEARCH_MAX_CALLS, 35),
+    researchTimeoutMs: parseDurationMsSetting('CATALOG_RESEARCH_TIMEOUT_MS', process.env.CATALOG_RESEARCH_TIMEOUT_MS, 120_000),
+    /** ESCO occupations per page; one page is one chunk. */
+    escoLimit: parsePositiveIntSetting('CATALOG_ESCO_LIMIT', process.env.CATALOG_ESCO_LIMIT, 25),
+    escoPagesPerRun: parsePositiveIntSetting('CATALOG_ESCO_PAGES_PER_RUN', process.env.CATALOG_ESCO_PAGES_PER_RUN, 8),
+    /** Existing catalog roles looked up by title in ESCO per run, for alternative labels. */
+    escoRoleLookupsPerRun: parsePositiveIntSetting('CATALOG_ESCO_ROLE_LOOKUPS_PER_RUN', process.env.CATALOG_ESCO_ROLE_LOOKUPS_PER_RUN, 40),
+    /** Pause between ESCO requests: a free public API, asked politely and one at a time. */
+    escoDelayMs: parseDurationMsSetting('CATALOG_ESCO_DELAY_MS', process.env.CATALOG_ESCO_DELAY_MS, 500),
+    fetchTimeoutMs: parseDurationMsSetting('CATALOG_FETCH_TIMEOUT_MS', process.env.CATALOG_FETCH_TIMEOUT_MS, 60_000),
   },
 };
 

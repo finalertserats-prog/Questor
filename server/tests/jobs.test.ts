@@ -15,7 +15,7 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
 
 import { prisma } from '../src/db.js';
 import { config } from '../src/config.js';
-import { runExclusive, latestJobRuns, _resetJobAlerts } from '../src/services/jobs.js';
+import { runExclusive, latestJobRuns, renewLease, _resetJobAlerts } from '../src/services/jobs.js';
 
 /**
  * Background work under a database lease. Two instances, or one restarting
@@ -69,6 +69,29 @@ describe('running a job under a lease', () => {
     const outcome = await runExclusive('stale-job', 60_000, async () => undefined);
 
     expect(outcome).toBe('ran');
+  });
+});
+
+describe('renewing a lease during long work', () => {
+  it('extends the lease for the instance holding it', async () => {
+    let renewed = false;
+    await runExclusive('long-job', 1_000, async () => { renewed = await renewLease('long-job', 60_000); });
+    expect(renewed).toBe(true);
+  });
+
+  it('pushes the expiry out while the work runs', async () => {
+    let expiresInMs = 0;
+    await runExclusive('long-job', 1_000, async () => {
+      await renewLease('long-job', 60_000);
+      const lease = await prisma.jobLease.findUniqueOrThrow({ where: { name: 'long-job' } });
+      expiresInMs = lease.expiresAt.getTime() - Date.now();
+    });
+    expect(expiresInMs).toBeGreaterThan(30_000);
+  });
+
+  it('refuses to renew a lease another instance holds', async () => {
+    await prisma.jobLease.create({ data: { name: 'theirs', holder: 'other-host:1:abc', expiresAt: new Date(Date.now() + 60_000) } });
+    expect(await renewLease('theirs', 60_000)).toBe(false);
   });
 });
 

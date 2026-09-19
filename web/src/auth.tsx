@@ -9,6 +9,8 @@ export interface User {
   role: string;
   /** When this user finished or skipped the guided tour; null means it has never run for them. */
   tourCompletedAt: string | null;
+  /** The platform owner (server PLATFORM_OPERATOR_EMAILS), who alone reviews the shared catalog. */
+  platformOperator?: boolean;
 }
 /** The organisation the signed-in user belongs to. */
 export interface Tenant {

@@ -16,6 +16,7 @@ import { seedCatalogWithRetry } from './services/catalogSeed.js';
 import { startRateLimitPurge } from './middleware/rateLimit.js';
 import { releaseHeldLeases, runningJobCount, startJob, stopAllJobs } from './services/jobs.js';
 import { generatePendingDrafts, JD_DRAFT_JOB } from './services/jdDrafts.js';
+import { startCatalogRefreshSchedule } from './services/catalogRefresh.js';
 import { markDraining } from './services/drainState.js';
 import { countLiveSessions, inFlightRequests } from './realtime/liveSessions.js';
 import { createShutdown } from './services/shutdown.js';
@@ -33,6 +34,7 @@ startWebhookDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();
 startJob({ name: JD_DRAFT_JOB.name, intervalMs: 5_000, ttlMs: JD_DRAFT_JOB.ttlMs, fn: async () => `generated ${await generatePendingDrafts({ limit: JD_DRAFT_JOB.batch })} JD drafts` });
+startCatalogRefreshSchedule();
 // One-time move of invitation tokens out of plaintext; a no-op once done.
 backfillInvitationSecrets().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not backfill invitation token storage');

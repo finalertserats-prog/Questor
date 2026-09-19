@@ -17,6 +17,7 @@ import './styles/health.css';
 import './styles/polish.css';
 import './styles/tour.css';
 import './styles/observer.css';
+import './styles/catalogReview.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

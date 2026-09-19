@@ -1,6 +1,6 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { claimHealth } from '../components/healthStatusStore';
-import { Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
@@ -10,6 +10,7 @@ import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
 import { SystemHealthPanel } from '../components/SystemHealthPanel';
 import { PageHeader } from '../components/PageHeader';
+import { Icon } from '../components/Icon';
 import { AdminTabList } from '../components/AdminTabList';
 import { adminPanelId, adminTabFromParam, adminTabId, adminTabPath, nextAdminTab, type AdminTabKey } from '../components/adminTabsModel';
 import {
@@ -235,7 +236,12 @@ export function Admin() {
 
   return (
     <div>
-      <PageHeader icon="admin" title="Admin console" />
+      <PageHeader
+        icon="admin"
+        title="Admin console"
+        // The platform owner reviews the shared catalog from here as well as the profile menu.
+        actions={user?.platformOperator ? <Link className="btn secondary" to="/catalog-review"><Icon name="list" size={16} />Catalog review</Link> : undefined}
+      />
 
       <AdminTabList active={activeTab} onSelect={selectTab} onKeyDown={handleTabKeyDown} />
 

@@ -27,6 +27,9 @@ type MenuEntry = ProfileMenuItem & {
   // server capability each page's API requires (server domain/capabilities.ts),
   // so nobody is offered a link that only leads to an access-denied page.
   readonly roles?: readonly string[];
+  // Only for the platform owner (the server's PLATFORM_OPERATOR_EMAILS), whose
+  // standing has nothing to do with their role in their own organisation.
+  readonly platformOperatorOnly?: true;
 };
 
 // admin:manage
@@ -41,6 +44,7 @@ const MENU_ENTRIES: readonly MenuEntry[] = [
   { key: 'admin', label: 'Admin console', kind: 'link', to: '/admin', roles: ADMIN_ROLES },
   { key: 'signups', label: 'Account requests', kind: 'link', to: '/admin/signups', roles: ADMIN_ROLES },
   { key: 'audit', label: 'Audit log', kind: 'link', to: '/audit', roles: AUDIT_ROLES },
+  { key: 'catalog-review', label: 'Catalog review', kind: 'link', to: '/catalog-review', platformOperatorOnly: true },
   { key: 'about', label: 'About', kind: 'link', to: '/about' },
   { key: 'contact', label: 'Contact', kind: 'link', to: '/contact' },
   // Last among the entries, beside the other help: the tour is for everyone,
@@ -49,10 +53,10 @@ const MENU_ENTRIES: readonly MenuEntry[] = [
 ];
 
 /** The menu entries this user may see, in display order. */
-export function profileMenuItems(role: string): ProfileMenuItem[] {
+export function profileMenuItems(role: string, opts: { readonly platformOperator?: boolean } = {}): ProfileMenuItem[] {
   return MENU_ENTRIES
-    .filter((entry) => !entry.roles || entry.roles.includes(role))
-    .map(({ roles: _roles, ...item }) => item);
+    .filter((entry) => (entry.platformOperatorOnly ? opts.platformOperator === true : !entry.roles || entry.roles.includes(role)))
+    .map(({ roles: _roles, platformOperatorOnly: _operatorOnly, ...item }) => item);
 }
 
 /** Whether this role may open the Admin console (and so sees it in the sidebar). */
