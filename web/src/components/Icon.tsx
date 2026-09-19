@@ -27,9 +27,9 @@ const PAGE_BADGE = <circle cx="17" cy="17" r="4.5" />;
 const PATHS = {
   menu: <><path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h16" /></>,
   close: <><path d="M6 6l12 12" /><path d="M18 6L6 18" /></>,
-  // A panel with its rail drawn in, and the direction the rail is about to go.
-  'sidebar-collapse': <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 4v16" /><path d="M7 9l-2 3 2 3" /></>,
-  'sidebar-expand': <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M10 4v16" /><path d="M5 9l2 3-2 3" /></>,
+  // A bar for the menu's edge and an arrow toward it (collapse) or away from it (show).
+  'sidebar-collapse': <><path d="M5 5v14" /><path d="M19 12H9" /><path d="M13 8l-4 4 4 4" /></>,
+  'sidebar-expand': <><path d="M19 5v14" /><path d="M5 12h10" /><path d="M11 8l4 4-4 4" /></>,
   'arrow-right': <><path d="M5 12h14" /><path d="M13 6l6 6-6 6" /></>,
 
   // The 2026 sheet.
