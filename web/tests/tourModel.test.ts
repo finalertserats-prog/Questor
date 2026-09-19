@@ -75,7 +75,7 @@ describe('TOUR_STEPS', () => {
 
   it('explains the medallion stages including the AI-run Silver round', () => {
     const stages = TOUR_STEPS.find((step) => step.id === 'pipeline-stages')!;
-    for (const word of ['Participation', 'Bronze', 'Silver', 'Schranders', 'Gold', 'Platinum', 'Diamond']) {
+    for (const word of ['Participation', 'Bronze', 'Silver', 'AI interviewer', 'Gold', 'Platinum', 'Diamond']) {
       expect(stages.body).toContain(word);
     }
   });

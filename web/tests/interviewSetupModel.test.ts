@@ -3,8 +3,8 @@ import {
   MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
 } from '../src/components/interviewSetupModel';
 
-const setup = (over: Partial<{ durationMinutes: unknown; personaName: string }> = {}) =>
-  ({ durationMinutes: 45, personaName: 'Schranders', ...over });
+const setup = (over: Partial<{ durationMinutes: unknown; interviewer: string }> = {}) =>
+  ({ durationMinutes: 45, interviewer: 'random', ...over });
 
 describe('interviewSetupProblem', () => {
   it('allows a sensible interview', () => {
@@ -32,12 +32,16 @@ describe('interviewSetupProblem', () => {
     expect(interviewSetupProblem(setup({ durationMinutes: Number.NaN }))).toContain('how long');
   });
 
-  it('refuses an interviewer with no name, which is what the candidate meets', () => {
-    expect(interviewSetupProblem(setup({ personaName: '   ' }))).toContain('name');
+  it('allows a named interviewer as well as Random', () => {
+    expect(interviewSetupProblem(setup({ interviewer: 'maya' }))).toBe(null);
   });
 
-  it('reports the missing name first, since it is the one a person can see is wrong', () => {
-    expect(interviewSetupProblem(setup({ personaName: '', durationMinutes: 0 }))).toContain('name');
+  it('refuses a setup with no interviewer chosen, since that is who the candidate meets', () => {
+    expect(interviewSetupProblem(setup({ interviewer: '   ' }))).toContain('interviewer');
+  });
+
+  it('reports the missing interviewer first, since it is the one a person can see is wrong', () => {
+    expect(interviewSetupProblem(setup({ interviewer: '', durationMinutes: 0 }))).toContain('interviewer');
   });
 });
 

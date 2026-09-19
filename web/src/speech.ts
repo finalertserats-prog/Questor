@@ -3,6 +3,9 @@
 // configured server-side, this module is where a streaming transport would be
 // swapped in; the default path needs zero credentials.
 
+import { pickBrowserVoice } from './components/interviewerModel';
+import type { PreviewDeps, PreviewSource } from './components/voicePreviewModel';
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const AnyWindow = window as any;
 
@@ -25,11 +28,16 @@ function pickVoice(): SpeechSynthesisVoice | null {
   return cachedVoice;
 }
 
-export function speak(text: string, onDone?: () => void): void {
+/**
+ * Speak with the browser voice. `voiceHint` is the interviewer's
+ * `<female|male>:<n>` hint, so each interviewer keeps a distinct system voice
+ * when there is no server voice; without one the long-standing default is used.
+ */
+export function speak(text: string, onDone?: () => void, voiceHint?: string): void {
   if (!ttsSupported()) { onDone?.(); return; }
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  const v = pickVoice();
+  const v = voiceHint ? pickBrowserVoice(window.speechSynthesis.getVoices(), voiceHint) ?? pickVoice() : pickVoice();
   if (v) u.voice = v;
   u.rate = 1.02;
   u.pitch = 1.0;
@@ -217,8 +225,10 @@ export async function speakTurn(o: {
   turnId: string;
   text: string;
   onDone?: () => void;
+  /** The session interviewer's browser-voice hint, for the fallback voice. */
+  voiceHint?: string;
 }): Promise<void> {
-  const finishLocally = () => speak(o.text, o.onDone);
+  const finishLocally = () => speak(o.text, o.onDone, o.voiceHint);
   try {
     const res = await fetch(`/api/portal/${o.token}/speak`, {
       method: 'POST',
@@ -363,7 +373,7 @@ export async function createMicMeter(): Promise<MicMeter | null> {
  * Resolves when the audio has finished, so the caller knows when it is safe to
  * listen again without recording the interviewer talking over the candidate.
  */
-export async function speakNudge(token: string, index: number): Promise<string> {
+export async function speakNudge(token: string, index: number, voiceHint?: string): Promise<string> {
   let text = '';
   try {
     const res = await fetch(`/api/portal/${token}/nudge`, {
@@ -375,7 +385,7 @@ export async function speakNudge(token: string, index: number): Promise<string> 
     if (header) text = decodeURIComponent(header);
 
     if (res.status === 204 || !res.ok) {
-      if (text) await new Promise<void>((done) => speak(text, done));
+      if (text) await new Promise<void>((done) => speak(text, done, voiceHint));
       return text;
     }
 
@@ -394,7 +404,40 @@ export async function speakNudge(token: string, index: number): Promise<string> 
   } catch {
     // A failed check-in must never end the turn. Silence is recoverable; a
     // dropped answer is not.
-    if (text) await new Promise<void>((done) => speak(text, done));
+    if (text) await new Promise<void>((done) => speak(text, done, voiceHint));
     return text;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Interviewer voice previews (HR setup form)
+//
+// The server synthesises the sample with exactly the voice, model and delivery
+// the live interview uses, so what HR hears is what the candidate hears. A 204
+// means no server voice: the page speaks the sample in the browser voice the
+// interviewer's hint picks, just as the room would.
+
+async function fetchInterviewerPreview(interviewerId: string): Promise<PreviewSource> {
+  const res = await fetch(`/api/interviewers/${encodeURIComponent(interviewerId)}/preview`, { credentials: 'include' });
+  const text = decodeURIComponent(res.headers.get('X-Preview-Text') ?? '');
+  const hint = res.headers.get('X-Voice-Hint') ?? '';
+  if (res.status === 200) return { kind: 'audio', url: URL.createObjectURL(await res.blob()) };
+  if (!text) throw new Error('This voice preview is not available right now.');
+  return { kind: 'browser', text, hint };
+}
+
+export const browserPreviewDeps: PreviewDeps = {
+  fetchPreview: fetchInterviewerPreview,
+  playAudio(url, onEnd) {
+    const audio = new Audio(url);
+    const done = () => { URL.revokeObjectURL(url); onEnd(); };
+    audio.onended = done;
+    audio.onerror = done;
+    void audio.play().catch(done);
+    return { stop() { audio.pause(); URL.revokeObjectURL(url); } };
+  },
+  speakBrowser(text, hint, onEnd) {
+    speak(text, onEnd, hint);
+    return { stop() { stopSpeaking(); } };
+  },
+};

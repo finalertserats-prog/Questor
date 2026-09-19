@@ -87,7 +87,7 @@ export function About() {
           <h2 className="about-heading">How it works</h2>
           <WorkflowDiagram className="workflow-showcase" label="How hiring runs in Questor" steps={SHOWCASE_STEPS} />
           <p>
-            Only the AI round is conducted by Schranders, our AI interviewer, in Questor’s own browser room.
+            Only the AI round is conducted by an AI interviewer (Avery, Maya, Adrian, Elena or Theo) in Questor’s own browser room.
             The rounds after it are yours: Questor schedules them, records who interviewed and what they
             found, and keeps it all beside the evidence from the first round.
           </p>

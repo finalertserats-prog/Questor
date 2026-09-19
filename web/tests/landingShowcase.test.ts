@@ -121,17 +121,16 @@ describe('SHOWCASE_FEATURES', () => {
     }
   });
 
-  it('introduces the AI interviewer by name where the AI round is described', () => {
+  it('introduces the AI interviewers where the AI round is described', () => {
     const step = SHOWCASE_STEPS.find((s) => s.key === 'ai-interview');
-    expect(step?.detail).toContain('Schranders');
-    expect(step?.detail.toLowerCase()).toContain('ai interviewer');
+    expect(step?.detail.toLowerCase()).toContain('five ai interviewers');
   });
 
-  it('names the AI interviewer once, so it is never used before it is explained', () => {
+  it('introduces the AI interviewers once, so the idea is never used before it is explained', () => {
     const copy = [
       ...SHOWCASE_FEATURES.map((f) => `${f.title} ${f.detail}`),
       ...SHOWCASE_STEPS.map((s) => `${s.title} ${s.detail}`),
     ].join(' ');
-    expect(copy.match(/Schranders/g)).toHaveLength(1);
+    expect(copy.match(/five AI interviewers/g)).toHaveLength(1);
   });
 });

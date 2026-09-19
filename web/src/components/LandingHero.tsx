@@ -14,7 +14,7 @@ const POINTS: ReadonlyArray<{ key: string; icon: IconName; title: string; detail
     key: 'round',
     icon: 'interviews',
     title: 'A structured first round',
-    detail: 'Run by Schranders, our AI interviewer — the same ground with every candidate, against criteria a person approved first.',
+    detail: 'Run by one of our AI interviewers —the same ground with every candidate, against criteria a person approved first.',
   },
   {
     key: 'evidence',

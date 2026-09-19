@@ -3,7 +3,7 @@
  * the four steps a recruiter actually walks through.
  *
  *   1. Onboard            who they are, the job, their resume, the job fit
- *   2. AI interview       the one round Schranders conducts, and its state
+ *   2. AI interview       the one round an AI interviewer conducts, and its state
  *   3. Schedule           the human rounds — run by people, recorded here
  *   4. Decision & evidence what the evidence says, and the outcome a person records
  *
@@ -80,9 +80,8 @@ export const DEFAULT_INTERVIEWER = 'the interviewer';
 /**
  * The interviewer's name for a session.
  *
- * WHY this is not a constant: the persona is configurable per interview, so a
- * hardcoded "Schranders" describes someone the candidate never spoke to as soon
- * as a tenant names theirs differently.
+ * WHY this is not a constant: each interview has its own AI interviewer, so a
+ * hardcoded name describes someone the candidate may never have spoken to.
  */
 export function interviewerName(name: string | null | undefined): string {
   return typeof name === 'string' && name.trim() ? name.trim() : DEFAULT_INTERVIEWER;
@@ -408,7 +407,7 @@ function columnStates(pipeline: JourneyPipeline | null): [ColumnState, ColumnSta
   // A step the role's plan does not contain cannot be "done" — nothing ever
   // happened there. The stage schema allows a plan with no AI interview at all,
   // and reading position by ordinal alone marked that step complete for a
-  // candidate who had never spoken to Schranders.
+  // candidate who had never spoken to an AI interviewer.
   const planned = [0, 1, 2].map((column) => pipeline.stages.some((s) => COLUMN_OF_KIND[s.kind] === column));
   const settled = (column: number): ColumnState => (planned[column] ? 'done' : 'upcoming');
 

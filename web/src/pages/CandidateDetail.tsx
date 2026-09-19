@@ -18,6 +18,8 @@ import {
   MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
 } from '../components/interviewSetupModel';
 import { formatDateTime } from '../components/dateFormat';
+import { InterviewerSelector } from '../components/InterviewerSelector';
+import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -157,7 +159,9 @@ export function CandidateDetail() {
 
   // interview setup form
   const [durationMinutes, setDurationMinutes] = useState(45);
-  const [personaName, setPersonaName] = useState('Schranders');
+  // Random is the recommended default. Tone below is a separate setting and is
+  // never set or changed by the interviewer choice.
+  const [interviewer, setInterviewer] = useState(DEFAULT_INTERVIEWER_CHOICE);
   const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
 
   const [creating, setCreating] = useState(false);
@@ -347,7 +351,8 @@ export function CandidateDetail() {
         durationMinutes,
         language: 'en',
         modules: MODULES,
-        persona: { name: personaName, tone },
+        interviewer,
+        persona: { tone },
         // The AI interview always runs in Questor's own browser room; meeting
         // providers only create links for human rounds (PipelinePanel).
         provider: 'hosted',
@@ -364,7 +369,7 @@ export function CandidateDetail() {
     }
   };
 
-  const setupProblem = interviewSetupProblem({ durationMinutes, personaName });
+  const setupProblem = interviewSetupProblem({ durationMinutes, interviewer });
 
   return (
     <div>
@@ -468,10 +473,6 @@ export function CandidateDetail() {
             />
           </div>
           <div>
-            <label htmlFor="interview-persona">Persona name</label>
-            <input id="interview-persona" value={personaName} onChange={(e) => setPersonaName(e.target.value)} required />
-          </div>
-          <div>
             <label htmlFor="interview-tone">Tone</label>
             <select id="interview-tone" value={tone} onChange={(e) => setTone(e.target.value as typeof tone)}>
               <option value="warm">Warm</option>
@@ -502,7 +503,10 @@ export function CandidateDetail() {
             </div>
           </div>
         </div>
-        {setupProblem && <p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
+        <div style={{ marginTop: 14 }}>
+          <InterviewerSelector value={interviewer} onChange={setInterviewer} />
+        </div>
+        {setupProblem &&<p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
         <div className="row" style={{ marginTop: 16 }}>
           <button className="btn" type="submit" disabled={creating || setupProblem !== null}>
             <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />

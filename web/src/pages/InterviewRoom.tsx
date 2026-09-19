@@ -10,6 +10,7 @@ import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } fro
 import { Icon } from '../components/Icon';
 import { BrandLogo } from '../components/BrandLogo';
 import { interviewerName } from '../components/candidateJourney';
+import { interviewRoomHeader } from '../components/interviewerModel';
 import { listensByVoice, shouldCaptureAudio } from '../components/portalConsentModel';
 import {
   REPLY_POLL_INTERVAL_MS, keepWaitingForReply, roomOpening, roomRefusal, type StartResponse,
@@ -30,8 +31,8 @@ interface AgentTurn { turnId: string; text: string; done: boolean }
 interface Msg { speaker: 'agent' | 'candidate'; text: string }
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
-  /** Who conducts this interview, and whether they may listen. Both absent on an older server. */
-  persona?: { name: string | null } | null;
+  /** Who conducts this interview; absent on an older server. voiceHint picks the browser voice when there is no server voice; never a provider voice id. */
+  persona?: { name: string | null; interviewerId?: string | null; voiceHint?: string } | null;
   recordingConsented?: boolean;
   speech: { stt: SttCapability };
   proctoringEnabled: boolean;
@@ -197,11 +198,15 @@ export function InterviewRoom() {
   const currentTurnIdRef = useRef('');
   // Stops the wait-for-reply loop once the room is gone.
   const unmountedRef = useRef(false);
+  // Read by callbacks created before the portal info arrived, so the fallback
+  // browser voice is always this interviewer's, never the default.
+  const voiceHintRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`)
       .then((d) => {
         setInfo(d);
+        voiceHintRef.current = d.persona?.voiceHint;
         // A candidate who already answered — on another device, or before a
         // reload — is shown their answer rather than the question again.
         setFeedbackChoice(d.feedbackOptIn?.choice ?? null);
@@ -321,7 +326,7 @@ export function InterviewRoom() {
   }, [token]);
 
   /**
-   * Schranders checks in after a long silence, then goes back to listening.
+   * The interviewer checks in after a long silence, then goes back to listening.
    *
    * Recognition is stopped while the check-in plays, or the microphone would
    * transcribe the interviewer's own words into the candidate's answer.
@@ -335,7 +340,7 @@ export function InterviewRoom() {
     recognizerRef.current = null;
     setPhase('speaking');
 
-    const said = await speakNudge(token, n);
+    const said = await speakNudge(token, n, voiceHintRef.current);
     if (said) addMsg({ speaker: 'agent', text: said });
 
     // They may have finished or navigated while it was speaking.
@@ -378,7 +383,7 @@ export function InterviewRoom() {
         recognizerFailedRef.current = true;
         if (!recordingRef.current) setErr(`Speech error: ${e}. You can type your answer instead.`);
       },
-      // Long silence. Schranders speaks rather than a banner appearing: a
+      // Long silence. The interviewer speaks rather than a banner appearing: a
       // candidate who has gone quiet is usually thinking or stuck, and a person
       // conducting this interview would say something. A silent screen with a
       // warning on it is the moment an interview stops feeling like one.
@@ -527,7 +532,7 @@ export function InterviewRoom() {
     setCaptionPrefix(prefix);
     setPhase('speaking');
     void speakTurn({
-      token, turnId: turn.turnId, text: turn.text,
+      token, turnId: turn.turnId, text: turn.text, voiceHint: voiceHintRef.current,
       onDone: () => {
         if (turn.done) {
           // Close the microphone at the end rather than at unmount. The capture
@@ -696,7 +701,7 @@ export function InterviewRoom() {
   const repeat = () => {
     stopAllSpeech();
     recognizerRef.current?.abort();
-    void speakTurn({ token, turnId: currentTurnId, text: currentAgent, onDone: () => { if (!textModeRef.current) beginListening(); } });
+    void speakTurn({ token, turnId: currentTurnId, text: currentAgent, voiceHint: voiceHintRef.current, onDone: () => { if (!textModeRef.current) beginListening(); } });
   };
 
   if (err && !info) return <div className="center-screen"><div className="card auth-card"><div className="banner error">{err}</div></div></div>;
@@ -708,8 +713,9 @@ export function InterviewRoom() {
     );
   }
 
-  // The persona is configurable per interview, so the name on screen is the one
-  // this candidate was actually introduced to.
+  // The name on screen is the interviewer this candidate was actually
+  // introduced to, always labelled as an AI.
+  const header = interviewRoomHeader(info.persona);
   const interviewer = interviewerName(info.persona?.name);
   const live = phase !== 'ready' && phase !== 'done';
   const speaking = phase === 'speaking';
@@ -724,6 +730,13 @@ export function InterviewRoom() {
           <BrandLogo variant="lockup" size={22} surfaceTone="dark" className="candidate-logo" />
           <span className="room-role">{info.roleTitle}</span>
         </div>
+        <div className="room-interviewer" data-testid="room-interviewer">
+          <span className="room-interviewer-avatar" aria-hidden="true">{header.initial}</span>
+          <span className="room-interviewer-text">
+            <span className="room-interviewer-name">{header.name}</span>
+            <span className="room-interviewer-role">{header.role}</span>
+          </span>
+        </div>
         <div className="row" style={{ gap: 12, alignItems: 'center' }}>
           {live && micOpen && (
             <CaptureIndicator mode={textMode ? 'mic' : 'transcribing'} stt={info.speech.stt} />
@@ -735,8 +748,8 @@ export function InterviewRoom() {
       <main className="stage">
         <div className={`tile ${speaking ? 'is-active' : ''}`}>
           <SpeakingRings active={speaking} level={0.35} />
-          <div className="tile-avatar agent-avatar">A</div>
-          <div className="tile-name">{interviewer} <span className="tile-tag">AI interviewer</span></div>
+          <div className="tile-avatar agent-avatar">{header.initial}</div>
+          <div className="tile-name">{header.name} <span className="tile-tag">{header.role}</span></div>
           <div className="tile-status">
             {speaking ? 'Speaking' : phase === 'thinking' ? 'Thinking…' : phase === 'done' ? 'Signed off' : 'Ready'}
           </div>

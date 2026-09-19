@@ -46,9 +46,8 @@ export const SHOWCASE_STEPS: readonly ShowcaseStep[] = [
     key: 'ai-interview',
     icon: 'interviews',
     title: 'The AI interview round',
-    // The persona is named once, and introduced: a visitor who has never seen
-    // the product reads "Schranders" as a typo otherwise.
-    detail: 'A structured first round run by Schranders, our AI interviewer, in Questor’s own browser room — consent taken and the AI disclosed before it starts.',
+    // The interviewers are introduced once, here, before anything relies on them.
+    detail: 'A structured first round run by one of Questor’s five AI interviewers, in Questor’s own browser room — consent taken and the AI disclosed before it starts.',
   },
   {
     key: 'human-rounds',

@@ -16,7 +16,7 @@ interface Turn { id: string; index: number; speaker: 'agent' | 'candidate' | 'sy
 interface Invitation { token: string; status: string; portalUrl: string; sentAt: string | null; openedAt: string | null; }
 interface Session {
   id: string; state: string; provider: string; language: string; durationMinutes: number;
-  scheduledAt: string | null; persona: { name: string; tone: string }; consent: unknown;
+  scheduledAt: string | null; persona: { name?: string | null; tone?: string; interviewerId?: string }; consent: unknown;
 }
 interface InterviewResp {
   session: Session;
@@ -177,7 +177,8 @@ export function InterviewDetail() {
           <div><div className="muted small">Provider</div><b>{humanise(session.provider)}</b></div>
           <div><div className="muted small">Duration</div><b>{session.durationMinutes} min</b></div>
           <div><div className="muted small">Language</div><b>{session.language}</b></div>
-          <div><div className="muted small">Persona</div><b>{session.persona?.name}{session.persona?.tone ? ` (${session.persona.tone.toLowerCase()} tone)` : ''}</b></div>
+          {/* Two separate settings: who interviews (name and voice) and the tone. */}
+          <div><div className="muted small">AI interviewer</div><b>{session.persona?.name ?? 'Not recorded'}{session.persona?.tone ? ` (${session.persona.tone.toLowerCase()} tone)` : ''}</b></div>
         </div>
         {session.scheduledAt && (
           <div className="muted small" style={{ marginTop: 10 }}>

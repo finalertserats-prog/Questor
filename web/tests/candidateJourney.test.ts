@@ -628,7 +628,7 @@ describe('a role with its own stage plan', () => {
   const CUSTOM = [
     { key: 'applied', label: 'Applied', kind: 'intake' },
     { key: 'screen', label: 'Paper screen', kind: 'profile_review' },
-    { key: 'ai_round', label: 'Conversation with Schranders', kind: 'ai_interview' },
+    { key: 'ai_round', label: 'Conversation with Maya', kind: 'ai_interview' },
     { key: 'panel', label: 'Panel', kind: 'human_interview' },
     { key: 'exec', label: 'Exec chat', kind: 'human_interview' },
   ] as const;
@@ -636,7 +636,7 @@ describe('a role with its own stage plan', () => {
   it('uses the role\'s own labels for the AI stage', () => {
     const journey = buildJourney(input({ pipeline: pipeline({ stages: CUSTOM, currentStageKey: 'ai_round' }) }));
 
-    expect(journey.aiInterview.stageLabel).toBe('Conversation with Schranders');
+    expect(journey.aiInterview.stageLabel).toBe('Conversation with Maya');
   });
 
   it('lists the human stages in the plan\'s order, not alphabetically', () => {

@@ -89,7 +89,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'pipeline-stages',
     anchor: 'pipeline-stages',
     title: 'The medallion pipeline',
-    body: 'Every candidate moves through Participation (onboarding), Bronze (profile review), Silver — the AI interview, run by Schranders while HR may quietly observe — and then the human rounds: Gold, Platinum and Diamond, where the AI only listens and transcribes. A person decides every advancement and the final outcome, from the Hiring pipeline panel on the candidate’s page.',
+    body: 'Every candidate moves through Participation (onboarding), Bronze (profile review), Silver — the AI interview, run by the AI interviewer chosen for it (Avery, Maya, Adrian, Elena or Theo) while HR may quietly observe — and then the human rounds: Gold, Platinum and Diamond, where the AI only listens and transcribes. A person decides every advancement and the final outcome, from the Hiring pipeline panel on the candidate’s page.',
   },
   {
     id: 'recent-interviews',

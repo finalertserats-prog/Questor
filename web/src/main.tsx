@@ -14,6 +14,7 @@ import './styles/pipeline.css';
 import './styles/journey.css';
 import './styles/dashboard.css';
 import './styles/health.css';
+import './styles/interviewers.css';
 import './styles/polish.css';
 import './styles/tour.css';
 import './styles/observer.css';

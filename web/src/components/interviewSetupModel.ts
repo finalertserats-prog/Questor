@@ -11,7 +11,8 @@ export const MAX_DURATION_MINUTES = 120;
 
 export interface InterviewSetup {
   readonly durationMinutes: unknown;
-  readonly personaName: string;
+  /** 'random' or an interviewer id. */
+  readonly interviewer: string;
 }
 
 /**
@@ -19,12 +20,12 @@ export interface InterviewSetup {
  *
  * WHY it is not left to the input's own min/max: the button was not a form
  * submit, so the browser never checked them. A 0-minute interview, a
- * 999-minute one, and one whose interviewer had no name at all all reached the
- * server — which then either refused with a raw message or, worse, accepted.
+ * 999-minute one, and one with no interviewer at all all reached the server —
+ * which then either refused with a raw message or, worse, accepted.
  */
-export function interviewSetupProblem({ durationMinutes, personaName }: InterviewSetup): string | null {
-  if (!personaName.trim()) {
-    return 'Give the interviewer a name — it is what the candidate is introduced to.';
+export function interviewSetupProblem({ durationMinutes, interviewer }: InterviewSetup): string | null {
+  if (!interviewer.trim()) {
+    return 'Choose an AI interviewer, or Random — it is who the candidate is introduced to.';
   }
   if (!hasScore(durationMinutes)) {
     return `Say how long the interview should run, between ${MIN_DURATION_MINUTES} and ${MAX_DURATION_MINUTES} minutes.`;
