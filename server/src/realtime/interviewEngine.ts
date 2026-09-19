@@ -600,6 +600,25 @@ export async function continueAfterAnswer(sessionId: string): Promise<{ turn: Ag
   return produceOrCurrent(sessionId, last.id);
 }
 
+/**
+ * The sign-off already on record when this session ended because the
+ * candidate pressed Leave; null for any other ending. Only a withdrawal whose
+ * last candidate turn is the Leave marker, and whose last agent turn follows
+ * it, counts — a session withdrawn some other way keeps refusing.
+ */
+async function repeatedLeave(
+  sessionId: string,
+  state: string,
+  rows: { index: number; speaker: string; metaJson: string }[],
+): Promise<AgentTurnOut | null> {
+  if (state !== 'CANDIDATE_WITHDREW') return null;
+  const lastCandidate = [...rows].reverse().find((t) => t.speaker === 'candidate');
+  if (!lastCandidate || !leftByButton(lastCandidate)) return null;
+  const recorded = await recordedOutcome(sessionId, state, false);
+  if (!recorded || recorded.turn.index < lastCandidate.index || !recorded.turn.withdrawn) return null;
+  return recorded.turn;
+}
+
 /** Ingest a candidate turn and return the next agent turn. */
 export async function submitCandidateTurn(sessionId: string, text: string, timing?: { startMs?: number; endMs?: number; confidence?: number }): Promise<AgentTurnOut> {
   return (await submitCandidateAnswer(sessionId, text, timing)).turn;
@@ -633,6 +652,11 @@ export async function submitCandidateAnswer(
     throw new HttpError(400, `That answer is too long (limit ${MAX_ANSWER_CHARS} characters).`);
   }
   if (!LIVE_STATES.includes(session.state)) {
+    // A Leave retried after it worked — the response was lost, or a second tab
+    // pressed it — gets the sign-off it already received, not a refusal that
+    // reads as though the candidate is still in an interview they left.
+    const repeat = opts?.leaving ? await repeatedLeave(sessionId, session.state, session.turns) : null;
+    if (repeat) return { turn: repeat, produced: false };
     throw new HttpError(409, 'This interview is no longer accepting answers.');
   }
   if (turns.length >= MAX_TURNS_PER_SESSION) {

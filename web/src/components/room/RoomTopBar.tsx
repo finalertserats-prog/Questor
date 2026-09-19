@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { BrandLogo } from '../BrandLogo';
 import { Icon } from '../Icon';
 import { transcriptionProcessorSentence, type SttCapability } from '../../pages/Portal';
+import { RoomPrivacy } from './RoomPanels';
 import { formatElapsed, progressLabel, timeTrack } from './roomProgressModel';
 
 /** Re-render once a second while the interview runs, for the clock and time left. */
@@ -42,6 +43,56 @@ export function CaptureIndicator({ mode, stt, aiFact }: { mode: 'transcribing' |
   );
 }
 
+/**
+ * The "What's captured" facts, from the top bar.
+ *
+ * On a phone the participants rail drops its own copy of these facts, and a
+ * compact (keyboard-open) room drops the rail entirely; the capture pill's
+ * tooltip was then the only place the room said the interviewer is an AI, and
+ * a touch screen never shows a tooltip. So the bar carries the same facts
+ * behind a control a finger or a keyboard can open. room.css shows it only
+ * where the rail's copy is hidden.
+ */
+function CapturedFacts({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setOpen(false);
+      buttonRef.current?.focus();
+    };
+    // A tap anywhere else puts it away, as the rail's details never cover the room.
+    const onPointer = (e: PointerEvent) => {
+      if (e.target instanceof Node && !wrapRef.current?.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('pointerdown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('pointerdown', onPointer);
+    };
+  }, [open]);
+  return (
+    <div className="room-facts" ref={wrapRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="room-ghost"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((was) => !was)}
+      >
+        What's captured
+      </button>
+      {open && <div id={panelId} className="room-facts-panel">{children}</div>}
+    </div>
+  );
+}
+
 export interface RoomTopBarProps {
   readonly roleTitle: string;
   readonly durationMinutes: number;
@@ -50,6 +101,12 @@ export interface RoomTopBarProps {
   readonly finished: boolean;
   readonly question: number | null;
   readonly capture: { readonly mode: 'transcribing' | 'mic'; readonly stt: SttCapability; readonly aiFact: string } | null;
+  /**
+   * The rail's "What's captured" content, for the bar's own copy on a phone.
+   * Without it the bar builds the same facts from `capture`: an open mic means
+   * the candidate consented to capture.
+   */
+  readonly privacy?: ReactNode;
   readonly showActions: boolean;
   readonly paused: boolean;
   readonly pauseAvailable: boolean;
@@ -63,6 +120,8 @@ export function RoomTopBar(props: RoomTopBarProps) {
   const now = useSecondTick(started && !props.finished);
   const elapsedMs = started ? now - props.startedAt : 0;
   const label = progressLabel({ started, durationMinutes: props.durationMinutes, elapsedMs, question: props.question });
+  const privacy = props.privacy
+    ?? (props.capture && <RoomPrivacy aiFact={props.capture.aiFact} stt={props.capture.stt} canCapture />);
   return (
     <header className="room-bar">
       {/* The room is dark in both themes, so it always takes the dark cut. */}
@@ -75,6 +134,7 @@ export function RoomTopBar(props: RoomTopBarProps) {
         <span className="room-progress-label">{label}</span>
       </div>
       {props.capture && <CaptureIndicator mode={props.capture.mode} stt={props.capture.stt} aiFact={props.capture.aiFact} />}
+      {privacy && <CapturedFacts>{privacy}</CapturedFacts>}
       <span className="room-timer" aria-label="Elapsed time">{formatElapsed(elapsedMs)}</span>
       {props.showActions && (
         <div className="room-bar-actions">

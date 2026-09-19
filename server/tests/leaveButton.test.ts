@@ -62,6 +62,42 @@ describe('leaving through the Leave button', () => {
     expect(marked).toHaveLength(1);
   });
 
+  // A Leave whose response was lost (network drop, second tab) is retried by
+  // the room. The candidate did leave; answering the retry with "no longer
+  // accepting answers" tells them the opposite of what happened.
+  describe('pressed again after it already worked', () => {
+    it('succeeds', async () => {
+      await leave();
+      const res = await leave();
+      expect(res.status).toBe(200);
+    });
+
+    it('hands back the same sign-off', async () => {
+      const first = await leave();
+      const res = await leave();
+      expect(res.body.turn).toEqual(first.body.turn);
+    });
+
+    it('writes nothing', async () => {
+      await leave();
+      const before = await prisma.turn.count({ where: { sessionId: ids.sessionId } });
+      await leave();
+      expect(await prisma.turn.count({ where: { sessionId: ids.sessionId } })).toBe(before);
+    });
+
+    it('still refuses an ordinary answer', async () => {
+      await leave();
+      const res = await request(app).post(`/api/portal/${ids.token}/turn`).send({ text: 'One more thing.' });
+      expect(res.status).toBe(409);
+    });
+
+    it('still refuses a Leave after an interview that ended some other way', async () => {
+      await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { state: 'CANDIDATE_WITHDREW' } });
+      const res = await leave();
+      expect(res.status).toBe(409);
+    });
+  });
+
   it('keeps an ordinary answer an ordinary answer', async () => {
     const res = await request(app).post(`/api/portal/${ids.token}/turn`).send({ text: 'I build data pipelines.' });
     expect(res.body.turn.withdrawn).toBe(false);

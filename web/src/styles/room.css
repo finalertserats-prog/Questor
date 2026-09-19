@@ -41,6 +41,7 @@
 
 /* --- top bar --- */
 .room-bar {
+  position: relative;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -113,6 +114,37 @@
 .room-ghost.room-leave {
   color: var(--room-stop);
   border-color: var(--room-stop-edge);
+}
+/* The bar's copy of "What's captured": only where the participants rail's
+   copy is hidden (phones, a compact room — see the rules below). The panel
+   hangs from the bar, not the button, so it fits a 375px screen wherever the
+   button wrapped to. */
+.room-facts {
+  display: none;
+}
+.room-facts-panel {
+  position: absolute;
+  top: 100%;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+  margin-top: 6px;
+  /* The visible height, so an open keyboard cannot push its end off screen. */
+  max-height: calc(var(--room-vh, 100dvh) * 0.6);
+  overflow-y: auto;
+  background: var(--room-panel-2);
+  color: var(--room-ink-2);
+  border: var(--hair) solid var(--room-line-2);
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.room-facts-panel ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 4px;
 }
 
 /* The capture pill: an outline and a pulsing dot, because capture is live
@@ -822,6 +854,9 @@
   .room-people .room-tag {
     display: none;
   }
+  .room-facts {
+    display: block;
+  }
   .room-tile,
   .room-tile.room-tile-observer {
     grid-template-columns: auto auto;
@@ -917,9 +952,28 @@
 :root[data-room-compact] .room-people,
 :root[data-room-compact] .room-convo-head,
 :root[data-room-compact] .room-current-label,
-:root[data-room-compact] .room-mode-row .room-hint,
-:root[data-room-compact] .room-nudge {
+:root[data-room-compact] .room-mode-row .room-hint {
   display: none;
+}
+/* The rail and its "What's captured" are gone, so the bar carries them. */
+:root[data-room-compact] .room-facts {
+  display: block;
+}
+/* The one hint that stays: the answer box just turned into a code editor under
+   the candidate's fingers, and without a word that reads as a fault. One line,
+   so it costs the editor no height. The row gives up its min-content width
+   too, or the unwrapped line would widen the composer past the screen. */
+:root[data-room-compact] .room-mode-row {
+  min-width: 0;
+}
+:root[data-room-compact] .room-nudge {
+  /* Takes what is left of the mode row, and never more than the row. */
+  flex: 1 1 12em;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 :root[data-room-compact] .room-body {
   grid-template-rows: minmax(0, 1fr);

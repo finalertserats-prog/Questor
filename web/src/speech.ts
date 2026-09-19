@@ -249,6 +249,23 @@ if (ttsSupported()) {
 
 let currentAudio: HTMLAudioElement | null = null;
 let currentAudioId = 0;
+let currentAudioWatchdog: ReturnType<typeof setTimeout> | null = null;
+
+// The element can go quiet without ever firing 'ended' — on iOS the audio
+// context it is routed through can be suspended mid-utterance — and the room
+// then waits in 'speaking' for good, with the candidate unable to answer. Past
+// the file's own length plus this grace, it is treated as finished.
+const AUDIO_END_GRACE_MS = 1_500;
+// Before the file's length is known: generous against a slow speaking rate
+// (~12 characters a second), so it only ever ends audio that is stuck.
+const AUDIO_CAP_MS_PER_CHAR = 80;
+const AUDIO_CAP_BASE_MS = 3_000;
+const AUDIO_CAP_MIN_MS = 5_000;
+
+function clearAudioWatchdog(): void {
+  if (currentAudioWatchdog !== null) clearTimeout(currentAudioWatchdog);
+  currentAudioWatchdog = null;
+}
 
 /** Speak an agent turn, preferring the server voice and falling back locally. */
 export async function speakTurn(o: {
@@ -278,15 +295,31 @@ export async function speakTurn(o: {
     currentAudioId = id;
     emitActivity({ type: 'start', id, text: o.text, audio });
     let fired = false;
+    const release = () => {
+      if (currentAudio === audio) { currentAudio = null; clearAudioWatchdog(); }
+    };
     const finish = () => {
       if (fired) return;
       fired = true;
       emitActivity({ type: 'end', id });
       URL.revokeObjectURL(url);
-      if (currentAudio === audio) currentAudio = null;
+      release();
       o.onDone?.();
     };
     audio.onended = finish;
+    const watchFor = (ms: number) => {
+      clearAudioWatchdog();
+      // Paused as well as finished, so audio that does wake up late cannot
+      // talk over the next question.
+      currentAudioWatchdog = setTimeout(() => { audio.pause(); finish(); }, ms);
+    };
+    watchFor(Math.max(AUDIO_CAP_MIN_MS, o.text.length * AUDIO_CAP_MS_PER_CHAR + AUDIO_CAP_BASE_MS));
+    audio.onloadedmetadata = () => {
+      // A stream can report an infinite length; the cap above stays then.
+      if (!fired && currentAudio === audio && Number.isFinite(audio.duration) && audio.duration > 0) {
+        watchFor(audio.duration * 1000 + AUDIO_END_GRACE_MS);
+      }
+    };
     // A failed play (autoplay policy, decode error) must not strand the
     // interview — fall through to the browser voice instead. The failed
     // utterance is ended first, so its audio graph is released.
@@ -295,7 +328,7 @@ export async function speakTurn(o: {
       fired = true;
       emitActivity({ type: 'end', id });
       URL.revokeObjectURL(url);
-      if (currentAudio === audio) currentAudio = null;
+      release();
       finishLocally();
     };
     audio.onerror = fallBack;
@@ -307,7 +340,7 @@ export async function speakTurn(o: {
 
 export function stopAllSpeech(): void {
   stopSpeaking();
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; emitActivity({ type: 'end', id: currentAudioId }); }
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; clearAudioWatchdog(); emitActivity({ type: 'end', id: currentAudioId }); }
 }
 
 // ---------------------------------------------------------------------------
