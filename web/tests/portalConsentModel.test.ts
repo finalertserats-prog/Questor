@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MIN_ACCOMMODATION_CHARS, accommodationHint, canSubmitConsent, consentAction, shouldCaptureAudio,
+  MIN_ACCOMMODATION_CHARS, accommodationHint, canSubmitConsent, consentAction, listensByVoice, shouldCaptureAudio,
 } from '../src/components/portalConsentModel';
 
 const draft = (over: Partial<Parameters<typeof consentAction>[0]> = {}) =>
@@ -82,5 +82,21 @@ describe('shouldCaptureAudio', () => {
   it('does not capture audio when the answer is unknown', () => {
     expect([shouldCaptureAudio(undefined), shouldCaptureAudio(null), shouldCaptureAudio('true')])
       .toEqual([false, false, false]);
+  });
+});
+
+describe('listensByVoice', () => {
+  it('listens by voice when capture is allowed and the candidate is not typing', () => {
+    expect(listensByVoice({ textMode: false, canCapture: true })).toBe(true);
+  });
+
+  it('waits for a typed answer in typing mode', () => {
+    expect(listensByVoice({ textMode: true, canCapture: true })).toBe(false);
+  });
+
+  // The regression: a stale "not typing" must still never open the microphone
+  // for a candidate who declined voice capture.
+  it('never listens by voice without consent to capture, even outside typing mode', () => {
+    expect(listensByVoice({ textMode: false, canCapture: false })).toBe(false);
   });
 });

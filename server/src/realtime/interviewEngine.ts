@@ -114,6 +114,9 @@ async function lockSessionForAppend(tx: TransactionClient, sessionId: string): P
   await tx.$queryRaw`SELECT "id" FROM "InterviewSession" WHERE "id" = ${sessionId} FOR UPDATE`;
 }
 
+/** A check made under the append lock; throwing refuses the append. */
+type AppendGuard = (tx: TransactionClient, tail: { id: string; index: number } | null) => Promise<void> | void;
+
 /** A unique-constraint violation, however the driver reports it. */
 function isDuplicateIndex(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: unknown }).code === 'P2002';
@@ -129,16 +132,22 @@ function isDuplicateIndex(err: unknown): boolean {
  * now read and written inside one transaction, and the unique constraint on
  * (sessionId, index) is what catches the interleaving the transaction does not:
  * the loser retries once against the newly-current tail.
+ *
+ * `guard`, when given, runs inside that transaction after the tail is read and
+ * may throw to refuse the append.
  */
-async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'index'>, meta?: Record<string, unknown>): Promise<TurnRecord> {
+async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'index'>, meta?: Record<string, unknown>, guard?: AppendGuard): Promise<TurnRecord> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const rec = await prisma.$transaction(async (tx) => {
         await lockSessionForAppend(tx, sessionId);
         const tail = await tx.turn.findFirst({
-          where: { sessionId }, orderBy: { index: 'desc' }, select: { index: true },
+          where: { sessionId }, orderBy: { index: 'desc' }, select: { id: true, index: true },
         });
+        // Decided under the same lock as the write, so "the transcript is still
+        // what I read" cannot change between the check and the insert.
+        if (guard) await guard(tx, tail);
         return tx.turn.create({
           data: {
             id: nanoid(10), sessionId, index: (tail?.index ?? -1) + 1, speaker: turn.speaker, text: turn.text,
@@ -182,10 +191,28 @@ export async function transitionIfInState(sessionId: string, from: string, to: s
   return count > 0;
 }
 
-/** Produce and persist the next agent turn given the current transcript. */
-async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
+/**
+ * The transcript gained a turn between reading it and writing the reply to it.
+ * Internal: callers catch it and hand back whatever is now pending.
+ */
+class TranscriptMovedError extends Error {
+  constructor() { super('The transcript changed while a reply was being produced'); }
+}
+
+/**
+ * Produce and persist the next agent turn given the current transcript.
+ *
+ * The reply is written only if the transcript's last turn is still the one it
+ * was generated from. Two writers — a reload's Continue racing the original
+ * answer, two tabs, two starts — otherwise each put a reply on the record and
+ * the candidate was asked two things at once. `requireTailId`, when given, also
+ * refuses before any model call if the transcript has already moved on.
+ */
+async function produceAgentTurn(sessionId: string, requireTailId?: string | null): Promise<AgentTurnOut> {
   noteSessionActivity(sessionId);
   const { session, plan, profile, persona, turns } = await loadContext(sessionId);
+  const readTailId = turns.length > 0 ? turns[turns.length - 1].id : null;
+  if (requireTailId !== undefined && requireTailId !== readTailId) throw new TranscriptMovedError();
   const signal = directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) });
   // The disclosure is the required opening; a damaged consent record must not
   // quietly become an interview that never says it is AI-run.
@@ -199,7 +226,9 @@ async function produceAgentTurn(sessionId: string): Promise<AgentTurnOut> {
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.
-  }, { kind: utter.kind });
+  }, { kind: utter.kind }, (_tx, tail) => {
+    if ((tail?.id ?? null) !== readTailId) throw new TranscriptMovedError();
+  });
 
   // 'close' invites the candidate's own questions and must stay open for their
   // reply; the session ends on the sign-off that follows it.
@@ -270,9 +299,14 @@ export interface StartOutcome {
   /** The last thing on record is the candidate's answer, and no reply to it exists. */
   awaitingReply: boolean;
   /**
-   * How far into the interview this is, in the same clock as turn startMs/endMs.
-   * The room offsets its own clock by this so answers given after a rejoin are
-   * stamped after everything already on record, not from zero again.
+   * How long ago that unanswered answer arrived. A recent one usually means the
+   * reply is still being produced by the request that stored it, so the room
+   * waits for it rather than inviting the candidate to carry on over the top.
+   */
+  pendingAnswerAgeMs?: number;
+  /**
+   * Where the room's answer clock resumes, in the same clock as turn
+   * startMs/endMs. See resumeClockMs.
    */
   elapsedMs: number;
 }
@@ -280,6 +314,33 @@ export interface StartOutcome {
 /** Agent turn kinds after which the conversation is over (see produceAgentTurn). */
 const ENDING_KINDS = ['signoff', 'safety', 'withdrawn'];
 const WITHDRAWN_KINDS = ['withdrawn', 'safety'];
+
+/** A beat between the last thing on record and the first thing after a rejoin. */
+const RESUME_GAP_MS = 1_000;
+/**
+ * Far past any real interview, and far enough under the portal's 24-hour
+ * ceiling on answer stamps that answers after a rejoin always fit under it.
+ */
+const MAX_RESUME_CLOCK_MS = 6 * 60 * 60 * 1000;
+/** Re-reads of start inside this window are the same rejoin (see recordRejoin). */
+const REJOIN_AUDIT_WINDOW_MS = 60_000;
+
+/**
+ * Where a rejoined room's clock starts: just after the last stamp on record.
+ *
+ * Deliberately NOT wall-clock time since the start. The director paces the
+ * interview from these stamps (elapsedMinutes), so twenty minutes spent
+ * reconnecting would otherwise be spent out of the candidate's interview. The
+ * time away is recorded separately, for reviewers, as 'interview.rejoined'.
+ *
+ * Capped so one absurd stamp — a browser can send up to 24 hours — cannot push
+ * every later answer past the portal's limit and have them all refused. Past
+ * the cap the stamps stop being monotonic, which only happens after a stamp
+ * that was already meaningless.
+ */
+function resumeClockMs(lastEndMs: number): number {
+  return Math.min(lastEndMs + RESUME_GAP_MS, MAX_RESUME_CLOCK_MS);
+}
 
 function toTranscript(turns: { speaker: string; text: string }[]): TranscriptLine[] {
   return turns
@@ -292,31 +353,24 @@ function toTranscript(turns: { speaker: string; text: string }[]): TranscriptLin
  *
  * The turn handed back is the latest agent turn: the question the candidate
  * still owes an answer to. When the last row is the candidate's own answer —
- * stored, but the reply never was (the model failed, or they reloaded while it
- * was thinking) — the reply is NOT generated here. Doing so would make start a
- * paid LLM call, and it would race the original request if that is still in
- * flight, putting two replies to one answer on the record. Instead the
- * question that answer was for is handed back with `awaitingReply`, and the
- * room invites the candidate to carry on: whatever they send next is appended
- * and the reply is produced from the whole transcript, their stored answer
- * included, by the normal answer path.
+ * stored, but the reply not (yet) — the reply is NOT generated here. Doing so
+ * would make start a paid LLM call, and it would race the original request if
+ * that is still in flight. Instead the question that answer was for is handed
+ * back with `awaitingReply` and the answer's age: the room waits briefly for
+ * the in-flight reply, then offers Continue (continueAfterAnswer), which
+ * produces it under the same guard as every other reply.
  *
- * Returns null when a live session somehow has no agent turn yet, so the caller
- * falls through and produces one rather than handing back nothing.
+ * Returns null when a live session somehow has no agent turn yet.
  */
-async function resumeLiveInterview(sessionId: string, state: string, startedAt: Date | null): Promise<StartOutcome | null> {
+async function recordedOutcome(sessionId: string, state: string, resumed: boolean): Promise<StartOutcome | null> {
   const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' } });
   const pending = [...turns].reverse().find((t) => t.speaker === 'agent');
   if (!pending) return null;
   const kindValue = parseJsonOptional<{ kind?: unknown }>(pending.metaJson, {}, { model: 'Turn', id: pending.id, field: 'metaJson' }).kind;
   const kind = typeof kindValue === 'string' ? kindValue : 'question';
   const last = turns[turns.length - 1];
+  const awaitingReply = last?.speaker === 'candidate';
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
-  // Wall-clock time since the start where the server knows it, but never less
-  // than the latest stamp on record: agent turns are stamped on a virtual clock
-  // that can run ahead of real time, and a stamp that went backwards would put
-  // a later answer before an earlier one in the reviewer's transcript.
-  const wallClock = startedAt ? Math.max(0, Date.now() - startedAt.getTime()) : 0;
   return {
     turn: {
       turnId: pending.id, index: pending.index, text: pending.text, competencyId: pending.competencyId,
@@ -326,11 +380,29 @@ async function resumeLiveInterview(sessionId: string, state: string, startedAt: 
       done: ENDING_KINDS.includes(kind),
       withdrawn: WITHDRAWN_KINDS.includes(kind),
     },
-    resumed: true,
+    resumed,
     history: toTranscript(turns),
-    awaitingReply: last?.speaker === 'candidate',
-    elapsedMs: Math.max(wallClock, lastEnd),
+    awaitingReply,
+    ...(awaitingReply ? { pendingAnswerAgeMs: Math.max(0, Date.now() - last.createdAt.getTime()) } : {}),
+    elapsedMs: resumed ? resumeClockMs(lastEnd) : 0,
   };
+}
+
+/**
+ * Produce the next agent turn, or — if another writer got there first — hand
+ * back what is now pending. `produced` says which, so only the writer that
+ * actually wrote a sign-off goes on to finalise.
+ */
+async function produceOrCurrent(sessionId: string, requireTailId?: string | null): Promise<{ turn: AgentTurnOut; produced: boolean }> {
+  try {
+    return { turn: await produceAgentTurn(sessionId, requireTailId), produced: true };
+  } catch (err) {
+    if (!(err instanceof TranscriptMovedError)) throw err;
+    const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { state: true } });
+    const current = session ? await recordedOutcome(sessionId, session.state, false) : null;
+    if (!current) throw new HttpError(409, 'This interview changed while we were replying. Please reload the page.', 'transcript_moved');
+    return { turn: current.turn, produced: false };
+  }
 }
 
 /**
@@ -341,7 +413,7 @@ async function resumeLiveInterview(sessionId: string, state: string, startedAt: 
  * was drafted for them". A session created by the recruiter routes carries the
  * disclosure text but no `consentedAt` until the candidate accepts it.
  */
-function hasRecordedConsent(session: { id: string; consentJson: string }): boolean {
+export function hasRecordedConsent(session: { id: string; consentJson: string }): boolean {
   // Unreadable is corruption, not "no consent": the candidate may well have
   // agreed, and sending them back to agree again would write over the only
   // record of what they agreed to.
@@ -362,17 +434,21 @@ export async function startInterview(sessionId: string): Promise<AgentTurnOut> {
  * edge one. See resumeLiveInterview for what a resume hands back.
  */
 export async function startOrResumeInterview(sessionId: string): Promise<StartOutcome> {
-  const { session } = await loadContext(sessionId);
+  const { session, turns: turnsAtStart } = await loadContext(sessionId);
+  // Usually empty. Not always: a session retried after a technical failure
+  // starts again with its earlier turns on record.
+  const tailAtStart = turnsAtStart.length > 0 ? turnsAtStart[turnsAtStart.length - 1].id : null;
   // Starting an interview that is already live is a repeat, not a new start.
   // A refresh, a double-tap, or a socket reconnect racing the portal fallback
   // used to append a second opening: another paid LLM call, another
   // 'interview.started' event, and a transcript whose canonical order contains
   // two greetings — the interviewer introducing itself again mid-interview.
   if (LIVE_STATES.includes(session.state)) {
-    const resumed = await resumeLiveInterview(sessionId, session.state, session.startedAt);
+    const resumed = await recordedOutcome(sessionId, session.state, true);
     if (resumed) {
       // A candidate coming back mid-interview is live work for the drain.
       noteSessionActivity(sessionId);
+      await recordRejoin(session.tenantId, sessionId);
       return resumed;
     }
   }
@@ -408,18 +484,110 @@ export async function startOrResumeInterview(sessionId: string): Promise<StartOu
     // that is shutting down must not begin an interview it will abandon. The
     // session is left exactly as it was, so the retry after restart works.
     assertAcceptingNewInterviews();
-    await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: 'ASSESSING' } });
+    // Conditional on the state we read, so of two starts racing (two tabs, the
+    // socket and the portal fallback) exactly one begins the interview. The
+    // other joins it below instead of announcing and opening it a second time.
+    const { count } = await prisma.interviewSession.updateMany({
+      where: { id: sessionId, state: session.state },
+      data: { state: 'ASSESSING', startedAt: new Date() },
+    });
+    if (count === 0) return joinRacingStart(sessionId);
+  } else {
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
   }
-  await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
   await logAudit({ tenantId: session.tenantId, action: 'interview.started', entityType: 'InterviewSession', entityId: sessionId });
   await emitEvent(session.tenantId, 'interview.started', { sessionId });
-  const turn = await produceAgentTurn(sessionId);
+  // Only onto the transcript as it stood when this start began: if a racing
+  // start's opening landed first, this one is discarded and theirs handed back.
+  const { turn } = await produceOrCurrent(sessionId, tailAtStart);
   const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' }, select: { speaker: true, text: true } });
   return { turn, resumed: false, history: toTranscript(turns), awaitingReply: false, elapsedMs: 0 };
 }
 
+/** The start that lost the race: take the opening the winner produced, or produce it if theirs has not landed. */
+async function joinRacingStart(sessionId: string): Promise<StartOutcome> {
+  const fresh = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { state: true } });
+  if (!fresh || !LIVE_STATES.includes(fresh.state)) {
+    throw new HttpError(409, 'This interview is not open right now. If you think that is wrong, reply to your invitation email and we will look into it.');
+  }
+  const existing = await recordedOutcome(sessionId, fresh.state, false);
+  if (existing) return existing;
+  // The winner is still generating. Racing it is safe: both write only onto
+  // the transcript as it stands now, so whichever opening lands second is
+  // refused and hands back the first.
+  const tail = await prisma.turn.findFirst({ where: { sessionId }, orderBy: { index: 'desc' }, select: { id: true } });
+  const { turn } = await produceOrCurrent(sessionId, tail?.id ?? null);
+  const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' }, select: { speaker: true, text: true } });
+  return { turn, resumed: false, history: toTranscript(turns), awaitingReply: false, elapsedMs: 0 };
+}
+
+/**
+ * The rejoin, for reviewers: when it happened and how long the candidate was
+ * away. Kept out of the turn stamps on purpose — see resumeClockMs.
+ */
+async function recordRejoin(tenantId: string, sessionId: string): Promise<void> {
+  // A room waiting for a reply re-reads start every couple of seconds; that is
+  // one rejoin for the reviewer, not a line per re-read.
+  const recent = await prisma.auditEvent.findFirst({
+    where: { entityId: sessionId, action: 'interview.rejoined', createdAt: { gte: new Date(Date.now() - REJOIN_AUDIT_WINDOW_MS) } },
+    select: { id: true },
+  });
+  if (recent) return;
+  const last = await prisma.turn.findFirst({ where: { sessionId }, orderBy: { index: 'desc' }, select: { createdAt: true } });
+  await logAudit({
+    tenantId, action: 'interview.rejoined', entityType: 'InterviewSession', entityId: sessionId,
+    after: { sinceLastTurnMs: last ? Math.max(0, Date.now() - last.createdAt.getTime()) : null },
+  });
+}
+
+/**
+ * The candidate's answer is on record but no reply to it is, and they have
+ * nothing to add: produce that reply now.
+ *
+ * Only while the answer is still the last thing on record. If a reply already
+ * exists — the original request finished, another tab pressed Continue — that
+ * reply is handed back and nothing is written, so pressing it any number of
+ * times, at once or in turn, puts one reply on the record.
+ */
+export async function continueAfterAnswer(sessionId: string): Promise<{ turn: AgentTurnOut; produced: boolean }> {
+  const { session, turns } = await loadContext(sessionId);
+  if (!LIVE_STATES.includes(session.state)) {
+    throw new HttpError(409, 'This interview is no longer accepting answers.');
+  }
+  const last = turns[turns.length - 1];
+  if (last?.speaker !== 'candidate') {
+    const current = await recordedOutcome(sessionId, session.state, false);
+    if (!current) throw new HttpError(409, 'This interview has not started yet.');
+    return { turn: current.turn, produced: false };
+  }
+  if (turns.length >= MAX_TURNS_PER_SESSION) {
+    throw new HttpError(429, 'This interview has reached its maximum length. Our team will follow up with you.');
+  }
+  return produceOrCurrent(sessionId, last.id);
+}
+
 /** Ingest a candidate turn and return the next agent turn. */
 export async function submitCandidateTurn(sessionId: string, text: string, timing?: { startMs?: number; endMs?: number; confidence?: number }): Promise<AgentTurnOut> {
+  return (await submitCandidateAnswer(sessionId, text, timing)).turn;
+}
+
+/**
+ * Ingest a candidate answer; `produced` is false when another writer's reply
+ * was handed back instead of a new one (see produceOrCurrent).
+ *
+ * `inReplyTo` is the agent turn the candidate was looking at when they
+ * answered. When it is not the newest agent turn the answer is refused as
+ * stale: the interview moved on in another tab, or while a reload was showing
+ * the previous question, and crediting the answer to a question the candidate
+ * never saw puts false evidence in front of a reviewer. Optional, so the socket
+ * and older rooms keep working unchanged.
+ */
+export async function submitCandidateAnswer(
+  sessionId: string,
+  text: string,
+  timing?: { startMs?: number; endMs?: number; confidence?: number },
+  opts?: { inReplyTo?: string },
+): Promise<{ turn: AgentTurnOut; produced: boolean }> {
   const { session, turns } = await loadContext(sessionId);
   // All three guards run before any LLM call so an abusive caller never reaches
   // a billable path.
@@ -446,14 +614,25 @@ export async function submitCandidateTurn(sessionId: string, text: string, timin
     logger.warn({ sessionId, index: turns.length, matched: injection.matched, textLength: text.length }, 'Prompt-injection attempt flagged on candidate turn');
   }
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
-  await appendTurn(sessionId, {
+  const answer = await appendTurn(sessionId, {
     speaker: 'candidate', text,
     startMs: timing?.startMs ?? lastEnd + 1000,
     endMs: timing?.endMs ?? lastEnd + 30_000,
     confidence: timing?.confidence ?? 0.9,
     competencyId,
-  }, injection.injection ? { flags: ['prompt_injection'], injectionMatched: injection.matched, flaggedAt: new Date().toISOString() } : undefined);
-  return produceAgentTurn(sessionId);
+  }, injection.injection ? { flags: ['prompt_injection'], injectionMatched: injection.matched, flaggedAt: new Date().toISOString() } : undefined,
+  async (tx) => {
+    if (!opts?.inReplyTo) return;
+    const newest = await tx.turn.findFirst({
+      where: { sessionId, speaker: 'agent' }, orderBy: { index: 'desc' }, select: { id: true },
+    });
+    if (newest?.id !== opts.inReplyTo) {
+      throw new HttpError(409, 'The interviewer has already moved on to the next question.', 'stale_question');
+    }
+  });
+  // Only onto this answer: if a Continue from another tab already replied to
+  // it, that reply is handed back rather than a second one written after it.
+  return produceOrCurrent(sessionId, answer.id);
 }
 
 /** Close the interview, run the independent evaluator and persist the assessment. */

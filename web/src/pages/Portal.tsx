@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
@@ -19,6 +19,8 @@ interface PortalInfo {
   observerNotice?: boolean;
   /** Whether this candidate consented to voice capture; absent on an older server. */
   recordingConsented?: boolean;
+  /** Whether consent to the interview is on record; absent on an older server. */
+  consented?: boolean;
   speech: { stt: SttCapability; tts: { provider: string } };
 }
 
@@ -92,6 +94,13 @@ export function Portal() {
   // Set when a button press tells us the interview has moved on since this page
   // loaded; it overrides the state the page was opened with.
   const [refusedEntry, setRefusedEntry] = useState<PortalEntry | null>(null);
+  // True once a button press has swapped the form for a card. Focus then moves
+  // to the card's heading: the button the candidate pressed is gone, and focus
+  // left on nothing strands a keyboard or screen-reader user at the top of the
+  // page with no announcement of what changed.
+  const [swappedByPress, setSwappedByPress] = useState(false);
+  const cardHeadingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (swappedByPress) cardHeadingRef.current?.focus(); }, [swappedByPress]);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`).then(setInfo).catch((e) => setErr(e.message));
@@ -109,11 +118,15 @@ export function Portal() {
     const status = e instanceof ApiError ? e.status : undefined;
     const message = e instanceof Error ? e.message : fallback;
     const entry = entryFromRefusal(status, message);
-    if (entry) { setRefusedEntry(entry); return; }
+    if (entry) { setRefusedEntry(entry); setSwappedByPress(true); return; }
     if (status === 409) {
       try {
         const fresh = await api.get<PortalInfo>(`/portal/${token}`);
-        if (portalEntry(fresh.state).kind !== 'journey') { setInfo(fresh); return; }
+        if (portalEntry(fresh.state, fresh.consented === true).kind !== 'journey') {
+          setInfo(fresh);
+          setSwappedByPress(true);
+          return;
+        }
       } catch {
         // The re-read is a courtesy; the original refusal is still the answer.
       }
@@ -174,7 +187,7 @@ export function Portal() {
   }
   if (handoff) return <div className="center-screen"><div className="card auth-card"><Banner kind="ok">{handoff}</Banner></div></div>;
 
-  const entry = refusedEntry ?? portalEntry(info.state);
+  const entry = refusedEntry ?? portalEntry(info.state, info.consented === true);
   if (entry.kind !== 'journey') {
     return (
       <div className="center-screen">
@@ -182,7 +195,7 @@ export function Portal() {
           <BrandLogo variant="lockup" size={26} className="candidate-logo" />
           <h1 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h1>
           <p className="muted small">Hello {info.candidateName}.</p>
-          <h3>{entry.title}</h3>
+          <h2 ref={cardHeadingRef} tabIndex={-1}>{entry.title}</h2>
           <Banner kind={entry.kind === 'closed' ? 'info' : 'ok'}>{entry.message}</Banner>
           {entry.kind === 'rejoin' && (
             <button className="btn" style={{ width: '100%', marginTop: 12 }} onClick={() => nav(`/room/${token}`)}>

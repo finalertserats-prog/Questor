@@ -16,7 +16,10 @@ import {
   audioBytesMatchMimeType,
 } from '../providers/speech.js';
 import { logger } from '../logger.js';
-import { startOrResumeInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from '../realtime/interviewEngine.js';
+import {
+  startOrResumeInterview, submitCandidateAnswer, continueAfterAnswer, finalizeInterview, withdrawInterview,
+  hasRecordedConsent, INVITATION_CONSUMED, type AgentTurnOut,
+} from '../realtime/interviewEngine.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
@@ -155,6 +158,37 @@ portalRouter.post('/:token/feedback-opt-in', asyncHandler(async (req, res) => {
   });
 }));
 
+/**
+ * A turn as the candidate's room receives it: only what the room uses.
+ *
+ * The portal is unauthenticated, and the engine's turn carries the competency
+ * being assessed, the utterance kind and the session state — the shape of the
+ * assessment, handed to the person being assessed. The socket and recruiter
+ * routes keep the full shape; they are authenticated and use it.
+ */
+function candidateTurn(turn: AgentTurnOut) {
+  return { turnId: turn.turnId, text: turn.text, done: turn.done, withdrawn: turn.withdrawn };
+}
+
+/**
+ * What a freshly written reply sets in motion. Withdrawal ends the interview
+ * WITHOUT assessing it: finalising here once scored a real candidate 0/100
+ * seconds after telling him nothing he said would count against him. Only the
+ * request that wrote the turn does this, so a reply handed back to a second
+ * caller is not finalised twice.
+ */
+async function settleTurn(sessionId: string, turn: AgentTurnOut): Promise<boolean> {
+  if (turn.withdrawn) {
+    await withdrawInterview(sessionId, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+    return false;
+  }
+  if (turn.done) {
+    await finalizeInterview(sessionId);
+    return true;
+  }
+  return false;
+}
+
 /** The consent record as the portal reads and extends it. */
 interface StoredConsent {
   disclosureText?: string;
@@ -216,6 +250,10 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     // Whether the candidate agreed to have their voice captured. When false the
     // room must not open the microphone; answers are typed instead.
     recordingConsented: s.recordingConsent === true,
+    // Whether the candidate has agreed to the interview at all. Past the
+    // consent step the portal offers the room only when this is true; without
+    // it the room would refuse to start and send them back here.
+    consented: hasRecordedConsent(s),
     // The interviewer's name, as HR set it for this session. The pages used
     // to hardcode a default that stopped matching what the AI said aloud.
     persona: { name: parseJsonOptional<{ name?: unknown }>(s.personaJson, {}, { model: 'InterviewSession', id: s.id, field: 'personaJson' }).name ?? DEFAULT_PERSONA_NAME },
@@ -381,16 +419,31 @@ portalRouter.post('/:token/start', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
   // A live session resumes: the pending question plus the conversation so far,
   // so a reload or a return through the link does not replay the opening.
-  const { turn, resumed, history, awaitingReply, elapsedMs } = await startOrResumeInterview(inv.sessionId);
-  res.json({ turn, resumed, history, awaitingReply, elapsedMs });
+  const { turn, resumed, history, awaitingReply, pendingAnswerAgeMs, elapsedMs } = await startOrResumeInterview(inv.sessionId);
+  res.json({ turn: candidateTurn(turn), resumed, history, awaitingReply, pendingAnswerAgeMs, elapsedMs });
+}));
+/**
+ * The candidate's last answer has no reply and they have nothing to add.
+ * Idempotent: see continueAfterAnswer. Guarded exactly like /turn — same token
+ * and consumption checks here, same rate-limit bucket in app.ts.
+ */
+portalRouter.post('/:token/continue', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  const { turn, produced } = await continueAfterAnswer(inv.sessionId);
+  const assessmentReady = produced ? await settleTurn(inv.sessionId, turn) : false;
+  res.json({ turn: candidateTurn(turn), assessmentReady });
 }));
 portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
   const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
   // Unauthenticated route where every call funds an LLM prompt. The 2mb Express
   // JSON limit is not a spend limit, so bound the answer here: a spoken reply
   // runs a few hundred characters, far under this ceiling.
-  const { text, startMs, endMs } = z.object({
+  const { text, startMs, endMs, inReplyTo } = z.object({
     text: z.string().min(1).max(MAX_TURN_TEXT_CHARS),
+    // The question on the candidate's screen. Optional for older rooms; when
+    // present, an answer to a question the interview has moved past is
+    // refused rather than credited to one they never saw.
+    inReplyTo: z.string().min(1).max(64).optional(),
     // Stored and shown to reviewers as when the answer was given; unbounded
     // numbers let a browser distort pacing and the transcript's timestamps.
     // The room sends null when the moment is genuinely unknown (a typed
@@ -398,18 +451,9 @@ portalRouter.post('/:token/turn', asyncHandler(async (req, res) => {
     startMs: z.number().int().min(0).max(MAX_TURN_MS).nullish().transform((v) => v ?? undefined),
     endMs: z.number().int().min(0).max(MAX_TURN_MS).nullish().transform((v) => v ?? undefined),
   }).refine((b) => b.startMs === undefined || b.endMs === undefined || b.endMs >= b.startMs, { message: 'endMs must not be before startMs.' }).parse(req.body);
-  const turn = await submitCandidateTurn(inv.sessionId, text, { startMs, endMs });
-  let assessmentReady = false;
-  // Withdrawal ends the interview WITHOUT assessing it. Finalising here scored
-  // a real candidate 0/100 seconds after telling him nothing he said would
-  // count against him.
-  if (turn.withdrawn) {
-    await withdrawInterview(inv.sessionId, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
-  } else if (turn.done) {
-    await finalizeInterview(inv.sessionId);
-    assessmentReady = true;
-  }
-  res.json({ turn, assessmentReady });
+  const { turn, produced } = await submitCandidateAnswer(inv.sessionId, text, { startMs, endMs }, { inReplyTo });
+  const assessmentReady = produced ? await settleTurn(inv.sessionId, turn) : false;
+  res.json({ turn: candidateTurn(turn), assessmentReady });
 }));
 
 const speakSchema = z.object({

@@ -66,6 +66,13 @@ test('portal consent without voice capture starts typed mode and never asks for 
   await expect(answer).toHaveValue('');
   await expect.poll(captionLine).not.toBe(openingLine);
   const nextQuestion = await captionLine();
+  // The room once listened by voice after every typed answer — a closure from
+  // its first render still thought it was not typing — and opened the
+  // microphone for a candidate who had declined voice capture.
+  const micRequestsAfterAnswer = await portalPage.evaluate(
+    () => (window as unknown as { __e2eGetUserMediaCalls?: number }).__e2eGetUserMediaCalls ?? 0,
+  );
+  expect(micRequestsAfterAnswer).toBe(0);
 
   // A reload mid-interview resumes: the question still owed, not the opening
   // disclosure read out again.

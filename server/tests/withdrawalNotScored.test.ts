@@ -24,7 +24,7 @@ describe('a candidate who asks to stop is not scored', () => {
       .send({ text: "No I'm done I don't wanna do this to you anymore" });
 
     expect(res.status).toBe(200);
-    expect(res.body.turn.kind).toBe('withdrawn');
+    expect(res.body.turn.withdrawn).toBe(true);
     expect(res.body.turn.done).toBe(true);
     expect(res.body.assessmentReady).toBeFalsy();
 

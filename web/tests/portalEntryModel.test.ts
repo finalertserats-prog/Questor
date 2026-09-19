@@ -16,9 +16,11 @@ const EXCEPTION_STATES = [
 ];
 const ALL_STATES = [...SESSION_STATES, ...EXCEPTION_STATES];
 
-const kindOf = (state: string) => portalEntry(state).kind;
-const textOf = (state: string) => {
-  const entry = portalEntry(state);
+// Consent on record unless a test says otherwise: it only changes the answer
+// for the three states between consent and the interview going live.
+const kindOf = (state: string, consented = true) => portalEntry(state, consented).kind;
+const textOf = (state: string, consented = true) => {
+  const entry = portalEntry(state, consented);
   return entry.kind === 'journey' ? '' : `${entry.title} ${entry.message}`;
 };
 
@@ -45,12 +47,26 @@ describe('portalEntry while the interview is live', () => {
 
   // Startable by the engine but past the consent step: entering the room is the
   // only thing left to do, so the form the server would refuse is not offered.
-  it.each(['WAITING', 'CONNECTING', 'WARMUP'])('lets the candidate go straight in from %s', (state) => {
+  it.each(['WAITING', 'CONNECTING', 'WARMUP'])('lets a candidate who consented go straight in from %s', (state) => {
     expect(kindOf(state)).toBe('rejoin');
   });
 
+  // The room refuses to start without consent and sends them back here; a
+  // button into it would be a loop.
+  it.each(['WAITING', 'CONNECTING', 'WARMUP'])('offers no way in from %s when consent is not on record', (state) => {
+    expect(kindOf(state, false)).toBe('closed');
+  });
+
+  it('still offers to rejoin a live interview whatever the consent flag says', () => {
+    expect(kindOf('ASSESSING', false)).toBe('rejoin');
+  });
+
+  it('defaults to consent not being on record', () => {
+    expect(portalEntry('WAITING').kind).toBe('closed');
+  });
+
   it('labels a not-yet-begun room "Join interview"', () => {
-    const entry = portalEntry('WAITING');
+    const entry = portalEntry('WAITING', true);
     expect(entry.kind === 'rejoin' && entry.action).toBe('Join interview');
   });
 });
@@ -90,8 +106,14 @@ describe('portalEntry for an interview that is not open', () => {
     expect(textOf('CANCELLED')).toMatch(/cancelled/);
   });
 
-  it('mentions a technical problem when that is the recorded cause', () => {
-    expect(textOf('TECHNICAL_FAILURE')).toMatch(/technical problem/);
+  it('says a technical failure was on our side', () => {
+    expect(textOf('TECHNICAL_FAILURE')).toMatch(/on our side/);
+  });
+
+  // TECHNICAL_FAILURE is also where a finished interview lands when our
+  // processing of it fails, so it must not say the interview was cut short.
+  it('does not tell a candidate who finished that their interview was cut short', () => {
+    expect(textOf('TECHNICAL_FAILURE')).not.toMatch(/interrupted|stopped|before it finished/);
   });
 
   it('does not tell a candidate who stopped that they failed to show up', () => {

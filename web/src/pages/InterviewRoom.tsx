@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import {
   speakTurn, speakNudge, stopAllSpeech, createRecognizer, createMicMeter,
   startRecording, transcribeOnServer,
@@ -10,8 +10,11 @@ import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } fro
 import { Icon } from '../components/Icon';
 import { BrandLogo } from '../components/BrandLogo';
 import { interviewerName } from '../components/candidateJourney';
-import { shouldCaptureAudio } from '../components/portalConsentModel';
-import { roomOpening, type StartResponse } from '../components/roomResumeModel';
+import { listensByVoice, shouldCaptureAudio } from '../components/portalConsentModel';
+import {
+  REPLY_POLL_INTERVAL_MS, keepWaitingForReply, roomOpening, roomRefusal, type StartResponse,
+} from '../components/roomResumeModel';
+import { FINISHED_ENTRY } from '../components/portalEntryModel';
 import {
   FEEDBACK_EXPLANATION, FEEDBACK_NO_LABEL, FEEDBACK_QUESTION, FEEDBACK_YES_LABEL, answerConfirmation,
 } from '../components/feedbackOptInCopy';
@@ -22,7 +25,8 @@ import {
 // people already know how to be interviewed over a video call, and borrowing
 // that grammar means nobody has to learn a new UI while also being assessed.
 
-interface AgentTurn { turnId: string; text: string; competencyId: string; kind: string; done: boolean }
+/** A turn as the portal sends it to the room: only what the room uses. */
+interface AgentTurn { turnId: string; text: string; done: boolean }
 interface Msg { speaker: 'agent' | 'candidate'; text: string }
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
@@ -113,6 +117,23 @@ export function InterviewRoom() {
   const [interim, setInterim] = useState('');
   const [typed, setTyped] = useState('');
   const [textMode, setTextMode] = useState(false);
+  // Read by the listening path at the moment it runs. submitAnswer and friends
+  // are memoised on the token alone, so the state value they closed over was
+  // the first render's — "not typing" — and after every typed answer the room
+  // opened the microphone and the recognizer, even for a candidate who had
+  // declined voice capture. Refs cannot go stale that way.
+  const textModeRef = useRef(false);
+  const canCaptureRef = useRef(false);
+  const setTextModeTracked = useCallback((on: boolean) => {
+    textModeRef.current = on;
+    setTextMode(on);
+  }, []);
+  // The last answer is on record without a reply: offer Continue.
+  const [awaitingReply, setAwaitingReply] = useState(false);
+  // Set when the interview turned out to be complete already (another tab, or
+  // the reply this room missed was the sign-off). The done screen then says so
+  // plainly instead of describing a session this room did not see.
+  const [completedNote, setCompletedNote] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
   const [captionsOn, setCaptionsOn] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
@@ -171,6 +192,11 @@ export function InterviewRoom() {
   // Escalates the check-in wording within a turn, and resets with the turn so
   // the next question starts from the gentlest phrasing again.
   const silenceCountRef = useRef(0);
+  // The question on screen, sent with each answer so the server can refuse one
+  // aimed at a question the interview has already moved past.
+  const currentTurnIdRef = useRef('');
+  // Stops the wait-for-reply loop once the room is gone.
+  const unmountedRef = useRef(false);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`)
@@ -179,10 +205,11 @@ export function InterviewRoom() {
         // A candidate who already answered — on another device, or before a
         // reload — is shown their answer rather than the question again.
         setFeedbackChoice(d.feedbackOptIn?.choice ?? null);
+        canCaptureRef.current = shouldCaptureAudio(d.recordingConsented);
         // No consent to capture voice means no microphone at all — the
         // interview is answered by typing. The AI still speaks: that is output,
         // not capture.
-        if (!sttSupported() || !shouldCaptureAudio(d.recordingConsented)) setTextMode(true);
+        if (!sttSupported() || !shouldCaptureAudio(d.recordingConsented)) setTextModeTracked(true);
       })
       .catch((e: Error) => setErr(e.message));
   }, [token]);
@@ -200,6 +227,7 @@ export function InterviewRoom() {
   }, []);
 
   useEffect(() => () => {
+    unmountedRef.current = true;
     meterRef.current?.stop();
     stopAllSpeech();
     recognizerRef.current?.abort();
@@ -264,7 +292,7 @@ export function InterviewRoom() {
     const endMs = startTimeRef.current ? now - startTimeRef.current : null;
     try {
       const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/turn`, {
-        text, startMs, endMs,
+        text, startMs, endMs, inReplyTo: currentTurnIdRef.current || undefined,
       });
       // Only show the answer once the server has it. Showing it first made a
       // failed submit invisible: the candidate saw their answer sitting in the
@@ -275,13 +303,17 @@ export function InterviewRoom() {
       setTyped('');
       // A retry that worked must not leave "your answer was not sent" on screen.
       setErr('');
+      setAwaitingReply(false);
       addMsg({ speaker: 'agent', text: res.turn.text });
       sayAndListen(res.turn);
     } catch (e: unknown) {
+      const refusal = refusalOf(e);
+      if (refusal === 'finished') { showFinished(); return; }
+      if (refusal === 'stale') { void catchUpAfterStale(text); return; }
       // Keep the text so they can retry rather than reconstruct what they said.
       turnClosedRef.current = false;
       setTyped(text);
-      setTextMode(true);
+      setTextModeTracked(true);
       setErr(`${errorMessage(e)} — your answer was not sent. It's in the box below; press Send to try again.`);
       setPhase('listening');
     }
@@ -316,7 +348,13 @@ export function InterviewRoom() {
   const beginListening = useCallback(async () => {
     // When this turn's answer actually started, for the evidence timestamps.
     turnStartRef.current = Date.now();
-    if (textMode) { turnClosedRef.current = false; setPhase('listening'); return; }
+    if (!listensByVoice({ textMode: textModeRef.current, canCapture: canCaptureRef.current })) {
+      // Without consent to capture, the keyboard is the only way to answer.
+      if (!canCaptureRef.current && !textModeRef.current) setTextModeTracked(true);
+      turnClosedRef.current = false;
+      setPhase('listening');
+      return;
+    }
     setInterim('');
     setPhase('listening');
     // A new turn is open for answering again.
@@ -326,7 +364,9 @@ export function InterviewRoom() {
     // Always record. The recording is what gets transcribed if the browser's
     // own recognition fails — without it a `network` error loses the answer
     // outright and the candidate has to repeat themselves.
-    recordingRef.current = await startRecording();
+    // Checked again at the call itself: nothing may open the microphone for a
+    // candidate who declined voice capture, whatever path led here.
+    recordingRef.current = canCaptureRef.current ? await startRecording() : null;
 
     const rec = createRecognizer({
       onInterim: setInterim,
@@ -350,20 +390,20 @@ export function InterviewRoom() {
       // rather than letting them keep talking to a microphone that is not on.
       onDead: () => {
         recognizerFailedRef.current = true;
-        setTextMode(true);
+        setTextModeTracked(true);
         setErr('Your microphone stopped working. Please type your answer below — nothing you have said so far is lost.');
       },
     });
     if (!rec) {
       // No browser recognition at all. Recording alone still works if the
       // server can transcribe; otherwise fall back to typing.
-      if (!recordingRef.current) { setTextMode(true); setPhase('listening'); }
+      if (!recordingRef.current) { setTextModeTracked(true); setPhase('listening'); }
       return;
     }
     recognizerRef.current = rec;
     rec.start();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [textMode]);
+  }, []);
 
   /**
    * Turn "the candidate stopped talking" into text, from whichever source
@@ -389,14 +429,14 @@ export function InterviewRoom() {
         // in front of a screen that had stopped listening and never said so.
         setInterim('');
         turnClosedRef.current = false;
-        setTextMode(true);
+        setTextModeTracked(true);
         setPhase('listening');
         setErr('We could not transcribe that just now. Nothing you have said is lost — please type this answer below.');
         return;
       }
       setInterim('');
       turnClosedRef.current = false;
-      setTextMode(true);
+      setTextModeTracked(true);
       setPhase('listening');
       setErr('We could not transcribe that just now. Nothing you have said is lost — please type this answer below.');
       return;
@@ -452,7 +492,7 @@ export function InterviewRoom() {
       doneWatchdogRef.current = null;
     }
     setInterim('');
-    setTextMode(true);
+    setTextModeTracked(true);
     setPhase('listening');
   };
 
@@ -472,9 +512,18 @@ export function InterviewRoom() {
     rec.stop();
   };
 
+  /** Put a question on screen as the one the next answer replies to. */
+  function showQuestion(turn: AgentTurn, prefix: string) {
+    setCurrentAgent(turn.text);
+    setCurrentTurnId(turn.turnId);
+    currentTurnIdRef.current = turn.turnId;
+    setCaptionPrefix(prefix);
+  }
+
   function sayAndListen(turn: AgentTurn, prefix = '') {
     setCurrentAgent(turn.text);
     setCurrentTurnId(turn.turnId);
+    currentTurnIdRef.current = turn.turnId;
     setCaptionPrefix(prefix);
     setPhase('speaking');
     void speakTurn({
@@ -503,6 +552,126 @@ export function InterviewRoom() {
     });
   }
 
+  /** How a refused request should be handled, from what the server said. */
+  function refusalOf(e: unknown) {
+    return roomRefusal(e instanceof ApiError ? e.status : undefined, e instanceof ApiError ? e.code : undefined, errorMessage(e));
+  }
+
+  /**
+   * The interview is already complete. Retrying would only meet the same
+   * refusal, so the room closes the microphone and says so.
+   */
+  function showFinished() {
+    recognizerRef.current?.abort();
+    recognizerRef.current = null;
+    meterRef.current?.stop();
+    meterRef.current = null;
+    setMicOpen(false);
+    setErr('');
+    // The same words the portal shows for a finished interview.
+    setCompletedNote(FINISHED_ENTRY.message);
+    setPhase('done');
+  }
+
+  /**
+   * Open the room on what start returned: the opening on a fresh start, or on
+   * a rejoin the conversation so far and only the pending question.
+   */
+  function applyOpening(res: StartResponse, allowWait = true) {
+    const opening = roomOpening(res, { allowWait });
+    // Set back so answers given now are stamped after everything on record.
+    startTimeRef.current = Date.now() - opening.clockOffsetMs;
+    setMsgs(opening.messages);
+    setAwaitingReply(opening.mode !== 'speak');
+    if (opening.mode === 'wait') {
+      showQuestion(opening.turn, opening.captionPrefix);
+      // The caption says only that the room is picking up: the question beside
+      // it has been answered, and the reply is the next thing to show.
+      setCurrentAgent('');
+      setPhase('thinking');
+      void waitForReply();
+      return;
+    }
+    if (opening.mode === 'listen') {
+      showQuestion(opening.turn, opening.captionPrefix);
+      void beginListening();
+      return;
+    }
+    sayAndListen(opening.turn, opening.captionPrefix);
+  }
+
+  /**
+   * The candidate's answer went in moments before the rejoin, so its reply is
+   * most likely still being produced. Re-read until it lands rather than invite
+   * them to answer a question they already answered; after the budget, offer
+   * Continue instead.
+   */
+  async function waitForReply() {
+    const began = Date.now();
+    let latest: StartResponse | null = null;
+    while (keepWaitingForReply(Date.now() - began)) {
+      await new Promise((resolve) => window.setTimeout(resolve, REPLY_POLL_INTERVAL_MS));
+      if (unmountedRef.current) return;
+      try {
+        latest = await api.post<StartResponse>(`/portal/${token}/start`, {});
+      } catch (e: unknown) {
+        if (refusalOf(e) === 'finished') { showFinished(); return; }
+        continue;
+      }
+      if (!latest.awaitingReply) { applyOpening(latest); return; }
+    }
+    if (latest) {
+      applyOpening(latest, false);
+      return;
+    }
+    setAwaitingReply(true);
+    void beginListening();
+  }
+
+  /**
+   * The answer was aimed at a question the interview had already moved past —
+   * another tab, or a reply that landed during a reload. Nothing was recorded;
+   * put the current question up and keep what they wrote so nothing is lost.
+   */
+  async function catchUpAfterStale(keptText: string) {
+    setTyped(keptText);
+    setTextModeTracked(true);
+    try {
+      const res = await api.post<StartResponse>(`/portal/${token}/start`, {});
+      applyOpening(res);
+      setErr('The interview had already moved on to a newer question, so that answer was not sent. It is still in the box below — edit it or send it as it is.');
+    } catch (e: unknown) {
+      if (refusalOf(e) === 'finished') { showFinished(); return; }
+      turnClosedRef.current = false;
+      setErr(`${errorMessage(e)} — your answer was not sent. It is in the box below; press Send to try again.`);
+      setPhase('listening');
+    }
+  }
+
+  /** Nothing to add to the saved answer: ask for the reply to it. */
+  const continueInterview = async () => {
+    recognizerRef.current?.abort();
+    recognizerRef.current = null;
+    const recording = recordingRef.current;
+    recordingRef.current = null;
+    if (recording) void recording.stop();
+    setInterim('');
+    setErr('');
+    setPhase('thinking');
+    try {
+      const res = await api.post<{ turn: AgentTurn }>(`/portal/${token}/continue`, {});
+      setAwaitingReply(false);
+      // The server hands back the pending question if a reply already existed;
+      // only a question not yet on screen joins the transcript.
+      if (res.turn.turnId !== currentTurnIdRef.current) addMsg({ speaker: 'agent', text: res.turn.text });
+      sayAndListen(res.turn);
+    } catch (e: unknown) {
+      if (refusalOf(e) === 'finished') { showFinished(); return; }
+      setErr(`${errorMessage(e)} Please try again.`);
+      void beginListening();
+    }
+  };
+
   const begin = async () => {
     setErr('');
     startTimeRef.current = Date.now();
@@ -516,28 +685,18 @@ export function InterviewRoom() {
     }
     try {
       const res = await api.post<StartResponse>(`/portal/${token}/start`, {});
-      // A rejoin mid-interview resumes rather than replaying the opening: the
-      // conversation so far is restored and only the pending question is said.
-      const opening = roomOpening(res);
-      // Set back so answers given now are stamped after everything on record.
-      // The timer shows the same offset, which is the honest elapsed time.
-      startTimeRef.current = Date.now() - opening.clockOffsetMs;
-      setMsgs(opening.messages);
-      if (opening.mode === 'listen') {
-        setCurrentAgent(opening.turn.text);
-        setCurrentTurnId(opening.turn.turnId);
-        setCaptionPrefix(opening.captionPrefix);
-        void beginListening();
-      } else {
-        sayAndListen(opening.turn, opening.captionPrefix);
-      }
-    } catch (e: unknown) { setErr(errorMessage(e)); setPhase('ready'); }
+      applyOpening(res);
+    } catch (e: unknown) {
+      if (refusalOf(e) === 'finished') { showFinished(); return; }
+      setErr(errorMessage(e));
+      setPhase('ready');
+    }
   };
 
   const repeat = () => {
     stopAllSpeech();
     recognizerRef.current?.abort();
-    void speakTurn({ token, turnId: currentTurnId, text: currentAgent, onDone: () => { if (!textMode) beginListening(); } });
+    void speakTurn({ token, turnId: currentTurnId, text: currentAgent, onDone: () => { if (!textModeRef.current) beginListening(); } });
   };
 
   if (err && !info) return <div className="center-screen"><div className="card auth-card"><div className="banner error">{err}</div></div></div>;
@@ -600,7 +759,7 @@ export function InterviewRoom() {
         </div>
       </main>
 
-      {captionsOn && (currentAgent || interim) && phase !== 'ready' && (
+      {captionsOn && (currentAgent || captionPrefix || interim) && phase !== 'ready' && (
         <div className="captions">
           {listening && interim
             ? <p><span className="cap-who">You</span>{interim}</p>
@@ -624,6 +783,12 @@ export function InterviewRoom() {
             </div>
             <button type="button" className="btn btn-join" onClick={begin}><Icon name="play" size={18} />Join interview</button>
           </div>
+        )}
+
+        {phase === 'listening' && awaitingReply && (
+          <button type="button" className="btn secondary" onClick={() => void continueInterview()}>
+            <Icon name="arrow-right" size={16} />Continue
+          </button>
         )}
 
         {listening && (
@@ -651,7 +816,7 @@ export function InterviewRoom() {
             />
             <div className="type-actions">
               <button type="button" className="btn btn-done" onClick={() => void submitAnswer(typed)} disabled={!typed.trim()}><Icon name="send" size={16} />Send</button>
-              {sttSupported() && canCapture && <button type="button" className="ctl" onClick={() => setTextMode(false)}><Icon name="mic" /><span>Voice</span></button>}
+              {sttSupported() && canCapture && <button type="button" className="ctl" onClick={() => setTextModeTracked(false)}><Icon name="mic" /><span>Voice</span></button>}
             </div>
           </div>
         )}
@@ -663,7 +828,16 @@ export function InterviewRoom() {
           </div>
         )}
 
-        {phase === 'done' && (
+        {/* Reached from a refusal rather than the sign-off: this room saw none
+            of the interview, so it says only that it is complete. */}
+        {phase === 'done' && completedNote && (
+          <div className="done-panel">
+            <h3>Your interview is complete</h3>
+            <p className="muted">{completedNote}</p>
+          </div>
+        )}
+
+        {phase === 'done' && !completedNote && (
           <div className="done-panel">
             <h3>That's everything — thank you.</h3>
             <p className="muted">

@@ -58,3 +58,16 @@ export function accommodationHint(accommodation: string): string {
 export function shouldCaptureAudio(recordingConsented: unknown): boolean {
   return recordingConsented === true;
 }
+
+/**
+ * Whether the room may listen by voice for the next answer, as opposed to
+ * waiting for a typed one.
+ *
+ * Both are read at the moment of listening, not when the room first rendered:
+ * a closure from that first render once saw "not typing" and opened the
+ * microphone after every typed answer — including for a candidate who had
+ * declined voice capture. Without consent this is false whatever the mode.
+ */
+export function listensByVoice(room: { readonly textMode: boolean; readonly canCapture: boolean }): boolean {
+  return room.canCapture && !room.textMode;
+}

@@ -40,20 +40,22 @@ const IN_PROGRESS_STATES: readonly string[] = ['ASSESSING', 'CANDIDATE_QUESTIONS
 
 /**
  * Startable in the engine (STARTABLE_STATES) but past the point where the
- * portal takes consent, so the only useful thing left is to enter the room.
- * Nothing in the current code writes these; they are handled so a session that
- * reaches one is still enterable rather than stranded on a refused form.
+ * portal takes consent, so the only useful thing left is to enter the room —
+ * and only when consent is on record, because the engine refuses to start
+ * without it and would send the candidate straight back here. Nothing in the
+ * current code writes these; they are handled so a session that reaches one is
+ * not stranded on a refused form.
  */
 const READY_STATES: readonly string[] = ['WAITING', 'CONNECTING', 'WARMUP'];
 
 /** The candidate has finished; scoring and review happen without them. */
 const FINISHED_STATES: readonly string[] = ['CLOSING', 'PROCESSING', 'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED'];
 
-const FINISHED: PortalEntry = {
+export const FINISHED_ENTRY = {
   kind: 'finished',
   title: 'Your interview is complete',
   message: 'Thank you — the hiring team will be in touch.',
-};
+} as const satisfies PortalEntry;
 
 const STOPPED_EARLY = 'This interview was stopped before it finished. The hiring team will contact you about next steps.';
 const REPLY_TO_INVITATION = 'If you think that is wrong, reply to your invitation email and we will look into it.';
@@ -63,9 +65,12 @@ const REPLY_TO_INVITATION = 'If you think that is wrong, reply to your invitatio
 const CLOSED_MESSAGES: Readonly<Record<string, { title: string; message: string }>> = {
   INCOMPLETE: { title: 'Your interview stopped part-way', message: STOPPED_EARLY },
   POLICY_STOP: { title: 'Your interview stopped part-way', message: STOPPED_EARLY },
+  // Also the state of an interview the candidate FINISHED whose processing
+  // failed on our side (server services/incompleteInterviews.ts), so it must
+  // not say the interview itself was cut short or that they did anything wrong.
   TECHNICAL_FAILURE: {
-    title: 'Your interview was interrupted',
-    message: 'A technical problem interrupted this interview. The hiring team will contact you about next steps — there is nothing you need to do right now.',
+    title: 'We hit a problem on our side',
+    message: 'Something went wrong on our side with this interview — nothing you did caused it. The hiring team will contact you about next steps; there is nothing you need to do right now.',
   },
   RESCHEDULE_REQUIRED: {
     title: 'Your interview is being rescheduled',
@@ -98,7 +103,12 @@ const UNKNOWN: PortalEntry = {
   message: `This interview is not open right now. ${REPLY_TO_INVITATION}`,
 };
 
-export function portalEntry(state: string): PortalEntry {
+/**
+ * `consented` is whether consent is on record (GET /api/portal/:token sends
+ * it). It matters only past the consent step and before the interview is live:
+ * a live interview could not have started without it.
+ */
+export function portalEntry(state: string, consented = false): PortalEntry {
   if (JOURNEY_STATES.includes(state)) return { kind: 'journey' };
   if (IN_PROGRESS_STATES.includes(state)) {
     return {
@@ -109,6 +119,7 @@ export function portalEntry(state: string): PortalEntry {
     };
   }
   if (READY_STATES.includes(state)) {
+    if (!consented) return UNKNOWN;
     return {
       kind: 'rejoin',
       title: 'Your interview is ready',
@@ -116,7 +127,7 @@ export function portalEntry(state: string): PortalEntry {
       action: 'Join interview',
     };
   }
-  if (FINISHED_STATES.includes(state)) return FINISHED;
+  if (FINISHED_STATES.includes(state)) return FINISHED_ENTRY;
   const closed = CLOSED_MESSAGES[state];
   return closed ? { kind: 'closed', ...closed } : UNKNOWN;
 }
@@ -132,6 +143,6 @@ export function portalEntry(state: string): PortalEntry {
  * Anything else returns null and is shown as the error it is.
  */
 export function entryFromRefusal(status: number | undefined, message: string): PortalEntry | null {
-  if (status === 410 && /already been completed/i.test(message)) return FINISHED;
+  if (status === 410 && /already been completed/i.test(message)) return FINISHED_ENTRY;
   return null;
 }

@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { ANSWER_SAVED, WELCOME_BACK, roomOpening, type StartResponse } from '../src/components/roomResumeModel';
+import {
+  ANSWER_SAVED, MAX_CLOCK_OFFSET_MS, PICKING_UP, REPLY_POLL_BUDGET_MS, WELCOME_BACK,
+  keepWaitingForReply, roomOpening, roomRefusal, type StartResponse,
+} from '../src/components/roomResumeModel';
 
 const turn = (over: Partial<StartResponse['turn']> = {}): StartResponse['turn'] =>
-  ({ turnId: 't2', text: 'Tell me about a pipeline you built.', competencyId: 'c1', kind: 'question', done: false, ...over });
+  ({ turnId: 't2', text: 'Tell me about a pipeline you built.', done: false, ...over });
 
 const opening = { speaker: 'agent' as const, text: 'Hello, I am the AI interviewer.' };
 const answer = { speaker: 'candidate' as const, text: 'I moved batch jobs to streaming.' };
@@ -47,7 +50,7 @@ describe('roomOpening on a rejoin', () => {
     expect(roomOpening(rejoin).messages).toEqual([opening, answer, question]);
   });
 
-  it('sets the clock back by how far in the interview already is', () => {
+  it('sets the clock back to where the record leaves off', () => {
     expect(roomOpening(rejoin).clockOffsetMs).toBe(95_000);
   });
 
@@ -58,21 +61,44 @@ describe('roomOpening on a rejoin', () => {
   it('ignores an elapsed time that is not a number', () => {
     expect(roomOpening({ ...rejoin, elapsedMs: Number.NaN }).clockOffsetMs).toBe(0);
   });
+
+  it('caps an absurd elapsed time so later answers stay within the server limit', () => {
+    expect(roomOpening({ ...rejoin, elapsedMs: 23 * 60 * 60 * 1000 }).clockOffsetMs).toBe(MAX_CLOCK_OFFSET_MS);
+  });
 });
 
 describe('roomOpening when the last answer has no reply yet', () => {
-  const pending: StartResponse = { turn: turn({ turnId: 't0', text: opening.text }), resumed: true, history: [opening, answer], awaitingReply: true, elapsedMs: 40_000 };
-
-  it('listens without asking the answered question again', () => {
-    expect(roomOpening(pending).mode).toBe('listen');
+  const pending = (ageMs?: number): StartResponse => ({
+    turn: turn({ turnId: 't0', text: opening.text }), resumed: true, history: [opening, answer],
+    awaitingReply: true, pendingAnswerAgeMs: ageMs, elapsedMs: 40_000,
   });
 
-  it('tells the candidate their answer was saved', () => {
-    expect(roomOpening(pending).captionPrefix).toBe(ANSWER_SAVED);
+  it('waits for the reply when the answer was sent moments ago', () => {
+    expect(roomOpening(pending(3_000)).mode).toBe('wait');
+  });
+
+  it('says it is picking up where it left off while waiting', () => {
+    expect(roomOpening(pending(3_000)).captionPrefix).toBe(PICKING_UP);
+  });
+
+  it('stops waiting once the wait is used up', () => {
+    expect(roomOpening(pending(3_000), { allowWait: false }).mode).toBe('listen');
+  });
+
+  it('does not wait for a reply to an answer from long ago', () => {
+    expect(roomOpening(pending(10 * 60_000)).mode).toBe('listen');
+  });
+
+  it('does not wait when the server gives no age', () => {
+    expect(roomOpening(pending(undefined)).mode).toBe('listen');
+  });
+
+  it('tells the candidate their answer was saved and they can continue', () => {
+    expect(roomOpening(pending(10 * 60_000)).captionPrefix).toBe(ANSWER_SAVED);
   });
 
   it('shows their stored answer last', () => {
-    expect(roomOpening(pending).messages.at(-1)).toEqual(answer);
+    expect(roomOpening(pending(3_000)).messages.at(-1)).toEqual(answer);
   });
 });
 
@@ -89,5 +115,37 @@ describe('roomOpening against an older server', () => {
 
   it('never trusts awaitingReply without resumed', () => {
     expect(roomOpening({ ...legacy, awaitingReply: true }).mode).toBe('speak');
+  });
+});
+
+describe('keepWaitingForReply', () => {
+  it('keeps waiting inside the budget', () => {
+    expect(keepWaitingForReply(REPLY_POLL_BUDGET_MS - 1)).toBe(true);
+  });
+
+  it('stops at the budget', () => {
+    expect(keepWaitingForReply(REPLY_POLL_BUDGET_MS)).toBe(false);
+  });
+});
+
+describe('roomRefusal', () => {
+  it('reads a completed interview as finished, not as something to retry', () => {
+    expect(roomRefusal(410, undefined, 'This interview has already been completed. Our team will be in touch.')).toBe('finished');
+  });
+
+  it('reads a stale question as stale', () => {
+    expect(roomRefusal(409, 'stale_question', 'The interviewer has already moved on to the next question.')).toBe('stale');
+  });
+
+  it('does not read another conflict as stale', () => {
+    expect(roomRefusal(409, undefined, 'This interview is no longer accepting answers.')).toBe('error');
+  });
+
+  it('leaves an expired invitation as an error', () => {
+    expect(roomRefusal(410, undefined, 'This invitation has expired')).toBe('error');
+  });
+
+  it('leaves a network failure as an error', () => {
+    expect(roomRefusal(undefined, undefined, 'Failed to fetch')).toBe('error');
   });
 });

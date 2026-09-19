@@ -131,7 +131,9 @@ export function createApp() {
     const m = /^\/api\/portal\/([A-Za-z0-9_-]{8,64})(?:[/?]|$)/.exec(req.originalUrl);
     return m ? `t:${m[1]}` : `ip:${req.ip ?? 'unknown'}`;
   };
-  app.use('/api/portal/:token/turn', rateLimit({ name: 'portal-turn', windowMs: 60 * 60_000, max: 120, keyOf: portalKey }));
+  // Continue produces a reply exactly as an answer does, so it spends from the
+  // same bucket rather than doubling what one token can spend.
+  app.use(['/api/portal/:token/turn', '/api/portal/:token/continue'], rateLimit({ name: 'portal-turn', windowMs: 60 * 60_000, max: 120, keyOf: portalKey }));
   // Server-side TTS is billed per synthesis. The route already refuses to speak
   // anything but an agent turn persisted for that session, so this is the
   // second bound rather than the first: it caps how hard one token can hammer
