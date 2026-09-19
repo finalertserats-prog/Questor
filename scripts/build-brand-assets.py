@@ -67,6 +67,7 @@ EDGE_BAND = 3
 BRAND_NAVY = (11, 16, 32)
 # The app's own dark surface (--desk under data-theme="dark" in app.css).
 APP_DARK_DESK = "#121218"
+APP_LIGHT_DESK = "#f5f4f8"
 LOCKUP_PAD = 24
 # The horizontal lockup, for headers 22-34 px tall: the word's capitals are
 # 0.58 of the mark's height (the stacked source runs 0.43, too small once the
@@ -294,8 +295,10 @@ def manifest():
             {"src": "/brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
              "purpose": "maskable"},
         ],
-        "theme_color": APP_DARK_DESK,
-        "background_color": APP_DARK_DESK,
+        # Light is the product's default theme, so the installed app's splash
+        # and title bar match it rather than the dark desk.
+        "theme_color": APP_LIGHT_DESK,
+        "background_color": APP_LIGHT_DESK,
         "display": "standalone",
         "start_url": "/",
     }, indent=2) + "\n"
