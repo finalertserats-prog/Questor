@@ -45,7 +45,7 @@ const { wipe } = await import('../src/seed/demoData.js');
 const { signToken } = await import('../src/services/auth.js');
 const { _resetLlm } = await import('../src/providers/llm/index.js');
 const { _resetRateLimits } = await import('../src/middleware/rateLimit.js');
-const { generatePendingDrafts, getOrQueueDraft } = await import('../src/services/jdDrafts.js');
+const { finishDraft, generatePendingDrafts, getOrQueueDraft } = await import('../src/services/jdDrafts.js');
 
 const app = createApp();
 const LONG_AGO = new Date(Date.now() - 60 * 60_000);
@@ -69,6 +69,7 @@ beforeEach(async () => {
   await prisma.catalogDomain.deleteMany();
   await prisma.catalogRegion.deleteMany();
   await prisma.rateLimitBucket.deleteMany();
+  await prisma.jobLease.deleteMany();
   _resetRateLimits();
   _resetLlm();
   generate.mockClear();
@@ -160,5 +161,52 @@ describe('POST /api/jd-drafts/describe', () => {
     for (let i = 0; i < 21; i += 1) statuses.push((await request(app).post('/api/jd-drafts/describe').set('Authorization', auth).send(body)).status);
 
     expect(statuses.at(-1)).toBe(429);
+  });
+});
+
+describe('generation stays bounded (Codex release review)', () => {
+  it('does not generate from the request while another instance holds the generation lease', async () => {
+    const { auth, role } = await fixture();
+    await prisma.jobLease.create({ data: { name: 'jd-draft-generate', holder: 'another-instance', expiresAt: new Date(Date.now() + 60_000) } });
+
+    await request(app).get('/api/jd-drafts').query(key(role.id)).set('Authorization', auth);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect((await prisma.catalogJdDraft.findFirstOrThrow()).status).toBe('pending');
+  });
+
+  it('never lets a worker whose claim was taken over overwrite the draft', async () => {
+    const { role } = await fixture();
+    const row = await getOrQueueDraft(key(role.id));
+    const staleClaim = new Date(Date.now() - 20 * 60_000);
+    await prisma.catalogJdDraft.update({ where: { id: row.id }, data: { status: 'generating', updatedAt: new Date() } });
+
+    const written = await finishDraft(row.id, staleClaim, { status: 'ready', text: 'late text', generator: 'llm', model: '', promptVersion: 'v', lintJson: '[]', lastError: '' });
+
+    expect({ written, text: (await prisma.catalogJdDraft.findUniqueOrThrow({ where: { id: row.id } })).text }).toEqual({ written: false, text: '' });
+  });
+
+  it('leaves a live claim alone', async () => {
+    const { role } = await fixture();
+    const row = await getOrQueueDraft(key(role.id));
+    await prisma.catalogJdDraft.update({ where: { id: row.id }, data: { status: 'generating', updatedAt: new Date() } });
+
+    await generatePendingDrafts({ limit: 5 });
+
+    expect((await prisma.catalogJdDraft.findUniqueOrThrow({ where: { id: row.id } })).status).toBe('generating');
+  });
+
+  it('limits how many new shared drafts one person can ask for, while existing drafts stay readable', async () => {
+    const { auth, domain } = await fixture();
+    const roles = [];
+    for (let i = 0; i < 6; i += 1) roles.push(await prisma.catalogRole.create({ data: { domainId: domain.id, title: `Role ${i}`, normalizedTitle: `role ${i} ${Math.random()}`, source: 'test' } }));
+    const bands = ['emerging', 'developing', 'established', 'senior', 'principal', 'executive'];
+    const statuses: number[] = [];
+    for (const r of roles) for (const b of bands) {
+      statuses.push((await request(app).get('/api/jd-drafts').query({ catalogRoleId: r.id, experienceBand: b, regionCode: 'IN' }).set('Authorization', auth)).status);
+    }
+    const again = await request(app).get('/api/jd-drafts').query({ catalogRoleId: roles[0].id, experienceBand: 'emerging', regionCode: 'IN' }).set('Authorization', auth);
+
+    expect({ limited: statuses.includes(429), rereadOk: again.status !== 429 }).toEqual({ limited: true, rereadOk: true });
   });
 });

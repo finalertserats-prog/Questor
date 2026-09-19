@@ -67,7 +67,7 @@ describe('roleDisplayLabel', () => {
 
 describe('roleDetailLine', () => {
   it('shows level, domain, region and band', () => {
-    expect(roleDetailLine({ level: 'Senior', domain: 'Software', regionCode: 'IN', experienceBand: 'mid' })).toBe('Senior · Software · IN · mid');
+    expect(roleDetailLine({ level: 'Senior', domain: 'Software', regionCode: 'IN', experienceBand: 'mid' })).toBe('mid · Software · India');
   });
 
   it('says the role is not in the catalog when it has no domain', () => {
@@ -86,5 +86,15 @@ describe('sessionOptionLabels', () => {
       { id: 's2', createdAt: '2026-01-05T15:30:00Z', text: 'Backend Engineer' },
     ]);
     expect(labels[0]).not.toBe(labels[1]);
+  });
+});
+
+describe('roleDetailLine wording', () => {
+  it('shows the experience level and region by name, and the chosen level instead of the one read from the JD', () => {
+    expect(roleDetailLine({ level: 'Senior', domain: 'Engineering', regionCode: 'NA', experienceBand: 'established' })).toBe('Established · Engineering · North America');
+  });
+
+  it('keeps the JD level when the role is not linked to the catalog', () => {
+    expect(roleDetailLine({ level: 'Senior', domain: null, regionCode: null, experienceBand: null })).toBe('Senior · Not linked to catalog');
   });
 });

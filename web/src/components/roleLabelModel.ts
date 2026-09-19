@@ -86,17 +86,36 @@ export function roleDisplayLabel(items: readonly RoleLabelSource[], id: string):
   return index === -1 ? '' : roleDisplayLabels(items)[index];
 }
 
-/** The line under a role's title in the roles list: level, then catalog placement. */
+/** Names for the catalog's experience bands, as a person reads them. */
+const BAND_NAMES: Readonly<Record<string, string>> = {
+  emerging: 'Emerging', developing: 'Developing', established: 'Established',
+  senior: 'Senior', principal: 'Principal', executive: 'Executive',
+};
+
+/** The catalog's eight regions by name: a bare "NA" reads as "not applicable". */
+const REGION_NAMES: Readonly<Record<string, string>> = {
+  NA: 'North America', LATAM: 'Latin America', UKI: 'UK & Ireland', EU: 'Europe',
+  MENA: 'Middle East & North Africa', IN: 'India', APAC: 'Asia-Pacific', ANZ: 'Australia & New Zealand',
+};
+
+/**
+ * The line under a role's title in the roles list. A role linked to the
+ * catalog shows its chosen experience level, domain and region by name; the
+ * level read from the JD is shown only when no level was chosen, so the line
+ * never says "Senior" and "Established" at once.
+ */
 export function roleDetailLine(role: {
   readonly level?: string | null;
   readonly domain?: string | null;
   readonly regionCode?: string | null;
   readonly experienceBand?: string | null;
 }): string {
-  const catalog = role.domain
-    ? [role.domain, role.regionCode, role.experienceBand]
-    : ['Not linked to catalog'];
-  return [role.level, ...catalog].map((part) => (part ?? '').trim()).filter(Boolean).join(LABEL_SEPARATOR);
+  const band = role.experienceBand ? (BAND_NAMES[role.experienceBand] ?? role.experienceBand) : null;
+  const region = role.regionCode ? (REGION_NAMES[role.regionCode] ?? role.regionCode) : null;
+  const parts = role.domain
+    ? [band ?? role.level, role.domain, region]
+    : [role.level, 'Not linked to catalog'];
+  return parts.map((part) => (part ?? '').trim()).filter(Boolean).join(LABEL_SEPARATOR);
 }
 
 /** Labels for a session picker: date and time, so two sessions on the same day differ. */

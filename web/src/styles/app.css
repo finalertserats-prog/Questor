@@ -849,6 +849,28 @@ th {
   white-space: nowrap;
 }
 
+/* A sortable header is a button; browsers give buttons their own case and
+   colour, which made "Applied" sit beside "STATUS". It takes the header's
+   type instead, and the brand colour only on hover and focus. */
+th .link-button {
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  font: inherit;
+}
+th .link-button:hover,
+th .link-button:focus-visible {
+  color: var(--accent);
+}
+th[aria-sort] .link-button::after {
+  margin-left: 4px;
+  content: '▲';
+  font-size: 0.8em;
+}
+th[aria-sort='descending'] .link-button::after {
+  content: '▼';
+}
+
 /* Digits line up in columns wherever they appear. */
 td {
   font-variant-numeric: tabular-nums;
