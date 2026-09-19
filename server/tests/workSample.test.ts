@@ -236,7 +236,7 @@ describe('question form variety', () => {
     for (let i = 0; i < 14; i++) {
       const signal = directorDecide({ plan: PLAN, turns, elapsedMinutes: i * 1.5 });
       const utter = await nextUtterance({
-        plan: PLAN, signal, turns, role: ROLE, persona: PERSONA, disclosureText: '',
+        plan: PLAN, signal, turns, role: ROLE, persona: PERSONA,
       });
       if (utter.kind === 'signoff' || utter.kind === 'withdrawn') break;
       turns.push(turn({ speaker: 'agent', index: turns.length, text: utter.text, competencyId: utter.competencyId }));
@@ -262,7 +262,7 @@ describe('question form variety', () => {
     for (let i = 0; i < 14; i++) {
       const signal = directorDecide({ plan: PLAN, turns, elapsedMinutes: i * 1.5 });
       const utter = await nextUtterance({
-        plan: PLAN, signal, turns, role: ROLE, persona: PERSONA, disclosureText: '',
+        plan: PLAN, signal, turns, role: ROLE, persona: PERSONA,
       });
       if (utter.kind === 'work_sample') {
         sawWorkSample = true;
@@ -414,7 +414,7 @@ describe('acknowledging a correction', () => {
     ];
     const utter = await nextUtterance({
       plan: PLAN, signal: signalFor({ coverageState: { [SF_SHARING.id]: 1 } }),
-      turns, role: ROLE, persona: PERSONA, disclosureText: '',
+      turns, role: ROLE, persona: PERSONA,
     });
     expect(utter.text.toLowerCase()).toContain('correction');
     expect(utter.text.toLowerCase()).not.toContain('farmer');
@@ -430,7 +430,7 @@ describe('zero-key degradation', () => {
     for (let i = 0; i < 40 && !signedOff; i++) {
       const signal = directorDecide({ plan: PLAN, turns, elapsedMinutes: i * 2 });
       const utter = await nextUtterance({
-        plan: PLAN, signal, turns, role: ROLE, persona: PERSONA, disclosureText: '',
+        plan: PLAN, signal, turns, role: ROLE, persona: PERSONA,
       });
       expect(utter.text.length).toBeGreaterThan(10);
       turns.push(turn({ speaker: 'agent', index: turns.length, text: utter.text, competencyId: utter.competencyId }));
@@ -449,7 +449,7 @@ describe('zero-key degradation', () => {
       turn({ speaker: 'candidate', index: 1, text: "Well you know what I think I'm going to end the interview", competencyId: SF_SHARING.id }),
     ];
     const utter = await nextUtterance({
-      plan: PLAN, signal: signalFor(), turns, role: ROLE, persona: PERSONA, disclosureText: '',
+      plan: PLAN, signal: signalFor(), turns, role: ROLE, persona: PERSONA,
     });
     expect(utter.kind).toBe('withdrawn');
   });

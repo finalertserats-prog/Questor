@@ -13,7 +13,7 @@ import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
 import { assertAcceptingNewInterviews } from '../services/drainState.js';
 import { noteSessionActivity } from './liveSessions.js';
-import { composeOpening } from '../domain/interviewerModel.js';
+import { OBSERVER_NOTICE, hasObserverNotice } from '../services/observerPolicy.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -218,15 +218,19 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   const readTailId = turns.length > 0 ? turns[turns.length - 1].id : null;
   if (requireTailId !== undefined && requireTailId !== readTailId) throw new TranscriptMovedError();
   const signal = directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) });
-  // The disclosure is the required opening; a damaged consent record must not
-  // quietly become an interview that never says it is AI-run.
+  // The AI disclosure is shown and agreed to on the consent screen before the
+  // interview; the consent record is what proves it. A damaged record stops
+  // the interview here rather than letting it run with nothing on file saying
+  // the candidate was told.
   const consent = parseJsonStrict<{ disclosureText?: string }>(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
-  // The spoken opening is the session interviewer's named introduction followed
-  // by the stored disclosure, whole. Composed here rather than trusted from the
-  // record, so a disclosure consented to under an older introduction is still
-  // spoken by the interviewer the candidate sees on screen.
-  const disclosure = consent.disclosureText ? composeOpening(persona.name, consent.disclosureText) : '';
-  const utter = await nextUtterance({ plan, signal, turns, role: profile, persona, disclosureText: disclosure, sessionId });
+  // The opening greets the candidate by first name and names the role. The
+  // observation notice is still said aloud when the consent screen carried it:
+  // that spoken turn is the server-side proof live observation depends on.
+  const utter = await nextUtterance({
+    plan, signal, turns, role: profile, persona, sessionId,
+    candidateName: session.candidate.fullName, roleTitle: session.role.title,
+    observerNotice: hasObserverNotice(consent.disclosureText ?? '') ? OBSERVER_NOTICE : undefined,
+  });
 
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const agentTurn = await appendTurn(sessionId, {

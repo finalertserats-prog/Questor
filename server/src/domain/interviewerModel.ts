@@ -125,27 +125,39 @@ export function voiceOverridesFromEnv(env: Readonly<Record<string, string | unde
 export const DEFAULT_DISCLOSURE_BODY =
   "Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.";
 
-/** The opening sentence, built from the name. It always says the interviewer is an AI. */
-export function interviewerIntro(name: string | null | undefined): string {
-  const who = typeof name === 'string' && name.trim() ? `${name.trim()}, your AI interviewer` : 'your AI interviewer';
-  return `Hi, I'm ${who} from Questor. I'll be conducting your first-round interview today.`;
+/**
+ * The first lines of the disclosure on the consent screen: who the interviewer
+ * is, that it is an AI, and that a person reviews the interview. This is where
+ * the candidate is told — before the interview, in writing, with the consent
+ * record keeping exactly what was shown — so the spoken opening can greet
+ * them like a real interviewer would (engines/openingModel.ts).
+ */
+export function consentIntro(name: string | null | undefined): string {
+  const who = typeof name === 'string' && name.trim() ? `${name.trim()}, an AI interviewer` : 'an AI interviewer';
+  return `Your interviewer today is ${who} from Questor. A person on the hiring team reviews the interview.`;
 }
 
-// Any self-introduction an opening may already start with: the current one,
-// and the older "Hello, I'm <name>, an AI interviewer for this first-round
-// conversation." that stored disclosures and tenant policies still carry.
-const LEADING_INTRO = /^\s*(?:Hello|Hi)(?:, and thank you for joining)?[,.!]?\s+I['’]m\s+[^.]{0,120}?\bAI interviewer\b[^.]*\.\s*/i;
+// Any introduction a stored disclosure may already start with: the current
+// consent one, the short-lived spoken "Hi, I'm <name>, your AI interviewer
+// from Questor. I'll be conducting…", and the older "Hello, I'm <name>, an AI
+// interviewer for this first-round conversation." that tenant policies carry.
+const LEADING_CONSENT_INTRO = /^\s*Your interviewer today is [^.]{0,120}?\bAI interviewer\b[^.]*\.\s*(?:A person on the hiring team reviews the interview\.\s*)?/i;
+const LEADING_SPOKEN_INTRO = /^\s*(?:Hello|Hi)(?:, and thank you for joining)?[,.!]?\s+I['’]m\s+[^.]{0,120}?\bAI interviewer\b[^.]*\.\s*/i;
 const LEADING_CONDUCTING = /^\s*I['’]ll be conducting your first-round interview today\.\s*/i;
 
 /**
- * The interviewer's spoken opening: the named introduction followed by the
- * disclosure, whole. A leading self-introduction already in the disclosure is
- * replaced rather than repeated, so the name spoken is always the session's
- * interviewer and nothing after the introduction is lost.
+ * The disclosure the consent screen shows: the named introduction followed by
+ * the disclosure, whole. An introduction already at its start is replaced
+ * rather than repeated, so the name shown is always the session's interviewer
+ * and nothing after it is lost.
  */
-export function composeOpening(name: string | null | undefined, disclosureText: string): string {
-  const rest = disclosureText.replace(LEADING_INTRO, '').replace(LEADING_CONDUCTING, '').trim();
-  const intro = interviewerIntro(name);
+export function composeDisclosure(name: string | null | undefined, disclosureText: string): string {
+  const rest = disclosureText
+    .replace(LEADING_CONSENT_INTRO, '')
+    .replace(LEADING_SPOKEN_INTRO, '')
+    .replace(LEADING_CONDUCTING, '')
+    .trim();
+  const intro = consentIntro(name);
   return rest ? `${intro} ${rest}` : intro;
 }
 

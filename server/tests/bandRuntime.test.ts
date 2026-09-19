@@ -73,7 +73,7 @@ async function questionsAcrossBank(band: BandId, samples = 14): Promise<string[]
     }
     const u = await nextUtterance({
       plan, signal: signal({ coverageState: { [TECH.id]: 0 } }), turns, role: ROLE,
-      persona: PERSONA, disclosureText: 'hello',
+      persona: PERSONA,
     });
     out.push(u.text);
   }
@@ -137,7 +137,7 @@ describe('band gating applies to whatever produced the question', () => {
     const u = await nextUtterance({
       plan,
       signal: signal({ action: 'followup', depthInstruction: 'increase', coverageState: { [TECH.id]: 1 } }),
-      turns, role: ROLE, persona: PERSONA, disclosureText: 'hello',
+      turns, role: ROLE, persona: PERSONA,
     });
     expect(u.text.toLowerCase()).not.toContain('at ten times that scale');
     expect(u.text.trim().length).toBeGreaterThan(15);

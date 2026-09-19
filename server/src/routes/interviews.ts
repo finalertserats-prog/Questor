@@ -22,7 +22,7 @@ import { startInterview, submitCandidateTurn, finalizeInterview, withdrawIntervi
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
-import { DEFAULT_DISCLOSURE_BODY, composeOpening } from '../domain/interviewerModel.js';
+import { DEFAULT_DISCLOSURE_BODY, composeDisclosure } from '../domain/interviewerModel.js';
 import { assignInterviewer } from '../services/interviewers.js';
 import { invitationLink, invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
@@ -113,7 +113,7 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   // either way. Stating capture, transcription and retention plainly is both
   // true and more useful than the flag ever was. The named introduction goes
   // in front of whichever disclosure applies, never instead of it.
-  const baseDisclosureText = composeOpening(interviewer.name, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
+  const baseDisclosureText = composeDisclosure(interviewer.name, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   const session = await prisma.interviewSession.create({
@@ -392,7 +392,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJsonOptional<{ disclosureText?: string }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
-  const baseDisclosureText = composeOpening(personaName, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
+  const baseDisclosureText = composeDisclosure(personaName, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   // Claim the original atomically. The conditional close succeeds for exactly

@@ -88,6 +88,19 @@ label.interviewer-option-label {
   white-space: nowrap;
 }
 
+/* ---- Consent screen: who the interviewer is, before the interview ----
+   Marked with a rule, not a fill: it must not be missed, and it is not a
+   warning. */
+.interviewer-notice {
+  margin: 8px 0 10px;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
 /* ---- Interview room: who is speaking (the room is dark in both themes) ---- */
 
 .room-interviewer {
@@ -110,22 +123,9 @@ label.interviewer-option-label {
   font-weight: 600;
 }
 
-.room-interviewer-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  line-height: 1.2;
-}
-
 .room-interviewer-name {
   font-size: 13.5px;
   font-weight: 600;
   color: var(--room-ink);
   overflow-wrap: anywhere;
-}
-
-.room-interviewer-role {
-  font-size: 11.5px;
-  color: var(--room-ink-2);
-  white-space: nowrap;
 }

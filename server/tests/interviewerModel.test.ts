@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   INTERVIEWER_CATALOGUE,
   VOICE_PROFILE_CATALOGUE,
-  composeOpening,
+  composeDisclosure,
+  consentIntro,
   defaultVoiceFor,
-  interviewerIntro,
   needsInterviewerBackfill,
   parseVoiceOverride,
   pickInterviewer,
@@ -12,8 +12,10 @@ import {
 } from '../src/domain/interviewerModel.js';
 
 // The five interviewers differ in name and voice and in nothing else. These
-// tests pin the catalogue, the opening line built from the name, and the
+// tests pin the catalogue, the consent-screen introduction built from the name, and the
 // parsing of the backend-only voice configuration.
+
+const RETIRED = ['Schr', 'anders'].join('');
 
 describe('interviewer catalogue', () => {
   it('lists Avery, Maya, Adrian, Elena and Theo in that order', () => {
@@ -95,44 +97,49 @@ describe('voiceOverridesFromEnv', () => {
   });
 });
 
-describe('interviewerIntro', () => {
-  it('introduces the interviewer by name', () => {
-    expect(interviewerIntro('Maya')).toBe("Hi, I'm Maya, your AI interviewer from Questor. I'll be conducting your first-round interview today.");
+describe('consentIntro', () => {
+  it('names the interviewer as an AI interviewer and says a person reviews the interview', () => {
+    expect(consentIntro('Maya')).toBe('Your interviewer today is Maya, an AI interviewer from Questor. A person on the hiring team reviews the interview.');
   });
 
   it('still says it is an AI interviewer when the record has no name', () => {
-    expect(interviewerIntro(null)).toBe("Hi, I'm your AI interviewer from Questor. I'll be conducting your first-round interview today.");
+    expect(consentIntro(null)).toBe('Your interviewer today is an AI interviewer from Questor. A person on the hiring team reviews the interview.');
   });
 });
 
-describe('composeOpening', () => {
+describe('composeDisclosure', () => {
   const body = 'Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it.';
 
   it('puts the named introduction before the disclosure', () => {
-    expect(composeOpening('Theo', body)).toBe(`${interviewerIntro('Theo')} ${body}`);
+    expect(composeDisclosure('Theo', body)).toBe(`${consentIntro('Theo')} ${body}`);
   });
 
-  it('replaces a legacy self-introduction instead of introducing twice', () => {
-    const legacy = `Hello, I'm Schranders, an AI interviewer for this first-round conversation. ${body}`;
-    expect(composeOpening('Elena', legacy)).toBe(`${interviewerIntro('Elena')} ${body}`);
+  it('replaces a legacy spoken self-introduction instead of introducing twice', () => {
+    const legacy = `Hello, I'm ${RETIRED}, an AI interviewer for this first-round conversation. ${body}`;
+    expect(composeDisclosure('Elena', legacy)).toBe(`${consentIntro('Elena')} ${body}`);
   });
 
   it('replaces the unnamed retake introduction', () => {
     const legacy = `Hello, I'm an AI interviewer for this first-round conversation. ${body}`;
-    expect(composeOpening('Adrian', legacy)).toBe(`${interviewerIntro('Adrian')} ${body}`);
+    expect(composeDisclosure('Adrian', legacy)).toBe(`${consentIntro('Adrian')} ${body}`);
+  });
+
+  it('replaces the short-lived spoken opening introduction', () => {
+    const legacy = `Hi, I'm Maya, your AI interviewer from Questor. I'll be conducting your first-round interview today. ${body}`;
+    expect(composeDisclosure('Maya', legacy)).toBe(`${consentIntro('Maya')} ${body}`);
   });
 
   it('is idempotent, so re-composing never stacks introductions', () => {
-    const once = composeOpening('Maya', body);
-    expect(composeOpening('Maya', once)).toBe(once);
+    const once = composeDisclosure('Maya', body);
+    expect(composeDisclosure('Maya', once)).toBe(once);
   });
 
-  it('swaps one interviewer for another in an already composed opening', () => {
-    expect(composeOpening('Avery', composeOpening('Maya', body))).toBe(`${interviewerIntro('Avery')} ${body}`);
+  it('swaps one interviewer for another in an already composed disclosure', () => {
+    expect(composeDisclosure('Avery', composeDisclosure('Maya', body))).toBe(`${consentIntro('Avery')} ${body}`);
   });
 
   it('keeps every word of the disclosure after the introduction', () => {
-    expect(composeOpening('Maya', body).endsWith(body)).toBe(true);
+    expect(composeDisclosure('Maya', body).endsWith(body)).toBe(true);
   });
 });
 

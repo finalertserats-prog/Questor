@@ -5,6 +5,10 @@ import {
   isInterviewerChoice,
   interviewRoomHeader,
   pickBrowserVoice,
+  roomAiFact,
+  splitDisclosure,
+  aiAcknowledgement,
+  whatHappensFirst,
   type PublicInterviewer,
 } from '../src/components/interviewerModel';
 
@@ -48,12 +52,49 @@ describe('interviewer selector model', () => {
 });
 
 describe('interviewRoomHeader', () => {
-  it('shows the interviewer name and "AI Interviewer"', () => {
-    expect(interviewRoomHeader({ name: 'Maya' })).toEqual({ name: 'Maya', role: 'AI Interviewer', initial: 'M' });
+  it('shows just the interviewer name, like a real call', () => {
+    expect(interviewRoomHeader({ name: 'Maya' })).toEqual({ name: 'Maya', initial: 'M' });
   });
 
-  it('still says AI Interviewer when the session records no name', () => {
-    expect(interviewRoomHeader({ name: null })).toEqual({ name: 'Your interviewer', role: 'AI Interviewer', initial: 'AI' });
+  it('falls back to "Your interviewer" when the session records no name', () => {
+    expect(interviewRoomHeader({ name: null })).toEqual({ name: 'Your interviewer', initial: 'Y' });
+  });
+});
+
+describe('roomAiFact', () => {
+  it('keeps the AI fact reachable in the room', () => {
+    expect(roomAiFact('Maya')).toBe('Maya is an AI interviewer. A person on the hiring team reviews the interview.');
+  });
+
+  it('still states it without a name', () => {
+    expect(roomAiFact(null)).toBe('Your interviewer is an AI interviewer. A person on the hiring team reviews the interview.');
+  });
+});
+
+describe('consent screen wording', () => {
+  const DISCLOSURE = 'Your interviewer today is Maya, an AI interviewer from Questor. A person on the hiring team reviews the interview. Your voice is transcribed as we talk.';
+
+  it('lifts the interviewer introduction out of the disclosure so it can be shown prominently', () => {
+    expect(splitDisclosure(DISCLOSURE)).toEqual({
+      intro: 'Your interviewer today is Maya, an AI interviewer from Questor. A person on the hiring team reviews the interview.',
+      rest: 'Your voice is transcribed as we talk.',
+    });
+  });
+
+  it('leaves a disclosure without the introduction whole', () => {
+    expect(splitDisclosure('Tenant wording only.')).toEqual({ intro: '', rest: 'Tenant wording only.' });
+  });
+
+  it('names the interviewer in the AI acknowledgement', () => {
+    expect(aiAcknowledgement('Maya')).toBe('I understand this first round is conducted by Maya, an AI interviewer, and reviewed by a person on the hiring team, and I agree to proceed.');
+  });
+
+  it('keeps the acknowledgement meaningful without a name', () => {
+    expect(aiAcknowledgement(null)).toBe('I understand this first round is conducted by an AI interviewer and reviewed by a person on the hiring team, and I agree to proceed.');
+  });
+
+  it('says what happens when the interview starts', () => {
+    expect(whatHappensFirst('Maya')).toBe('When you join, Maya will greet you, say briefly what the role is mainly looking for, and start with a question about your current work.');
   });
 });
 

@@ -45,6 +45,12 @@ export function coverageState(plan: InterviewPlan, turns: TurnRecord[]): Record<
       state[t.competencyId] = (state[t.competencyId] ?? 0) + 1;
     }
   }
+  // The opening greets and asks the warm-up question in one turn, so the
+  // answer to it IS the warm-up answer. Without this the warm-up question was
+  // asked a second time straight after the candidate had answered it.
+  if ('__warmup__' in state && (state.__process__ ?? 0) > 0) {
+    state.__warmup__ = Math.max(state.__warmup__, state.__process__);
+  }
   return state;
 }
 

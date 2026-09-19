@@ -10,7 +10,7 @@ import { VoiceHandling, transcriptionProcessorSentence, type SttCapability } fro
 import { Icon } from '../components/Icon';
 import { BrandLogo } from '../components/BrandLogo';
 import { interviewerName } from '../components/candidateJourney';
-import { interviewRoomHeader } from '../components/interviewerModel';
+import { interviewRoomHeader, roomAiFact } from '../components/interviewerModel';
 import { listensByVoice, shouldCaptureAudio } from '../components/portalConsentModel';
 import {
   REPLY_POLL_INTERVAL_MS, keepWaitingForReply, roomOpening, roomRefusal, type StartResponse,
@@ -713,8 +713,8 @@ export function InterviewRoom() {
     );
   }
 
-  // The name on screen is the interviewer this candidate was actually
-  // introduced to, always labelled as an AI.
+  // The name on screen is the interviewer this candidate was introduced to on
+  // the consent screen, where they were told it is an AI.
   const header = interviewRoomHeader(info.persona);
   const interviewer = interviewerName(info.persona?.name);
   const live = phase !== 'ready' && phase !== 'done';
@@ -733,10 +733,7 @@ export function InterviewRoom() {
         <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'nowrap' }}>
           <div className="room-interviewer" data-testid="room-interviewer">
             <span className="room-interviewer-avatar" aria-hidden="true">{header.initial}</span>
-            <span className="room-interviewer-text">
-              <span className="room-interviewer-name">{header.name}</span>
-              <span className="room-interviewer-role">{header.role}</span>
-            </span>
+            <span className="room-interviewer-name">{header.name}</span>
           </div>
           {live && micOpen && (
             <CaptureIndicator mode={textMode ? 'mic' : 'transcribing'} stt={info.speech.stt} />
@@ -749,7 +746,7 @@ export function InterviewRoom() {
         <div className={`tile ${speaking ? 'is-active' : ''}`}>
           <SpeakingRings active={speaking} level={0.35} />
           <div className="tile-avatar agent-avatar">{header.initial}</div>
-          <div className="tile-name">{header.name} <span className="tile-tag">{header.role}</span></div>
+          <div className="tile-name">{header.name}</div>
           <div className="tile-status">
             {speaking ? 'Speaking' : phase === 'thinking' ? 'Thinking…' : phase === 'done' ? 'Signed off' : 'Ready'}
           </div>
@@ -792,6 +789,9 @@ export function InterviewRoom() {
                 have been read minutes ago on another device, and this is the last
                 moment before the microphone actually opens. */}
             <div className="muted" style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto' }}>
+              {/* The on-screen name carries no label, as on a real call; the
+                  fact stays here, beside what is captured. */}
+              <p className="small" data-testid="room-ai-fact" style={{ margin: '0 0 4px' }}>{roomAiFact(info.persona?.name)}</p>
               <VoiceHandling stt={info.speech.stt} />
             </div>
             <button type="button" className="btn btn-join" onClick={begin}><Icon name="play" size={18} />Join interview</button>

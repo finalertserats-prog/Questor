@@ -7,7 +7,7 @@ import type { VoiceSelection } from '../providers/speech.js';
 import {
   INTERVIEWER_CATALOGUE,
   VOICE_PROFILE_CATALOGUE,
-  composeOpening,
+  composeDisclosure,
   defaultVoiceFor,
   needsInterviewerBackfill,
   pickInterviewer,
@@ -156,7 +156,7 @@ async function backfillSession(session: BackfillCandidate, randomInt: RandomInt)
   // new name. One they HAVE agreed to is left as the record of what they
   // agreed to; the spoken opening is composed from the name at speaking time.
   const rewriteDisclosure = typeof consent.disclosureText === 'string' && consent.disclosureText.length > 0 && !consent.consentedAt;
-  const nextConsent = rewriteDisclosure ? { ...consent, disclosureText: composeOpening(assigned.name, consent.disclosureText as string) } : null;
+  const nextConsent = rewriteDisclosure ? { ...consent, disclosureText: composeDisclosure(assigned.name, consent.disclosureText as string) } : null;
 
   const { count } = await prisma.interviewSession.updateMany({
     where: { id: session.id, state: session.state, personaJson: session.personaJson },

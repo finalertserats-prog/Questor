@@ -8,6 +8,7 @@ import { BrandLogo } from '../components/BrandLogo';
 import { Skeleton } from '../components/Skeleton';
 import { accommodationHint, canSubmitConsent, consentAction } from '../components/portalConsentModel';
 import { entryFromRefusal, portalEntry, type PortalEntry } from '../components/portalEntryModel';
+import { aiAcknowledgement, splitDisclosure, whatHappensFirst } from '../components/interviewerModel';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -22,6 +23,8 @@ interface PortalInfo {
   /** Whether consent to the interview is on record; absent on an older server. */
   consented?: boolean;
   speech: { stt: SttCapability; tts: { provider: string } };
+  /** The interviewer's name; absent on an older server. */
+  persona?: { name: string | null } | null;
 }
 
 /**
@@ -207,6 +210,11 @@ export function Portal() {
     );
   }
 
+  // The journey (first visit, not yet consented): the AI disclosure is shown
+  // here, before the interview, naming the interviewer.
+  const interviewer = info.persona?.name ?? null;
+  const disclosure = splitDisclosure(info.aiDisclosure);
+
   return (
     <div className="center-screen">
       <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
@@ -218,9 +226,15 @@ export function Portal() {
 
         {step === 'review' && (
           <>
-            <div className="card tight" style={{ background: 'var(--panel-2)' }}>
+            {/* The AI disclosure lives here, before the interview, and not in
+                the spoken opening: the interview itself opens like a real one.
+                The interviewer line is lifted out so it cannot be missed; the
+                whole text is still what the consent record stores. */}
+            <div className="card tight" style={{ background: 'var(--panel-2)' }} data-testid="what-to-expect">
               <b className="check-label"><Icon name="about" size={16} />What to expect</b>
-              <p className="small">{info.aiDisclosure}</p>
+              {disclosure.intro && <p className="interviewer-notice" data-testid="interviewer-notice">{disclosure.intro}</p>}
+              {disclosure.rest && <p className="small">{disclosure.rest}</p>}
+              <p className="small">{whatHappensFirst(interviewer)}</p>
             </div>
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
               <b className="check-label"><Icon name="mic" size={16} />What happens to your voice</b>
@@ -263,7 +277,7 @@ export function Portal() {
             </div>
             <label className="check-row">
               <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
-              <span>I understand this first round is conducted by an AI interviewer and reviewed by a human, and I agree to proceed.</span>
+              <span>{aiAcknowledgement(interviewer)}</span>
             </label>
             {info.accommodationsEnabled && (
               <>

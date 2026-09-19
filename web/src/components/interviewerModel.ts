@@ -39,20 +39,53 @@ export function isInterviewerChoice(value: string, list: readonly PublicIntervie
 
 export interface RoomHeader {
   readonly name: string;
-  readonly role: string;
   readonly initial: string;
 }
 
+function nameOf(name: string | null | undefined): string {
+  return typeof name === 'string' && name.trim() ? name.trim() : '';
+}
+
 /**
- * The interview room's heading: who is speaking, and that it is an AI. The
- * "AI Interviewer" line is shown whatever the name, so the disclosure never
- * depends on a record carrying one.
+ * The interview room's heading: just who is speaking, as on a real call. The
+ * candidate was told this is an AI interviewer on the consent screen before
+ * the interview (and the fact stays in the room's details, roomAiFact), so the
+ * name is not labelled on screen.
  */
 export function interviewRoomHeader(persona: { readonly name?: string | null } | null | undefined): RoomHeader {
-  const name = typeof persona?.name === 'string' && persona.name.trim() ? persona.name.trim() : '';
-  return name
-    ? { name, role: 'AI Interviewer', initial: name.charAt(0).toUpperCase() }
-    : { name: 'Your interviewer', role: 'AI Interviewer', initial: 'AI' };
+  const name = nameOf(persona?.name) || 'Your interviewer';
+  return { name, initial: name.charAt(0).toUpperCase() };
+}
+
+/** The AI fact, kept reachable in the room beside what is captured. */
+export function roomAiFact(name: string | null | undefined): string {
+  return `${nameOf(name) || 'Your interviewer'} is an AI interviewer. A person on the hiring team reviews the interview.`;
+}
+
+// The introduction the server puts at the start of the disclosure
+// (server/src/domain/interviewerModel.ts consentIntro).
+const CONSENT_INTRO = /^\s*(Your interviewer today is [^.]*\.(?:\s*A person on the hiring team reviews the interview\.)?)\s*/;
+
+/**
+ * The disclosure split so its first lines — who the interviewer is, that it is
+ * an AI, that a person reviews it — can be shown prominently. Nothing is
+ * dropped: intro and rest together are the text the consent record stores.
+ */
+export function splitDisclosure(text: string): { intro: string; rest: string } {
+  const match = CONSENT_INTRO.exec(text);
+  if (!match) return { intro: '', rest: text };
+  return { intro: match[1], rest: text.slice(match[0].length) };
+}
+
+/** The required acknowledgement on the consent step, naming the interviewer. */
+export function aiAcknowledgement(name: string | null | undefined): string {
+  const who = nameOf(name) ? `${nameOf(name)}, an AI interviewer,` : 'an AI interviewer';
+  return `I understand this first round is conducted by ${who} and reviewed by a person on the hiring team, and I agree to proceed.`;
+}
+
+/** What the start of the interview will be like, so it is not a surprise. */
+export function whatHappensFirst(name: string | null | undefined): string {
+  return `When you join, ${nameOf(name) || 'your interviewer'} will greet you, say briefly what the role is mainly looking for, and start with a question about your current work.`;
 }
 
 /** The minimum of a SpeechSynthesisVoice this needs, so it can be tested without a browser. */

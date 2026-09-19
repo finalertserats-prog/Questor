@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { wipe, createDemoData, type DemoIds } from '../src/seed/demoData.js';
 import { seedInterviewers, backfillLegacyInterviewers } from '../src/services/interviewers.js';
-import { interviewerIntro } from '../src/domain/interviewerModel.js';
+import { consentIntro } from '../src/domain/interviewerModel.js';
 
 // Sessions created before the interviewer catalogue carry the retired default
 // name. Those the candidate has not started get a real interviewer; finished
@@ -52,7 +52,7 @@ describe('backfillLegacyInterviewers', () => {
   it('re-introduces an unconsented disclosure with the new name', async () => {
     await makeLegacy('INVITED', false);
     await backfillLegacyInterviewers(() => 1);
-    expect((await stored()).consent.disclosureText).toBe(`${interviewerIntro('Maya')} Your voice is transcribed as we talk.`);
+    expect((await stored()).consent.disclosureText).toBe(`${consentIntro('Maya')} Your voice is transcribed as we talk.`);
   });
 
   it('leaves a disclosure the candidate already agreed to as it was', async () => {

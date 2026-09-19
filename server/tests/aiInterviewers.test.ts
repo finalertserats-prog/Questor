@@ -5,7 +5,7 @@ import { prisma } from '../src/db.js';
 import { wipe, createDemoData, type DemoIds } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
 import { seedInterviewers } from '../src/services/interviewers.js';
-import { DEFAULT_DISCLOSURE_BODY, interviewerIntro } from '../src/domain/interviewerModel.js';
+import { DEFAULT_DISCLOSURE_BODY, consentIntro } from '../src/domain/interviewerModel.js';
 import { sweepIncompleteInterviews, INACTIVITY_MS } from '../src/services/incompleteInterviews.js';
 
 // HR picks an AI interviewer (or Random) when setting up an interview. The
@@ -110,7 +110,7 @@ describe('POST /api/interviews — interviewer choice', () => {
   it('introduces the interviewer by name in the stored disclosure', async () => {
     const res = await createInterview({ interviewer: 'theo' });
     const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: res.body.session.id } });
-    expect((JSON.parse(session.consentJson) as { disclosureText: string }).disclosureText.startsWith(interviewerIntro('Theo'))).toBe(true);
+    expect((JSON.parse(session.consentJson) as { disclosureText: string }).disclosureText.startsWith(consentIntro('Theo'))).toBe(true);
   });
 
   it('keeps the tenant disclosure whole after the introduction', async () => {
@@ -123,7 +123,7 @@ describe('POST /api/interviews — interviewer choice', () => {
     await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: '{}' } });
     const res = await createInterview({ interviewer: 'theo' });
     const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: res.body.session.id } });
-    expect((JSON.parse(session.consentJson) as { disclosureText: string }).disclosureText).toBe(`${interviewerIntro('Theo')} ${DEFAULT_DISCLOSURE_BODY}`);
+    expect((JSON.parse(session.consentJson) as { disclosureText: string }).disclosureText).toBe(`${consentIntro('Theo')} ${DEFAULT_DISCLOSURE_BODY}`);
   });
 });
 

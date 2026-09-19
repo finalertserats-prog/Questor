@@ -112,6 +112,24 @@ export function detectDistress(text: string): boolean {
  * construction, so that describing a past decision — "we decided to stop the
  * rollout", "I want to quit that habit" — does not end the interview.
  */
+/**
+ * The candidate is asking whether they are talking to an AI, a bot or a real
+ * person. The opening does not announce the AI any more (the consent screen
+ * does, before the interview), so this question must always get a truthful
+ * answer. Anchored on a question addressed to the interviewer ("are you",
+ * "am I talking to", "is this"), so describing an AI project or a real person
+ * on the candidate's team does not trip it.
+ */
+export function detectAiIdentityQuestion(text: string): boolean {
+  const t = text.toLowerCase();
+  const subject = /\b(an?\s+)?(ai|a\.i\.|bot|chat ?bot|robot|machine|computer|recording|real person|actual person|real human|human|person|real interviewer)\b/;
+  const addressed = /\b(?:are you|r u|am i (?:talking|speaking|chatting) (?:to|with)|is this|is that|is it)\b([^.?!]{0,40})/g;
+  for (const m of t.matchAll(addressed)) {
+    if (subject.test(m[1] ?? '')) return true;
+  }
+  return false;
+}
+
 export function detectWithdrawal(text: string): boolean {
   const t = text.trim().toLowerCase();
   return (
