@@ -1,7 +1,15 @@
+import { parseJsonOptional } from '../db.js';
+
 /**
- * The interviewer's default name. HR can rename the persona per session
- * (routes/interviews.ts, `persona.name`); everything that shows or speaks the
- * name must read the session's value and fall back to this one, never to its
- * own copy of the string.
+ * The interviewer's name as the session recorded it, or null.
+ *
+ * There is deliberately no default name any more. Every new session is given
+ * one of the catalogue interviewers (services/interviewers.ts); a record with
+ * no name is an old one, and inventing a name for it would put words in the
+ * mouth of an interviewer the candidate never met. Callers show "your AI
+ * interviewer" instead.
  */
-export const DEFAULT_PERSONA_NAME = 'Schranders';
+export function personaNameOf(personaJson: string, sessionId: string): string | null {
+  const persona = parseJsonOptional<{ name?: unknown }>(personaJson, {}, { model: 'InterviewSession', id: sessionId, field: 'personaJson' });
+  return typeof persona.name === 'string' && persona.name.trim() ? persona.name.trim() : null;
+}

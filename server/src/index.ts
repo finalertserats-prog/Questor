@@ -13,6 +13,7 @@ import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
 import { backfillInvitationSecrets } from './services/invitations.js';
 import { seedCatalogWithRetry } from './services/catalogSeed.js';
+import { initInterviewers } from './services/interviewers.js';
 import { startRateLimitPurge } from './middleware/rateLimit.js';
 import { releaseHeldLeases, runningJobCount, startJob, stopAllJobs } from './services/jobs.js';
 import { generatePendingDrafts, JD_DRAFT_JOB } from './services/jdDrafts.js';
@@ -47,6 +48,12 @@ backfillInvitationSecrets().catch((err: unknown) => {
 // never sees an empty or half-filled catalog. If that first try fails the
 // server still starts, and the seed keeps retrying in the background.
 if (!(await seedCatalogWithRetry({ maxAttempts: 1 }))) void seedCatalogWithRetry();
+// The five AI interviewers and their voices, the VOICE_PROFILE_0N overrides,
+// and a real interviewer for any not-yet-started session from before them.
+// A failure is logged, not fatal: interview creation seeds on demand too.
+await initInterviewers().catch((err: unknown) => {
+  logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not initialise AI interviewers');
+});
 
 const app = createApp();
 const httpServer = createServer(app);

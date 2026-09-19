@@ -40,6 +40,14 @@ describe('anonymiseTranscript', () => {
     expect(out).not.toMatch(/schranders/i);
   });
 
+  it('removes every catalogue interviewer name too', () => {
+    const out = anonymiseTranscript(transcript([
+      { speaker: 'interviewer', text: "Hi, I'm Maya, your AI interviewer. Avery, Adrian, Elena and Theo send their regards." },
+      { speaker: 'candidate', text: 'Thanks Maya.' },
+    ]));
+    expect(out).not.toMatch(/\b(avery|maya|adrian|elena|theo)\b/i);
+  });
+
   it('removes model self-identification, which identifies the benchmark lane', () => {
     const out = anonymiseTranscript(transcript([
       { speaker: 'interviewer', text: 'As Claude, I would ask about scale.' },

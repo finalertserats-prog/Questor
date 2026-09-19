@@ -16,6 +16,7 @@ import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { DEMO_JD, DEMO_RESUME } from '../seed/demoData.js';
 import { slugifyCatalogName } from '../domain/catalogText.js';
 import { DEMO_ROLE } from '../domain/capabilities.js';
+import { assignInterviewer } from './interviewers.js';
 import { renderDemoAccessEmail, renderDemoOperatorEmail, renderDemoDecisionEmail, renderDemoDeclinedEmail } from '../providers/email/demoEmail.js';
 
 const DAY_MS = 86_400_000;
@@ -70,6 +71,8 @@ export interface ProvisionedDemoTenant { tenantId: string; userId: string; invit
 
 export async function provisionDemoTenant(input: { name: string; email: string; company: string; now?: Date }): Promise<ProvisionedDemoTenant> {
   const now = input.now ?? new Date();
+  // Drawn before the transaction: the catalogue is global, not sandbox data.
+  const interviewer = await assignInterviewer('random');
   return prisma.$transaction(async (tx) => {
     // Default policy and persona: the demo shows the product as a customer gets it.
     const tenant = await tx.tenant.create({ data: { name: `${input.company} (demo)`, slug: await uniqueTenantSlug(tx as PrismaClient, input.company), isDemo: true, demoExpiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });
@@ -87,7 +90,7 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
     const plan = buildInterviewPlan({ role: extraction.profile, fit, durationMinutes: 45, language: 'en', modules: [] });
     // INVITED with no consent recorded: the visitor meets the consent step exactly
     // as a candidate would, which is part of what the demo is showing.
-    const session = await tx.interviewSession.create({ data: { tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'INVITED', provider: 'hosted', language: 'en', durationMinutes: 45 } });
+    const session = await tx.interviewSession.create({ data: { tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'INVITED', provider: 'hosted', language: 'en', durationMinutes: 45, personaJson: JSON.stringify({ interviewerId: interviewer.interviewerId, name: interviewer.name, tone: 'warm' }) } });
     await tx.interviewPlanVersion.create({ data: { sessionId: session.id, version: 1, planJson: JSON.stringify(plan) } });
     const invitationToken = mintInvitationToken();
     await tx.invitation.create({ data: { sessionId: session.id, ...invitationSecretColumns(invitationToken), status: 'sent', sentAt: now, expiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });

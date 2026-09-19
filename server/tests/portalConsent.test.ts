@@ -73,19 +73,27 @@ describe('what the portal tells the room about voice capture', () => {
 });
 
 describe('the interviewer name the portal shows', () => {
-  it('is the name HR set for this session, not a built-in default', async () => {
-    await prisma.interviewSession.update({ where: { id: sessionId }, data: { personaJson: JSON.stringify({ name: 'Alex', tone: 'warm' }) } });
+  it('is the interviewer assigned to this session, not a built-in default', async () => {
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { personaJson: JSON.stringify({ interviewerId: 'theo', name: 'Theo', tone: 'warm' }) } });
 
     const res = await summary();
 
-    expect(res.body.persona.name).toBe('Alex');
+    expect(res.body.persona.name).toBe('Theo');
   });
 
-  it('falls back to the default when the session has none', async () => {
+  it('assigns a catalogue interviewer when a not-yet-started session has none', async () => {
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { personaJson: '{}' } });
 
     const res = await summary();
 
-    expect(res.body.persona.name).toBe('Schranders');
+    expect(['Avery', 'Maya', 'Adrian', 'Elena', 'Theo']).toContain(res.body.persona.name);
+  });
+
+  it('invents no name for a finished interview that recorded none', async () => {
+    await prisma.interviewSession.update({ where: { id: sessionId }, data: { personaJson: '{}', state: 'REVIEW_READY' } });
+
+    const res = await summary();
+
+    expect(res.body.persona.name).toBe(null);
   });
 });

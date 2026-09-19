@@ -24,7 +24,8 @@ import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
 import { hasObserverNotice } from '../services/observerPolicy.js';
-import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
+import { personaNameOf } from '../domain/persona.js';
+import { ensureSessionInterviewer, interviewerIdOf, voiceForInterviewer, voiceHintForInterviewer } from '../services/interviewers.js';
 import { findInvitationByToken } from '../services/invitations.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
@@ -196,9 +197,21 @@ interface StoredConsent {
   [key: string]: unknown;
 }
 
+/** The voice a session's interviewer speaks with; null means the configured default voice. */
+async function sessionVoice(personaJson: string, sessionId: string) {
+  return voiceForInterviewer(interviewerIdOf(personaJson, sessionId));
+}
+
 portalRouter.get('/:token', asyncHandler(async (req, res) => {
-  const inv = await loadByToken(req.params.token);
+  const loaded = await loadByToken(req.params.token);
+  // A session from before the interviewer catalogue meets its interviewer here,
+  // the first time it is opened for the interview. Finished ones are left as
+  // they were recorded (see services/interviewers.ts).
+  const needsInterviewer = !interviewerIdOf(loaded.session.personaJson, loaded.sessionId);
+  if (needsInterviewer) await ensureSessionInterviewer(loaded.sessionId);
+  const inv = needsInterviewer ? await loadByToken(req.params.token) : loaded;
   const s = inv.session;
+  const interviewerId = interviewerIdOf(s.personaJson, s.id);
 
   // Record the first open. SMTP acceptance only proves a provider took the
   // message — this is the first evidence a human actually received it, and it
@@ -256,7 +269,9 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     consented: hasRecordedConsent(s),
     // The interviewer's name, as HR set it for this session. The pages used
     // to hardcode a default that stopped matching what the AI said aloud.
-    persona: { name: parseJsonOptional<{ name?: unknown }>(s.personaJson, {}, { model: 'InterviewSession', id: s.id, field: 'personaJson' }).name ?? DEFAULT_PERSONA_NAME },
+    // voiceHint only steers which BROWSER voice speaks when there is no server
+    // voice; the provider voice itself never leaves the server.
+    persona: { name: personaNameOf(s.personaJson, s.id), interviewerId, voiceHint: await voiceHintForInterviewer(interviewerId) },
     privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
     accommodationsEnabled: true,
     proctoringEnabled,
@@ -520,20 +535,22 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
   }
 
   // Nothing configured to speak with: tell the client to use browser speech.
-  if (!(await serverSpeechAllowed(inv.sessionId, serverTtsReady))) return res.status(204).end();
+  const voice = await sessionVoice(inv.session.personaJson, inv.sessionId);
+  if (!(await serverSpeechAllowed(inv.sessionId, () => serverTtsReady(voice)))) return res.status(204).end();
 
   // Answer conditional requests BEFORE synthesizing. The ETag is a pure
   // function of (provider, model, voice, text), so it can be computed without
   // calling the vendor — checking it afterwards would save bandwidth but still
-  // pay for the audio, which defeats the point.
-  const etag = speechEtag(turn.text);
+  // pay for the audio, which defeats the point. The voice is the session
+  // interviewer's, so a changed interviewer never matches another's audio.
+  const etag = speechEtag(turn.text, voice);
   res.setHeader('ETag', etag);
   res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
   let speech: Awaited<ReturnType<typeof synthesizeServerSpeech>>;
   try {
-    speech = await synthesizeServerSpeech(turn.text);
+    speech = await synthesizeServerSpeech(turn.text, voice);
   } catch (err) {
     // A vendor outage must not stop an interview mid-question. Log it and let
     // the client fall back to the browser voice.
@@ -548,7 +565,7 @@ portalRouter.post('/:token/speak', asyncHandler(async (req, res) => {
 }));
 
 /**
- * What Schranders says when a candidate has gone quiet for a long time.
+ * What the interviewer says when a candidate has gone quiet for a long time.
  *
  * The phrases live here, not on the client, for the same reason `/speak` will
  * only synthesize a stored turn: if the caller supplied the words, this would
@@ -577,16 +594,17 @@ portalRouter.post('/:token/nudge', asyncHandler(async (req, res) => {
   res.setHeader('X-Nudge-Text', encodeURIComponent(text));
   res.setHeader('Access-Control-Expose-Headers', 'X-Nudge-Text');
 
-  if (!(await serverSpeechAllowed(inv.sessionId, serverTtsReady))) return res.status(204).end();
+  const voice = await sessionVoice(inv.session.personaJson, inv.sessionId);
+  if (!(await serverSpeechAllowed(inv.sessionId, () => serverTtsReady(voice)))) return res.status(204).end();
 
-  const etag = speechEtag(text);
+  const etag = speechEtag(text, voice);
   res.setHeader('ETag', etag);
   res.setHeader('Cache-Control', 'private, max-age=86400, immutable');
   if (req.headers['if-none-match'] === etag) return res.status(304).end();
 
   let speech: Awaited<ReturnType<typeof synthesizeServerSpeech>>;
   try {
-    speech = await synthesizeServerSpeech(text);
+    speech = await synthesizeServerSpeech(text, voice);
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: inv.sessionId }, 'Nudge TTS failed; falling back to browser speech');
     return res.status(204).end();

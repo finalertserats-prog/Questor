@@ -21,7 +21,9 @@ import { emitEvent } from '../services/webhooks.js';
 import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, transitionIfInState } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
-import { DEFAULT_PERSONA_NAME } from '../domain/persona.js';
+import { personaNameOf } from '../domain/persona.js';
+import { DEFAULT_DISCLOSURE_BODY, composeOpening } from '../domain/interviewerModel.js';
+import { assignInterviewer } from '../services/interviewers.js';
 import { invitationLink, invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
@@ -30,19 +32,18 @@ import { assertRoleOpen } from '../services/roleOpen.js';
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
 
-/** The AI interviewer's name. Questor is the product; Schranders conducts the
- *  interview. The candidate should meet the same name in the invitation that
- *  greets them in the room. */
-
 /** The invitation a candidate receives. Kept in one place so the plain-text and
  *  HTML bodies cannot drift apart — a candidate whose client strips HTML must
- *  still get a working link. */
-function buildInvite(candidateName: string, roleTitle: string, portalUrl: string, personaName: string = DEFAULT_PERSONA_NAME) {
+ *  still get a working link. The candidate meets the same interviewer name here
+ *  that greets them in the room. */
+function buildInvite(candidateName: string, roleTitle: string, portalUrl: string, personaName: string | null) {
+  const who = personaName ? `${personaName}, an AI voice interviewer` : 'an AI voice interviewer';
+  const whoHtml = personaName ? `<b>${escapeHtml(personaName)}</b>, an AI voice interviewer` : 'an AI voice interviewer';
   return brandedEmail({
     to: '',
     subject: `Your first-round interview for ${headerSafe(roleTitle)}`,
-    text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. It is conducted by ${personaName}, an AI voice interviewer, and your answers are transcribed as you speak — no audio recording is kept.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
-    html: `<p>Hi ${escapeHtml(candidateName)},</p><p>You're invited to a first-round interview for <b>${escapeHtml(roleTitle)}</b>, conducted by <b>${escapeHtml(personaName)}</b>, an AI voice interviewer. Your answers are transcribed as you speak — no audio recording is kept.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
+    text: `Hi ${candidateName},\n\nYou're invited to a first-round interview for ${roleTitle}. It is conducted by ${who}, and your answers are transcribed as you speak — no audio recording is kept.\n\nStart or schedule here: ${portalUrl}\n\nYou can review privacy information and consent before you begin.\n\nThanks,\nRecruiting Team`,
+    html: `<p>Hi ${escapeHtml(candidateName)},</p><p>You're invited to a first-round interview for <b>${escapeHtml(roleTitle)}</b>, conducted by ${whoHtml}. Your answers are transcribed as you speak — no audio recording is kept.</p><p><a href="${portalUrl}">Start or schedule your interview</a></p>`,
   });
 }
 
@@ -51,7 +52,13 @@ const createSchema = z.object({
   durationMinutes: z.number().int().min(10).max(120).default(45),
   language: z.string().trim().min(2).max(16).default('en'),
   modules: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
-  persona: z.object({ name: z.string().trim().min(1).max(80), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ name: DEFAULT_PERSONA_NAME, tone: 'warm' }),
+  // Tone is its own setting and is stored exactly as chosen. `name` is still
+  // accepted so an older client keeps working, but it no longer names anyone:
+  // the interviewer below does.
+  persona: z.object({ name: z.string().trim().max(80).optional(), tone: z.enum(['warm', 'neutral', 'formal']) }).default({ tone: 'warm' }),
+  // 'random' (the recommended default) or one catalogue id. Unknown or
+  // inactive ids are refused in assignInterviewer.
+  interviewer: z.union([z.literal('random'), z.string().regex(/^[a-z]{1,32}$/)]).default('random'),
   provider: z.enum(['hosted', 'teams', 'zoom', 'meet']).default('hosted'),
   recordingRequested: z.boolean().default(false),
   humanReviewRequired: z.boolean().default(true),
@@ -95,21 +102,25 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
   });
 
+  // Drawn once, here, and stored: a session's interviewer never changes after
+  // creation, retakes included. It decides the name and voice and nothing else.
+  const interviewer = await assignInterviewer(body.interviewer);
+
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJsonOptional<{ disclosureText?: string }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
-  const baseDisclosureText = tenantPolicy.disclosureText ??
-    // No `recordingRequested` branch: it offered two different sentences for a
-    // distinction that does not exist, since no audio artefact is produced
-    // either way. Stating capture, transcription and retention plainly is both
-    // true and more useful than the flag ever was.
-    `Hello, I'm ${body.persona.name}, an AI interviewer for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+  // No `recordingRequested` branch: it offered two different sentences for a
+  // distinction that does not exist, since no audio artefact is produced
+  // either way. Stating capture, transcription and retention plainly is both
+  // true and more useful than the flag ever was. The named introduction goes
+  // in front of whichever disclosure applies, never instead of it.
+  const baseDisclosureText = composeOpening(interviewer.name, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   const session = await prisma.interviewSession.create({
     data: {
       tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, scorecardId: scorecard.id,
       state: 'PROVISIONED', provider: body.provider, language: body.language, durationMinutes: body.durationMinutes,
-      personaJson: JSON.stringify(body.persona),
+      personaJson: JSON.stringify({ interviewerId: interviewer.interviewerId, name: interviewer.name, tone: body.persona.tone }),
       consentJson: JSON.stringify({ disclosureText, recordingRequested: body.recordingRequested, humanReviewRequired: body.humanReviewRequired }),
       recordingConsent: false,
     },
@@ -361,7 +372,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const originalModules = originalPlan
     ? parseJsonStrict<{ modules?: string[] }>(originalPlan.planJson, { model: 'InterviewPlanVersion', id: originalPlan.id, field: 'planJson' }).modules ?? []
     : [];
-  const persona = parseJsonOptional<{ name?: string }>(original.personaJson, {}, { model: 'InterviewSession', id: original.id, field: 'personaJson' });
+  const personaName = personaNameOf(original.personaJson, original.id);
 
   const candidate = await assertCanAccessCandidate(req.auth!, original.candidateId);
   const scorecard = await prisma.roleScorecardVersion.findFirst({ where: { roleId: original.roleId, status: 'approved' }, orderBy: { version: 'desc' } });
@@ -381,8 +392,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
   const tenantPolicy = parseJsonOptional<{ disclosureText?: string }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
-  const baseDisclosureText = tenantPolicy.disclosureText ??
-    `Hello, I'm ${persona.name ? `${persona.name}, an AI interviewer` : 'an AI interviewer'} for this first-round conversation. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it. I'll ask about your relevant experience. You can ask me to repeat anything or request a pause at any time.`;
+  const baseDisclosureText = composeOpening(personaName, tenantPolicy.disclosureText ?? DEFAULT_DISCLOSURE_BODY);
   const disclosureText = await disclosureWithProctoringPolicy({ tenantId: req.auth!.tenantId, scorecardId: scorecard.id }, baseDisclosureText);
 
   // Claim the original atomically. The conditional close succeeds for exactly
@@ -460,7 +470,7 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
   }
 
   try {
-    await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl), to: candidate!.email });
+    await email.send({ ...buildInvite(candidate!.fullName, role!.title, portalUrl, personaNameOf(session.personaJson, session.id)), to: candidate!.email });
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation resend failed');
     throw new HttpError(502, 'The email could not be sent. Copy the link and send it yourself, or try again.');
@@ -619,7 +629,7 @@ interviewsRouter.get('/:id/observe', requireCapability('candidate:read'), asyncH
 
   res.json({
     session: { id: session.id, state: session.state },
-    persona: { name: parseJsonOptional<{ name?: unknown }>(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }).name ?? DEFAULT_PERSONA_NAME },
+    persona: { name: personaNameOf(session.personaJson, session.id) },
     turns,
   });
 }));
@@ -653,7 +663,7 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
  * only the tenant in hand — the tenant-only lookup this replaced was the single
  * line behind every leak on this router.
  */
-type InvitableSession = { id: string; candidateId: string; roleId: string; state: string };
+type InvitableSession = { id: string; candidateId: string; roleId: string; state: string; personaJson: string };
 
 async function inviteSession(req: Request, session: InvitableSession) {
   const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
@@ -682,6 +692,7 @@ async function inviteSession(req: Request, session: InvitableSession) {
 
   const portalUrl = `${config.webOrigin}/portal/${token}`;
   const email = getEmail();
+  const invite = buildInvite(candidate.fullName, role.title, portalUrl, personaNameOf(session.personaJson, session.id));
 
   // Delivery is reported honestly, and a failure never loses the invitation.
   // The link is the valuable artefact — a recruiter who can see it can send it
@@ -690,12 +701,12 @@ async function inviteSession(req: Request, session: InvitableSession) {
   let delivered = false;
   let deliveryNote: string;
   if (!email.delivers) {
-    await email.send({ ...buildInvite(candidate.fullName, role.title, portalUrl), to: candidate.email }); // logs it
+    await email.send({ ...invite, to: candidate.email }); // logs it
     deliveryNote = `No email was sent: EMAIL_PROVIDER is "${email.name}", which does not deliver. Copy the link and send it yourself.`;
     logger.warn({ sessionId: session.id, to: candidate.email }, 'Invitation created but NOT emailed — no delivering email provider configured');
   } else {
     try {
-      await email.send({ ...buildInvite(candidate.fullName, role.title, portalUrl), to: candidate.email });
+      await email.send({ ...invite, to: candidate.email });
       delivered = true;
       deliveryNote = `Emailed to ${candidate.email}.`;
     } catch (err) {

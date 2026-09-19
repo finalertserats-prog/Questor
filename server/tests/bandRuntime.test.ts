@@ -42,7 +42,7 @@ const ROLE: RoleSuccessProfile = {
   redFlags: [], seniority: 'Mid',
 };
 
-const PERSONA: Persona = { name: 'Schranders', tone: 'warm' };
+const PERSONA: Persona = { name: 'Maya', tone: 'warm' };
 
 function turn(p: Partial<TurnRecord> & { speaker: TurnRecord['speaker']; text: string }): TurnRecord {
   return { id: Math.random().toString(36).slice(2), index: 0, startMs: 0, endMs: 1000, confidence: 1, ...p };

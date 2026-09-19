@@ -111,15 +111,24 @@ function elevenLabsConfigured(): boolean {
 }
 
 /**
- * Server-side ElevenLabs TTS connector (returns audio bytes). Only used when
- * TTS_PROVIDER=elevenlabs and a key is present; the browser falls back to
- * speechSynthesis otherwise.
+ * Server-side ElevenLabs TTS connector (returns audio bytes). Used when
+ * TTS_PROVIDER=elevenlabs, or when an interviewer's voice profile names
+ * ElevenLabs (VOICE_PROFILE_0N=elevenlabs:<voiceId>), and a key is present;
+ * the browser falls back to speechSynthesis otherwise. `voiceId` is that
+ * profile's voice; without one the configured ELEVENLABS_VOICE_ID speaks.
+ *
+ * Model and settings, per https://elevenlabs.io/docs/overview/models and the
+ * text-to-speech API reference: eleven_multilingual_v2 is documented as the
+ * "lifelike, stable on long-form" tier (eleven_v3 is more dramatic, which is
+ * the opposite of what an interview wants); stability 0.5 / similarity 0.75 /
+ * style 0 are the vendor defaults, the natural-sounding middle between a
+ * monotone read and an over-acted one.
  */
-export async function synthesizeElevenLabs(text: string): Promise<Buffer> {
+export async function synthesizeElevenLabs(text: string, voiceId?: string): Promise<Buffer> {
   const apiKey = process.env.ELEVENLABS_API_KEY || config.tts.elevenKey;
   if (!apiKey) throw new Error('ElevenLabs not configured');
 
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(elevenLabsVoice())}`
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId || elevenLabsVoice())}`
     + `?output_format=${ELEVENLABS_OUTPUT_FORMAT}`;
 
   const res = await fetch(url, {
@@ -174,12 +183,21 @@ export async function synthesizeElevenLabs(text: string): Promise<Buffer> {
 const DEFAULT_OPENAI_TTS_MODEL = 'gpt-4o-mini-tts';
 const DEFAULT_OPENAI_TTS_VOICE = 'marin';
 
-// Steers prosody, not wording. The complaint that prompted this was "looks like
-// a bot", which is mostly pace and pausing rather than timbre.
-const INTERVIEWER_STYLE =
-  'Speak as a warm, calm, professional human interviewer. Natural conversational pace, ' +
-  'slightly slower than average. Pause briefly at commas and between sentences. ' +
-  'Friendly and encouraging but not bubbly or salesy. Do not sound like a narrator or an announcer.';
+/**
+ * The one delivery instruction sent with every interviewer's speech.
+ *
+ * Steers prosody, not wording: "sounds like a bot" is mostly pace and pausing
+ * rather than timbre. It is IDENTICAL for all five interviewers — they differ
+ * only in voice — and it deliberately says nothing about warmth, formality or
+ * strictness, because that is the interview's separate Tone setting and must
+ * not be set, or contradicted, by whoever happens to be the interviewer.
+ * gpt-4o-mini-tts is the OpenAI speech model that accepts `instructions`
+ * (https://developers.openai.com/api/docs/guides/text-to-speech); tts-1 and
+ * tts-1-hd ignore them.
+ */
+export const INTERVIEWER_DELIVERY =
+  'Speak like an experienced human interviewer in a real conversation: natural pace, relaxed and clear, ' +
+  'brief natural pauses between sentences, conversational rhythm, not a narrator, announcer or customer-service script.';
 
 /** The API rejects anything longer; callers cap far below this for spend reasons. */
 const OPENAI_TTS_MAX_INPUT_CHARS = 4096;
@@ -197,7 +215,7 @@ function openAiTtsVoice(): string {
  * TTS_PROVIDER=openai and OPENAI_API_KEY is present; the browser falls back to
  * speechSynthesis otherwise.
  */
-export async function synthesizeOpenAI(text: string): Promise<Buffer> {
+export async function synthesizeOpenAI(text: string, voiceId?: string): Promise<Buffer> {
   if (!config.llm.openaiKey) throw new Error('OpenAI TTS not configured');
   const res = await fetch('https://api.openai.com/v1/audio/speech', {
     method: 'POST',
@@ -207,9 +225,9 @@ export async function synthesizeOpenAI(text: string): Promise<Buffer> {
     },
     body: JSON.stringify({
       model: openAiTtsModel(),
-      voice: openAiTtsVoice(),
+      voice: voiceId || openAiTtsVoice(),
       input: text.slice(0, OPENAI_TTS_MAX_INPUT_CHARS),
-      instructions: INTERVIEWER_STYLE,
+      instructions: INTERVIEWER_DELIVERY,
       response_format: 'mp3',
       // Slightly under real-time. Interview questions land better with a beat of
       // space, and it gives the candidate time to parse a long question.
@@ -420,38 +438,93 @@ export interface SynthesizedSpeech {
   etag: string;
 }
 
-/** True when a *server-side* TTS provider is selected AND has its credential. */
-export function serverTtsReady(): boolean {
+/**
+ * An interviewer's voice: which provider speaks, and which of its voices.
+ * Backend-only — it comes from a VoiceProfile row and never leaves the server.
+ */
+export interface VoiceSelection {
+  readonly provider: string;
+  readonly voiceId: string;
+}
+
+type ConnectorProvider = 'openai' | 'elevenlabs';
+
+/** The exact request a synthesis would make. */
+interface SpeechTarget {
+  readonly provider: string;
+  readonly model: string;
+  readonly voice: string;
+}
+
+function isConnector(provider: string): provider is ConnectorProvider {
+  return provider === 'openai' || provider === 'elevenlabs';
+}
+
+function connectorHasCredential(provider: ConnectorProvider): boolean {
+  return provider === 'openai' ? !!config.llm.openaiKey : elevenLabsConfigured();
+}
+
+// Resolved through the same accessors the connectors use, never through a
+// literal. The ElevenLabs arm previously hardcoded its model id and read the
+// raw config value for the voice, so it described a request the connector had
+// stopped making: changing ELEVENLABS_MODEL_ID left the key identical, and an
+// unset ELEVENLABS_VOICE_ID hashed an empty voice while the connector actually
+// synthesized with its default. Either way a voice or model swap kept serving
+// the previous rendering under the same ETag, which looks exactly like the
+// setting silently not working.
+function connectorTarget(provider: ConnectorProvider, voiceId: string): SpeechTarget {
+  return provider === 'openai'
+    ? { provider, model: openAiTtsModel(), voice: voiceId || openAiTtsVoice() }
+    : { provider, model: elevenLabsModel(), voice: voiceId || elevenLabsVoice() };
+}
+
+/**
+ * Who actually speaks for this voice, or null when nobody server-side can.
+ *
+ * The profile's own provider is honoured when that provider has a credential,
+ * so any interviewer can be moved to ElevenLabs (or back) by VOICE_PROFILE_0N
+ * alone. Otherwise the configured TTS_PROVIDER speaks with its own configured
+ * voice — a profile pointing at a vendor with no key must degrade to a working
+ * voice, never to silence.
+ */
+function resolveSpeechTarget(voice?: VoiceSelection | null): SpeechTarget | null {
+  if (voice?.voiceId && isConnector(voice.provider) && connectorHasCredential(voice.provider)) {
+    return connectorTarget(voice.provider, voice.voiceId);
+  }
+  const configured = config.tts.provider;
+  if (isConnector(configured) && connectorHasCredential(configured)) {
+    // The profile's id only means something to its own provider.
+    return connectorTarget(configured, voice?.provider === configured ? voice.voiceId : '');
+  }
+  return null;
+}
+
+/** True when a *server-side* TTS provider can speak for this voice (or, with no voice, at all). */
+export function serverTtsReady(voice?: VoiceSelection | null): boolean {
+  if (resolveSpeechTarget(voice)) return true;
   const cap = ttsCapability();
   return cap.mode === 'server' && cap.configured;
 }
 
+// NUL is the one character that cannot occur in a provider name, a voice id or
+// interview text — a printable separator would let two different field splits
+// hash identically.
+const KEY_FIELD_SEPARATOR = String.fromCharCode(0);
+
 /**
  * Cache key must cover everything that changes the audio, or a voice/model swap
- * would keep serving the previous rendering under the same ETag.
- *
- * Fields are joined on NUL because it is the one character that cannot occur in
- * a provider name, a voice id or interview text — a printable separator would
- * let two different field splits hash identically.
+ * — or a different interviewer — would keep serving the previous rendering
+ * under the same ETag.
  */
-function speechKey(text: string): string {
-  const provider = config.tts.provider;
-  // Resolved through the same accessors the connectors use, never through a
-  // literal. The ElevenLabs arm previously hardcoded its model id and read the
-  // raw config value for the voice, so it described a request the connector had
-  // stopped making: changing ELEVENLABS_MODEL_ID left the key identical, and an
-  // unset ELEVENLABS_VOICE_ID hashed an empty voice while the connector
-  // actually synthesized with its default. Either way a voice or model swap
-  // kept serving the previous rendering under the same ETag, which looks
-  // exactly like the setting silently not working.
-  const { model, voice } = provider === 'openai'
-    ? { model: openAiTtsModel(), voice: openAiTtsVoice() }
-    : provider === 'elevenlabs'
-      ? { model: elevenLabsModel(), voice: elevenLabsVoice() }
+function speechKey(text: string, voice?: VoiceSelection | null): string {
+  const configured = config.tts.provider;
+  const target = resolveSpeechTarget(voice)
+    ?? (isConnector(configured)
+      ? connectorTarget(configured, voice?.provider === configured ? voice.voiceId : '')
       // Providers with no connector never reach synthesis, so their key only
       // has to stay distinct from the two that do.
-      : { model: '', voice: '' };
-  return createHash('sha256').update(`${provider}\u0000${model}\u0000${voice}\u0000${text}`).digest('hex').slice(0, 32);
+      : { provider: configured, model: '', voice: '' });
+  return createHash('sha256').update([target.provider, target.model, target.voice, text].join(KEY_FIELD_SEPARATOR)).digest('hex').slice(0, 32);
 }
 
 // Every synthesis is billed, and an interview replays the same handful of
@@ -518,8 +591,8 @@ const inFlight = new Map<string, Promise<SynthesizedSpeech>>();
  * Strong validator for `text` without synthesizing it. Lets a caller answer a
  * conditional request before spending anything at the vendor.
  */
-export function speechEtag(text: string): string {
-  return `"${speechKey(text)}"`;
+export function speechEtag(text: string, voice?: VoiceSelection | null): string {
+  return `"${speechKey(text, voice)}"`;
 }
 
 /**
@@ -529,16 +602,17 @@ export function speechEtag(text: string): string {
  * "use browser speech" instead of failing — the zero-key path is a core
  * property of this build and must never degrade into an error.
  */
-export async function synthesizeServerSpeech(text: string): Promise<SynthesizedSpeech | null> {
-  if (!serverTtsReady()) return null;
+export async function synthesizeServerSpeech(text: string, voice?: VoiceSelection | null): Promise<SynthesizedSpeech | null> {
+  if (!serverTtsReady(voice)) return null;
 
-  const key = speechKey(text);
+  const key = speechKey(text, voice);
   const cached = cacheGet(key);
   if (cached) return cached;
 
   // `serverTtsReady` admits azure, which has no connector yet. Checked before
   // taking an in-flight slot so an unsupported provider cannot park a promise.
-  if (config.tts.provider !== 'openai' && config.tts.provider !== 'elevenlabs') {
+  const target = resolveSpeechTarget(voice);
+  if (!target) {
     logger.warn({ provider: config.tts.provider }, 'No server TTS connector for configured provider');
     return null;
   }
@@ -546,9 +620,8 @@ export async function synthesizeServerSpeech(text: string): Promise<SynthesizedS
   const pending = inFlight.get(key);
   if (pending) return pending;
 
-  const provider = config.tts.provider;
   const work = (async (): Promise<SynthesizedSpeech> => {
-    const audio = provider === 'openai' ? await synthesizeOpenAI(text) : await synthesizeElevenLabs(text);
+    const audio = target.provider === 'openai' ? await synthesizeOpenAI(text, target.voice) : await synthesizeElevenLabs(text, target.voice);
     const result: SynthesizedSpeech = { audio, contentType: 'audio/mpeg', etag: `"${key}"` };
     cachePut(key, result);
     return result;

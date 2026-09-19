@@ -81,7 +81,7 @@ async function createSimTenant(): Promise<{ tenantId: string; userId: string }> 
       region: 'in',
       policyJson: JSON.stringify({
         disclosureText:
-          "Hello, I'm Schranders, an AI interviewer for this first-round conversation. While you speak, your voice " +
+          "While you speak, your voice " +
           'is transcribed; no audio recording is kept, and the written transcript is what our hiring team reviews. ' +
           "I'll ask about your relevant experience — take your time, and ask me to repeat anything.",
         recordingDefault: true,
@@ -177,7 +177,7 @@ export async function createSimSession(opts: {
     data: {
       tenantId, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
       state: 'ACCEPTED', provider: 'hosted', language: 'en', durationMinutes,
-      personaJson: JSON.stringify({ name: 'Schranders', tone: 'warm' }),
+      personaJson: JSON.stringify({ interviewerId: 'maya', name: 'Maya', tone: 'warm' }),
       consentJson: JSON.stringify({
         disclosureText: '',
         recordingRequested: true, recording: true, humanReviewRequired: true,

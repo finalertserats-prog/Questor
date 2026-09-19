@@ -13,6 +13,7 @@ import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
 import { assertAcceptingNewInterviews } from '../services/drainState.js';
 import { noteSessionActivity } from './liveSessions.js';
+import { composeOpening } from '../domain/interviewerModel.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -83,7 +84,10 @@ async function loadContext(sessionId: string) {
   // transition, so nothing is left half-moved.
   const plan = parseJsonStrict<InterviewPlan>(session.plan.planJson, { model: 'InterviewPlanVersion', id: session.plan.id, field: 'planJson' });
   const profile = parseJsonStrict<RoleSuccessProfile>(session.scorecard.profileJson, { model: 'RoleScorecardVersion', id: session.scorecard.id, field: 'profileJson' });
-  const persona = parseJsonOptional<Persona>(session.personaJson, { name: 'Schranders', tone: 'warm' }, { model: 'InterviewSession', id: session.id, field: 'personaJson' });
+  // No invented name: a record without one is spoken for as "your AI
+  // interviewer". Tone keeps its long-standing default.
+  const stored = parseJsonOptional<Partial<Persona>>(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' });
+  const persona: Persona = { name: typeof stored.name === 'string' ? stored.name : '', tone: stored.tone ?? 'warm' };
   const turns: TurnRecord[] = session.turns.map((t) => ({
     id: t.id, index: t.index, speaker: t.speaker as TurnRecord['speaker'], text: t.text,
     startMs: t.startMs, endMs: t.endMs, confidence: t.confidence, competencyId: t.competencyId,
@@ -217,7 +221,11 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   // The disclosure is the required opening; a damaged consent record must not
   // quietly become an interview that never says it is AI-run.
   const consent = parseJsonStrict<{ disclosureText?: string }>(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' });
-  const disclosure = consent.disclosureText ?? '';
+  // The spoken opening is the session interviewer's named introduction followed
+  // by the stored disclosure, whole. Composed here rather than trusted from the
+  // record, so a disclosure consented to under an older introduction is still
+  // spoken by the interviewer the candidate sees on screen.
+  const disclosure = consent.disclosureText ? composeOpening(persona.name, consent.disclosureText) : '';
   const utter = await nextUtterance({ plan, signal, turns, role: profile, persona, disclosureText: disclosure, sessionId });
 
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);

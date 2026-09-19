@@ -13,11 +13,15 @@
  */
 import { BANDS, bandById, bandDistance, type BandId } from '../src/engines/experienceBands.js';
 import { callPeerJson, type PeerId } from './peers.js';
+import { INTERVIEWER_CATALOGUE } from '../src/domain/interviewerModel.js';
 import type { JudgeVerdict, SimTranscript } from './types.js';
 
 /** Tells that identify a lane rather than describe an interview. */
 const IDENTIFYING_TERMS: RegExp[] = [
+  // The retired single interviewer name (older transcripts) and the five
+  // catalogue interviewers: any of them identifies the engine outright.
   /\bschranders\b/gi,
+  ...INTERVIEWER_CATALOGUE.map((i) => new RegExp(`\\b${i.name}\\b`, 'gi')),
   /\bquestor\b/gi,
   /\bclaude\b/gi,
   /\bgemini\b/gi,

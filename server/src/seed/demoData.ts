@@ -7,6 +7,8 @@ import { extractRoleHeuristic } from '../engines/roleIntelligence.js';
 import { normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
+import { assignInterviewer } from '../services/interviewers.js';
+import { composeOpening } from '../domain/interviewerModel.js';
 
 export const DEMO_JD = `Senior Data Engineer
 Location: Bengaluru (Hybrid)  |  Employment type: Full-time  |  Level: Senior
@@ -136,7 +138,9 @@ export async function createDemoData(): Promise<DemoIds> {
         // text exists — and the text is kept. The spoken disclosure now says
         // that, because it is the first and sometimes only version a candidate
         // takes in.
-        disclosureText: "Hello, I'm Schranders, an AI interviewer for this first-round conversation. So you know how this works: while you speak, your voice is captured and sent to a speech-to-text service to be written down. No recording of your voice is stored — the written transcript is what is kept, and it is what our hiring team reviews. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
+        // No self-introduction: the interviewer's named introduction is put in
+        // front of this per interview (domain/interviewerModel.ts composeOpening).
+        disclosureText: "So you know how this works: while you speak, your voice is captured and sent to a speech-to-text service to be written down. No recording of your voice is stored — the written transcript is what is kept, and it is what our hiring team reviews. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
         recordingDefault: true, retentionDaysRecording: 90, retentionDaysTranscript: 180,
         allowedModules: ['coding', 'case'], languages: ['en'], humanReviewRequired: true,
       }),
@@ -179,12 +183,14 @@ export async function createDemoData(): Promise<DemoIds> {
 
   // Interview session + plan + invitation
   const plan = buildInterviewPlan({ role: extraction.profile, fit, durationMinutes: 45, language: 'en', modules: [] });
+  // A random interviewer, as a real interview created with the default gets.
+  const interviewer = await assignInterviewer('random');
   const session = await prisma.interviewSession.create({
     data: {
       tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
       state: 'ACCEPTED', provider: 'hosted', language: 'en', durationMinutes: 45,
-      personaJson: JSON.stringify({ name: 'Schranders', tone: 'warm' }),
-      consentJson: JSON.stringify({ disclosureText: JSON.parse(tenant.policyJson).disclosureText, recordingRequested: true, recording: true, humanReviewRequired: true, consentVersion: 'v1', consentedAt: new Date().toISOString(), channel: 'seed' }),
+      personaJson: JSON.stringify({ interviewerId: interviewer.interviewerId, name: interviewer.name, tone: 'warm' }),
+      consentJson: JSON.stringify({ disclosureText: composeOpening(interviewer.name, JSON.parse(tenant.policyJson).disclosureText), recordingRequested: true, recording: true, humanReviewRequired: true, consentVersion: 'v1', consentedAt: new Date().toISOString(), channel: 'seed' }),
       recordingConsent: true,
     },
   });

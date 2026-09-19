@@ -23,7 +23,7 @@ async function main() {
   const t = await runLaneA({ role, candidate, candidatePeer: peer, durationMinutes: 12 });
 
   for (const turn of t.turns) {
-    console.log(`${turn.speaker === 'interviewer' ? 'SCHRANDERS' : 'CANDIDATE '}: ${turn.text}\n`);
+    console.log(`${turn.speaker === 'interviewer' ? 'INTERVIEWER' : 'CANDIDATE  '}: ${turn.text}\n`);
   }
 
   console.log('---');

@@ -25,7 +25,7 @@ import { DEMO_JD, DEMO_RESUME } from '../src/seed/demoData.js';
 
 const BASE = process.env.LOAD_BASE ?? 'http://127.0.0.1:4300';
 const DISCLOSURE =
-  "Hello, I'm Schranders, an AI interviewer for this first-round conversation. While you speak, your voice is " +
+  "Hi, I'm Maya, your AI interviewer from Questor. I'll be conducting your first-round interview today. While you speak, your voice is " +
   'captured and written down. No recording of your voice is stored — the written transcript is what is kept.';
 const ANSWER =
   'We had a nightly pipeline that silently dropped late-arriving events. I noticed it through a freshness check, ' +
@@ -99,7 +99,7 @@ async function seed(count: number): Promise<string[]> {
       data: {
         tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
         state: 'ACCEPTED', provider: 'hosted', language: 'en', durationMinutes: 45,
-        personaJson: JSON.stringify({ name: 'Schranders', tone: 'warm' }),
+        personaJson: JSON.stringify({ interviewerId: 'maya', name: 'Maya', tone: 'warm' }),
         consentJson: JSON.stringify({ disclosureText: DISCLOSURE, recordingRequested: false, humanReviewRequired: true }),
         recordingConsent: false,
       },

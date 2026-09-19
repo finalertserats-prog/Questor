@@ -1034,3 +1034,40 @@ model ObservationSegment {
   @@unique([observationId, index])
   @@index([tenantId])
 }
+
+// ---- AI interviewers ----
+//
+// Five selectable interviewers that differ ONLY in name and voice. Nothing
+// about how the interview is run hangs off these rows: questions, scoring,
+// difficulty and the separate Tone setting all come from the interview's own
+// settings. Global rather than per tenant, seeded on boot (insert missing,
+// never overwrite an edit).
+model AIInterviewer {
+  id             String       @id // 'maya'
+  name           String
+  voiceProfileId String       @unique // one voice per interviewer
+  voiceProfile   VoiceProfile @relation(fields: [voiceProfileId], references: [id])
+  avatarUrl      String       @default("")
+  active         Boolean      @default(true)
+  sortOrder      Int          @default(0)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+// Which provider voice speaks for an interviewer. provider/providerVoiceId are
+// backend configuration (VOICE_PROFILE_0N env overrides) and are never sent to
+// HR users or candidates. fallbackHint only steers the browser's own voice
+// choice when no server voice exists.
+model VoiceProfile {
+  id              String         @id // 'voice_02'
+  displayName     String
+  provider        String
+  providerVoiceId String         @default("")
+  language        String         @default("English")
+  locale          String         @default("en-US")
+  enabled         Boolean        @default(true)
+  fallbackHint    String         @default("")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  interviewer     AIInterviewer?
+}

@@ -75,7 +75,7 @@ const ROLE: RoleSuccessProfile = {
   seniority: 'mid',
 };
 
-const PERSONA: Persona = { name: 'Schranders', tone: 'warm' };
+const PERSONA: Persona = { name: 'Maya', tone: 'warm' };
 
 function turn(partial: Partial<TurnRecord> & { speaker: TurnRecord['speaker']; text: string }): TurnRecord {
   return {

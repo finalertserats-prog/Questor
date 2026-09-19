@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma, parseJson } from '../src/db.js';
 import { createDemoData, wipe, DEMO_RESUME } from '../src/seed/demoData.js';
+import { interviewerIntro } from '../src/domain/interviewerModel.js';
 
 const app = createApp();
 
@@ -78,7 +79,10 @@ describe('proctoring-lite integrity events', () => {
     const offInterview = await request(app).post('/api/interviews').set('Authorization', `Bearer ${ids.auth}`).send({ candidateId: offCandidate.body.candidate.id, approve: true });
     expect(offInterview.status).toBe(201);
     const offSession = await prisma.interviewSession.findUniqueOrThrow({ where: { id: offInterview.body.session.id } });
-    expect(parseJson<any>(offSession.consentJson, {}).disclosureText).toBe(base);
+    // The tenant's text with only the interviewer's named introduction in front
+    // of it — no browser-activity sentence.
+    const offInterviewer = parseJson<{ name: string }>(offSession.personaJson, { name: '' }).name;
+    expect(parseJson<any>(offSession.consentJson, {}).disclosureText).toBe(`${interviewerIntro(offInterviewer)} ${base}`);
 
     await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: JSON.stringify({ disclosureText: base, proctoringEnabled: true }) } });
     const onCandidate = await request(app).post('/api/candidates').set('Authorization', `Bearer ${ids.auth}`)
