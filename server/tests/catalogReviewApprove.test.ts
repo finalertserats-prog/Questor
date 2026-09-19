@@ -140,17 +140,38 @@ describe('approving what the operator actually saw', () => {
   });
 });
 
+// The suite also runs on Postgres, whose triggers are written differently.
+const onPostgres = /^postgres(ql)?:/.test(process.env.DATABASE_URL ?? '');
+
+async function createFailingRoleTrigger(): Promise<void> {
+  if (!onPostgres) {
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER IF NOT EXISTS "fail_role_insert" BEFORE INSERT ON "CatalogRole" WHEN NEW."title" = 'Boom Title' BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+    return;
+  }
+  await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION fail_role_insert() RETURNS trigger AS $$ BEGIN IF NEW."title" = 'Boom Title' THEN RAISE EXCEPTION 'boom'; END IF; RETURN NEW; END $$ LANGUAGE plpgsql`);
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER "fail_role_insert" BEFORE INSERT ON "CatalogRole" FOR EACH ROW EXECUTE FUNCTION fail_role_insert()`);
+}
+
+async function dropFailingRoleTrigger(): Promise<void> {
+  if (!onPostgres) {
+    await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS "fail_role_insert"');
+    return;
+  }
+  await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS "fail_role_insert" ON "CatalogRole"');
+  await prisma.$executeRawUnsafe('DROP FUNCTION IF EXISTS fail_role_insert()');
+}
+
 describe('when the catalog write fails', () => {
   it('leaves the proposal pending, to be approved again', async () => {
     // A trigger stands in for any failure between claiming the proposal and creating the role.
-    await prisma.$executeRawUnsafe(`CREATE TRIGGER IF NOT EXISTS "fail_role_insert" BEFORE INSERT ON "CatalogRole" WHEN NEW."title" = 'Boom Title' BEGIN SELECT RAISE(ABORT, 'boom'); END`);
+    await createFailingRoleTrigger();
     try {
       const p = await proposal(world, { title: 'Boom Title' });
       const res = await approve(p.id);
       const row = await prisma.catalogProposal.findUniqueOrThrow({ where: { id: p.id } });
       expect({ status: res.status, proposal: row.status, reviewedAt: row.reviewedAt }).toEqual({ status: 500, proposal: 'pending', reviewedAt: null });
     } finally {
-      await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS "fail_role_insert"');
+      await dropFailingRoleTrigger();
     }
   });
 });
