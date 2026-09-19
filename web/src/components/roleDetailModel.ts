@@ -12,12 +12,16 @@ export function approvePayload(scorecard: { readonly id: string; readonly versio
   return { scorecardId: scorecard.id, version: scorecard.version };
 }
 
-export type RoleStatusTarget = 'archived' | 'active';
+/**
+ * What PATCH /api/roles/:id/status accepts. Restoring sends 'draft'; the server
+ * decides the real status from the latest scorecard (approved stays approved).
+ */
+export type RoleStatusTarget = 'archived' | 'draft';
 
 /** What the archive control offers for a role in `status`. */
 export function archiveAction(status: string): { label: string; next: RoleStatusTarget } {
   return status === 'archived'
-    ? { label: 'Unarchive role', next: 'active' }
+    ? { label: 'Unarchive role', next: 'draft' }
     : { label: 'Archive role', next: 'archived' };
 }
 

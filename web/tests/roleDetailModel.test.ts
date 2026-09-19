@@ -18,7 +18,7 @@ describe('archiveAction', () => {
   });
 
   it('offers to restore an archived role', () => {
-    expect(archiveAction('archived')).toEqual({ label: 'Unarchive role', next: 'active' });
+    expect(archiveAction('archived')).toEqual({ label: 'Unarchive role', next: 'draft' });
   });
 });
 
