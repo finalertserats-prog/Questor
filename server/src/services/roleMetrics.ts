@@ -8,13 +8,15 @@ import { COMPLETED_STATES } from './dashboardMetrics.js';
  * Role metrics contract:
  * - `applied`: candidates whose `Candidate.roleId` is the role.
  * - `interviewInvited`: distinct candidates with at least one session for the role that has an
- *   invitation; a provisioned session nobody was invited to is not counted. Retakes count once.
+ *   invitation or reached a completed state (a completed interview was put to the candidate
+ *   however it started); a provisioned session nobody was invited to is not counted. Retakes
+ *   count once. So `interviewed` <= `interviewInvited` always.
  * - `interviewed`: distinct candidates with at least one completed-state session for the role.
  * - `awaitingReview`: sessions for the role in `REVIEW_READY`.
  * - `decisions`: decided pipeline rows by APPROVED / REJECTED / WITHDRAWN.
  * - `advanceRate`: APPROVED / (APPROVED + REJECTED), WITHDRAWN excluded; null below `MIN_SAMPLE`.
  * - `medianInviteToCompleteHours`: median completion minus invitation sent/created in the last 90 days; null below `MIN_SAMPLE`.
- * - `lastActivityAt`: latest session creation time for the role.
+ * - `lastActivityAt`: latest session or candidate (application) creation time for the role.
  *
  * Row ceilings: roles, the per-(role, candidate) invited/interviewed groups and
  * the turnaround samples are each read up to `rowLimit` rows; reaching any of
@@ -143,12 +145,12 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
   const turnaroundSince = new Date(now.getTime() - TURNAROUND_WINDOW_DAYS * DAY_MS);
 
   const [
-    appliedRows, invitedRows, interviewedRows, awaitingRows, decisionRows, lastRows, turnaroundRows,
-  ] = roles.length === 0 ? [[], [], [], [], [], [], []] : await Promise.all([
+    appliedRows, invitedRows, interviewedRows, awaitingRows, decisionRows, lastRows, turnaroundRows, lastAppliedRows,
+  ] = roles.length === 0 ? [[], [], [], [], [], [], [], []] : await Promise.all([
     prisma.candidate.groupBy({ by: ['roleId'], where: candidateRoleWhere, _count: { _all: true } }),
     prisma.interviewSession.groupBy({
       by: ['roleId', 'candidateId'],
-      where: { ...sessionWhere, invitation: { isNot: null } },
+      where: { ...sessionWhere, OR: [{ invitation: { isNot: null } }, { state: { in: [...COMPLETED_STATES] } }] },
       _count: { _all: true },
       // One row per (role, candidate), so bounded like every other row read here.
       orderBy: [{ roleId: 'asc' }, { candidateId: 'asc' }],
@@ -189,6 +191,7 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
       orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
       take: rowLimit,
     }),
+    prisma.candidate.groupBy({ by: ['roleId'], where: candidateRoleWhere, _max: { createdAt: true } }),
   ]);
 
   const applied = countMap(appliedRows);
@@ -206,6 +209,12 @@ export async function getRoleMetrics(auth: AuthClaims, options: RoleMetricsOptio
   }
 
   const lastActivity = new Map(lastRows.flatMap((r) => (r._max.createdAt ? [[r.roleId, r._max.createdAt] as const] : [])));
+  for (const r of lastAppliedRows) {
+    const at = r._max.createdAt;
+    if (!r.roleId || !at) continue;
+    const seen = lastActivity.get(r.roleId);
+    if (!seen || at > seen) lastActivity.set(r.roleId, at);
+  }
   const turnaround = new Map<string, number[]>();
   for (const row of turnaroundRows) {
     const invitedAt = row.invitation?.sentAt ?? row.invitation?.createdAt;

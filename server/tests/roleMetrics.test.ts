@@ -147,7 +147,8 @@ describe('getRoleMetrics', () => {
     expect(metrics.topByApplied).toHaveLength(10);
     expect(metrics.topByInterviewed).toHaveLength(10);
     expect(metrics.topByApplied.filter((r) => r.title === 'Other Tenant')).toEqual([]);
-    expect(metrics.topByApplied.findIndex((r) => r.title === 'Tie A')).toBeLessThan(metrics.topByApplied.findIndex((r) => r.title === 'Tie B'));
+    // Both present, and in title order: findIndex alone passed when a title was missing (-1).
+    expect(metrics.topByApplied.map((r) => r.title).filter((t) => t === 'Tie A' || t === 'Tie B')).toEqual(['Tie A', 'Tie B']);
   });
 });
 
@@ -191,5 +192,32 @@ describe('GET /api/roles/metrics', () => {
     expect(metrics.body).toHaveProperty('roles');
     const dashboard = await request(app).get('/api/dashboard/metrics').set('Authorization', `Bearer ${admin.token}`);
     expect(dashboard.body.roles).toHaveProperty('topByApplied');
+  });
+});
+
+describe('getRoleMetrics consistent definitions', () => {
+  it('never reports more interviewed than invited candidates', async () => {
+    const tenant = await prisma.tenant.create({ data: { name: 'Walk-in Org' } });
+    const admin = await makeUser(tenant.id, 'admin@walkin.local');
+    const { role, scorecard } = await makeRole(tenant.id, 'Walk-in Role');
+    const candidate = await makeCandidate(tenant.id, role.id, 'Walk In');
+    // Completed without an invitation, as a hosted or recruiter-driven session can be.
+    await makeSession({ tenantId: tenant.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, state: 'CLOSED' });
+
+    const metrics = await getRoleMetrics({ userId: admin.id, tenantId: tenant.id, role: 'admin', email: 'admin@walkin.local' }, { now });
+
+    expect({ invited: metrics.roles[0].interviewInvited, interviewed: metrics.roles[0].interviewed }).toEqual({ invited: 1, interviewed: 1 });
+  });
+
+  it('counts a new applicant as activity on the role', async () => {
+    const tenant = await prisma.tenant.create({ data: { name: 'Applicant Org' } });
+    const admin = await makeUser(tenant.id, 'admin@applicant.local');
+    const { role } = await makeRole(tenant.id, 'Quiet Role');
+    const appliedAt = new Date('2026-09-10T08:00:00.000Z');
+    await prisma.candidate.create({ data: { tenantId: tenant.id, roleId: role.id, fullName: 'New', email: 'new@applicant.local', createdAt: appliedAt } });
+
+    const metrics = await getRoleMetrics({ userId: admin.id, tenantId: tenant.id, role: 'admin', email: 'admin@applicant.local' }, { now });
+
+    expect(metrics.roles[0].lastActivityAt).toBe(appliedAt.toISOString());
   });
 });
