@@ -42,7 +42,27 @@ So independent-first review is doing two jobs at once:
 | **Validity** | A verdict recorded *after* seeing the AI measures anchoring, not accuracy. Only a blind verdict is an independent measurement, and only independent measurements make agreement statistics mean anything. |
 | **Compliance** | An audited record showing human judgement *preceded* the machine's is evidence that the oversight was real. |
 
-The same control produces both. That is why the reveal is gated rather than merely advised.
+The same control produces both.
+
+### What is required, and what is offered
+
+Blind-first review is an **option the organisation can require**, not a gate everyone meets by
+default. The tenant policy `requireBlindReview` decides:
+
+- **Off (the default).** The assessment opens as soon as it exists. "Review the evidence blind"
+  stays one click away on the assessment page, and every blind verdict filed still counts
+  towards the agreement statistics below. The first time a reviewer opens an assessment without
+  having filed one, an audit event `assessment.ai_viewed_without_blind_verdict` is written
+  against them, so the compliance record still shows, per reviewer and per assessment, whether
+  the human judgement came before the machine's or after it.
+- **On.** `GET /api/assessments/:id` and its report 409 (`blind_review_required`) until that
+  reviewer records a blind verdict or states a reason for skipping (`POST
+  /:id/skip-blind-review`, which is audited and surfaces in shadow metrics).
+
+The reveal endpoint is gated in both cases.
+
+A study that wants independent measurements should run with `requireBlindReview` on, or select
+only assessments whose audit log shows `review.blind_verdict` before any unblinded read.
 
 ---
 
@@ -192,10 +212,12 @@ competency levels, more often than chance explains.
 
 ### Known limitations of the harness
 
-- `GET /api/assessments/:id` still returns the full AI output without a blind gate, so a
-  reviewer can bypass shadow mode by calling it. The blind flow is enforced on the reveal
-  endpoint; it is a workflow control, not an airtight one. A study should confirm via the audit
-  log (`review.blind_verdict` preceding `review.ai_revealed`) that reviewers actually used it.
+- With `requireBlindReview` off (the default), `GET /api/assessments/:id` returns the full AI
+  output without a blind gate, so most reviewers will never file a blind verdict and the sample
+  is whoever chose to. The blind flow is a workflow control there, not an airtight one: the
+  unblinded read is recorded (`assessment.ai_viewed_without_blind_verdict`) rather than
+  refused. A study should switch the policy on, or confirm via the audit log
+  (`review.blind_verdict` preceding `review.ai_revealed`) that reviewers actually used it.
 - When several reviewers blind-review the same assessment, only the first is counted. Two
   opinions about one interview are not two independent data points about the model. Inter-rater
   reliability *between humans* — the natural ceiling on any human-AI agreement figure — is not

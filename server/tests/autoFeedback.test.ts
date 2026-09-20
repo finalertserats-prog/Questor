@@ -12,6 +12,10 @@ const mail = vi.hoisted(() => ({
   sent: [] as Array<{ to: string; subject: string; text: string; html: string }>,
   failNext: 0,
   delivers: true,
+  /** Set to hold a send open, so a stalled provider can be tested deterministically. */
+  hold: null as null | Promise<void>,
+  /** Called the moment a held send starts. */
+  started: null as null | (() => void),
 }));
 
 vi.mock('../src/providers/email/index.js', async (orig) => {
@@ -24,6 +28,10 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
       if (mail.failNext > 0) {
         mail.failNext -= 1;
         throw new Error('SMTP 451 try again later');
+      }
+      if (mail.hold) {
+        mail.started?.();
+        await mail.hold;
       }
       mail.sent.push(msg);
       return { status: 'sent', id: `fake-${mail.sent.length}` };
@@ -69,6 +77,7 @@ const { signToken } = await import('../src/services/auth.js');
 const { _resetLlm } = await import('../src/providers/llm/index.js');
 const {
   attemptFeedbackEmail, deliverDueFeedbackEmails, enqueueAutoFeedback, FEEDBACK_SEND_STALE_MS,
+  _setFeedbackSendTimeoutForTest,
 } = await import('../src/services/autoFeedback.js');
 const { MAX_SEND_ATTEMPTS } = await import('../src/services/autoFeedbackModel.js');
 const { TALK_LINK_PLACEHOLDER } = await import('../src/providers/email/autoFeedbackEmail.js');
@@ -122,6 +131,9 @@ beforeEach(async () => {
   mail.sent = [];
   mail.failNext = 0;
   mail.delivers = true;
+  mail.hold = null;
+  mail.started = null;
+  _setFeedbackSendTimeoutForTest(null);
   llm.reply = JSON.stringify(MODEL_CONTENT);
   llm.calls = 0;
   _resetLlm();
@@ -317,6 +329,71 @@ describe('retries', () => {
     expect(await rowFor(ids.sessionId)).toMatchObject({ status: 'FAILED', attempts: MAX_SEND_ATTEMPTS });
   });
 
+  it('gives up on a provider that never answers, and says so', async () => {
+    _setFeedbackSendTimeoutForTest(50);
+    let release = () => {};
+    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+    const ids = await completedInterview();
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    await deliverDueFeedbackEmails(LATER());
+    const row = await rowFor(ids.sessionId);
+    release();
+    mail.hold = null;
+
+    expect({ status: row.status, attempts: row.attempts, error: row.lastError })
+      .toEqual({ status: 'QUEUED', attempts: 1, error: expect.stringMatching(/did not answer/i) });
+  });
+
+  // The stall the sweeper is for, run for real: the send is still in flight
+  // when its claim is taken, and the email then goes out. Recording that as
+  // FAILED would invite a person to send the candidate a second copy.
+  it('records a send whose claim was taken mid-flight as unconfirmed, not failed', async () => {
+    let release = () => {};
+    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { mail.started = resolve; });
+    const ids = await completedInterview();
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const queued = await rowFor(ids.sessionId);
+
+    const inFlight = attemptFeedbackEmail(queued.id, LATER());
+    await started;
+    // The claim looks abandoned to another instance, which releases it.
+    await prisma.candidateFeedbackEmail.update({
+      where: { id: queued.id }, data: { claimedAt: new Date(Date.now() - FEEDBACK_SEND_STALE_MS - 1000) },
+    });
+    await deliverDueFeedbackEmails(new Date());
+    expect((await rowFor(ids.sessionId)).status).toBe('FAILED');
+    release();
+    mail.hold = null;
+    await inFlight;
+
+    const row = await rowFor(ids.sessionId);
+    expect({ status: row.status, sent: mail.sent.length, sentAt: row.sentAt instanceof Date })
+      .toEqual({ status: 'SENT_UNVERIFIED', sent: 1, sentAt: true });
+  });
+
+  it('keeps the text of an unconfirmed send so a person can see what went', async () => {
+    let release = () => {};
+    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { mail.started = resolve; });
+    const ids = await completedInterview();
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const queued = await rowFor(ids.sessionId);
+
+    const inFlight = attemptFeedbackEmail(queued.id, LATER());
+    await started;
+    await prisma.candidateFeedbackEmail.update({
+      where: { id: queued.id }, data: { claimedAt: new Date(Date.now() - FEEDBACK_SEND_STALE_MS - 1000) },
+    });
+    await deliverDueFeedbackEmails(new Date());
+    release();
+    mail.hold = null;
+    await inFlight;
+
+    expect((await rowFor(ids.sessionId)).bodyText).toContain('Hi Priya,');
+  });
+
   it('marks a send interrupted mid-way as failed rather than sending twice', async () => {
     const ids = await completedInterview();
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
@@ -410,6 +487,40 @@ describe('the assessment page', () => {
     const auth = { Authorization: `Bearer ${signToken({ userId: recruiter.id, tenantId: ids.tenantId, role: 'recruiter', email: recruiter.email })}` };
     const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(auth).send({});
     expect({ status: res.status, sent: mail.sent.length }).toEqual({ status: 403, sent: 0 });
+  });
+
+  it('refuses to resend an unconfirmed send without someone accepting the risk', async () => {
+    const ids = await completedInterview();
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { status: 'SENT_UNVERIFIED', bodyText: 'Hi Priya,' } });
+
+    const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth).send({});
+
+    expect({ status: res.status, sent: mail.sent.length, reason: res.body.error })
+      .toEqual({ status: 409, sent: 0, reason: expect.stringMatching(/may already have reached the candidate/i) });
+  });
+
+  it('tells the page that this one needs the risk accepted', async () => {
+    const ids = await completedInterview();
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { status: 'SENT_UNVERIFIED' } });
+
+    const res = await request(app).get(`/api/assessments/${ids.assessmentId}/feedback-email`).set(ids.auth);
+
+    expect({ canSendNow: res.body.canSendNow, needsConfirmation: res.body.needsDuplicateConfirmation })
+      .toEqual({ canSendNow: false, needsConfirmation: true });
+  });
+
+  it('sends an unconfirmed one again when the risk is accepted', async () => {
+    const ids = await completedInterview();
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { status: 'SENT_UNVERIFIED' } });
+
+    const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth)
+      .send({ confirmPossibleDuplicate: true });
+
+    expect({ status: res.status, email: res.body.email?.status, sent: mail.sent.length })
+      .toEqual({ status: 200, email: 'SENT', sent: 1 });
   });
 
   it('refuses a body it does not expect', async () => {

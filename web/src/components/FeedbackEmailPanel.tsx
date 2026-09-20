@@ -23,6 +23,9 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  // The second copy is asked for in its own step, naming the risk, so nobody
+  // sends one by pressing the same button they pressed a moment ago.
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -51,13 +54,17 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
     }
   };
 
-  const confirmSend = async () => {
+  const confirmSend = async (confirmPossibleDuplicate = false) => {
     setBusy('send');
     setError('');
     try {
-      const next = await api.post<FeedbackEmailState>(`/assessments/${assessmentId}/feedback-email/send`, {});
+      const next = await api.post<FeedbackEmailState>(
+        `/assessments/${assessmentId}/feedback-email/send`,
+        confirmPossibleDuplicate ? { confirmPossibleDuplicate: true } : {},
+      );
       setState(next);
       setPreview(null);
+      setConfirmDuplicate(false);
       if (next.email?.status === 'SENT') setNotice('Feedback sent to the candidate.');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'The feedback email could not be sent.');
@@ -104,11 +111,32 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
             <button type="button" className="btn secondary" onClick={() => setPreview(null)} disabled={busy !== null}>Cancel</button>
           </div>
         </div>
-      ) : summary.canSendNow && (
+      ) : summary.canSendNow ? (
         <button type="button" className="btn secondary" style={{ marginTop: 8 }} onClick={() => void askToSend()} disabled={busy !== null}>
           <Icon name={busy === 'preview' ? 'hourglass' : 'send'} size={16} />
           {busy === 'preview' ? 'Preparing…' : 'Send feedback now'}
         </button>
+      ) : summary.needsDuplicateConfirmation && (
+        confirmDuplicate ? (
+          <div role="dialog" aria-labelledby="feedback-email-duplicate-title" className="card" style={{ marginTop: 12 }}>
+            <h3 id="feedback-email-duplicate-title" style={{ marginTop: 0 }}>Send this feedback a second time?</h3>
+            <p className="muted small">
+              The first send reached the mail provider but could not be confirmed, so the candidate may already have
+              this email. Sending again may give them a second copy of the same feedback.
+            </p>
+            <div className="row" style={{ gap: 8 }}>
+              <button type="button" className="btn" onClick={() => void confirmSend(true)} disabled={busy !== null}>
+                <Icon name={busy === 'send' ? 'hourglass' : 'send'} size={16} />
+                {busy === 'send' ? 'Sending…' : 'Send it again anyway'}
+              </button>
+              <button type="button" className="btn secondary" onClick={() => setConfirmDuplicate(false)} disabled={busy !== null}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" className="btn ghost" style={{ marginTop: 8 }} onClick={() => setConfirmDuplicate(true)} disabled={busy !== null}>
+            <Icon name="send" size={16} />Send it again anyway…
+          </button>
+        )
       )}
     </div>
   );

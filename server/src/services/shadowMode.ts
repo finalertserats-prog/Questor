@@ -1,4 +1,5 @@
-// Shadow mode: a scoring-validity harness AND a compliance safeguard.
+// Shadow mode: a scoring-validity harness, and a compliance safeguard an
+// organisation can switch on (tenant policy `requireBlindReview`).
 //
 // WHY THIS EXISTS
 // Questor's score is advisory. That framing is what keeps the employer outside
@@ -9,8 +10,18 @@
 // rubber stamp and treat the pipeline as fully automated.
 //
 // Shadow mode inverts the order: the reviewer records their own verdict from the
-// evidence and transcript BEFORE the AI's conclusions are shown. That single
-// change buys two things at once:
+// evidence and transcript BEFORE the AI's conclusions are shown.
+//
+// WHETHER IT IS REQUIRED IS THE ORGANISATION'S CHOICE
+// `requireBlindReview` (tenant policy, default OFF) decides whether an
+// unblinded read is refused until a verdict exists. Off, the assessment opens
+// at once, "Review the evidence blind" stays an option on the page, and the
+// first unblinded read by each reviewer is audited
+// (UNBLINDED_READ_ACTION) so the compliance record still shows the order in
+// which the two judgements were formed. On, the gate applies as it always did.
+// The reveal endpoint is gated either way.
+//
+// Where it IS used, that single change buys two things at once:
 //   1. Validity  — the blind human verdict is an independent measurement, so
 //                  human/AI agreement actually means something. Agreement
 //                  measured after the human saw the AI's answer measures
@@ -37,7 +48,7 @@ export {
 export { computeCohenKappa, type KappaResult } from './shadowModeKappa.js';
 export {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getBlindView, hasUnblindedAccess,
-  recordBlindVerdict, SELF_REVIEW_NOTE,
+  recordBlindVerdict, BLIND_REVIEW_REQUIRED, SELF_REVIEW_NOTE, UNBLINDED_READ_ACTION,
   type BlindAssessmentView, type BlindCompetency, type BlindCompetencyVerdict, type BlindEvidenceSpan,
   type BlindTurn, type BlindVerdictInput,
 } from './shadowModeBlind.js';

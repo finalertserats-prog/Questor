@@ -4,7 +4,16 @@
  * services/autoFeedback.ts applies them.
  */
 
-export type AutoFeedbackStatus = 'DRAFT' | 'QUEUED' | 'SENDING' | 'SENT' | 'FAILED' | 'SKIPPED';
+export type AutoFeedbackStatus = 'DRAFT' | 'QUEUED' | 'SENDING' | 'SENT' | 'SENT_UNVERIFIED' | 'FAILED' | 'SKIPPED';
+
+/**
+ * The mail provider accepted the message (or never answered) but the row's
+ * claim had already been taken, so we cannot say for certain what the
+ * candidate received. Treated as "probably sent": never resent without
+ * someone accepting the risk of a duplicate.
+ */
+export const SENT_UNVERIFIED_REASON = 'This feedback email may already have reached the candidate: the send was interrupted '
+  + 'before it could be confirmed. Check with them before sending it again.';
 
 export type FeedbackSkipReason =
   | 'POLICY_OFF'
@@ -110,8 +119,16 @@ const OVERRIDABLE_SKIPS: ReadonlySet<string> = new Set<FeedbackSkipReason>(['POL
 
 export function manualSendAllowed(
   row: { readonly status: string; readonly skipReason: string } | null,
-): { allowed: true } | { allowed: false; reason: string } {
+  opts: { readonly confirmDuplicate?: boolean } = {},
+): { allowed: true } | { allowed: false; reason: string; requiresConfirmation?: boolean } {
   if (!row || row.status === 'FAILED' || row.status === 'DRAFT') return { allowed: true };
+  // Only this one state can be overridden, and only deliberately: the risk is
+  // a second copy of their feedback, not a lost email.
+  if (row.status === 'SENT_UNVERIFIED') {
+    return opts.confirmDuplicate === true
+      ? { allowed: true }
+      : { allowed: false, reason: SENT_UNVERIFIED_REASON, requiresConfirmation: true };
+  }
   if (row.status === 'SENT') return { allowed: false, reason: 'Feedback has already been sent to this candidate.' };
   if (row.status === 'QUEUED' || row.status === 'SENDING') {
     return { allowed: false, reason: 'The feedback email is already on its way. Refresh in a moment.' };
