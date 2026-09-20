@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stageStates, stageCaption, nextStage } from '../src/components/pipelineView';
+import { stageStates, stageCaption, nextStage, finalStage } from '../src/components/pipelineView';
 
 const STAGES = [
   { key: 'participation', label: 'Participation', kind: 'intake' },
@@ -35,5 +35,19 @@ describe('nextStage', () => {
 
   it('returns null at the final stage', () => {
     expect(nextStage(STAGES, 'gold')).toBeNull();
+  });
+});
+
+describe('finalStage', () => {
+  it('offers the last stage from any earlier one', () => {
+    expect(finalStage(STAGES, 'participation')?.label).toBe('Gold');
+  });
+
+  it('offers nothing once the candidate is at the last stage', () => {
+    expect(finalStage(STAGES, 'gold')).toBeNull();
+  });
+
+  it('offers nothing when the current stage is not in the plan', () => {
+    expect(finalStage(STAGES, 'platinum')).toBeNull();
   });
 });

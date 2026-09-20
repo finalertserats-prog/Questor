@@ -5,7 +5,7 @@
 **Deployed in this release** (branch `claude/open-source-app-build-lnrqia`, from `feature/postgres`):
 
 - UI shell: collapsible sidebar, profile menu (Settings / About / Admin console / Contact), SVG icon set, landing page with Gemini artwork, per-organisation sign-in links (`/o/:slug`), workflow diagram on the home page.
-- Medallion pipeline: Participation → Bronze → Silver (the only AI-conducted round; HR may silently observe) → Gold / Platinum / Diamond (human rounds, AI as silent observer). Scheduling with email link, round notes, early decisions, consolidated evidence summary.
+- Medallion pipeline: Participation → Bronze → Silver (the only AI-conducted round; HR may silently observe) → Gold (human rounds, AI as silent observer) → Diamond (finalised by a person). Onboarding, resume analysis, interview scheduling and assessment move the candidate forward on their own; Diamond never. Scheduling with email link, round notes, early decisions, consolidated evidence summary.
 - Observer consent: live observation and live transcripts only after the candidate was told and answered.
 - Retention: round notes expire; candidates still moving through a pipeline are never purged.
 - PostgreSQL support in code: provider-swap schema generator, full test suite passes on Postgres (519/519), migration script with row-count verification.

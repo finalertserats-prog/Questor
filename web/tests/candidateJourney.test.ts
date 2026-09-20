@@ -35,7 +35,6 @@ const STAGES = [
   { key: 'bronze', label: 'Bronze', kind: 'profile_review' },
   { key: 'silver', label: 'Silver', kind: 'ai_interview' },
   { key: 'gold', label: 'Gold', kind: 'human_interview' },
-  { key: 'platinum', label: 'Platinum', kind: 'human_interview' },
   { key: 'diamond', label: 'Diamond', kind: 'human_interview' },
 ] as const;
 
@@ -495,22 +494,22 @@ describe('a role plan with no AI interview stage', () => {
 describe('a candidate with mixed human rounds', () => {
   const journey = buildJourney(input({
     pipeline: pipeline({
-      currentStageKey: 'platinum',
+      currentStageKey: 'diamond',
       rounds: [
         round({
           id: 'r-gold', stageKey: 'gold', status: 'COMPLETED', interviewers: ['Dev Rao', 'Lin Wu'],
           notes: 'Walked through a production incident end to end with a measured outcome.',
           completedAt: '2026-10-08T10:00:00.000Z',
         }),
-        round({ id: 'r-plat', stageKey: 'platinum', status: 'SCHEDULED', interviewers: ['Priya Nair'], scheduledAt: '2026-10-15T09:00:00.000Z' }),
+        round({ id: 'r-gold-2', stageKey: 'gold', status: 'SCHEDULED', interviewers: ['Priya Nair'], scheduledAt: '2026-10-15T09:00:00.000Z' }),
         round({ id: 'r-dia', stageKey: 'diamond', status: 'CANCELLED', interviewers: [], scheduledAt: '2026-10-20T09:00:00.000Z' }),
       ],
     }),
   }));
 
   it('groups the rounds under the human stages of the role plan, in order', () => {
-    expect(journey.schedule.stages.map((s) => s.label)).toEqual(['Gold', 'Platinum', 'Diamond']);
-    expect(journey.schedule.stages.map((s) => s.rounds.map((r) => r.id))).toEqual([['r-gold'], ['r-plat'], ['r-dia']]);
+    expect(journey.schedule.stages.map((s) => s.label)).toEqual(['Gold', 'Diamond']);
+    expect(journey.schedule.stages.map((s) => s.rounds.map((r) => r.id))).toEqual([['r-gold', 'r-gold-2'], ['r-dia']]);
   });
 
   it('keeps each round\'s status as the server recorded it', () => {
@@ -519,13 +518,13 @@ describe('a candidate with mixed human rounds', () => {
   });
 
   it('names the interviewers, and says so when none were named', () => {
-    const [gold, , diamond] = journey.schedule.stages;
+    const [gold, diamond] = journey.schedule.stages;
     expect(gold.rounds[0].interviewers).toEqual(['Dev Rao', 'Lin Wu']);
     expect(diamond.rounds[0].interviewerNote).toMatch(/not named/i);
   });
 
   it('offers only the scheduled rounds as ones that can still be completed', () => {
-    expect(journey.schedule.openRounds.map((r) => r.id)).toEqual(['r-plat']);
+    expect(journey.schedule.openRounds.map((r) => r.id)).toEqual(['r-gold-2']);
   });
 
   it('says plainly that Questor does not host these rounds', () => {
@@ -547,7 +546,7 @@ describe('a candidate with mixed human rounds', () => {
   it('says when a completed round\'s notes were cleared by retention', () => {
     const purged = buildJourney(input({
       pipeline: pipeline({
-        currentStageKey: 'platinum',
+        currentStageKey: 'diamond',
         rounds: [round({ id: 'r-old', status: 'COMPLETED', notes: '', completedAt: '2025-01-01T10:00:00.000Z' })],
       }),
     }));
@@ -583,7 +582,7 @@ describe('a decided candidate', () => {
         { name: 'Cost awareness', level: null, requiredLevel: 3, notEnoughEvidence: true, evidence: [] },
       ],
     },
-    missingEvidence: ['Platinum', 'Diamond'],
+    missingEvidence: ['Diamond'],
   }));
 
   it('makes the decision the current step and everything before it done', () => {
@@ -611,7 +610,7 @@ describe('a decided candidate', () => {
   });
 
   it('carries forward the stages Questor holds no evidence for', () => {
-    expect(journey.decision.evidenceGaps).toEqual(['Platinum', 'Diamond']);
+    expect(journey.decision.evidenceGaps).toEqual(['Diamond']);
   });
 
   it('states that the evidence is quoted from the transcript, not recorded audio', () => {

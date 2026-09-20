@@ -154,7 +154,7 @@ describe('GET /api/dashboard/metrics — counts', () => {
     await makePipeline({ tenantId: tenant.id, candidateId: c2.id, roleId: role.id, stage: 'silver' });
     const p3 = await makePipeline({ tenantId: tenant.id, candidateId: c3.id, roleId: role.id, stage: 'gold' });
     await makePipeline({ tenantId: tenant.id, candidateId: c4.id, roleId: role.id, stage: 'bronze', status: 'DECIDED', decision: 'REJECTED' });
-    await makePipeline({ tenantId: tenant.id, candidateId: c5.id, roleId: role.id, stage: 'platinum', status: 'DECIDED', decision: 'APPROVED' });
+    await makePipeline({ tenantId: tenant.id, candidateId: c5.id, roleId: role.id, stage: 'diamond', status: 'DECIDED', decision: 'APPROVED' });
 
     await makeRound({ tenantId: tenant.id, pipelineId: p3.id, scheduledAt: ahead(3) });
     await makeRound({ tenantId: tenant.id, pipelineId: p3.id, scheduledAt: ahead(10) });
@@ -215,7 +215,6 @@ describe('GET /api/dashboard/metrics — counts', () => {
       { key: 'bronze', label: 'Bronze', count: 0 },
       { key: 'silver', label: 'Silver', count: 2 },
       { key: 'gold', label: 'Gold', count: 1 },
-      { key: 'platinum', label: 'Platinum', count: 0 },
       { key: 'diamond', label: 'Diamond', count: 0 },
     ]);
   });

@@ -7,6 +7,7 @@ import type { AssessmentResult } from '../domain/types.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
+import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { atsFailure, requireTenantAts } from '../services/atsConnections.js';
 import { findCandidateLink } from '../services/atsRecords.js';
 import { getEmail } from '../providers/email/index.js';
@@ -597,6 +598,8 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     after: { disposition: body.disposition, reason: body.reason, selfReview },
   });
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, disposition: body.disposition });
+  // A reviewed interview is an assessed one: Gold, if the finalisation had not already got there.
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId, event: 'interview.assessed', trigger: 'review.completed' });
   if (previous && body.supersede) {
     await prisma.humanReview.update({ where: { id: previous.id }, data: { supersededAt: new Date(), supersededReason: body.supersede.reason } });
     await logAudit({

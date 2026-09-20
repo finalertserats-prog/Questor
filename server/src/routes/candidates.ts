@@ -23,6 +23,7 @@ import { assertDemoCreationCap } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
+import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -117,6 +118,8 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
   // grant survives the creator later being unassigned from the role.
   await assignCandidate(candidate.id, req.auth!.userId, 'owner');
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.created', entityType: 'Candidate', entityId: candidate.id });
+  // Onboarding starts the candidate's journey at Participation on its own.
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.onboarded', trigger: 'candidate.created' });
   res.status(201).json({ candidate: shape(candidate) });
 }));
 
@@ -170,6 +173,8 @@ candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resu
   await prisma.artifact.create({ data: { tenantId: req.auth!.tenantId, candidateId: candidate.id, kind: 'resume', filename, contentType: req.file?.mimetype ?? 'text/plain', storageKey: rawText, sizeBytes: rawText.length, retentionDays: 180 } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.parsed', entityType: 'Candidate', entityId: candidate.id });
   await emitEvent(req.auth!.tenantId, 'candidate.parsed', { candidateId: candidate.id, fit: fit.overall });
+  // An analysed profile is what the Bronze review works from: Participation is over.
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.profiled', trigger: 'candidate.parsed' });
 
   res.status(201).json({ profile, fit, profileVersionId: profileVersion.id, filename });
 }));

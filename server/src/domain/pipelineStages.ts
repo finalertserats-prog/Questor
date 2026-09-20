@@ -8,7 +8,10 @@ import { CorruptRecordError, type CorruptRecordRef } from '../db.js';
  * which HR may silently observe. Every other interview stage is conducted by a
  * person, with the AI as a silent observer that, when both parties agree,
  * transcribes and quotes (never summarises or judges; services/roundObserver.ts).
- * HR decides every advancement and every final outcome.
+ * Silver and Gold hold as many interviews as the team wants. Events in the
+ * process move a candidate forward on their own (domain/pipelineAutonomy.ts);
+ * Diamond — the finalised candidate — and every final outcome are a person's
+ * decision.
  */
 
 export const STAGE_KINDS = ['intake', 'profile_review', 'ai_interview', 'human_interview'] as const;
@@ -25,7 +28,6 @@ export const DEFAULT_STAGES: readonly PipelineStage[] = [
   { key: 'bronze', label: 'Bronze', kind: 'profile_review' },
   { key: 'silver', label: 'Silver', kind: 'ai_interview' },
   { key: 'gold', label: 'Gold', kind: 'human_interview' },
-  { key: 'platinum', label: 'Platinum', kind: 'human_interview' },
   { key: 'diamond', label: 'Diamond', kind: 'human_interview' },
 ];
 
