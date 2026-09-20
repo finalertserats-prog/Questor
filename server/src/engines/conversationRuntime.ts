@@ -9,7 +9,7 @@ import { bandById, type Abstraction, type BandId } from './experienceBands.js';
 import { WARMUP_QUESTION, buildOpeningGreeting, focusAreas, openingQuestion, spokenRoleTitle } from './openingModel.js';
 import { config } from '../config.js';
 import {
-  bareYesNo, couldBeUpgraded, detectCandidateIntent, llmIntentSchema, mergeLlmIntent,
+  bareYesNo, couldBeUpgraded, detectCandidateIntent, isSubstantiveAnswer, llmIntentSchema, mergeLlmIntent,
   type CandidateIntent, type IntentReading, type LlmIntent,
 } from './candidateIntent.js';
 import {
@@ -693,6 +693,9 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
         : { text: POSTPONE_REPLY, competencyId: pending?.competencyId ?? '', kind: 'postponed' };
     }
     if (pending) {
+      if (isSubstantiveAnswer(lastText)) {
+        return { text: "No problem — let's carry on.", competencyId: pending.competencyId, kind: 'candidate_answer' };
+      }
       return { text: `No problem — let's carry on. ${pending.text}`, question: pending.text, competencyId: pending.competencyId, kind: 'reask' };
     }
   }

@@ -42,16 +42,17 @@ export function confirmCue(text: string): 'stop' | 'postpone' | null {
   return null;
 }
 
-// "Yes", "yes please", "let's stop", "another time" — a confirmation. Anything
-// else, including silence-shaped answers, carries on.
-const AFFIRMS = /^(?:(?:ok(?:ay)?|yes|yeah|yep|yup|sure|please|i think|i guess|probably|honestly|sorry)\s+)*(?:yes|yeah|yep|yup|sure|please|correct|that'?s right|i would|i'?d like to|let'?s (?:stop|do that|pick it up)|stop|end it|another time|reschedule|do that)\b/;
+// Only short standalone confirmations end a confirmed stop/postpone. WHY:
+// longer "yes, ..." turns often start the actual work answer, and production
+// has no model credits to recover if we throw that answer away as consent.
+const AFFIRMS: ReadonlySet<string> = new Set([
+  'yes', 'yes please', 'yeah', 'yep', 'sure', 'ok', 'okay', 'stop', 'yes stop', 'end it', "let's stop", 'please stop',
+]);
 
 /** Does this reply to a confirming question mean "yes, end it"? */
 export function isAffirmative(text: string): boolean {
   const t = (text ?? '').toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?,;:]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!t) return false;
-  if (/\b(?:no|nope|not|carry on|continue|keep going|go on|carry)\b/.test(t) && !/\bno (?:let'?s|i'?d|i want)\b/.test(t)) return false;
-  return AFFIRMS.test(t);
+  return AFFIRMS.has(t);
 }
 
 /**
@@ -188,10 +189,12 @@ export function isYesNoQuestion(question: string): boolean {
 export function isAnswerInContext(turns: readonly TurnRecord[], index: number): boolean {
   const t = turns[index];
   if (!t || t.speaker !== 'candidate' || !t.text.trim()) return false;
-  // A reply to a confirming question is about the conversation, not the work.
+  const substantive = isSubstantiveAnswer(t.text);
+  // WHY: a long reply after a confirm can be the answer itself ("yes, I used Decipher...").
+  // Only standalone management replies to the confirm are excluded as evidence.
   const before = turns[index - 1];
-  if (before?.speaker === 'agent' && before.kind === 'confirm') return false;
-  if (isSubstantiveAnswer(t.text)) return true;
+  if (before?.speaker === 'agent' && before.kind === 'confirm' && !substantive) return false;
+  if (substantive) return true;
   if (!bareYesNo(t.text)) return false;
   const asked = pendingQuestion(turns.slice(0, index));
   return !!asked && asked.competencyId !== '__candidate_questions__' && isYesNoQuestion(asked.text);

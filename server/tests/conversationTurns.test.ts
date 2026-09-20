@@ -200,11 +200,26 @@ describe('an unclear ending cue is confirmed, not acted on', () => {
     expect(u.competencyId).toBe(asked.competencyId);
   });
 
-  it('ends when the candidate confirms', async () => {
+  it.each(['yes', 'yes please', 'yeah', 'yep', 'sure', 'ok', 'okay', 'stop', 'yes stop', 'end it', "let's stop", 'please stop'])(
+    'ends when the candidate gives the short standalone confirmation "%s"',
+    async (said) => {
+      const c = await intoFirstCompetency();
+      await c.say('I might have to stop soon');
+      const u = await c.say(said);
+      expect(u.kind).toBe('withdrawn');
+    },
+  );
+
+  it('carries on and keeps a substantive answer that starts with yes after a stop confirm', async () => {
     const c = await intoFirstCompetency();
     await c.say('I might have to stop soon');
-    const u = await c.say('yes');
-    expect(u.kind).toBe('withdrawn');
+    const u = await c.say("yes, I used Decipher for the tracker and QA'd it myself");
+    const answer = c.turns.at(-2);
+    expect(u.kind).not.toBe('withdrawn');
+    expect(u.text).toBe("No problem — let's carry on.");
+    expect(answer?.speaker).toBe('candidate');
+    expect(answer?.text).toBe("yes, I used Decipher for the tracker and QA'd it myself");
+    expect(answer ? coverageState(plan, c.turns)[answer.competencyId] ?? 0 : 0).toBeGreaterThan(0);
   });
 
   it('carries on with the same question when they say no, and scores nothing for the detour', async () => {
@@ -233,6 +248,18 @@ describe('an unclear ending cue is confirmed, not acted on', () => {
     expect(u.text).toBe(CONFIRM_POSTPONE);
     const end = await c.say('yes please');
     expect(end.kind).toBe('postponed');
+  });
+
+  it('carries on and keeps a substantive answer that starts with yes after a postponement confirm', async () => {
+    const c = await intoFirstCompetency();
+    await c.say('maybe another time would be better');
+    const u = await c.say("yes, I used Decipher for the tracker and QA'd it myself");
+    const answer = c.turns.at(-2);
+    expect(u.kind).not.toBe('postponed');
+    expect(u.text).toBe("No problem — let's carry on.");
+    expect(answer?.speaker).toBe('candidate');
+    expect(answer?.text).toBe("yes, I used Decipher for the tracker and QA'd it myself");
+    expect(answer ? coverageState(plan, c.turns)[answer.competencyId] ?? 0 : 0).toBeGreaterThan(0);
   });
 
   it('still ends immediately on a clear one', async () => {

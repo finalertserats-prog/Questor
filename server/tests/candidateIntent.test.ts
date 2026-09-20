@@ -93,6 +93,9 @@ const QUESTION = table('question', [
 // no credits on the model account the deterministic path is the only path.
 const WORK_TALK_NOT_STOP = table('answer', [
   'I need to stop using Excel for tracker delivery',
+  'I think I should continue to use Decipher',
+  'I might stop using Excel for the tracker',
+  'maybe we should wrap up the fieldwork early',
   'I would like to stop relying on vendors',
   'I want to end the manual process',
   'I want to stop doing the checks by hand every morning',
@@ -253,6 +256,9 @@ const CLEAR_CONTINUE = tiers('continue', [
   'stop it because the quota is full, then reopen the cell',
   'We had to stop the project when the client changed the brief.',
   'I need to stop using Excel for tracker delivery',
+  'I think I should continue to use Decipher',
+  'I might stop using Excel for the tracker',
+  'maybe we should wrap up the fieldwork early',
   'I want to end the manual process',
   'The survey stops when the quota for that cell is full.',
   'My job was to stop duplicate records being created',

@@ -279,6 +279,9 @@ function isReportedRequest(t: string): boolean {
  */
 const CUE_WITH_OBJECT = /\b(?:stop|stops|stopped|stopping|end|ends|ended|ending|cancel|cancels|cancell?ed|pause|pauses|paused|quit)\s+(?!(?:please|now|here|already|then|sorry|i|we|my|our|because|since|and|but|so|soon|later|today|tomorrow|tonight|early|for|at|in|when|if|before|after|until|there|right)\b)(?:the|this|that|a|an|our|my|their|its|all|any|it|them|those|these)?\s*[a-z][a-z'-]*/;
 
+/** "wrap up the fieldwork" is an action on the work, not on this interview. */
+const WRAP_UP_WORK_OBJECT = /\bwrap\s+up\s+(?!(?:this|it|here|now|soon|please|the interview|the call|the session)\b)(?:the|this|that|a|an|our|my|their|its)?\s*[a-z][a-z'-]*/;
+
 /** "The survey stops when the quota is full" — the thing stopping is the work. */
 const WORK_STOPS = /\b(?:the|our|my|this|that|a|an|each|every)\s+[a-z][a-z'-]*\s+(?:stops?|ends?|pauses?|finishes|finished|stopped|ended)\b/;
 
@@ -289,7 +292,7 @@ const NARRATIVE_CUE = /\b(?:later|afterwards|then|eventually)\s+(?:we|i|they|it|
 const CUE_IN_WORK_PHRASE = /\b(?:later|tomorrow|next week|another day|another time)\s+(?:in|on|at|during|within|for|with|alongside|across|of)\b|\bafter\s+(?:the\s+|my\s+|our\s+)?\w+\s+(?:with|for|in|on|at|alongside)\b/;
 
 function isClearlyAboutTheWork(t: string): boolean {
-  return REPORTED_SPEECH.test(t) || CUE_WITH_OBJECT.test(t) || WORK_STOPS.test(t) || NARRATIVE_CUE.test(t) || CUE_IN_WORK_PHRASE.test(t);
+  return REPORTED_SPEECH.test(t) || CUE_WITH_OBJECT.test(t) || WRAP_UP_WORK_OBJECT.test(t) || WORK_STOPS.test(t) || NARRATIVE_CUE.test(t) || CUE_IN_WORK_PHRASE.test(t);
 }
 
 /**
@@ -299,7 +302,7 @@ function isClearlyAboutTheWork(t: string): boolean {
  * confirming question, so it covers hedges about ending rather than every
  * mention of "later".
  */
-const HEDGED_STOP = /\b(?:i|we)\b[^.?!]{0,40}\b(?:might|may|maybe|probably|not sure|think i|feel like|should|may have|might have)\b[^.?!]{0,40}\b(?:stop|stopping|leave|go|wrap (?:this|it) up|wrap up|quit|cancel|keep going|carry on|continue|do this)\b/;
+const HEDGED_STOP = /\b(?:i|we)\b[^.?!]{0,40}\b(?:might|may|maybe|probably|not sure|think i|feel like|should|may have|might have)\b[^.?!]{0,40}\b(?:stop|stopping|leave|go|wrap (?:this|it) up|wrap up|quit|end|call it|keep going)\b(?:\s+(?:soon|now|here|today|early|please|probably|maybe|then))*$/;
 
 const HEDGED_POSTPONE = /\b(?:maybe|perhaps|might|may|possibly|probably|i wonder)\b[^.?!]{0,40}\b(?:another time|later|tomorrow|next week|another day|reschedul\w*|postpone)\b|\b(?:another time|later|tomorrow|next week|another day)\b[^.?!]{0,40}\b(?:might|may|would|could)\b[^.?!]{0,25}\b(?:be better|be easier|work|suit|help)\b/;
 
