@@ -1,15 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import type { AssessmentResult, CompetencyScore } from '../src/domain/types.js';
+import type { AssessmentResult, Competency, CompetencyScore, RoleSuccessProfile } from '../src/domain/types.js';
 import {
-  GENERIC_FEEDBACK, buildEvidenceFeedback, chooseFeedbackContent, feedbackContentSchema,
-  feedbackGuardrailViolations, feedbackPromptInput, type FeedbackContent,
+  GENERIC_SWOT, MARKER_LABEL, MARKER_SEGMENTS, buildEvidenceFeedback, chooseFeedbackContent,
+  coverageMarker, feedbackContentSchema, feedbackGuardrailViolations, feedbackPromptInput,
+  modelFeedbackSchema, type FeedbackContent, type ModelFeedback,
 } from '../src/services/feedbackContentModel.js';
 
 /**
- * What the candidate's automatic feedback email may say. The rule under test is
- * the owner's: specific and constructive, built from what the candidate said —
- * and never a score, a level, a recommendation or anything that reads as a
- * hiring decision.
+ * What the candidate's feedback letter says. The owner's design asks for a
+ * qualitative glance row per competency, a SWOT, a per-competency evidence
+ * section and three next steps — all built from the real assessment, and none
+ * of it allowed to carry a score, a level or a decision.
  */
 
 function competency(over: Partial<CompetencyScore> & { id: string; name: string }): CompetencyScore {
@@ -30,94 +31,150 @@ function assessment(competencies: CompetencyScore[]): AssessmentResult {
   };
 }
 
+function profileCompetency(id: string, name: string, definition: string): Competency {
+  return {
+    id, name, definition, category: 'technical', classification: 'essential', weight: 0.5,
+    requiredLevel: 3, targetLevel: 4, indicators: [`Shows ${name.toLowerCase()} in practice`], evidenceModes: [],
+  };
+}
+
+const PROFILE: RoleSuccessProfile = {
+  roleContext: 'Data team', outcomes: [], responsibilities: [],
+  competencies: [
+    profileCompetency('sql', 'SQL', 'Writing and tuning the queries the reporting stack runs on.'),
+    profileCompetency('stake', 'Stakeholder management', 'Keeping the people who depend on the data involved in changes.'),
+    profileCompetency('lead', 'People leadership', 'Growing the people around you.'),
+  ],
+  scoringRules: { mustPassCompetencyIds: [], notEnoughEvidencePolicy: 'exclude', passThreshold: 60 },
+  policyRules: { prohibitedTopics: [], requiredDisclosures: [], accommodationsEnabled: true, jurisdiction: 'IN' },
+  redFlags: [], seniority: 'Mid',
+};
+
 const MIXED = assessment([
   competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
     evidence: [{ turnId: 't1', startMs: 0, endMs: 1, quote: 'I rewrote the billing query with a window function and cut it from minutes to seconds.' }] }),
-  competency({ id: 'pipelines', name: 'Data pipelines', level: 4, requiredLevel: 3 }),
-  competency({ id: 'stakeholders', name: 'Stakeholder management', level: 2, requiredLevel: 3,
+  competency({ id: 'stake', name: 'Stakeholder management', level: 2, requiredLevel: 3,
     evidence: [{ turnId: 't3', startMs: 0, endMs: 1, quote: 'I mostly sent the report and moved on.' }] }),
-  competency({ id: 'testing', name: 'Testing', level: 1, requiredLevel: 3 }),
-  // Never discussed: must not be described as something to work on.
-  competency({ id: 'leadership', name: 'People leadership', level: null, notEnoughEvidence: true, evidence: [] }),
+  competency({ id: 'lead', name: 'People leadership', level: null, notEnoughEvidence: true, evidence: [] }),
 ]);
 
-function allText(content: FeedbackContent): string {
-  return [...content.strengths, ...content.develop, ...content.suggestions].join('\n');
+const INPUT = { result: MIXED, profile: PROFILE };
+
+function allProse(content: FeedbackContent): string {
+  return [
+    ...content.swot.strengths, ...content.swot.weaknesses, ...content.swot.opportunities, ...content.swot.watchOuts,
+    ...content.nextSteps,
+    ...content.competencies.flatMap((c) => [c.name, c.roleAsks, c.whatWeHeard, c.toGoFurther, c.quote]),
+  ].join('\n');
 }
 
-describe('feedback built from the evidence', () => {
-  it('names each strong competency among the strengths', () => {
-    const content = buildEvidenceFeedback(MIXED);
-    expect(content.strengths.join(' ')).toContain('SQL');
+describe('how each competency is marked', () => {
+  it('calls an evidenced competency at or above what the role asks a clear strength', () => {
+    expect(coverageMarker(competency({ id: 'a', name: 'A', level: 4, requiredLevel: 3 }))).toBe('strength');
   });
 
-  it("quotes the candidate's own words as the basis for a strength", () => {
-    const content = buildEvidenceFeedback(MIXED);
-    expect(content.strengths.join(' ')).toContain('window function');
+  it('calls an evidenced competency below it partly shown', () => {
+    expect(coverageMarker(competency({ id: 'a', name: 'A', level: 2, requiredLevel: 3 }))).toBe('partly');
   });
 
-  it('turns an evidenced shortfall into an area to develop', () => {
-    const content = buildEvidenceFeedback(MIXED);
-    expect(content.develop.join(' ')).toContain('Stakeholder management');
+  it('calls a competency with no evidence not covered', () => {
+    expect(coverageMarker(competency({ id: 'a', name: 'A', level: null, notEnoughEvidence: true, evidence: [] }))).toBe('not-covered');
   });
 
-  it('never describes a competency that was not discussed as something to work on', () => {
-    const content = buildEvidenceFeedback(MIXED);
-    expect(allText(content)).not.toContain('People leadership');
+  it('calls a competency whose grading failed not covered, never a shortfall', () => {
+    expect(coverageMarker(competency({ id: 'a', name: 'A', level: 1, requiredLevel: 3, gradingUnavailable: true }))).toBe('not-covered');
   });
 
-  it('does not quote the same answer under two strengths', () => {
-    const shared = 'I owned the billing pipeline end to end and made recovery safe to repeat.';
-    const same = assessment([
-      competency({ id: 'a', name: 'Ownership', level: 4, requiredLevel: 3, evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote: shared }] }),
-      competency({ id: 'b', name: 'Pipelines', level: 4, requiredLevel: 3, evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote: shared }] }),
-    ]);
-    const quoted = buildEvidenceFeedback(same).strengths.filter((s) => s.includes('billing pipeline'));
-    expect(quoted).toHaveLength(1);
+  it('words the markers the way the design does', () => {
+    expect([MARKER_LABEL.strength, MARKER_LABEL.partly, MARKER_LABEL['not-covered']])
+      .toEqual(['Clear strength', 'Partly shown', 'Not covered']);
   });
 
-  it('gives two or three strengths, two or three areas and one or two suggestions', () => {
-    expect(feedbackContentSchema.safeParse(buildEvidenceFeedback(MIXED)).success).toBe(true);
+  it('fills the four-segment bar without ever stating a number', () => {
+    expect([MARKER_SEGMENTS.strength, MARKER_SEGMENTS.partly, MARKER_SEGMENTS['not-covered']]).toEqual([3, 2, 0]);
+  });
+});
+
+describe('the letter built from the evidence', () => {
+  const content = buildEvidenceFeedback(INPUT);
+
+  it('has the shape the design asks for', () => {
+    expect(feedbackContentSchema.safeParse(content).success).toBe(true);
   });
 
-  it('still has the full shape when only one competency was evidenced', () => {
-    const one = assessment([competency({ id: 'sql', name: 'SQL', level: 5, requiredLevel: 3 })]);
-    expect(feedbackContentSchema.safeParse(buildEvidenceFeedback(one)).success).toBe(true);
+  it('keeps every competency, including the ones that never came up', () => {
+    expect(content.competencies.map((c) => c.name)).toEqual(['SQL', 'Stakeholder management', 'People leadership']);
   });
 
-  it('falls back to the generic wording when nothing was evidenced', () => {
-    const none = assessment([competency({ id: 'x', name: 'SQL', level: null, notEnoughEvidence: true, evidence: [] })]);
-    expect(buildEvidenceFeedback(none)).toEqual(GENERIC_FEEDBACK);
+  it('marks each one as the conversation actually went', () => {
+    expect(content.competencies.map((c) => c.marker)).toEqual(['strength', 'partly', 'not-covered']);
   });
 
-  it('ignores a competency whose grading failed, which says nothing about the person', () => {
-    const outage = assessment([competency({ id: 'sql', name: 'SQL', level: 2, requiredLevel: 3, gradingUnavailable: true })]);
-    expect(allText(buildEvidenceFeedback(outage))).not.toContain('SQL');
+  it("takes 'the role asks for' from the scorecard rather than inventing it", () => {
+    expect(content.competencies[0].roleAsks).toContain('reporting stack');
+  });
+
+  it("quotes the candidate's own words under the competency they belong to", () => {
+    expect(content.competencies[0].quote).toContain('window function');
+  });
+
+  it('has no quote for something that never came up', () => {
+    expect(content.competencies[2].quote).toBe('');
+  });
+
+  it('says a competency that never came up was not covered, not that it was a failing', () => {
+    expect(content.competencies[2].whatWeHeard).toMatch(/did not come up/i);
+  });
+
+  it('still tells them how to go further on what was not covered', () => {
+    expect(content.competencies[2].toGoFurther.length).toBeGreaterThan(20);
+  });
+
+  it('gives two or three bullets in each SWOT quarter', () => {
+    for (const quarter of [content.swot.strengths, content.swot.weaknesses, content.swot.opportunities, content.swot.watchOuts]) {
+      expect(quarter.length).toBeGreaterThanOrEqual(2);
+      expect(quarter.length).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('draws a strength from a competency the candidate actually showed', () => {
+    expect(content.swot.strengths.join(' ')).toContain('SQL');
+  });
+
+  it('gives three next steps', () => {
+    expect(content.nextSteps).toHaveLength(3);
   });
 
   it('passes its own guardrails', () => {
-    expect(feedbackGuardrailViolations(buildEvidenceFeedback(MIXED))).toEqual([]);
+    expect(feedbackGuardrailViolations(content)).toEqual([]);
   });
 
-  it('the generic wording passes its own guardrails', () => {
-    expect(feedbackGuardrailViolations(GENERIC_FEEDBACK)).toEqual([]);
+  it('works when there is no scorecard to read the role from', () => {
+    const noProfile = buildEvidenceFeedback({ result: MIXED, profile: null });
+    expect(feedbackContentSchema.safeParse(noProfile).success).toBe(true);
+  });
+
+  it('holds its shape when nothing at all was evidenced', () => {
+    const empty = assessment([competency({ id: 'sql', name: 'SQL', level: null, notEnoughEvidence: true, evidence: [] })]);
+    const content = buildEvidenceFeedback({ result: empty, profile: PROFILE });
+    expect(feedbackContentSchema.safeParse(content).success).toBe(true);
+  });
+
+  it('never claims a strength when nothing was evidenced', () => {
+    const empty = assessment([competency({ id: 'sql', name: 'SQL', level: null, notEnoughEvidence: true, evidence: [] })]);
+    expect(buildEvidenceFeedback({ result: empty, profile: PROFILE }).swot.strengths).toEqual(GENERIC_SWOT.strengths);
   });
 });
 
 describe('what the model is shown', () => {
-  it('carries no level, score, weight or recommendation for the model to repeat', () => {
-    const input = JSON.stringify(feedbackPromptInput(MIXED));
+  it('carries no level, score, weight or recommendation for it to repeat', () => {
+    const input = JSON.stringify(feedbackPromptInput(INPUT));
     expect(input).not.toMatch(/level|score|weight|recommend|PROCEED|DO_NOT_PROGRESS|\b38\b|0\.71/i);
   });
 
-  it('gives the model the evidenced competencies, bucketed', () => {
-    const input = feedbackPromptInput(MIXED);
-    expect(input.clearlyShown.map((c) => c.competency)).toEqual(['SQL', 'Data pipelines']);
-  });
-
-  it('leaves out competencies that were not discussed', () => {
-    const input = JSON.stringify(feedbackPromptInput(MIXED));
-    expect(input).not.toContain('People leadership');
+  it('tells the model how each competency was covered, in words', () => {
+    expect(feedbackPromptInput(INPUT).competencies.map((c) => c.coverage))
+      .toEqual(['Clear strength', 'Partly shown', 'Not covered']);
   });
 });
 
@@ -125,7 +182,6 @@ describe('what the model is shown', () => {
 const FORBIDDEN: ReadonlyArray<readonly [string, string]> = [
   ['a score', 'You scored well on SQL.'],
   ['a score out of five', 'Your SQL came out at 4/5 in this interview.'],
-  ['a score out of a hundred', 'Overall you reached 72 out of 100 today.'],
   ['a level', 'Your SQL was at level 4, which is strong.'],
   ['a rating', 'We rated your answers on testing as developing.'],
   ['the recommendation', 'Our recommendation is to consider you further.'],
@@ -136,32 +192,18 @@ const FORBIDDEN: ReadonlyArray<readonly [string, string]> = [
   ['a hiring decision', 'We have decided to move forward with your application.'],
   ['an offer', 'We would like to make you an offer.'],
   ['a rejection', 'Unfortunately we will not be progressing your application.'],
-  ['a next-round promise', 'You will hear about the next round soon.'],
-  ['weights', 'Testing carries the most weight for this role.'],
-  ['the threshold', 'You were just below the threshold for this role.'],
   ['a percentage verdict', 'You matched 80% of what we need.'],
   ['a mention of AI', 'Our AI noticed you explained trade-offs clearly.'],
-  ['a mention of automation', 'This automated summary shows your clearest answers.'],
+  ['moving them forward', 'We are moving you forward to the next step.'],
+  ['being selected', 'You have been selected for the next conversation.'],
+  ['a good fit', 'You are a good fit for this team.'],
   ['age-coded language', 'You bring the energy of a young team member.'],
   ['a protected characteristic', 'Your accent was easy to follow throughout.'],
-  ['family status', 'Balancing this with your children must be hard.'],
-  ['moving them forward', 'We are moving you forward to the next step.'],
-  ['a next step in the process', 'The next steps will be shared with you shortly.'],
-  ['advancing them', 'We will advance you to the technical stage.'],
-  ['progressing them', 'We are progressing you to a conversation with the team.'],
-  ['a shortlist', 'You are on the shortlist for this role.'],
-  ['being selected', 'You have been selected for the next conversation.'],
-  ['not being selected', 'You were not selected for this role on this occasion.'],
-  ['an unsuccessful application', 'Your application was unsuccessful this time.'],
-  ['a good fit', 'You are a good fit for this team.'],
-  ['a strong fit', 'You were a strong fit for what we need.'],
-  ['not a fit', 'You are not a fit for this role.'],
-  ['proceeding', 'We will proceed with your candidacy.'],
-  ['taking them through', 'We would like to take you through to the next stage.'],
 ];
 
 function withStrength(sentence: string): FeedbackContent {
-  return { ...GENERIC_FEEDBACK, strengths: [sentence, GENERIC_FEEDBACK.strengths[1]] };
+  const base = buildEvidenceFeedback(INPUT);
+  return { ...base, swot: { ...base.swot, strengths: [sentence, base.swot.strengths[1]] } };
 }
 
 describe('guardrails on what a candidate may be told', () => {
@@ -169,88 +211,89 @@ describe('guardrails on what a candidate may be told', () => {
     expect(feedbackGuardrailViolations(withStrength(sentence)).length).toBeGreaterThan(0);
   });
 
-  // The model is told to quote the candidate, so it can also put its own
-  // words inside quotation marks. Stripping every quoted span before the
-  // verdict checks would have let "We recommend moving you to the next step."
-  // through as long as it was quoted.
+  // The model writes prose, not quotations: wrapping a verdict in quotation
+  // marks must not buy it a way through.
   it.each(FORBIDDEN)('refuses %s even inside quotation marks', (_label, sentence) => {
-    expect(feedbackGuardrailViolations(withStrength(`You might wonder about this: "${sentence}"`)).length).toBeGreaterThan(0);
+    expect(feedbackGuardrailViolations(withStrength(`You might wonder: "${sentence}"`)).length).toBeGreaterThan(0);
   });
 
-  it("does not treat the candidate's own quoted words as our verdict", () => {
-    const quote = 'we detected the failure from alerts and passed the fix to the on-call team';
-    const content = withStrength(`You described your incident work clearly: "${quote}".`);
-    expect(feedbackGuardrailViolations(content, { evidenceQuotes: [quote] })).toEqual([]);
+  it("does not read the candidate's own quoted words as our verdict", () => {
+    const base = buildEvidenceFeedback(INPUT);
+    const quoted = {
+      ...base,
+      competencies: base.competencies.map((c, i) => (i === 0
+        ? { ...c, quote: 'we moved forward with Qualtrics after the trial, and I passed the fix to on-call' }
+        : c)),
+    };
+    expect(feedbackGuardrailViolations(quoted)).toEqual([]);
   });
 
-  it('allows a quoted answer that happens to use decision words, when we put the quote there', () => {
-    const quote = 'we moved forward with Qualtrics after the trial, and I owned the migration';
-    const content = withStrength(`You were specific about your tooling choices: "${quote}".`);
-    expect(feedbackGuardrailViolations(content, { evidenceQuotes: [quote] })).toEqual([]);
+  it('refuses exclusionary wording even inside a quote', () => {
+    const base = buildEvidenceFeedback(INPUT);
+    const quoted = {
+      ...base,
+      competencies: base.competencies.map((c, i) => (i === 0 ? { ...c, quote: 'as a native speaker I handled every client call' } : c)),
+    };
+    expect(feedbackGuardrailViolations(quoted).length).toBeGreaterThan(0);
   });
 
-  it('refuses the same wording when it is not a quote we inserted', () => {
-    const content = withStrength('You were specific about your tooling choices: "we moved forward with your application".');
-    expect(feedbackGuardrailViolations(content).length).toBeGreaterThan(0);
-  });
-
-  it('only forgives the exact quote, not a sentence the model built around it', () => {
-    const quote = 'I owned the billing pipeline end to end';
-    const content = withStrength(`You said: "${quote}, and we recommend moving you to the next step".`);
-    expect(feedbackGuardrailViolations(content, { evidenceQuotes: [quote] }).length).toBeGreaterThan(0);
-  });
-
-  it('still refuses exclusionary wording inside a quote', () => {
-    const quote = 'as a native speaker I handled every client call';
-    expect(feedbackGuardrailViolations(withStrength(`You said: "${quote}".`), { evidenceQuotes: [quote] }).length).toBeGreaterThan(0);
+  it('refuses a verdict hidden in what the role asks for', () => {
+    const base = buildEvidenceFeedback(INPUT);
+    const risky = {
+      ...base,
+      competencies: base.competencies.map((c, i) => (i === 0 ? { ...c, whatWeHeard: 'You scored higher than most on this.' } : c)),
+    };
+    expect(feedbackGuardrailViolations(risky).length).toBeGreaterThan(0);
   });
 });
 
 describe('choosing what goes out', () => {
-  const MODEL: FeedbackContent = {
-    strengths: [
-      'You explained how you rewrote the billing query step by step, which made your reasoning easy to follow.',
-      'You were specific about the pipeline you owned and how you made recovery safe to repeat.',
+  const MODEL: ModelFeedback = {
+    swot: {
+      strengths: ['You walked through the billing query rewrite in a way that was easy to follow.', 'You were specific about what you changed and why.'],
+      weaknesses: ['Your examples often stop before the result, so the impact is left unsaid.', 'Work with stakeholders is described briefly.'],
+      opportunities: ['Your habit of tuning queries before anyone complains is worth leading with.', 'One concrete number per story would lift every answer.'],
+      watchOuts: ['Long answers drift, and the strongest point often arrives last.', 'Saying "we" where it was you reads as a smaller part than you had.'],
+    },
+    notes: [
+      { competencyId: 'sql', whatWeHeard: 'A billing query you rewrote yourself, with the effect on run time spelled out.', toGoFurther: 'Name what the slow query was costing the team before you touched it.' },
+      { competencyId: 'stake', whatWeHeard: 'A report you sent on, with little about how you kept people involved afterwards.', toGoFurther: 'Describe how you brought a sceptical stakeholder along with a change.' },
     ],
-    develop: [
-      'When you talked about working with stakeholders, there was room to say more about how you kept them involved.',
-      'On testing, walking through how you decide what to test first would show more of your approach.',
+    nextSteps: [
+      'Add the ending to three of your stories: what changed, and how you knew.',
+      'Re-tell one story naming your own decisions rather than the team\'s.',
+      'Have one short example ready about growing the people around you.',
     ],
-    suggestions: ['Before your next interview, prepare one example of bringing a sceptical stakeholder along with a change.'],
   };
 
-  it("uses the model's wording when it is valid and clean", () => {
-    expect(chooseFeedbackContent({ model: MODEL, result: MIXED }).source).toBe('model');
+  it("uses the model's wording when it passes", () => {
+    const chosen = chooseFeedbackContent({ model: MODEL, input: INPUT });
+    expect({ source: chosen.source, heard: chosen.content.competencies[0].whatWeHeard })
+      .toEqual({ source: 'model', heard: MODEL.notes[0].whatWeHeard });
   });
 
-  it('falls back to the evidence wording when the model mentions a score', () => {
-    const leaky: FeedbackContent = { ...MODEL, strengths: ['You scored 4/5 on SQL, which is excellent.', MODEL.strengths[1]] };
-    expect(chooseFeedbackContent({ model: leaky, result: MIXED }).source).toBe('evidence');
+  it('keeps the facts ours even when the model writes the prose', () => {
+    const chosen = chooseFeedbackContent({ model: MODEL, input: INPUT });
+    expect({ quote: chosen.content.competencies[0].quote, marker: chosen.content.competencies[0].marker })
+      .toEqual({ quote: MIXED.competencies[0].evidence[0].quote, marker: 'strength' });
+  });
+
+  it('falls back to the evidence wording when the model leaks a score', () => {
+    const leaky: ModelFeedback = { ...MODEL, swot: { ...MODEL.swot, strengths: ['You scored 4 out of 5 on SQL.', MODEL.swot.strengths[1]] } };
+    expect(chooseFeedbackContent({ model: leaky, input: INPUT }).source).toBe('evidence');
   });
 
   it('falls back to the evidence wording when there is no model', () => {
-    expect(chooseFeedbackContent({ model: null, result: MIXED }).source).toBe('evidence');
+    expect(chooseFeedbackContent({ model: null, input: INPUT }).source).toBe('evidence');
   });
 
-  it('keeps the evidence wording when a quoted answer uses decision words', () => {
-    const tooling = assessment([
-      competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
-        evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote: 'we moved forward with Qualtrics after the trial and I owned the migration' }] }),
-    ]);
-    expect(chooseFeedbackContent({ model: null, result: tooling }).source).toBe('evidence');
+  it('ignores model notes for competencies that do not exist', () => {
+    const strays: ModelFeedback = { ...MODEL, notes: [...MODEL.notes, { competencyId: 'ghost', whatWeHeard: 'Nothing at all.', toGoFurther: 'Nothing at all either.' }] };
+    expect(chooseFeedbackContent({ model: strays, input: INPUT }).content.competencies.map((c) => c.name))
+      .toEqual(['SQL', 'Stakeholder management', 'People leadership']);
   });
 
-  it('refuses model wording that hides a decision inside quotation marks', () => {
-    const leaky: FeedbackContent = { ...MODEL, strengths: ['You may like to know: "we are moving you forward to the next step".', MODEL.strengths[1]] };
-    expect(chooseFeedbackContent({ model: leaky, result: MIXED }).source).toBe('evidence');
-  });
-
-  it('falls back to the generic wording when the evidence itself fails the checks', () => {
-    const risky = assessment([
-      competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
-        evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote: 'I did this while looking after my children at home.' }] }),
-    ]);
-    const chosen = chooseFeedbackContent({ model: null, result: risky });
-    expect(chosen).toMatchObject({ source: 'generic', content: GENERIC_FEEDBACK });
+  it('refuses a model reply that is the wrong shape', () => {
+    expect(modelFeedbackSchema.safeParse({ swot: { strengths: ['one'] } }).success).toBe(false);
   });
 });

@@ -80,6 +80,12 @@ interface AssessmentResp {
     summary?: string;
     competencies?: JourneyAssessment['competencies'];
   } | null;
+  /**
+   * The verdict the team acts on: a reviewer's once they have recorded one,
+   * the AI's until then. Absent on an older server, which is why the AI's own
+   * recommendation stays the fallback.
+   */
+  outcome?: { source: 'human' | 'ai'; recommendation: string } | null;
 }
 
 const MODULES = ['warmup', 'technical', 'behavioral', 'wrapup'];
@@ -279,7 +285,9 @@ export function CandidateDetail() {
         if (cancelled) return;
         setAssessment({
           id: resp.id,
-          recommendation: resp.result?.recommendation ?? null,
+          // The reviewed verdict wins here, so the candidate's page does not
+          // still show the AI's call after a person has overruled it.
+          recommendation: resp.outcome?.recommendation ?? resp.result?.recommendation ?? null,
           summary: resp.result?.summary ?? '',
           competencies: resp.result?.competencies ?? [],
         });

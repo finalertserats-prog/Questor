@@ -19,7 +19,9 @@ import { feedbackConsentView, requestFeedbackOptIn } from '../services/candidate
 import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedbackEmail.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
-import { feedbackEmailState, previewFeedbackEmail, sendFeedbackNow } from '../services/autoFeedback.js';
+import { feedbackEmailState, previewFeedbackEmail, releaseFeedbackForReview, sendFeedbackNow } from '../services/autoFeedback.js';
+import { completedReviewFor } from '../services/assessmentReview.js';
+import { applyReviewOverrides, assessmentDifferences, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
@@ -455,13 +457,32 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     tenantId: req.auth!.tenantId,
   });
   const reviews = await prisma.humanReview.findMany({ where: { assessmentId: a.id }, orderBy: { createdAt: 'desc' } });
+  const result = readAssessmentResult(a);
+  // The three readings the page shows side by side: what the AI produced, what
+  // the reviewer left, and where the two differ. All of it derived from the
+  // review already stored (services/assessmentReview.ts), so the comparison
+  // can be analysed later without a second copy of the truth.
+  const completed = await completedReviewFor(a.id);
   res.json({
     id: a.id,
     sessionId: a.sessionId,
     candidate: { id: a.session.candidateId, name: a.session.candidate.fullName },
     role: { id: a.session.roleId, title: a.session.role.title },
-    result: readAssessmentResult(a),
+    result,
     reviews: reviews.map((r) => ({ id: r.id, status: r.status, disposition: r.disposition, reason: r.reason, overrides: parseJsonOptional(r.overridesJson, [], { model: 'HumanReview', id: r.id, field: 'overridesJson' }), completedAt: r.completedAt })),
+    reviewed: completed
+      ? {
+        result: applyReviewOverrides(result, completed),
+        review: {
+          id: completed.id, reviewerId: completed.reviewerId, disposition: completed.disposition,
+          reason: completed.reason, comments: completed.comments, completedAt: completed.completedAt,
+        },
+      }
+      : null,
+    differences: assessmentDifferences(result, completed),
+    // What the rest of the product should report: the human verdict once there
+    // is one, the AI's until then.
+    outcome: reviewedOutcome(result, completed),
   });
 }));
 
@@ -554,7 +575,11 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     after: { disposition: body.disposition, reason: body.reason, selfReview },
   });
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, disposition: body.disposition });
-  res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview } });
+  // The candidate has been waiting on exactly this. Their feedback email is
+  // released now and written from the reviewed assessment; a letter that has
+  // already gone is left alone (services/autoFeedback.ts).
+  const feedbackReleased = await releaseFeedbackForReview(a.id);
+  res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview }, feedbackReleased });
 }));
 
 // Export to ATS (FR-040)

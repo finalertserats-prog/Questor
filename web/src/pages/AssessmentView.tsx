@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
@@ -11,6 +11,11 @@ import {
   DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored, type Disposition,
 } from '../components/assessmentModel';
 import { FeedbackEmailPanel } from '../components/FeedbackEmailPanel';
+import { AssessmentTabList, DifferencesPanel, HumanReviewPanel, type DifferencesView } from '../components/AssessmentTabs';
+import {
+  assessmentPanelId, assessmentTabFromParam, assessmentTabId, assessmentTabPath, landingTab, levelText,
+  nextAssessmentTab, type AssessmentTabKey,
+} from '../components/assessmentTabsModel';
 import { humanise, recommendationStatus } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
 import { useAuth } from '../auth';
@@ -30,10 +35,18 @@ interface AssessmentResult {
   openQuestions: string[]; limitations: string[];
 }
 interface Review { id: string; status: string; disposition: string; reason: string; overrides: unknown[]; completedAt: string | null; }
+interface ReviewedView {
+  result: AssessmentResult;
+  review: { id: string; reviewerId: string; disposition: string; reason: string; comments: string; completedAt: string | null };
+}
 interface AssessmentResp {
   id: string; sessionId: string;
   candidate: { id: string; name: string }; role: { id: string; title: string };
   result: AssessmentResult; reviews: Review[];
+  /** The reviewed reading, the comparison and the outcome. Absent on an older server. */
+  reviewed?: ReviewedView | null;
+  differences?: DifferencesView | null;
+  outcome?: { source: 'human' | 'ai'; recommendation: string; reviewedAt: string | null };
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +155,13 @@ function StringCard({ title, items }: { title: string; items: string[] }) {
 }
 
 export function AssessmentView() {
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  // The tab is the last segment of the address (/assessments/:id/ai), so a
+  // link to one reading stays a link to that reading. Kept as explicit routes
+  // rather than a wildcard, which would also swallow /review.
+  const lastSegment = useLocation().pathname.split('/').filter(Boolean).pop();
+  const tab = lastSegment === 'human' || lastSegment === 'ai' || lastSegment === 'differences' ? lastSegment : undefined;
   const [data, setData] = useState<AssessmentResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -154,6 +173,10 @@ export function AssessmentView() {
   const [disposition, setDisposition] = useState<Disposition | ''>('');
   const [reason, setReason] = useState('');
   const [comments, setComments] = useState('');
+  // Per-competency levels the reviewer disagrees with. Empty means "the AI's
+  // level stands", which is a verdict in itself and is recorded as agreement.
+  const [levels, setLevels] = useState<Record<string, string>>({});
+  const [levelReasons, setLevelReasons] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
   const { user } = useAuth();
@@ -261,13 +284,21 @@ export function AssessmentView() {
     setNotice('');
     setSubmitting(true);
     try {
+      // Only the levels the reviewer actually changed travel: an untouched
+      // competency is agreement, and sending it as an "override" to the same
+      // value would make the comparison meaningless.
+      const overrides = (result.competencies ?? [])
+        .filter((c) => levels[c.id] && Number(levels[c.id]) !== c.level)
+        .map((c) => ({ competencyId: c.id, from: c.level, to: Number(levels[c.id]), reason: levelReasons[c.id] ?? '' }));
       await api.post(`/assessments/${id}/review`, {
-        disposition, reason, comments: comments || undefined, overrides: [],
+        disposition, reason, comments: comments || undefined, overrides,
       });
       setNotice('Review submitted.');
       setDisposition('');
       setReason('');
       setComments('');
+      setLevels({});
+      setLevelReasons({});
       // Awaited: the button used to re-enable over a page still showing the
       // state from before the review landed.
       await load();
@@ -312,13 +343,156 @@ export function AssessmentView() {
     setShowReport(true);
   };
 
+  // Recording a verdict belongs with the human reading, so the form lives on
+  // that tab — including the levels the reviewer wants to change.
+  const reviewForm = (
+    <div className="card">
+      <h2 className="card-title"><Icon name="human-review" />Record your review</h2>
+        <form onSubmit={submitReview}>
+          <div className="grid cols-2">
+            <div>
+              <label htmlFor="disposition">Disposition</label>
+              <select
+                id="disposition"
+                value={disposition}
+                disabled={!scored}
+                onChange={(e) => setDisposition(isDisposition(e.target.value) ? e.target.value : '')}
+              >
+                <option value="">Choose a disposition…</option>
+                {DISPOSITIONS.map((d) => (
+                  <option key={d} value={d}>{recommendationStatus(d).label}</option>
+                ))}
+              </select>
+              {!scored && (
+                <p className="muted small" style={{ marginTop: 6 }}>
+                  There is no assessment to judge, so no verdict can be recorded here. Record your
+                  decision from the candidate's page instead.
+                </p>
+              )}
+            </div>
+          </div>
+          {/* minWidth: 0 because a fieldset sizes to its content by default,
+              so the scrolling table inside it would push the whole page
+              sideways on a phone instead of scrolling within its card. */}
+          <fieldset
+            style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginTop: 12, minWidth: 0 }}
+            disabled={!scored}
+          >
+            <legend className="small muted">Levels (optional)</legend>
+            <p className="muted small" style={{ marginTop: 0 }}>
+              Change a level only where you read the evidence differently. What you leave alone counts as agreeing
+              with the AI, and both are kept on the "Key differences" tab.
+            </p>
+            <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency levels">
+              <table>
+                <thead><tr><th>Competency</th><th>AI</th><th>Your level</th><th>Why</th></tr></thead>
+                <tbody>
+                  {(result.competencies ?? []).map((c) => (
+                    <tr key={c.id}>
+                      <td>{c.name}</td>
+                      <td className="muted">{c.notEnoughEvidence ? 'Not graded' : levelText(c.level)}</td>
+                      <td>
+                        <label className="sr-only" htmlFor={`level-${c.id}`}>Your level for {c.name}</label>
+                        <select
+                          id={`level-${c.id}`}
+                          value={levels[c.id] ?? ''}
+                          onChange={(e) => setLevels((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                        >
+                          <option value="">Agree with the AI</option>
+                          {[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>{levelText(level)}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <label className="sr-only" htmlFor={`level-reason-${c.id}`}>Why you changed {c.name}</label>
+                        <input
+                          id={`level-reason-${c.id}`}
+                          value={levelReasons[c.id] ?? ''}
+                          onChange={(e) => setLevelReasons((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                          placeholder="Optional"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </fieldset>
+          <label htmlFor="review-reason">Reason (required)</label>
+          <textarea id="review-reason" value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3}
+            disabled={!scored}
+            placeholder="Explain your decision…" style={{ minHeight: 90 }} />
+          <label htmlFor="review-comments">Comments (optional)</label>
+          <textarea id="review-comments" value={comments} onChange={(e) => setComments(e.target.value)} disabled={!scored}
+            style={{ minHeight: 60 }} />
+          <div className="row" style={{ marginTop: 12 }}>
+            <button className="btn" type="submit" disabled={!canSubmitVerdict({ disposition, reason, scored, submitting })}>
+              <Icon name={submitting ? 'hourglass' : 'send'} size={16} />
+              {submitting ? 'Submitting…' : 'Submit review'}
+            </button>
+          </div>
+        </form>
+
+        {(reviews ?? []).length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <h3>Previous reviews</h3>
+            <div className="table-scroll" tabIndex={0} role="region" aria-label="Previous reviews">
+            <table>
+              <thead><tr><th>Disposition</th><th>Reason</th><th>Status</th><th>Completed</th></tr></thead>
+              <tbody>
+                {reviews.map((r) => (
+                  <tr key={r.id}>
+                    <td>{recBadge(r.disposition)}</td>
+                    <td className="muted small">{r.reason}</td>
+                    <td>{humanise(r.status)}</td>
+                    <td className="muted small">{r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        )}
+      </div>
+  );
+
+  // Addressable tabs, like the admin console's: a link to "the differences"
+  // stays a link to the differences.
+  // Only an address that names a tab counts as a request; the plain address
+  // lets landingTab choose, which is how a reviewed assessment opens on the
+  // human reading and an unreviewed one on the AI's.
+  const requested = tab ? assessmentTabFromParam(tab) ?? undefined : undefined;
+  const reviewed = data.reviewed ?? null;
+  const differences = data.differences ?? null;
+  const outcome = data.outcome ?? { source: 'ai' as const, recommendation: result.recommendation, reviewedAt: null };
+  const activeTab = landingTab({ reviewed: Boolean(reviewed), requested });
+  const selectTab = (key: AssessmentTabKey) => navigate(assessmentTabPath(id ?? '', key));
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, current: AssessmentTabKey) => {
+    const next = nextAssessmentTab(current, event.key);
+    if (next === current) return;
+    event.preventDefault();
+    selectTab(next);
+    window.requestAnimationFrame(() => document.getElementById(assessmentTabId(next))?.focus());
+  };
+  const panel = (key: AssessmentTabKey, content: React.ReactNode) => activeTab === key && (
+    <section id={assessmentPanelId(key)} role="tabpanel" aria-labelledby={assessmentTabId(key)} tabIndex={0} className="admin-panel">
+      {content}
+    </section>
+  );
+  const changedIds = new Set((differences?.competencies ?? []).filter((c) => c.changed).map((c) => c.competencyId));
+
   return (
     <div>
       <PageHeader
         icon="evidence"
         title="Assessment"
-        badge={recBadge(result.recommendation)}
-        subtitle={<><Link to={`/candidates/${candidate.id}`}>{candidate.name}</Link> · {role.title}</>}
+        badge={recBadge(outcome.recommendation)}
+        subtitle={(
+          <>
+            <Link to={`/candidates/${candidate.id}`}>{candidate.name}</Link> · {role.title}
+            {' · '}
+            <span className="muted">{outcome.source === 'human' ? "reviewer's verdict" : 'AI assessment, not yet reviewed'}</span>
+          </>
+        )}
         actions={
           <>
             {/* Offered here because this page shows the recommendation on sight —
@@ -345,6 +519,24 @@ export function AssessmentView() {
           "76/100" has formed the impression the notice is meant to qualify. */}
       <ValidationStatus />
 
+      <AssessmentTabList active={activeTab} onSelect={selectTab} onKeyDown={handleTabKeyDown} />
+
+      {panel('human', (
+        <HumanReviewPanel
+          review={reviewed ? { ...reviewed.review, completedAt: reviewed.review.completedAt } : null}
+          competencies={(reviewed?.result.competencies ?? []).map((c) => ({
+            id: c.id, name: c.name, level: c.level, requiredLevel: c.requiredLevel, notEnoughEvidence: c.notEnoughEvidence,
+          }))}
+          changedIds={changedIds}
+        >
+          {reviewForm}
+        </HumanReviewPanel>
+      ))}
+
+      {panel('differences', <DifferencesPanel differences={differences} />)}
+
+      {panel('ai', (
+      <div className="stack">
       {scored ? (
         <div className="grid cols-3" style={{ marginBottom: 16 }}>
           <Stat label="Overall score" value={formatScoreOutOf100(result.overallScore)} />
@@ -421,68 +613,8 @@ export function AssessmentView() {
         <StringCard title="Open questions" items={result.openQuestions} />
         <StringCard title="Limitations" items={result.limitations} />
       </div>
-
-      <div className="card">
-        <h2 className="card-title"><Icon name="human-review" />Human review</h2>
-        <form onSubmit={submitReview}>
-          <div className="grid cols-2">
-            <div>
-              <label htmlFor="disposition">Disposition</label>
-              <select
-                id="disposition"
-                value={disposition}
-                disabled={!scored}
-                onChange={(e) => setDisposition(isDisposition(e.target.value) ? e.target.value : '')}
-              >
-                <option value="">Choose a disposition…</option>
-                {DISPOSITIONS.map((d) => (
-                  <option key={d} value={d}>{recommendationStatus(d).label}</option>
-                ))}
-              </select>
-              {!scored && (
-                <p className="muted small" style={{ marginTop: 6 }}>
-                  There is no assessment to judge, so no verdict can be recorded here. Record your
-                  decision from the candidate's page instead.
-                </p>
-              )}
-            </div>
-          </div>
-          <label htmlFor="review-reason">Reason (required)</label>
-          <textarea id="review-reason" value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3}
-            disabled={!scored}
-            placeholder="Explain your decision…" style={{ minHeight: 90 }} />
-          <label htmlFor="review-comments">Comments (optional)</label>
-          <textarea id="review-comments" value={comments} onChange={(e) => setComments(e.target.value)} disabled={!scored}
-            style={{ minHeight: 60 }} />
-          <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit" disabled={!canSubmitVerdict({ disposition, reason, scored, submitting })}>
-              <Icon name={submitting ? 'hourglass' : 'send'} size={16} />
-              {submitting ? 'Submitting…' : 'Submit review'}
-            </button>
-          </div>
-        </form>
-
-        {(reviews ?? []).length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <h3>Previous reviews</h3>
-            <div className="table-scroll" tabIndex={0} role="region" aria-label="Previous reviews">
-            <table>
-              <thead><tr><th>Disposition</th><th>Reason</th><th>Status</th><th>Completed</th></tr></thead>
-              <tbody>
-                {reviews.map((r) => (
-                  <tr key={r.id}>
-                    <td>{recBadge(r.disposition)}</td>
-                    <td className="muted small">{r.reason}</td>
-                    <td>{humanise(r.status)}</td>
-                    <td className="muted small">{r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        )}
       </div>
+      ))}
 
       {/* What the candidate was emailed automatically after the interview, and
           "Send feedback now" when nothing went. Keyed so a different

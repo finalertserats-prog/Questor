@@ -47,6 +47,49 @@ export function autoCandidateFeedbackEnabled(policy: Readonly<Record<string, unk
 }
 
 /**
+ * How long the hiring team has to review an interview before the candidate's
+ * feedback goes out on its own.
+ *
+ * The owner's decision: a completed review sends it immediately, and a review
+ * that never comes must not leave the candidate waiting. Twelve hours gives
+ * the team a working day's grace either side of an interview.
+ */
+export const DEFAULT_REVIEW_WINDOW_HOURS = 12;
+
+/** A week is the longest wait anyone could defend putting a candidate through. */
+const MAX_REVIEW_WINDOW_HOURS = 168;
+
+export function reviewWindowHours(policy: Readonly<Record<string, unknown>>, fallbackHours: number): number {
+  const chosen = policy.feedbackReviewWindowHours;
+  if (typeof chosen !== 'number' || !Number.isFinite(chosen)) return fallbackHours;
+  if (chosen < 0 || chosen > MAX_REVIEW_WINDOW_HOURS) return fallbackHours;
+  return chosen;
+}
+
+/** When the email becomes due if no review has been completed by then. */
+export function feedbackDueAt(assessmentStoredAt: Date, hours: number): Date {
+  return new Date(assessmentStoredAt.getTime() + hours * 60 * 60_000);
+}
+
+/** Why an email left the waiting room: the window ran out, a review landed, or a person sent it. */
+export type FeedbackRelease = 'window' | 'review' | 'manual';
+
+export const RELEASE_TEXT: Readonly<Record<FeedbackRelease, string>> = {
+  window: 'Sent automatically once the review window passed.',
+  review: 'Sent as soon as a reviewer completed their review.',
+  manual: 'Sent from this page by a member of the hiring team.',
+};
+
+/**
+ * Who signs the candidate's letter. Questor by default — it is Questor's
+ * promise about how the feedback was written — with the organisation able to
+ * put its own hiring team's name to it instead.
+ */
+export function feedbackSignOff(policy: Readonly<Record<string, unknown>>): 'questor' | 'company' {
+  return policy.feedbackSignedByCompany === true ? 'company' : 'questor';
+}
+
+/**
  * Off unless an admin switched it on. Hiring teams see the assessment straight
  * away; an organisation that wants every reviewer to judge blind first opts in.
  */
@@ -118,10 +161,15 @@ export function afterFailedAttempt(
 const OVERRIDABLE_SKIPS: ReadonlySet<string> = new Set<FeedbackSkipReason>(['POLICY_OFF', 'NO_EMAIL', 'DEMO_RECIPIENT', 'NO_ASSESSMENT']);
 
 export function manualSendAllowed(
-  row: { readonly status: string; readonly skipReason: string } | null,
-  opts: { readonly confirmDuplicate?: boolean } = {},
+  row: { readonly status: string; readonly skipReason: string; readonly nextAttemptAt?: Date | null } | null,
+  opts: { readonly confirmDuplicate?: boolean; readonly now?: Date } = {},
 ): { allowed: true } | { allowed: false; reason: string; requiresConfirmation?: boolean } {
   if (!row || row.status === 'FAILED' || row.status === 'DRAFT') return { allowed: true };
+  // A letter waiting out the review window is exactly what this button is for:
+  // the reviewer has seen enough and wants the candidate told now.
+  const waiting = row.status === 'QUEUED' && row.nextAttemptAt !== null && row.nextAttemptAt !== undefined
+    && row.nextAttemptAt.getTime() > (opts.now ?? new Date()).getTime();
+  if (waiting) return { allowed: true };
   // Only this one state can be overridden, and only deliberately: the risk is
   // a second copy of their feedback, not a lost email.
   if (row.status === 'SENT_UNVERIFIED') {

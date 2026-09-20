@@ -7,19 +7,33 @@ import { getEmail, type EmailMessage } from '../providers/email/index.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
-import { autoCandidateFeedbackEnabledForTenant } from './candidateFeedbackPolicy.js';
+import {
+  autoCandidateFeedbackEnabledForTenant, feedbackReviewWindowHoursForTenant, feedbackSignOffForTenant,
+} from './candidateFeedbackPolicy.js';
+import { applyReviewOverrides, type CompletedReview } from '../domain/reviewedAssessment.js';
+import { completedReviewFor, scorecardProfileFor } from './assessmentReview.js';
 import { demoRecipientBlocked } from './demoPolicy.js';
 import { startJob } from './jobs.js';
 import { generateFeedbackContent } from './autoFeedbackContent.js';
-import { feedbackContentSchema, type FeedbackContent, type FeedbackContentSource } from './feedbackContentModel.js';
+import { feedbackContentSchema, type FeedbackContent, type FeedbackInput } from './feedbackContentModel.js';
 import {
-  SENT_UNVERIFIED_REASON, SKIP_REASON_TEXT, afterFailedAttempt, feedbackEligibility, manualSendAllowed,
-  type FeedbackSkipReason,
+  RELEASE_TEXT, SENT_UNVERIFIED_REASON, SKIP_REASON_TEXT, afterFailedAttempt, feedbackDueAt,
+  feedbackEligibility, manualSendAllowed, type FeedbackRelease, type FeedbackSkipReason,
 } from './autoFeedbackModel.js';
 
 /**
- * The candidate's feedback email, sent automatically once their interview is
- * assessed (owner decision: no human check before it goes).
+ * The candidate's feedback email: prepared when their interview is assessed,
+ * sent when the hiring team has had their say — or when the wait runs out.
+ *
+ * WHEN IT GOES (the owner's rule)
+ *   - A completed human review sends it at once, written from the reviewed
+ *     assessment, so a reviewer's corrections are what the candidate reads.
+ *   - Otherwise the review window (12 hours by default, see
+ *     autoFeedbackModel.ts) runs out and it goes written from the AI's own
+ *     reading. Nobody is left waiting on a review that never comes.
+ *   - "Send feedback now" ignores the window entirely.
+ *   - A review completed AFTER it went does not send a second one; the team
+ *     can write to the candidate themselves.
  *
  * A CandidateFeedbackEmail row is written when the assessment is stored and a
  * background job sends it, so finishing an interview is never slowed by a model
@@ -118,12 +132,14 @@ async function wasScoredPartially(sessionId: string): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 /**
- * Queue the email for an interview whose assessment was just stored. Called
- * from finalizeInterview; never sends on the caller's time. The job picks the
- * row up within FEEDBACK_EMAIL_JOB.intervalMs. There is deliberately no
- * "try at once" here: a fire-and-forget send racing the request that ended the
- * interview only competes with it for the database, and nobody is waiting on
- * a feedback email by the second.
+ * Prepare the email for an interview whose assessment was just stored.
+ *
+ * It does NOT go out yet. The owner's rule: the hiring team gets a window —
+ * twelve hours by default — to complete their review, and the candidate hears
+ * from us the moment that review lands. If no review comes, the window runs
+ * out and the letter goes anyway, written from the AI's own reading. Either
+ * way the words are composed at send time, so a reviewer's corrections are in
+ * the letter the candidate actually receives.
  */
 export async function enqueueAutoFeedback(opts: {
   sessionId: string;
@@ -143,13 +159,15 @@ export async function enqueueAutoFeedback(opts: {
   if (opts.partial) skip = 'PARTIAL_INTERVIEW';
   else if (!await autoCandidateFeedbackEnabledForTenant(session.tenantId)) skip = 'POLICY_OFF';
 
+  const windowHours = await feedbackReviewWindowHoursForTenant(session.tenantId);
   let id: string;
   try {
     const row = await prisma.candidateFeedbackEmail.create({
       data: {
         sessionId: opts.sessionId, assessmentId: opts.assessmentId,
         candidateId: session.candidateId, tenantId: session.tenantId, trigger: 'auto',
-        status: skip ? 'SKIPPED' : 'QUEUED', skipReason: skip ?? '', nextAttemptAt: skip ? null : now,
+        status: skip ? 'SKIPPED' : 'QUEUED', skipReason: skip ?? '',
+        nextAttemptAt: skip ? null : feedbackDueAt(now, windowHours),
       },
     });
     id = row.id;
@@ -166,6 +184,23 @@ export async function enqueueAutoFeedback(opts: {
     });
   }
   return { id, created: true };
+}
+
+/**
+ * A reviewer has finished with this assessment: the candidate hears now rather
+ * than when the window runs out.
+ *
+ * Only a letter still waiting is released. One that has already gone is left
+ * exactly as it is — a review landing afterwards does not send a second copy
+ * of anything, and the hiring team can write to the candidate themselves if
+ * the review changed the picture.
+ */
+export async function releaseFeedbackForReview(assessmentId: string, now = new Date()): Promise<boolean> {
+  const { count } = await prisma.candidateFeedbackEmail.updateMany({
+    where: { assessmentId, status: 'QUEUED', releaseReason: '' },
+    data: { nextAttemptAt: now, releaseReason: 'review' },
+  });
+  return count === 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,10 +255,10 @@ async function loadClaimed(id: string) {
   return prisma.candidateFeedbackEmail.findUniqueOrThrow({
     where: { id },
     include: {
-      assessment: { select: { id: true, resultJson: true } },
+      assessment: { select: { id: true, resultJson: true, scorecardId: true } },
       session: {
         select: {
-          id: true, state: true, completedAt: true, tenantId: true, candidateId: true,
+          id: true, state: true, completedAt: true, tenantId: true, candidateId: true, durationMinutes: true,
           candidate: { select: { fullName: true, email: true } },
           role: { select: { title: true } },
           tenant: { select: { name: true } },
@@ -261,19 +296,31 @@ function storedContent(contentJson: string): FeedbackContent | null {
  * feedback built from `{}` would tell the candidate nothing was covered.
  */
 async function contentFor(row: {
-  contentJson: string; contentSource: string; sessionId: string; assessment: { id: string; resultJson: string };
-}): Promise<{ content: FeedbackContent; source: string }> {
+  contentJson: string; contentSource: string; contentBasis: string; sessionId: string;
+  assessment: { id: string; resultJson: string; scorecardId: string };
+}, review: CompletedReview | null): Promise<{ content: FeedbackContent; source: string; basis: string }> {
+  // What the words were written from. A review landing after they were
+  // prepared changes this, and the letter is written again — the candidate
+  // must never receive an account a human had already corrected.
+  const basis = review ? `review:${review.id}` : 'ai';
   const stored = storedContent(row.contentJson);
-  if (stored) return { content: stored, source: row.contentSource };
-  let result: AssessmentResult;
+  if (stored && row.contentBasis === basis) return { content: stored, source: row.contentSource, basis };
+
+  let aiResult: AssessmentResult;
   try {
-    result = parseJsonStrict<AssessmentResult>(row.assessment.resultJson, { model: 'AssessmentVersion', id: row.assessment.id, field: 'resultJson' });
+    aiResult = parseJsonStrict<AssessmentResult>(row.assessment.resultJson, { model: 'AssessmentVersion', id: row.assessment.id, field: 'resultJson' });
   } catch (err) {
     if (err instanceof CorruptRecordError) throw new Error('The assessment record could not be read, so no feedback was written.');
     throw err;
   }
-  const generated = await generateFeedbackContent(result, row.sessionId);
-  return { content: generated.content, source: generated.source };
+  const input: FeedbackInput = {
+    // The reviewer's levels where they recorded any: their reading of the
+    // interview is the one the candidate should hear about.
+    result: applyReviewOverrides(aiResult, review),
+    profile: await scorecardProfileFor(row.assessment.scorecardId),
+  };
+  const generated = await generateFeedbackContent(input, row.sessionId);
+  return { content: generated.content, source: generated.source, basis };
 }
 
 /** The "speak to a person" link. Failing to mint costs the offer, never the email. */
@@ -303,16 +350,24 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   }
 
   const s = row.session;
-  const { content, source } = await contentFor(row);
+  const review = await completedReviewFor(row.assessmentId);
+  const { content, source, basis } = await contentFor(row, review);
   const rendered = renderAutoFeedbackEmail({
     to: s.candidate.email, candidateName: s.candidate.fullName, roleTitle: s.role.title,
     companyName: s.tenant.name, content, talkUrl: await talkLink(s),
+    interviewedAt: s.completedAt, durationMinutes: s.durationMinutes,
+    signOff: await feedbackSignOffForTenant(s.tenantId),
   });
   // Stored before the send: if the process dies after the mail went, the row
   // still says what went (and the stale-claim sweep marks it for a person).
   await prisma.candidateFeedbackEmail.update({
     where: { id },
-    data: { contentJson: JSON.stringify(content), contentSource: source, subject: rendered.message.subject, bodyText: rendered.storedText },
+    data: {
+      contentJson: JSON.stringify(content), contentSource: source, contentBasis: basis,
+      subject: rendered.message.subject, bodyText: rendered.storedText,
+      // A release reason is only missing when the window itself ran out.
+      releaseReason: row.releaseReason || 'window',
+    },
   });
 
   const email = getEmail();
@@ -449,6 +504,8 @@ export interface FeedbackEmailView {
     trigger: string;
     skipReason: string;
     skipReasonText: string | null;
+    releaseReason: string;
+    releaseText: string | null;
     attempts: number;
     lastError: string;
     subject: string;
@@ -499,6 +556,8 @@ export async function feedbackEmailState(
       ? {
         status: row.status, trigger: row.trigger, skipReason: row.skipReason,
         skipReasonText: row.skipReason ? SKIP_REASON_TEXT[row.skipReason as FeedbackSkipReason] ?? null : null,
+        releaseReason: row.releaseReason,
+        releaseText: row.releaseReason ? RELEASE_TEXT[row.releaseReason as FeedbackRelease] ?? null : null,
         attempts: row.attempts, lastError: row.lastError, subject: row.subject, bodyText: row.bodyText,
         contentSource: row.contentSource, delivered: row.delivered, sentAt: row.sentAt,
         nextAttemptAt: row.nextAttemptAt, createdAt: row.createdAt,
@@ -528,23 +587,31 @@ export async function previewFeedbackEmail(opts: {
   const session = await prisma.interviewSession.findUniqueOrThrow({
     where: { id: opts.sessionId },
     select: {
-      tenantId: true, candidateId: true, candidate: { select: { fullName: true, email: true } },
+      tenantId: true, candidateId: true, completedAt: true, durationMinutes: true,
+      candidate: { select: { fullName: true, email: true } },
       role: { select: { title: true } }, tenant: { select: { name: true } },
     },
   });
-  const assessment = await prisma.assessmentVersion.findUniqueOrThrow({ where: { id: opts.assessmentId }, select: { id: true, resultJson: true } });
+  const assessment = await prisma.assessmentVersion.findUniqueOrThrow({
+    where: { id: opts.assessmentId }, select: { id: true, resultJson: true, scorecardId: true },
+  });
+  const review = await completedReviewFor(opts.assessmentId);
   let row = await prisma.candidateFeedbackEmail.findUnique({ where: { sessionId: opts.sessionId } });
 
-  let content = row ? storedContent(row.contentJson) : null;
+  // The stored words are reused only when they were written from the same
+  // state of the assessment; otherwise the preview shows what would actually
+  // be sent now, review included.
+  const basis = review ? `review:${review.id}` : 'ai';
+  let content = row && row.contentBasis === basis ? storedContent(row.contentJson) : null;
   if (!content) {
-    let generated: { content: FeedbackContent; source: string };
+    let generated: { content: FeedbackContent; source: string; basis: string };
     try {
-      generated = await contentFor({ contentJson: '', contentSource: '', sessionId: opts.sessionId, assessment });
+      generated = await contentFor({ contentJson: '', contentSource: '', contentBasis: '', sessionId: opts.sessionId, assessment }, review);
     } catch (err) {
       throw new HttpError(409, errorText(err));
     }
     content = generated.content;
-    const fields = { contentJson: JSON.stringify(content), contentSource: generated.source };
+    const fields = { contentJson: JSON.stringify(content), contentSource: generated.source, contentBasis: generated.basis };
     if (!row) {
       try {
         row = await prisma.candidateFeedbackEmail.create({
@@ -567,6 +634,8 @@ export async function previewFeedbackEmail(opts: {
   const rendered = renderAutoFeedbackEmail({
     to: session.candidate.email, candidateName: session.candidate.fullName, roleTitle: session.role.title,
     companyName: session.tenant.name, content,
+    interviewedAt: session.completedAt, durationMinutes: session.durationMinutes,
+    signOff: await feedbackSignOffForTenant(session.tenantId),
     // Stands in for the link minted at send time; the preview text shows where it goes.
     talkUrl: `${config.webOrigin.replace(/\/+$/, '')}/talk-to-a-person/preview`,
   });
@@ -592,7 +661,7 @@ export async function sendFeedbackNow(opts: {
   const now = new Date();
   const queued = {
     status: 'QUEUED', trigger: 'manual', requestedByUserId: opts.userId, nextAttemptAt: now,
-    attempts: 0, skipReason: '', lastError: '', claimedAt: null,
+    releaseReason: 'manual', attempts: 0, skipReason: '', lastError: '', claimedAt: null,
   };
   const existing = await prisma.candidateFeedbackEmail.findUnique({ where: { sessionId: opts.sessionId } });
   let id: string;

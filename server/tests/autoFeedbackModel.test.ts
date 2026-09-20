@@ -1,8 +1,56 @@
 import { describe, it, expect } from 'vitest';
 import {
-  MAX_SEND_ATTEMPTS, afterFailedAttempt, autoCandidateFeedbackEnabled, blindReviewRequired,
-  feedbackEligibility, manualSendAllowed, retryDelayMs, type EligibilityInput,
+  DEFAULT_REVIEW_WINDOW_HOURS, MAX_SEND_ATTEMPTS, afterFailedAttempt, autoCandidateFeedbackEnabled,
+  blindReviewRequired, feedbackDueAt, feedbackSignOff, feedbackEligibility, manualSendAllowed,
+  retryDelayMs, reviewWindowHours, type EligibilityInput,
 } from '../src/services/autoFeedbackModel.js';
+
+/**
+ * The wait before feedback goes out. The owner's rule: a completed human
+ * review sends it at once, and if nobody reviews it within the window it goes
+ * on its own — 12 hours by default, so the hiring team has a working day's
+ * grace without the candidate being left waiting.
+ */
+describe('the review window', () => {
+  it('waits twelve hours by default', () => {
+    expect(DEFAULT_REVIEW_WINDOW_HOURS).toBe(12);
+  });
+
+  it('uses the deployment default when the organisation has not chosen', () => {
+    expect(reviewWindowHours({}, 12)).toBe(12);
+  });
+
+  it("uses the organisation's own window when it has", () => {
+    expect(reviewWindowHours({ feedbackReviewWindowHours: 4 }, 12)).toBe(4);
+  });
+
+  it('allows no wait at all', () => {
+    expect(reviewWindowHours({ feedbackReviewWindowHours: 0 }, 12)).toBe(0);
+  });
+
+  it('ignores a value that is not a sensible number of hours', () => {
+    expect([reviewWindowHours({ feedbackReviewWindowHours: -3 }, 12), reviewWindowHours({ feedbackReviewWindowHours: '8' }, 12)])
+      .toEqual([12, 12]);
+  });
+
+  it('counts the window from the moment the assessment was stored', () => {
+    expect(feedbackDueAt(new Date('2026-09-20T08:00:00.000Z'), 12)).toEqual(new Date('2026-09-20T20:00:00.000Z'));
+  });
+});
+
+describe('who the letter is signed by', () => {
+  it('is Questor unless the organisation says otherwise', () => {
+    expect(feedbackSignOff({})).toBe('questor');
+  });
+
+  it('is the organisation when they have asked to sign it', () => {
+    expect(feedbackSignOff({ feedbackSignedByCompany: true })).toBe('company');
+  });
+
+  it('treats a malformed value as the default', () => {
+    expect(feedbackSignOff({ feedbackSignedByCompany: 'yes' })).toBe('questor');
+  });
+});
 
 describe('tenant policy defaults', () => {
   it('sends feedback automatically when the policy says nothing', () => {
@@ -100,8 +148,24 @@ describe('when "Send feedback now" is offered', () => {
     expect(manualSendAllowed({ status: 'SKIPPED', skipReason })).toEqual({ allowed: true });
   });
 
-  it.each(['SENT', 'SENDING', 'QUEUED'])('is not offered once the email is %s', (status) => {
+  it.each(['SENT', 'SENDING'])('is not offered once the email is %s', (status) => {
     expect(manualSendAllowed({ status, skipReason: '' }).allowed).toBe(false);
+  });
+
+  // A queued letter is usually one waiting out the review window, and sending
+  // it by hand then is the whole point of the button.
+  it('is offered while the letter is still waiting for the review window', () => {
+    const waiting = { status: 'QUEUED', skipReason: '', nextAttemptAt: new Date('2026-09-20T20:00:00.000Z') };
+    expect(manualSendAllowed(waiting, { now: new Date('2026-09-20T09:00:00.000Z') })).toEqual({ allowed: true });
+  });
+
+  it('is not offered once that letter is due and on its way', () => {
+    const due = { status: 'QUEUED', skipReason: '', nextAttemptAt: new Date('2026-09-20T09:00:00.000Z') };
+    expect(manualSendAllowed(due, { now: new Date('2026-09-20T20:00:00.000Z') }).allowed).toBe(false);
+  });
+
+  it('is not offered for a queued letter with no due time at all', () => {
+    expect(manualSendAllowed({ status: 'QUEUED', skipReason: '', nextAttemptAt: null }).allowed).toBe(false);
   });
 
   // A send whose claim was taken while it was in flight: the email may well

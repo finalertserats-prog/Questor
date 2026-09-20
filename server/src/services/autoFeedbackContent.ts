@@ -1,23 +1,26 @@
 import { generateJson } from '../providers/llm/index.js';
-import type { AssessmentResult } from '../domain/types.js';
 import { logger } from '../logger.js';
 import {
-  chooseFeedbackContent, feedbackContentSchema, feedbackPromptInput,
-  type FeedbackContent, type FeedbackContentSource,
+  chooseFeedbackContent, feedbackPromptInput, modelFeedbackSchema,
+  type FeedbackContent, type FeedbackContentSource, type FeedbackInput, type ModelFeedback,
 } from './feedbackContentModel.js';
 
-export const FEEDBACK_PROMPT_VERSION = 'candidate-feedback-v1';
+export const FEEDBACK_PROMPT_VERSION = 'candidate-feedback-v2';
 
 // The model is told the rules, but the rules are not trusted to the model:
 // whatever it returns goes through the same guardrails as every other wording
 // (feedbackContentModel.ts), and fails over to wording built from the evidence.
 const SYSTEM = [
-  'You write short, warm, specific interview feedback addressed directly to a job candidate ("you").',
-  'Return JSON {"strengths": [2-3 strings], "develop": [2-3 strings], "suggestions": [1-2 strings]}, one or two sentences each.',
-  'Base every point only on the competencies and the candidate\'s own quoted words you are given. You may quote them briefly.',
-  '"clearlyShown" are things that came across well; "roomToGrow" are areas to develop. Never describe anything not listed as a weakness.',
-  'Be constructive and practical: say what would make an answer stronger next time.',
-  'Never mention scores, marks, levels, ratings, percentages, rankings, weightings, thresholds, pass or fail, a recommendation, other candidates, or any hiring decision, outcome, next round or promise.',
+  'You write warm, specific interview feedback addressed directly to a job candidate ("you"), for a letter that has',
+  'a SWOT, a section per competency, and three next steps.',
+  'Return JSON {"swot":{"strengths":[2-3],"weaknesses":[2-3],"opportunities":[2-3],"watchOuts":[2-3]},',
+  '"notes":[{"competencyId","whatWeHeard","toGoFurther"}],"nextSteps":[3 strings]}.',
+  'Use only the competencies, coverage words and quoted answers you are given. Never invent an example or a quote.',
+  'Coverage "Not covered" means the subject never came up: say so kindly and never treat it as a failing.',
+  '"whatWeHeard" describes what the candidate actually said; "toGoFurther" is one concrete, practical improvement.',
+  'Write each next step as an action they can take this week.',
+  'Never mention scores, marks, levels, ratings, percentages, rankings, weightings, thresholds, pass or fail, a',
+  'recommendation, other candidates, or any hiring decision, outcome, next round or promise.',
   'Never mention age, gender, nationality, accent, family, health, religion or any other personal characteristic.',
   'Do not mention AI, automation or how the feedback was produced. Write as the hiring team.',
 ].join(' ');
@@ -28,27 +31,28 @@ export interface GeneratedFeedback {
 }
 
 /**
- * The feedback points for one assessment. Never throws for a model problem:
- * no model, a demo interview (generateJson refuses to spend on those), a
- * timeout, bad JSON or a guardrail failure all end in wording built without it.
+ * The letter for one assessment. Never throws for a model problem: no model, a
+ * demo interview (generateJson refuses to spend on those), a timeout, bad JSON
+ * or a guardrail failure all end in wording built without it — over the same
+ * facts either way.
  */
-export async function generateFeedbackContent(result: AssessmentResult, sessionId: string): Promise<GeneratedFeedback> {
-  const input = feedbackPromptInput(result);
-  const evidenced = input.clearlyShown.length + input.roomToGrow.length > 0;
+export async function generateFeedbackContent(input: FeedbackInput, sessionId: string): Promise<GeneratedFeedback> {
+  const prompt = feedbackPromptInput(input);
+  const covered = prompt.competencies.some((c) => c.theirWords.length > 0);
   // With nothing evidenced the model has nothing true to say; skip the call.
-  const model = evidenced
-    ? await generateJson<FeedbackContent>({
+  const model = covered
+    ? await generateJson<ModelFeedback>({
       fn: 'candidate_feedback',
       system: SYSTEM,
-      user: JSON.stringify({ ...input, promptVersion: FEEDBACK_PROMPT_VERSION }),
-      validate: (raw) => feedbackContentSchema.parse(raw),
+      user: JSON.stringify({ ...prompt, promptVersion: FEEDBACK_PROMPT_VERSION }),
+      validate: (raw) => modelFeedbackSchema.parse(raw),
       sessionId,
       temperature: 0.3,
-      maxTokens: 900,
+      maxTokens: 1800,
       timeoutMs: 30_000,
     })
     : null;
-  const chosen = chooseFeedbackContent({ model, result });
+  const chosen = chooseFeedbackContent({ model, input });
   if (chosen.rejected.length) {
     // Which rule tripped, never the text: the text quotes the candidate.
     logger.warn({ sessionId, rejected: chosen.rejected, used: chosen.source }, 'Feedback wording failed a check; used the fallback');

@@ -7,7 +7,11 @@
  * console must show what the server will actually do in that case.
  */
 
-export type HiringPolicyKey = 'autoCandidateFeedback' | 'requireBlindReview';
+export type HiringPolicyKey = 'autoCandidateFeedback' | 'requireBlindReview' | 'feedbackSignedByCompany';
+
+/** Mirrors the server's DEFAULT_REVIEW_WINDOW_HOURS (services/autoFeedbackModel.ts). */
+export const DEFAULT_REVIEW_WINDOW_HOURS = 12;
+const MAX_REVIEW_WINDOW_HOURS = 168;
 
 export type HiringPolicySwitches = Readonly<Record<HiringPolicyKey, boolean>>;
 
@@ -26,6 +30,12 @@ export const HIRING_POLICY_TOGGLES: readonly HiringPolicyToggle[] = [
       + 'Candidates who withdrew, did not finish, or said they do not want feedback are not emailed.',
   },
   {
+    key: 'feedbackSignedByCompany',
+    label: 'Sign candidate feedback as your organisation instead of Questor',
+    help: 'By default the letter is signed "The Questor team" and the footer says it was sent on your behalf. '
+      + 'Switch this on to sign it as your own hiring team.',
+  },
+  {
     key: 'requireBlindReview',
     label: 'Require an independent review before showing AI scores',
     help: 'When on, reviewers must record their own verdict from the evidence (or give a reason to skip) before the '
@@ -38,7 +48,33 @@ export function hiringPolicySwitches(policy: Readonly<Record<string, unknown>>):
   return {
     autoCandidateFeedback: policy.autoCandidateFeedback !== false,
     requireBlindReview: policy.requireBlindReview === true,
+    feedbackSignedByCompany: policy.feedbackSignedByCompany === true,
   };
+}
+
+export interface ReviewWindowField {
+  readonly hours: number;
+  /** False when the deployment default is being shown rather than a choice. */
+  readonly chosen: boolean;
+}
+
+/**
+ * How long the hiring team has to review before the candidate's feedback goes
+ * on its own. Anything the server would refuse is shown as the default rather
+ * than echoed back as if it had been saved.
+ */
+export function reviewWindowField(policy: Readonly<Record<string, unknown>>): ReviewWindowField {
+  const hours = policy.feedbackReviewWindowHours;
+  if (typeof hours !== 'number' || !Number.isInteger(hours) || hours < 0 || hours > MAX_REVIEW_WINDOW_HOURS) {
+    return { hours: DEFAULT_REVIEW_WINDOW_HOURS, chosen: false };
+  }
+  return { hours, chosen: true };
+}
+
+/** The body for PUT /api/admin/policy, or null when the number is not one to send. */
+export function reviewWindowPatch(hours: number): { policy: { feedbackReviewWindowHours: number } } | null {
+  if (!Number.isInteger(hours) || hours < 0 || hours > MAX_REVIEW_WINDOW_HOURS) return null;
+  return { policy: { feedbackReviewWindowHours: hours } };
 }
 
 /** The body for PUT /api/admin/policy. The server merges it, so only the changed switch is sent. */

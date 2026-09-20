@@ -427,6 +427,11 @@ export function App() {
       <Route path="/interviews/:id" element={<Protected><InterviewDetail /></Protected>} />
       <Route path="/interviews/:id/observe" element={<Protected><ObserveInterview /></Protected>} />
       <Route path="/assessments/:id" element={<Protected><AssessmentView /></Protected>} />
+      {/* The assessment's three readings are addressable: /ai and /differences
+          open on that tab, and the plain address opens on the human review. */}
+      <Route path="/assessments/:id/human" element={<Protected><AssessmentView /></Protected>} />
+      <Route path="/assessments/:id/ai" element={<Protected><AssessmentView /></Protected>} />
+      <Route path="/assessments/:id/differences" element={<Protected><AssessmentView /></Protected>} />
       {/* Declared before nothing else claims it; the blind view is a distinct
           surface from the full assessment precisely so a reviewer cannot land on
           the score by accident. */}
