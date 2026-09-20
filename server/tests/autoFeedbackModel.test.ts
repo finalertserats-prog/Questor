@@ -104,6 +104,34 @@ describe('when "Send feedback now" is offered', () => {
     expect(manualSendAllowed({ status, skipReason: '' }).allowed).toBe(false);
   });
 
+  // A send whose claim was taken while it was in flight: the email may well
+  // have reached the candidate, so sending again risks a duplicate.
+  it('is not offered for a send we could not confirm', () => {
+    expect(manualSendAllowed({ status: 'SENT_UNVERIFIED', skipReason: '' }).allowed).toBe(false);
+  });
+
+  it('says the unconfirmed send may already have reached the candidate', () => {
+    const verdict = manualSendAllowed({ status: 'SENT_UNVERIFIED', skipReason: '' });
+    expect(verdict.allowed === false && verdict.reason).toMatch(/may already have reached the candidate/i);
+  });
+
+  it('asks for that risk to be accepted rather than hiding the button', () => {
+    const verdict = manualSendAllowed({ status: 'SENT_UNVERIFIED', skipReason: '' });
+    expect(verdict.allowed === false && verdict.requiresConfirmation).toBe(true);
+  });
+
+  it('sends again once someone accepts the risk of a duplicate', () => {
+    expect(manualSendAllowed({ status: 'SENT_UNVERIFIED', skipReason: '' }, { confirmDuplicate: true })).toEqual({ allowed: true });
+  });
+
+  it('never lets that confirmation resend an email that is already on its way', () => {
+    expect(manualSendAllowed({ status: 'SENDING', skipReason: '' }, { confirmDuplicate: true }).allowed).toBe(false);
+  });
+
+  it('never lets that confirmation resend a confirmed send', () => {
+    expect(manualSendAllowed({ status: 'SENT', skipReason: '' }, { confirmDuplicate: true }).allowed).toBe(false);
+  });
+
   it.each(['WITHDRAWN', 'DECLINED', 'PARTIAL_INTERVIEW', 'NOT_COMPLETED'])('is not offered after a skip for %s', (skipReason) => {
     expect(manualSendAllowed({ status: 'SKIPPED', skipReason }).allowed).toBe(false);
   });

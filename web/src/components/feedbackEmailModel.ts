@@ -27,9 +27,11 @@ export interface FeedbackEmailState {
   readonly email: FeedbackEmailRecord | null;
   readonly canSendNow: boolean;
   readonly blockedReason: string | null;
+  /** The server will send again only if someone accepts the risk of a duplicate. */
+  readonly needsDuplicateConfirmation?: boolean;
 }
 
-export type FeedbackEmailTone = 'sent' | 'pending' | 'failed' | 'none';
+export type FeedbackEmailTone = 'sent' | 'unverified' | 'pending' | 'failed' | 'none';
 
 export interface FeedbackEmailSummary {
   readonly tone: FeedbackEmailTone;
@@ -38,13 +40,19 @@ export interface FeedbackEmailSummary {
   /** Whether "View" can show the text the candidate received. */
   readonly showText: boolean;
   readonly canSendNow: boolean;
+  /** Sending again is possible, but only after the duplicate risk is accepted. */
+  readonly needsDuplicateConfirmation: boolean;
 }
 
 const NOT_SENT = 'No feedback email has been sent to the candidate yet';
 
 export function feedbackEmailSummary(state: FeedbackEmailState, formatDate: (iso: string) => string): FeedbackEmailSummary {
   const email = state.email;
-  const base = { canSendNow: state.canSendNow, showText: false };
+  const base = {
+    canSendNow: state.canSendNow,
+    showText: false,
+    needsDuplicateConfirmation: state.needsDuplicateConfirmation === true,
+  };
   if (!email || email.status === 'DRAFT') {
     return { ...base, tone: 'none', headline: NOT_SENT, detail: state.canSendNow ? null : state.blockedReason };
   }
@@ -60,6 +68,15 @@ export function feedbackEmailSummary(state: FeedbackEmailState, formatDate: (iso
         headline: `Feedback sent to the candidate on ${email.sentAt ? formatDate(email.sentAt) : 'an unknown date'}`,
       };
     }
+    // Not a failure and not a confirmed send: the candidate probably has it.
+    // Saying "could not be sent" here is how someone ends up sending a second
+    // copy of their feedback.
+    case 'SENT_UNVERIFIED':
+      return {
+        ...base, tone: 'unverified', showText: Boolean(email.bodyText),
+        headline: 'The feedback email may have reached the candidate',
+        detail: email.lastError || state.blockedReason,
+      };
     case 'QUEUED':
     case 'SENDING':
       return {

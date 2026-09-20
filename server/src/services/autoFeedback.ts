@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
-import { getEmail } from '../providers/email/index.js';
+import { getEmail, type EmailMessage } from '../providers/email/index.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
@@ -13,7 +13,8 @@ import { startJob } from './jobs.js';
 import { generateFeedbackContent } from './autoFeedbackContent.js';
 import { feedbackContentSchema, type FeedbackContent, type FeedbackContentSource } from './feedbackContentModel.js';
 import {
-  SKIP_REASON_TEXT, afterFailedAttempt, feedbackEligibility, manualSendAllowed, type FeedbackSkipReason,
+  SENT_UNVERIFIED_REASON, SKIP_REASON_TEXT, afterFailedAttempt, feedbackEligibility, manualSendAllowed,
+  type FeedbackSkipReason,
 } from './autoFeedbackModel.js';
 
 /**
@@ -31,10 +32,14 @@ import {
  *     both send it.
  *   - A failed send goes back to QUEUED with a backoff, and to FAILED after the
  *     last attempt, with the error kept on the row where the hiring team sees it.
- *   - A send that died mid-way (claim older than FEEDBACK_SEND_STALE_MS) is
- *     marked FAILED, NOT retried: the email may already have gone, and a
- *     candidate receiving their feedback twice is worse than a person checking
- *     and pressing "Send feedback now".
+ *   - An in-flight send renews its claim (a heartbeat) and is bounded by
+ *     FEEDBACK_SEND_TIMEOUT_MS, so a slow provider is never mistaken for a
+ *     dead process. A claim that really does go stale is marked FAILED, NOT
+ *     retried: the email may already have gone, and a candidate receiving
+ *     their feedback twice is worse than a person checking.
+ *   - If the provider accepted the message but the claim had been taken
+ *     anyway, the row says SENT_UNVERIFIED rather than FAILED, and "Send
+ *     feedback now" refuses it until someone accepts the risk of a duplicate.
  *
  * Every skip rule is checked again at send time, not just at queue time: a
  * candidate can withdraw, say no, or lose their address in between.
@@ -42,8 +47,48 @@ import {
 
 export const FEEDBACK_EMAIL_JOB = { name: 'candidate-feedback-email', intervalMs: 15_000, ttlMs: 5 * 60_000, batch: 20 } as const;
 
-/** A claim older than this belongs to a send that died. */
+/** A claim older than this, and not renewed, belongs to a send that died. */
 export const FEEDBACK_SEND_STALE_MS = 10 * 60_000;
+
+/**
+ * How long one send may hold the provider. Far inside the stale window on
+ * purpose: a provider that hangs for longer than that would otherwise still
+ * be sending while another instance declared the claim abandoned.
+ */
+export const FEEDBACK_SEND_TIMEOUT_MS = 60_000;
+
+/** How often an in-flight send renews its claim, so a slow send is not swept. */
+export const FEEDBACK_SEND_HEARTBEAT_MS = 60_000;
+
+let sendTimeoutMs: number = FEEDBACK_SEND_TIMEOUT_MS;
+
+/** Test hook: shorten (or restore, with null) the provider timeout. */
+export function _setFeedbackSendTimeoutForTest(ms: number | null): void {
+  sendTimeoutMs = ms ?? FEEDBACK_SEND_TIMEOUT_MS;
+}
+
+/**
+ * Send, but never wait for ever.
+ *
+ * A timeout is reported as a failure and retried: the message may still have
+ * gone, but an email nobody can account for is worse than the risk of a
+ * second copy from a provider that had already stopped answering.
+ */
+async function sendWithinTimeout(email: { send: (m: EmailMessage) => Promise<unknown> }, message: EmailMessage): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`The mail provider did not answer within ${Math.round(sendTimeoutMs / 1000)}s.`)),
+      sendTimeoutMs,
+    );
+    timer.unref?.();
+  });
+  try {
+    await Promise.race([email.send(message), expiry]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Recorded by POST /interviews/:id/assess-partial; a partial interview is never emailed. */
 const ASSESS_PARTIAL_ACTION = 'interview.assess_partial';
@@ -51,7 +96,7 @@ const MAX_ERROR_CHARS = 500;
 const INTERRUPTED_NOTE = 'The send was interrupted and may or may not have reached the candidate. '
   + 'Check with them before sending again.';
 
-type Outcome = 'not-due' | 'sent' | 'skipped' | 'retry' | 'failed';
+type Outcome = 'not-due' | 'sent' | 'sent-unverified' | 'skipped' | 'retry' | 'failed';
 
 function errorText(err: unknown): string {
   return (err instanceof Error ? err.message : String(err)).slice(0, MAX_ERROR_CHARS);
@@ -128,20 +173,46 @@ export async function enqueueAutoFeedback(opts: {
 // ---------------------------------------------------------------------------
 
 /**
+ * The live claim on a row. `at` moves as the heartbeat renews it, and every
+ * conditional write this attempt makes is keyed on the current value — so a
+ * claim that was taken from us elsewhere can never be written over.
+ */
+interface Claim { at: Date }
+
+/**
+ * Keep saying "still working" while a send is in flight, so a slow provider
+ * is not mistaken for a dead process by the stale-claim sweep.
+ */
+function startClaimHeartbeat(id: string, claim: Claim): () => void {
+  const timer = setInterval(() => {
+    const next = new Date();
+    prisma.candidateFeedbackEmail
+      .updateMany({ where: { id, status: 'SENDING', claimedAt: claim.at }, data: { claimedAt: next } })
+      .then(({ count }) => { if (count === 1) claim.at = next; })
+      .catch((err: unknown) => logger.warn({ feedbackEmailId: id, err: errorText(err) }, 'Could not renew the feedback email claim'));
+  }, FEEDBACK_SEND_HEARTBEAT_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
+/**
  * One attempt at one email. Does nothing unless it wins the claim, so it is
  * safe to call from anywhere, any number of times at once.
  */
 export async function attemptFeedbackEmail(id: string, now = new Date()): Promise<Outcome> {
-  const claimedAt = now;
-  const claim = await prisma.candidateFeedbackEmail.updateMany({
+  const claim: Claim = { at: now };
+  const claimed = await prisma.candidateFeedbackEmail.updateMany({
     where: { id, status: 'QUEUED', nextAttemptAt: { lte: now } },
-    data: { status: 'SENDING', claimedAt },
+    data: { status: 'SENDING', claimedAt: claim.at },
   });
-  if (claim.count !== 1) return 'not-due';
+  if (claimed.count !== 1) return 'not-due';
+  const stopHeartbeat = startClaimHeartbeat(id, claim);
   try {
-    return await sendClaimed(id, claimedAt);
+    return await sendClaimed(id, claim);
   } catch (err) {
-    return recordFailure(id, claimedAt, err);
+    return recordFailure(id, claim, err);
+  } finally {
+    stopHeartbeat();
   }
 }
 
@@ -216,12 +287,12 @@ async function talkLink(session: { id: string; candidateId: string; tenantId: st
   }
 }
 
-async function sendClaimed(id: string, claimedAt: Date): Promise<Outcome> {
+async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   const row = await loadClaimed(id);
   const skip = await skipReasonAtSend(row);
   if (skip) {
     await prisma.candidateFeedbackEmail.updateMany({
-      where: { id, status: 'SENDING', claimedAt },
+      where: { id, status: 'SENDING', claimedAt: claim.at },
       data: { status: 'SKIPPED', skipReason: skip, claimedAt: null, nextAttemptAt: null },
     });
     await logAudit({
@@ -245,16 +316,24 @@ async function sendClaimed(id: string, claimedAt: Date): Promise<Outcome> {
   });
 
   const email = getEmail();
-  await email.send(rendered.message);
+  // Bounded well inside the stale window, so a provider that never answers
+  // cannot still be sending while another instance decides this claim is dead.
+  await sendWithinTimeout(email, rendered.message);
 
   const sentAt = new Date();
-  await prisma.candidateFeedbackEmail.updateMany({
-    where: { id, status: 'SENDING', claimedAt },
+  const confirmed = await prisma.candidateFeedbackEmail.updateMany({
+    where: { id, status: 'SENDING', claimedAt: claim.at },
     data: {
       status: 'SENT', sentAt, delivered: email.delivers, attempts: row.attempts + 1,
       lastError: '', claimedAt: null, nextAttemptAt: null,
     },
   });
+  // The claim was taken from us while the provider had the message: the email
+  // went, but the row now says something else (the sweep marks an abandoned
+  // claim FAILED). Leaving it there would invite a person to send a second
+  // copy, so the row says "probably sent, unconfirmed" and names the doubt.
+  if (confirmed.count !== 1) return recordUnverifiedSend(id, row, { sentAt, delivered: email.delivers });
+
   await logAudit({
     tenantId: row.tenantId,
     actorType: row.trigger === 'manual' && row.requestedByUserId ? 'user' : 'system',
@@ -265,14 +344,45 @@ async function sendClaimed(id: string, claimedAt: Date): Promise<Outcome> {
   return 'sent';
 }
 
-async function recordFailure(id: string, claimedAt: Date, err: unknown): Promise<Outcome> {
+/**
+ * A send that reached the provider but could not claim its own row back.
+ *
+ * Written only over a row nobody else is actively sending: if another attempt
+ * has since claimed it, that attempt owns the outcome and this one only says
+ * so in the log.
+ */
+async function recordUnverifiedSend(
+  id: string,
+  row: { attempts: number; tenantId: string; sessionId: string; assessmentId: string },
+  outcome: { sentAt: Date; delivered: boolean },
+): Promise<Outcome> {
+  const { count } = await prisma.candidateFeedbackEmail.updateMany({
+    where: { id, status: { in: ['QUEUED', 'FAILED', 'SKIPPED', 'DRAFT', 'SENT_UNVERIFIED'] } },
+    data: {
+      status: 'SENT_UNVERIFIED', sentAt: outcome.sentAt, delivered: outcome.delivered,
+      attempts: row.attempts + 1, lastError: SENT_UNVERIFIED_REASON, claimedAt: null, nextAttemptAt: null,
+    },
+  });
+  logger.error(
+    { feedbackEmailId: id, sessionId: row.sessionId, recorded: count === 1 },
+    'Candidate feedback email was sent but its claim had been released; recorded as unconfirmed',
+  );
+  await logAudit({
+    tenantId: row.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
+    action: 'feedback.email.sent_unverified', entityType: 'InterviewSession', entityId: row.sessionId,
+    after: { assessmentId: row.assessmentId, sentAt: outcome.sentAt, delivered: outcome.delivered, recorded: count === 1 },
+  });
+  return 'sent-unverified';
+}
+
+async function recordFailure(id: string, claim: Claim, err: unknown): Promise<Outcome> {
   const message = errorText(err);
   const row = await prisma.candidateFeedbackEmail.findUnique({ where: { id }, select: { attempts: true, tenantId: true, sessionId: true } });
   if (!row) return 'failed';
   const attempts = row.attempts + 1;
   const next = afterFailedAttempt(attempts, new Date());
   await prisma.candidateFeedbackEmail.updateMany({
-    where: { id, status: 'SENDING', claimedAt },
+    where: { id, status: 'SENDING', claimedAt: claim.at },
     data: { status: next.status, nextAttemptAt: next.nextAttemptAt, attempts, lastError: message, claimedAt: null },
   });
   if (next.status === 'FAILED') {
@@ -319,9 +429,10 @@ export async function deliverDueFeedbackEmails(now = new Date()): Promise<string
     take: FEEDBACK_EMAIL_JOB.batch,
     select: { id: true },
   });
-  const tally: Record<Outcome, number> = { 'not-due': 0, sent: 0, skipped: 0, retry: 0, failed: 0 };
+  const tally: Record<Outcome, number> = { 'not-due': 0, sent: 0, 'sent-unverified': 0, skipped: 0, retry: 0, failed: 0 };
   for (const d of due) tally[await attemptFeedbackEmail(d.id, now)] += 1;
-  return `${due.length} due: ${tally.sent} sent, ${tally.skipped} skipped, ${tally.retry} retrying, ${tally.failed} failed; ${interrupted} interrupted`;
+  return `${due.length} due: ${tally.sent} sent, ${tally['sent-unverified']} unconfirmed, ${tally.skipped} skipped, `
+    + `${tally.retry} retrying, ${tally.failed} failed; ${interrupted} interrupted`;
 }
 
 export function startFeedbackEmailDelivery(intervalMs: number = FEEDBACK_EMAIL_JOB.intervalMs): () => void {
@@ -351,6 +462,11 @@ export interface FeedbackEmailView {
   canSendNow: boolean;
   /** Why "Send feedback now" is not offered, in words for the hiring team. */
   blockedReason: string | null;
+  /**
+   * The one refusal a person may override: a send we could not confirm. The
+   * page has to name the risk of a second copy before it offers the button.
+   */
+  needsDuplicateConfirmation: boolean;
 }
 
 async function sessionEligibility(sessionId: string) {
@@ -368,12 +484,15 @@ async function sessionEligibility(sessionId: string) {
   return { session: s, eligibility };
 }
 
-export async function feedbackEmailState(sessionId: string): Promise<FeedbackEmailView> {
+export async function feedbackEmailState(
+  sessionId: string,
+  opts: { confirmDuplicate?: boolean } = {},
+): Promise<FeedbackEmailView> {
   const [row, { eligibility }] = await Promise.all([
     prisma.candidateFeedbackEmail.findUnique({ where: { sessionId } }),
     sessionEligibility(sessionId),
   ]);
-  const manual = manualSendAllowed(row);
+  const manual = manualSendAllowed(row, opts);
   const blockedReason = !manual.allowed ? manual.reason : eligibility.eligible ? null : SKIP_REASON_TEXT[eligibility.reason];
   return {
     email: row
@@ -387,11 +506,12 @@ export async function feedbackEmailState(sessionId: string): Promise<FeedbackEma
       : null,
     canSendNow: blockedReason === null,
     blockedReason,
+    needsDuplicateConfirmation: !manual.allowed && manual.requiresConfirmation === true,
   };
 }
 
-async function assertManualSendAllowed(sessionId: string) {
-  const state = await feedbackEmailState(sessionId);
+async function assertManualSendAllowed(sessionId: string, opts: { confirmDuplicate?: boolean } = {}) {
+  const state = await feedbackEmailState(sessionId, opts);
   if (!state.canSendNow) throw new HttpError(409, state.blockedReason ?? 'Feedback cannot be sent for this interview.');
 }
 
@@ -463,8 +583,11 @@ export async function sendFeedbackNow(opts: {
   assessmentId: string;
   userId: string;
   tenantId: string;
+  /** Someone has read the warning that the candidate may already have this email. */
+  confirmPossibleDuplicate?: boolean;
 }): Promise<FeedbackEmailView> {
-  await assertManualSendAllowed(opts.sessionId);
+  const confirmDuplicate = opts.confirmPossibleDuplicate === true;
+  await assertManualSendAllowed(opts.sessionId, { confirmDuplicate });
   const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: opts.sessionId }, select: { candidateId: true } });
   const now = new Date();
   const queued = {
@@ -488,7 +611,7 @@ export async function sendFeedbackNow(opts: {
     // check above: a second press arriving while the first one's email is
     // QUEUED, SENDING or already SENT must not reset it to QUEUED and send
     // the candidate a second copy.
-    const allowed = manualSendAllowed(existing);
+    const allowed = manualSendAllowed(existing, { confirmDuplicate });
     if (!allowed.allowed) throw new HttpError(409, allowed.reason);
     const { count } = await prisma.candidateFeedbackEmail.updateMany({
       where: { id: existing.id, status: existing.status, updatedAt: existing.updatedAt },
@@ -501,7 +624,7 @@ export async function sendFeedbackNow(opts: {
   await logAudit({
     tenantId: opts.tenantId, actorType: 'user', actorId: opts.userId,
     action: 'feedback.email.requested', entityType: 'InterviewSession', entityId: opts.sessionId,
-    after: { assessmentId: opts.assessmentId, previousStatus: existing?.status ?? null },
+    after: { assessmentId: opts.assessmentId, previousStatus: existing?.status ?? null, confirmedPossibleDuplicate: confirmDuplicate },
   });
   await attemptFeedbackEmail(id, now);
   return feedbackEmailState(opts.sessionId);

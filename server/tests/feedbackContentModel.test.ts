@@ -145,28 +145,64 @@ const FORBIDDEN: ReadonlyArray<readonly [string, string]> = [
   ['age-coded language', 'You bring the energy of a young team member.'],
   ['a protected characteristic', 'Your accent was easy to follow throughout.'],
   ['family status', 'Balancing this with your children must be hard.'],
+  ['moving them forward', 'We are moving you forward to the next step.'],
+  ['a next step in the process', 'The next steps will be shared with you shortly.'],
+  ['advancing them', 'We will advance you to the technical stage.'],
+  ['progressing them', 'We are progressing you to a conversation with the team.'],
+  ['a shortlist', 'You are on the shortlist for this role.'],
+  ['being selected', 'You have been selected for the next conversation.'],
+  ['not being selected', 'You were not selected for this role on this occasion.'],
+  ['an unsuccessful application', 'Your application was unsuccessful this time.'],
+  ['a good fit', 'You are a good fit for this team.'],
+  ['a strong fit', 'You were a strong fit for what we need.'],
+  ['not a fit', 'You are not a fit for this role.'],
+  ['proceeding', 'We will proceed with your candidacy.'],
+  ['taking them through', 'We would like to take you through to the next stage.'],
 ];
+
+function withStrength(sentence: string): FeedbackContent {
+  return { ...GENERIC_FEEDBACK, strengths: [sentence, GENERIC_FEEDBACK.strengths[1]] };
+}
 
 describe('guardrails on what a candidate may be told', () => {
   it.each(FORBIDDEN)('refuses %s', (_label, sentence) => {
-    const content: FeedbackContent = { ...GENERIC_FEEDBACK, strengths: [sentence, GENERIC_FEEDBACK.strengths[1]] };
-    expect(feedbackGuardrailViolations(content).length).toBeGreaterThan(0);
+    expect(feedbackGuardrailViolations(withStrength(sentence)).length).toBeGreaterThan(0);
+  });
+
+  // The model is told to quote the candidate, so it can also put its own
+  // words inside quotation marks. Stripping every quoted span before the
+  // verdict checks would have let "We recommend moving you to the next step."
+  // through as long as it was quoted.
+  it.each(FORBIDDEN)('refuses %s even inside quotation marks', (_label, sentence) => {
+    expect(feedbackGuardrailViolations(withStrength(`You might wonder about this: "${sentence}"`)).length).toBeGreaterThan(0);
   });
 
   it("does not treat the candidate's own quoted words as our verdict", () => {
-    const content: FeedbackContent = {
-      ...GENERIC_FEEDBACK,
-      strengths: ['You described your incident work clearly: "we detected the failure from alerts and passed the fix to the on-call team".', GENERIC_FEEDBACK.strengths[1]],
-    };
-    expect(feedbackGuardrailViolations(content)).toEqual([]);
+    const quote = 'we detected the failure from alerts and passed the fix to the on-call team';
+    const content = withStrength(`You described your incident work clearly: "${quote}".`);
+    expect(feedbackGuardrailViolations(content, { evidenceQuotes: [quote] })).toEqual([]);
+  });
+
+  it('allows a quoted answer that happens to use decision words, when we put the quote there', () => {
+    const quote = 'we moved forward with Qualtrics after the trial, and I owned the migration';
+    const content = withStrength(`You were specific about your tooling choices: "${quote}".`);
+    expect(feedbackGuardrailViolations(content, { evidenceQuotes: [quote] })).toEqual([]);
+  });
+
+  it('refuses the same wording when it is not a quote we inserted', () => {
+    const content = withStrength('You were specific about your tooling choices: "we moved forward with your application".');
+    expect(feedbackGuardrailViolations(content).length).toBeGreaterThan(0);
+  });
+
+  it('only forgives the exact quote, not a sentence the model built around it', () => {
+    const quote = 'I owned the billing pipeline end to end';
+    const content = withStrength(`You said: "${quote}, and we recommend moving you to the next step".`);
+    expect(feedbackGuardrailViolations(content, { evidenceQuotes: [quote] }).length).toBeGreaterThan(0);
   });
 
   it('still refuses exclusionary wording inside a quote', () => {
-    const content: FeedbackContent = {
-      ...GENERIC_FEEDBACK,
-      strengths: ['You said: "as a native speaker I handled every client call".', GENERIC_FEEDBACK.strengths[1]],
-    };
-    expect(feedbackGuardrailViolations(content).length).toBeGreaterThan(0);
+    const quote = 'as a native speaker I handled every client call';
+    expect(feedbackGuardrailViolations(withStrength(`You said: "${quote}".`), { evidenceQuotes: [quote] }).length).toBeGreaterThan(0);
   });
 });
 
@@ -194,6 +230,19 @@ describe('choosing what goes out', () => {
 
   it('falls back to the evidence wording when there is no model', () => {
     expect(chooseFeedbackContent({ model: null, result: MIXED }).source).toBe('evidence');
+  });
+
+  it('keeps the evidence wording when a quoted answer uses decision words', () => {
+    const tooling = assessment([
+      competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
+        evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote: 'we moved forward with Qualtrics after the trial and I owned the migration' }] }),
+    ]);
+    expect(chooseFeedbackContent({ model: null, result: tooling }).source).toBe('evidence');
+  });
+
+  it('refuses model wording that hides a decision inside quotation marks', () => {
+    const leaky: FeedbackContent = { ...MODEL, strengths: ['You may like to know: "we are moving you forward to the next step".', MODEL.strengths[1]] };
+    expect(chooseFeedbackContent({ model: leaky, result: MIXED }).source).toBe('evidence');
   });
 
   it('falls back to the generic wording when the evidence itself fails the checks', () => {

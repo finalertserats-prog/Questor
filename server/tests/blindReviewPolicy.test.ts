@@ -100,6 +100,52 @@ describe('when the organisation requires an independent review', () => {
   });
 });
 
+// Blind-first is now an option rather than a gate, so the artefact that says
+// "this reviewer saw the AI's answer before forming their own" has to be
+// written instead of enforced.
+const VIEWED_WITHOUT_VERDICT = 'assessment.ai_viewed_without_blind_verdict';
+
+const viewedEvents = (assessmentId: string) =>
+  prisma.auditEvent.count({ where: { action: VIEWED_WITHOUT_VERDICT, entityId: assessmentId } });
+
+describe('the record of an unblinded read', () => {
+  it('records that a reviewer opened the assessment without judging blind first', async () => {
+    const ids = await reviewerOnAssessment();
+    await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
+    expect(await viewedEvents(ids.assessmentId)).toBe(1);
+  });
+
+  it('records it once, however often they open it', async () => {
+    const ids = await reviewerOnAssessment();
+    await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
+    await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
+    await request(app).get(`/api/assessments/${ids.assessmentId}/report`).set(ids.auth);
+    expect(await viewedEvents(ids.assessmentId)).toBe(1);
+  });
+
+  it('names the reviewer', async () => {
+    const ids = await reviewerOnAssessment();
+    await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
+    const event = await prisma.auditEvent.findFirstOrThrow({ where: { action: VIEWED_WITHOUT_VERDICT, entityId: ids.assessmentId } });
+    expect({ actorId: event.actorId, tenantId: event.tenantId }).toEqual({ actorId: ids.userId, tenantId: ids.tenantId });
+  });
+
+  it('records nothing when the reviewer judged blind first', async () => {
+    const ids = await reviewerOnAssessment();
+    await request(app).post(`/api/assessments/${ids.assessmentId}/blind-verdict`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'My own read of the evidence.' });
+    await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
+    expect(await viewedEvents(ids.assessmentId)).toBe(0);
+  });
+
+  it('records nothing when the organisation requires a blind review and the read is refused', async () => {
+    const ids = await reviewerOnAssessment();
+    await requireBlind(ids.tenantId, true);
+    await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
+    expect(await viewedEvents(ids.assessmentId)).toBe(0);
+  });
+});
+
 describe('the admin switches', () => {
   it('saves both switches', async () => {
     const ids = await reviewerOnAssessment();

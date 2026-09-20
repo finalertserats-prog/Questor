@@ -5,6 +5,7 @@ import type { AuthClaims } from './auth.js';
 import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
 import { BLIND_BYPASS_ACTION, BLIND_REVIEW_STATUS, type Disposition } from './shadowModeCommon.js';
 import { blindReviewRequiredForTenant } from './candidateFeedbackPolicy.js';
+import { logAudit } from './audit.js';
 
 // ---------------------------------------------------------------------------
 // Blind view — the assessment with every AI conclusion withheld
@@ -309,6 +310,27 @@ export async function hasUnblindedAccess(assessmentId: string, reviewerId: strin
  */
 export const BLIND_REVIEW_REQUIRED = 'blind_review_required';
 
+/**
+ * Written the first time a reviewer opens an assessment without having judged
+ * blind. The gate is optional now, so this is what is left of the artefact:
+ * the compliance record still shows, per reviewer and per assessment, whether
+ * the human judgement came before the machine's or after it.
+ */
+export const UNBLINDED_READ_ACTION = 'assessment.ai_viewed_without_blind_verdict';
+
+/** Once per reviewer per assessment: a page they refresh is one read, not ten. */
+async function recordUnblindedRead(o: { assessmentId: string; userId: string; tenantId: string }): Promise<void> {
+  const already = await prisma.auditEvent.count({
+    where: { entityId: o.assessmentId, actorId: o.userId, action: UNBLINDED_READ_ACTION },
+  });
+  if (already > 0) return;
+  await logAudit({
+    tenantId: o.tenantId, actorId: o.userId, actorType: 'user', action: UNBLINDED_READ_ACTION,
+    entityType: 'AssessmentVersion', entityId: o.assessmentId,
+    after: { blindVerdictFirst: false, requiredByPolicy: false },
+  });
+}
+
 export async function assertUnblindedReadAllowed(o: {
   assessmentId: string;
   userId: string;
@@ -316,7 +338,10 @@ export async function assertUnblindedReadAllowed(o: {
   tenantId: string;
 }): Promise<void> {
   if (!o.canReview) return;
-  if (!await blindReviewRequiredForTenant(o.tenantId)) return;
+  if (!await blindReviewRequiredForTenant(o.tenantId)) {
+    if (!await hasUnblindedAccess(o.assessmentId, o.userId)) await recordUnblindedRead(o);
+    return;
+  }
   if (await hasUnblindedAccess(o.assessmentId, o.userId)) return;
   throw new HttpError(
     409,

@@ -20,8 +20,50 @@ function record(over: Partial<FeedbackEmailRecord> = {}): FeedbackEmailRecord {
 }
 
 function state(over: Partial<FeedbackEmailState> = {}): FeedbackEmailState {
-  return { email: record(), canSendNow: false, blockedReason: 'Feedback has already been sent to this candidate.', ...over };
+  return {
+    email: record(), canSendNow: false, needsDuplicateConfirmation: false,
+    blockedReason: 'Feedback has already been sent to this candidate.', ...over,
+  };
 }
+
+// A send that reached the mail provider but could not claim its own row back:
+// the candidate may well have it, so the page must not quietly offer to send
+// another copy.
+const UNVERIFIED_REASON = 'This feedback email may already have reached the candidate: the send was interrupted '
+  + 'before it could be confirmed. Check with them before sending it again.';
+
+const UNVERIFIED = () => state({
+  email: record({ status: 'SENT_UNVERIFIED', lastError: UNVERIFIED_REASON }),
+  canSendNow: false,
+  needsDuplicateConfirmation: true,
+  blockedReason: UNVERIFIED_REASON,
+});
+
+describe('a send that could not be confirmed', () => {
+  it('says it may have reached the candidate rather than that it failed', () => {
+    expect(feedbackEmailSummary(UNVERIFIED(), DATE).headline).toBe('The feedback email may have reached the candidate');
+  });
+
+  it('gives the reason to check before sending again', () => {
+    expect(feedbackEmailSummary(UNVERIFIED(), DATE).detail).toBe(UNVERIFIED_REASON);
+  });
+
+  it('still shows the text that went', () => {
+    expect(feedbackEmailSummary(UNVERIFIED(), DATE).showText).toBe(true);
+  });
+
+  it('does not offer a plain "Send feedback now"', () => {
+    expect(feedbackEmailSummary(UNVERIFIED(), DATE).canSendNow).toBe(false);
+  });
+
+  it('offers sending again only behind an acceptance of the risk', () => {
+    expect(feedbackEmailSummary(UNVERIFIED(), DATE).needsDuplicateConfirmation).toBe(true);
+  });
+
+  it('asks for no such acceptance anywhere else', () => {
+    expect(feedbackEmailSummary(state(), DATE).needsDuplicateConfirmation).toBe(false);
+  });
+});
 
 describe('a sent email', () => {
   it('says the feedback was sent and when', () => {

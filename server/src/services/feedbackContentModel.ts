@@ -174,6 +174,18 @@ export function buildEvidenceFeedback(result: AssessmentResult): FeedbackContent
   };
 }
 
+/**
+ * Every quote this module could have put in front of a candidate for this
+ * assessment, exactly as it would render them. The guardrails use it to tell
+ * the candidate's words from the model's (see feedbackGuardrailViolations).
+ */
+export function quotedEvidence(result: AssessmentResult): string[] {
+  const { shown, toGrow } = evidencedBuckets(result);
+  return [...shown, ...toGrow]
+    .flatMap((c) => c.evidence.map((e) => (e.quote?.trim() ? trimQuote(e.quote) : '')))
+    .filter(Boolean);
+}
+
 export interface FeedbackPromptInput {
   readonly clearlyShown: ReadonlyArray<{ competency: string; quotes: string[] }>;
   readonly roomToGrow: ReadonlyArray<{ competency: string; quotes: string[] }>;
@@ -194,8 +206,12 @@ export function feedbackPromptInput(result: AssessmentResult): FeedbackPromptInp
 
 /**
  * Words that turn feedback into a verdict, a promise or a machine's report.
- * Checked on our prose only — the candidate's quoted words are theirs, and
- * "we passed the fix to on-call" is not a pass mark.
+ *
+ * Checked on our prose. The candidate's own quoted words are theirs — "we
+ * passed the fix to on-call" is not a pass mark — but only quotes WE put
+ * there are forgiven (see `feedbackGuardrailViolations`): a model asked to
+ * quote the candidate can just as easily wrap its own verdict in quotation
+ * marks, and stripping every quoted span used to let that through.
  */
 const VERDICT_PATTERNS: ReadonlyArray<{ readonly re: RegExp; readonly label: string }> = [
   { re: /\bscor(e|es|ed|ing)\b/i, label: 'score' },
@@ -211,7 +227,14 @@ const VERDICT_PATTERNS: ReadonlyArray<{ readonly re: RegExp; readonly label: str
   // Our deciding, not theirs: "how you decide what to test first" is feedback.
   { re: /\bwe('ve| have| had)? decided\b|\b(we|the team) (will|would|are going to) decide\b|\b(hiring )?decision (on|about) (you|your)\b|\bhiring decision\b/i, label: 'decision' },
   { re: /\bhire[sd]?\b|\boffer\b|\breject\w*|\b(un)?successful\b|\bshortlist\w*/i, label: 'decision' },
-  { re: /\bprogress(ed|ing)\b|\byour application\b|\bnext (round|stage)s?\b/i, label: 'decision' },
+  { re: /\bprogress(ed|ing)\b|\byour application\b|\bnext (round|stage|step)s?\b/i, label: 'decision' },
+  // What happens to this person next. Worded around the candidate ("you",
+  // "your application") so a story about their own work — "we moved forward
+  // with Qualtrics", "I advanced the migration" — is still theirs to tell.
+  { re: /\b(mov(e|es|ed|ing)|tak(e|es|ing)|put(ting)?|push(ing)?) (you|your application|things|this) (forward|through|on)\b/i, label: 'decision' },
+  { re: /\b(advanc|progress|proceed|move)\w* (you|your application)\b|\bwe (will |would |are going to )?proceed\b/i, label: 'decision' },
+  { re: /\byou (are|were|have been|will be|are being) (not )?(selected|chosen|shortlisted|progressed|advanced)\b/i, label: 'decision' },
+  { re: /\b(a|an|not a|the) (good|strong|great|poor|bad|right|wrong|close)? ?fit\b/i, label: 'decision' },
   { re: /\bweight\w*|\bthreshold\b|\bthe bar\b/i, label: 'weighting' },
   { re: /\bguarantee\w*|\bpromise\w*|\bwill (hear|be in touch|contact)\b/i, label: 'promise' },
   { re: /\b(PROCEED|CONSIDER|DO_NOT_PROGRESS|SCORING_UNAVAILABLE)\b/, label: 'recommendation' },
@@ -219,22 +242,47 @@ const VERDICT_PATTERNS: ReadonlyArray<{ readonly re: RegExp; readonly label: str
   { re: /\bartificial intelligence\b|\bautomat(ed|ic|ically)\b|\balgorithm\w*|\bmachine learning\b|\blanguage model\b|\bchat ?bot\b/i, label: 'AI' },
 ];
 
-function withoutQuotes(text: string): string {
-  return text.replace(/"[^"]*"/g, '""').replace(/“[^”]*”/g, '""');
+/**
+ * Take out the quotes WE inserted, and nothing else.
+ *
+ * Provenance is the whole point. The evidence wording quotes the candidate
+ * verbatim from the assessment, and those strings are known here; anything
+ * else between quotation marks was written by the model and is checked like
+ * any other prose. The match is on the exact known string, so a model that
+ * appends its own verdict inside the same pair of quotes is still caught.
+ */
+function withoutOurQuotes(text: string, evidenceQuotes: readonly string[]): string {
+  let out = text;
+  for (const quote of evidenceQuotes) {
+    if (!quote) continue;
+    for (const [open, close] of [['"', '"'], ['“', '”']] as const) {
+      out = out.split(`${open}${quote}${close}`).join(`${open}${close}`);
+    }
+  }
+  return out;
 }
 
 /**
  * Every reason this content may not go to a candidate; empty when it may.
+ *
+ * `evidenceQuotes` are the candidate's own words as this module quoted them.
+ * Without them, every character is treated as ours — which is what must
+ * happen for model output.
+ *
  * Exclusionary and protected-characteristic checks run over everything,
  * quotes included: a candidate mentioning their children should not see it
  * quoted back in an email about their interview.
  */
-export function feedbackGuardrailViolations(content: FeedbackContent): string[] {
+export function feedbackGuardrailViolations(
+  content: FeedbackContent,
+  opts: { readonly evidenceQuotes?: readonly string[] } = {},
+): string[] {
   const parsed = feedbackContentSchema.safeParse(content);
   const violations: string[] = parsed.success ? [] : ['shape'];
   const points = [...content.strengths, ...content.develop, ...content.suggestions];
+  const evidenceQuotes = opts.evidenceQuotes ?? [];
   for (const text of points) {
-    const prose = withoutQuotes(text);
+    const prose = withoutOurQuotes(text, evidenceQuotes);
     for (const p of VERDICT_PATTERNS) {
       if (p.re.test(prose)) violations.push(`verdict:${p.label}`);
     }
@@ -255,13 +303,15 @@ export function chooseFeedbackContent(opts: {
 }): { content: FeedbackContent; source: FeedbackContentSource; rejected: string[] } {
   const rejected: string[] = [];
   if (opts.model) {
+    // No provenance for model wording: every word of it is treated as ours,
+    // quotation marks included.
     const problems = feedbackGuardrailViolations(opts.model);
     if (!problems.length) return { content: opts.model, source: 'model', rejected };
     rejected.push(...problems.map((p) => `model:${p}`));
   }
   const evidence = buildEvidenceFeedback(opts.result);
   if (evidence !== GENERIC_FEEDBACK) {
-    const problems = feedbackGuardrailViolations(evidence);
+    const problems = feedbackGuardrailViolations(evidence, { evidenceQuotes: quotedEvidence(opts.result) });
     if (!problems.length) return { content: evidence, source: 'evidence', rejected };
     rejected.push(...problems.map((p) => `evidence:${p}`));
   }

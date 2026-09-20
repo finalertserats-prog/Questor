@@ -430,10 +430,18 @@ assessmentsRouter.post('/:id/feedback-email/preview', requireCapability('assessm
   res.json({ preview: await previewFeedbackEmail({ sessionId: a.sessionId, assessmentId: a.id }) });
 }));
 
+// The only field here is the one refusal a person may override: a send that
+// reached the mail provider but could not be confirmed. It is opt-in per
+// request and recorded, so "who chose to risk a second copy" has an answer.
+const sendFeedbackEmailSchema = z.object({ confirmPossibleDuplicate: z.boolean().optional() }).strict();
+
 assessmentsRouter.post('/:id/feedback-email/send', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
-  z.object({}).strict().parse(req.body ?? {});
+  const body = sendFeedbackEmailSchema.parse(req.body ?? {});
   const a = await getAssessment(req.auth!, req.params.id);
-  res.json(await sendFeedbackNow({ sessionId: a.sessionId, assessmentId: a.id, userId: req.auth!.userId, tenantId: req.auth!.tenantId }));
+  res.json(await sendFeedbackNow({
+    sessionId: a.sessionId, assessmentId: a.id, userId: req.auth!.userId, tenantId: req.auth!.tenantId,
+    confirmPossibleDuplicate: body.confirmPossibleDuplicate,
+  }));
 }));
 
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
