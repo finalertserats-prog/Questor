@@ -518,6 +518,12 @@ const policySchema = z.object({
   autoCandidateFeedback: z.boolean().optional(),
   // Reviewers must judge blind before the assessment opens. Unset means off.
   requireBlindReview: z.boolean().optional(),
+  // Hours the hiring team has to complete a review before the candidate's
+  // feedback goes on its own. Unset means the deployment default (12).
+  feedbackReviewWindowHours: z.number().int().min(0).max(168).optional(),
+  // Sign the candidate's feedback as this organisation's hiring team instead
+  // of as Questor. Unset means Questor.
+  feedbackSignedByCompany: z.boolean().optional(),
   proctoringEnabled: z.boolean().optional(),
   recordingDefault: z.boolean().optional(),
   // Which provider creates meeting links for human rounds. Credentials stay

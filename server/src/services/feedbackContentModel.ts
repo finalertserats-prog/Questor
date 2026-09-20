@@ -1,93 +1,148 @@
 import { z } from 'zod';
-import type { AssessmentResult, CompetencyScore } from '../domain/types.js';
+import type { AssessmentResult, Competency, CompetencyScore, RoleSuccessProfile } from '../domain/types.js';
 import { lintJd } from '../engines/jdDraft.js';
 import { screenQuestion, validateNoProtectedInference } from '../engines/policyEngine.js';
 
 /**
- * What the candidate's automatic feedback email says, and the checks it must
- * pass before it may say it. Pure, so the rules are tested on their own
- * (tests/feedbackContentModel.test.ts); services/autoFeedbackContent.ts asks the
- * model and services/autoFeedback.ts sends.
+ * The candidate's feedback letter: an at-a-glance row per competency, a SWOT,
+ * what the role asks against what we heard, and three next steps (the design
+ * the owner approved). Pure, so every rule is tested on its own
+ * (tests/feedbackContentModel.test.ts); services/autoFeedbackContent.ts asks
+ * the model, providers/email/autoFeedbackEmail.ts renders it, and
+ * services/autoFeedback.ts sends it.
  *
- * Nobody reads this email before the candidate does — that is the owner's
- * decision — so the guardrails carry the weight a reviewer used to. The rules:
+ * Nobody need read this before the candidate does, so the guardrails carry the
+ * weight a reviewer would:
  *
- *   - Built from the assessment's EVIDENCE: competency names and the
- *     candidate's own words. A competency that was not discussed is never
- *     described as something to work on (the same rule as
- *     candidateFeedbackDraft.ts).
- *   - No score, level, rating, recommendation, pass/fail, ranking, weighting,
- *     comparison with other candidates, or anything that reads as a hiring
- *     decision or a promise. The assessment's conclusions are advisory to the
- *     hiring team; the candidate must not receive one as a verdict nobody made.
- *   - Nothing about protected characteristics, and no exclusionary wording.
- *   - No mention of AI. The email is from the company's hiring team.
+ *   - THE FACTS ARE OURS. Which competencies exist, how each was covered, and
+ *     the candidate's quoted words come from the assessment and the scorecard.
+ *     The model only ever writes prose around them, so it cannot invent a
+ *     competency, a quote or a coverage marker.
+ *   - NO SCORE, LEVEL, RATING, RECOMMENDATION, PASS/FAIL, RANKING, WEIGHTING,
+ *     COMPARISON, DECISION OR PROMISE, in any field. The four-segment bar in
+ *     the email is drawn from the marker, which is a word, not a number.
+ *   - A COMPETENCY WITH NO EVIDENCE IS "NOT COVERED", never a shortfall: the
+ *     conversation ran out of time, which is ours to own, not theirs.
+ *   - Nothing about protected characteristics, and no exclusionary wording,
+ *     including inside a quote.
  *
  * Anything that fails falls back: model wording, then wording built from the
  * evidence, then safe generic wording that asserts nothing about the person.
  */
 
-export interface FeedbackContent {
+export type CoverageMarker = 'strength' | 'partly' | 'not-covered';
+
+export const MARKER_LABEL: Readonly<Record<CoverageMarker, string>> = {
+  strength: 'Clear strength',
+  partly: 'Partly shown',
+  'not-covered': 'Not covered',
+};
+
+/** Filled segments of the four in the glance bar. Qualitative: three buckets, no scale. */
+export const MARKER_SEGMENTS: Readonly<Record<CoverageMarker, number>> = {
+  strength: 3,
+  partly: 2,
+  'not-covered': 0,
+};
+
+export interface FeedbackCompetency {
+  readonly id: string;
+  readonly name: string;
+  readonly marker: CoverageMarker;
+  /** From the scorecard the role was approved with — the employer's own words. */
+  readonly roleAsks: string;
+  readonly whatWeHeard: string;
+  /** The candidate's own words from the transcript; empty when it never came up. */
+  readonly quote: string;
+  readonly toGoFurther: string;
+}
+
+export interface FeedbackSwot {
   readonly strengths: readonly string[];
-  readonly develop: readonly string[];
-  readonly suggestions: readonly string[];
+  readonly weaknesses: readonly string[];
+  readonly opportunities: readonly string[];
+  readonly watchOuts: readonly string[];
+}
+
+export interface FeedbackContent {
+  readonly swot: FeedbackSwot;
+  readonly competencies: readonly FeedbackCompetency[];
+  readonly nextSteps: readonly string[];
 }
 
 export type FeedbackContentSource = 'model' | 'evidence' | 'generic';
 
-const point = z.string().trim().min(20).max(400);
+export interface FeedbackInput {
+  readonly result: AssessmentResult;
+  /** The approved scorecard, for what the role asks. Null when it cannot be read. */
+  readonly profile: RoleSuccessProfile | null;
+}
 
-/** The shape every version of the content must have, whoever wrote it. */
-export const feedbackContentSchema = z.object({
-  strengths: z.array(point).min(2).max(3),
-  develop: z.array(point).min(2).max(3),
-  suggestions: z.array(point).min(1).max(2),
+// ---------------------------------------------------------------------------
+// Shape
+// ---------------------------------------------------------------------------
+
+const bullet = z.string().trim().min(15).max(300);
+const line = z.string().trim().min(10).max(400);
+
+const swotSchema = z.object({
+  strengths: z.array(bullet).min(2).max(3),
+  weaknesses: z.array(bullet).min(2).max(3),
+  opportunities: z.array(bullet).min(2).max(3),
+  watchOuts: z.array(bullet).min(2).max(3),
 }).strict();
 
-/**
- * True of anyone who sat through an interview, and nothing more. Used when
- * there is too little evidence to be specific, or when the specific wording
- * failed a check.
- */
-export const GENERIC_FEEDBACK: FeedbackContent = {
-  strengths: [
-    'You engaged openly with the questions and drew on examples from your own experience.',
-    'You stayed with the conversation through to the end, and we appreciated the time you gave it.',
-  ],
-  develop: [
-    'Giving each example a clear shape — the situation, what you personally did, and what changed as a result — makes it easier to follow your thinking.',
-    'Where you can, name the specific tools, choices and trade-offs involved, so the depth of your experience comes through.',
-  ],
-  suggestions: [
-    'Before your next interview, pick two or three recent pieces of work and note down the problem, your own part in it and the outcome. It makes those stories much easier to tell when time is short.',
-  ],
-};
+export const feedbackContentSchema = z.object({
+  swot: swotSchema,
+  competencies: z.array(z.object({
+    id: z.string().min(1).max(200),
+    name: z.string().trim().min(1).max(200),
+    marker: z.enum(['strength', 'partly', 'not-covered']),
+    roleAsks: line,
+    whatWeHeard: line,
+    quote: z.string().max(600),
+    toGoFurther: line,
+  }).strict()).min(1).max(12),
+  nextSteps: z.array(line).min(2).max(3),
+}).strict();
 
-const MAX_POINTS = 3;
-const MAX_SUGGESTIONS = 2;
-/** Long enough to be recognisable, short enough to read as a quote rather than a transcript. */
-const MAX_QUOTE_CHARS = 160;
+/** What the model may contribute: prose only, keyed to competencies we already know. */
+export const modelFeedbackSchema = z.object({
+  swot: swotSchema,
+  notes: z.array(z.object({
+    competencyId: z.string().min(1).max(200),
+    whatWeHeard: line,
+    toGoFurther: line,
+  }).strict()).max(12),
+  nextSteps: z.array(line).min(2).max(3),
+}).strict();
 
-/**
- * Usable only if it was actually graded and at least one span of what the
- * candidate said backs it. A failed grading call is a fact about our system,
- * not about the person.
- */
-function isEvidenced(c: CompetencyScore): boolean {
-  return !c.notEnoughEvidence && c.level !== null && !c.gradingUnavailable
-    && Array.isArray(c.evidence) && c.evidence.some((e) => Boolean(e.quote?.trim()));
+export type ModelFeedback = z.infer<typeof modelFeedbackSchema>;
+
+// ---------------------------------------------------------------------------
+// The facts
+// ---------------------------------------------------------------------------
+
+const MAX_COMPETENCIES = 8;
+/** Long enough to be recognisable, short enough to read as a quote. */
+const MAX_QUOTE_CHARS = 220;
+
+function hasEvidence(c: CompetencyScore): boolean {
+  return Array.isArray(c.evidence) && c.evidence.some((e) => Boolean(e.quote?.trim()));
 }
 
-/** Bucketed by how far above or below the bar each one was — used for order only, never shown. */
-function evidencedBuckets(result: AssessmentResult): { shown: CompetencyScore[]; toGrow: CompetencyScore[] } {
-  const all = Array.isArray(result.competencies) ? result.competencies.filter(isEvidenced) : [];
-  const margin = (c: CompetencyScore) => (c.level ?? 0) - c.requiredLevel;
-  const shown = all.filter((c) => margin(c) >= 0).sort((a, b) => margin(b) - margin(a));
-  const toGrow = all.filter((c) => margin(c) < 0).sort((a, b) => margin(a) - margin(b));
-  return { shown, toGrow };
+/**
+ * How the conversation went on this competency, in three buckets.
+ *
+ * `gradingUnavailable` counts as not covered even when a level survives on the
+ * row: that flag means our rubric call failed, which is a fact about our
+ * system and not about the person.
+ */
+export function coverageMarker(c: CompetencyScore): CoverageMarker {
+  if (c.notEnoughEvidence || c.level === null || c.gradingUnavailable || !hasEvidence(c)) return 'not-covered';
+  return c.level >= c.requiredLevel ? 'strength' : 'partly';
 }
 
-/** Straight double quotes inside would end our quotation early. */
 function trimQuote(quote: string): string {
   const clean = quote.replace(/\s+/g, ' ').replace(/["“”]/g, "'").trim();
   if (clean.length <= MAX_QUOTE_CHARS) return clean;
@@ -96,13 +151,9 @@ function trimQuote(quote: string): string {
   return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
-/**
- * The first quote for this competency not already used for another. One
- * answer often evidences several competencies, and the same sentence quoted
- * under three headings reads as though we heard only one thing.
- */
-function unusedQuote(c: CompetencyScore, used: Set<string>): string {
-  for (const span of c.evidence) {
+/** The first of the candidate's own words for this competency, or nothing. */
+function firstQuote(c: CompetencyScore, used: Set<string>): string {
+  for (const span of c.evidence ?? []) {
     const quote = span.quote?.trim() ? trimQuote(span.quote) : '';
     if (quote && !used.has(quote)) {
       used.add(quote);
@@ -112,106 +163,190 @@ function unusedQuote(c: CompetencyScore, used: Set<string>): string {
   return '';
 }
 
-const STRENGTH_TEMPLATES: ReadonlyArray<(name: string, quote: string) => string> = [
-  (name, quote) => `${name} came across clearly. You gave a concrete example when you said "${quote}".`,
-  (name, quote) => `You showed real substance on ${name}, for instance when you said "${quote}".`,
-  (name, quote) => `Your answers on ${name} were specific and easy to follow: "${quote}" is a good example.`,
-];
-
-const UNQUOTED_STRENGTH_TEMPLATES: ReadonlyArray<(name: string) => string> = [
-  (name) => `${name} came across clearly in the examples you gave.`,
-  (name) => `You showed real substance on ${name}, with specific examples from your own work.`,
-  (name) => `Your answers on ${name} were specific and easy to follow.`,
-];
-
-// The candidate's weaker answer is not quoted back at them: quoting it reads
-// as an accusation. The competency name and a concrete way forward are enough.
-const DEVELOP_TEMPLATES: ReadonlyArray<(name: string) => string> = [
-  (name) => `On ${name}, there is room to go deeper. Walking through the specific steps you took, the choices you weighed and what changed as a result would show more of your experience.`,
-  (name) => `${name} is worth building on. A concrete example with your own part in it and the outcome spelled out would make your experience here much clearer.`,
-  (name) => `When ${name} came up, a more detailed example would help: the situation, what you personally did, and how you knew it had worked.`,
-];
-
-function fillTo(items: string[], fallback: readonly string[], min: number): string[] {
-  const out = [...items];
-  for (const extra of fallback) {
-    if (out.length >= min) break;
-    if (!out.includes(extra)) out.push(extra);
-  }
-  return out;
+/** What the role asks, in the employer's own words from the approved scorecard. */
+function roleAsksFor(name: string, defined: Competency | undefined): string {
+  const definition = defined?.definition?.trim() ?? '';
+  if (definition.length >= 10) return definition;
+  const indicator = defined?.indicators?.find((i) => i.trim().length >= 10)?.trim();
+  if (indicator) return indicator;
+  return `Showing ${name.toLowerCase()} in the work you do day to day.`;
 }
 
-/**
- * Feedback worded from the evidence, with no model involved. Always has the
- * full shape; returns GENERIC_FEEDBACK itself when nothing was evidenced, so a
- * caller can tell the two apart.
- */
-export function buildEvidenceFeedback(result: AssessmentResult): FeedbackContent {
-  const { shown, toGrow } = evidencedBuckets(result);
-  if (!shown.length && !toGrow.length) return GENERIC_FEEDBACK;
+const HEARD_TEMPLATES: Readonly<Record<CoverageMarker, (name: string) => string>> = {
+  strength: () => 'You gave a specific example from your own work and walked through what you did.',
+  partly: () => 'This came up, and your example stayed brief, so there was less to go on than the role asks for.',
+  'not-covered': () => 'This did not come up in the time we had, so there is nothing here either way.',
+};
 
+const FURTHER_TEMPLATES: Readonly<Record<CoverageMarker, (name: string) => string>> = {
+  strength: () => 'Name the result as well as the work: what changed because of it, and how you knew.',
+  partly: () => 'Walk through the steps you took, the choices you weighed, and what changed as a result.',
+  'not-covered': (name) => `Have one short story ready about ${name.toLowerCase()}: what you did, and what you took from it.`,
+};
+
+/** The competency rows: names, markers, quotes and what the role asks — never the model's. */
+function competencyFacts(input: FeedbackInput): FeedbackCompetency[] {
+  const defined = new Map((input.profile?.competencies ?? []).map((c) => [c.id, c]));
   const used = new Set<string>();
-  const strengths = shown.slice(0, MAX_POINTS).map((c, i) => {
-    const quote = unusedQuote(c, used);
-    return quote
-      ? STRENGTH_TEMPLATES[i % STRENGTH_TEMPLATES.length](c.name, quote)
-      : UNQUOTED_STRENGTH_TEMPLATES[i % UNQUOTED_STRENGTH_TEMPLATES.length](c.name);
-  });
-  const develop = toGrow.slice(0, MAX_POINTS).map((c, i) => DEVELOP_TEMPLATES[i % DEVELOP_TEMPLATES.length](c.name));
+  const scores = Array.isArray(input.result.competencies) ? input.result.competencies : [];
+  // Covered first: the letter should open on what the candidate did show.
+  const order: Record<CoverageMarker, number> = { strength: 0, partly: 1, 'not-covered': 2 };
+  return [...scores]
+    .sort((a, b) => order[coverageMarker(a)] - order[coverageMarker(b)])
+    .slice(0, MAX_COMPETENCIES)
+    .map((c) => {
+      const marker = coverageMarker(c);
+      return {
+        id: c.id,
+        name: c.name,
+        marker,
+        roleAsks: roleAsksFor(c.name, defined.get(c.id)),
+        whatWeHeard: HEARD_TEMPLATES[marker](c.name),
+        quote: marker === 'not-covered' ? '' : firstQuote(c, used),
+        toGoFurther: FURTHER_TEMPLATES[marker](c.name),
+      };
+    });
+}
 
-  const suggestions: string[] = [];
-  if (toGrow.length) {
-    suggestions.push(`Before your next interview, prepare one or two short stories about ${toGrow[0].name}: the problem, what you personally did, and the outcome.`);
-  }
-  if (shown.length) {
-    suggestions.push(`Keep using concrete examples like the ones you gave on ${shown[0].name}. They are the most convincing part of any answer.`);
-  }
+// ---------------------------------------------------------------------------
+// The prose, without a model
+// ---------------------------------------------------------------------------
+
+/** True of anyone who sat through an interview, and nothing more. */
+export const GENERIC_SWOT: FeedbackSwot = {
+  strengths: [
+    'You engaged openly with the questions and drew on examples from your own experience.',
+    'You stayed with the conversation through to the end, and we appreciated the time you gave it.',
+  ],
+  weaknesses: [
+    'Some examples ended before the outcome, so what changed as a result was left unsaid.',
+    'There was not always time to hear the specific tools and choices behind the work.',
+  ],
+  opportunities: [
+    'One concrete detail per story — what you changed, and what it saved — lifts every answer.',
+    'Naming the part you personally played makes the scale of your work much clearer.',
+  ],
+  watchOuts: [
+    'Long answers can drift, and the strongest point often arrives last. Lead with it.',
+    'Saying "we" where the decision was yours can read as a smaller part than you had.',
+  ],
+};
+
+export const GENERIC_NEXT_STEPS: readonly string[] = [
+  'Take your three best examples and write the last line of each: what changed, in numbers where you have them.',
+  'Re-tell one of those stories out loud, naming your own decisions, and keep "we" for what the team truly did together.',
+  'Keep a two-sentence story ready for each tool on your CV: a limit you hit, and how you worked around it.',
+];
+
+function swotFromEvidence(competencies: readonly FeedbackCompetency[]): FeedbackSwot {
+  const strong = competencies.filter((c) => c.marker === 'strength');
+  const partly = competencies.filter((c) => c.marker === 'partly');
+  const missing = competencies.filter((c) => c.marker === 'not-covered');
+
+  const fill = (items: string[], fallback: readonly string[]) => {
+    const out = items.slice(0, 3);
+    for (const extra of fallback) {
+      if (out.length >= 2) break;
+      if (!out.includes(extra)) out.push(extra);
+    }
+    return out;
+  };
 
   return {
-    strengths: fillTo(strengths, GENERIC_FEEDBACK.strengths, 2),
-    develop: fillTo(develop, GENERIC_FEEDBACK.develop, 2),
-    suggestions: fillTo(suggestions, GENERIC_FEEDBACK.suggestions, 1).slice(0, MAX_SUGGESTIONS),
+    strengths: fill(strong.map((c) => `${c.name}: you gave a concrete example from your own work.`), GENERIC_SWOT.strengths),
+    // Only ever about something the candidate actually spoke to, or about what
+    // there was no time for — never a gap we are guessing at.
+    weaknesses: fill([
+      ...partly.map((c) => `${c.name}: the example stayed brief, so there was less to go on than the role asks for.`),
+      ...missing.map((c) => `${c.name} did not come up, so there is nothing on it either way.`),
+    ], GENERIC_SWOT.weaknesses),
+    // The competency's own name, as the scorecard writes it: lower-casing it
+    // turned "SQL" into "sql" in front of the candidate.
+    opportunities: fill(strong.map((c) => `Lead with ${c.name} — it was the clearest thing you showed us.`), GENERIC_SWOT.opportunities),
+    // Advice, not an assertion about this person.
+    watchOuts: fill([], GENERIC_SWOT.watchOuts),
   };
 }
 
-/**
- * Every quote this module could have put in front of a candidate for this
- * assessment, exactly as it would render them. The guardrails use it to tell
- * the candidate's words from the model's (see feedbackGuardrailViolations).
- */
-export function quotedEvidence(result: AssessmentResult): string[] {
-  const { shown, toGrow } = evidencedBuckets(result);
-  return [...shown, ...toGrow]
-    .flatMap((c) => c.evidence.map((e) => (e.quote?.trim() ? trimQuote(e.quote) : '')))
-    .filter(Boolean);
+function nextStepsFromEvidence(competencies: readonly FeedbackCompetency[]): string[] {
+  const partly = competencies.find((c) => c.marker === 'partly');
+  const missing = competencies.find((c) => c.marker === 'not-covered');
+  const steps: string[] = [];
+  if (partly) steps.push(`Write out one ${partly.name.toLowerCase()} story in full: the situation, what you did, and what changed. This week.`);
+  if (missing) steps.push(`Prepare a short example about ${missing.name.toLowerCase()}, so it is ready the next time it comes up.`);
+  for (const generic of GENERIC_NEXT_STEPS) {
+    if (steps.length >= 3) break;
+    if (!steps.includes(generic)) steps.push(generic);
+  }
+  return steps.slice(0, 3);
 }
+
+/** The whole letter, deterministic, with no model involved. */
+export function buildEvidenceFeedback(input: FeedbackInput): FeedbackContent {
+  const competencies = competencyFacts(input);
+  const covered = competencies.filter((c) => c.marker !== 'not-covered');
+  return {
+    swot: covered.length ? swotFromEvidence(competencies) : GENERIC_SWOT,
+    competencies,
+    nextSteps: covered.length ? nextStepsFromEvidence(competencies) : [...GENERIC_NEXT_STEPS],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The model's part
+// ---------------------------------------------------------------------------
 
 export interface FeedbackPromptInput {
-  readonly clearlyShown: ReadonlyArray<{ competency: string; quotes: string[] }>;
-  readonly roomToGrow: ReadonlyArray<{ competency: string; quotes: string[] }>;
+  readonly competencies: ReadonlyArray<{
+    readonly id: string;
+    readonly competency: string;
+    readonly coverage: string;
+    readonly roleAsks: string;
+    readonly theirWords: string;
+  }>;
 }
 
 /**
- * What the model is shown: buckets, names and quotes. No level, score, weight
- * or recommendation reaches it, so it has none to repeat.
+ * What the model is shown: names, coverage in words, what the role asks and
+ * the candidate's quoted words. No level, score, weight or recommendation
+ * reaches it, so it has none to repeat.
  */
-export function feedbackPromptInput(result: AssessmentResult): FeedbackPromptInput {
-  const { shown, toGrow } = evidencedBuckets(result);
-  const view = (c: CompetencyScore) => ({
-    competency: c.name,
-    quotes: c.evidence.map((e) => e.quote?.trim() ?? '').filter(Boolean).slice(0, 2).map(trimQuote),
-  });
-  return { clearlyShown: shown.slice(0, MAX_POINTS).map(view), roomToGrow: toGrow.slice(0, MAX_POINTS).map(view) };
+export function feedbackPromptInput(input: FeedbackInput): FeedbackPromptInput {
+  return {
+    competencies: competencyFacts(input).map((c) => ({
+      id: c.id,
+      competency: c.name,
+      coverage: MARKER_LABEL[c.marker],
+      roleAsks: c.roleAsks,
+      theirWords: c.quote,
+    })),
+  };
 }
+
+/** The model's prose over our facts. Notes for unknown competencies are dropped. */
+export function composeFeedbackContent(opts: { facts: readonly FeedbackCompetency[]; model: ModelFeedback }): FeedbackContent {
+  const notes = new Map(opts.model.notes.map((n) => [n.competencyId, n]));
+  return {
+    swot: opts.model.swot,
+    competencies: opts.facts.map((c) => {
+      const note = notes.get(c.id);
+      return note ? { ...c, whatWeHeard: note.whatWeHeard, toGoFurther: note.toGoFurther } : c;
+    }),
+    nextSteps: opts.model.nextSteps,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Guardrails
+// ---------------------------------------------------------------------------
 
 /**
  * Words that turn feedback into a verdict, a promise or a machine's report.
  *
- * Checked on our prose. The candidate's own quoted words are theirs — "we
- * passed the fix to on-call" is not a pass mark — but only quotes WE put
- * there are forgiven (see `feedbackGuardrailViolations`): a model asked to
- * quote the candidate can just as easily wrap its own verdict in quotation
- * marks, and stripping every quoted span used to let that through.
+ * Checked on every field we write. The candidate's quoted words and the
+ * employer's own description of the role are checked too, but only for
+ * exclusionary and protected-characteristic wording: "we passed the fix to
+ * on-call" is not a pass mark, and a job description is about the job.
  */
 const VERDICT_PATTERNS: ReadonlyArray<{ readonly re: RegExp; readonly label: string }> = [
   { re: /\bscor(e|es|ed|ing)\b/i, label: 'score' },
@@ -228,9 +363,8 @@ const VERDICT_PATTERNS: ReadonlyArray<{ readonly re: RegExp; readonly label: str
   { re: /\bwe('ve| have| had)? decided\b|\b(we|the team) (will|would|are going to) decide\b|\b(hiring )?decision (on|about) (you|your)\b|\bhiring decision\b/i, label: 'decision' },
   { re: /\bhire[sd]?\b|\boffer\b|\breject\w*|\b(un)?successful\b|\bshortlist\w*/i, label: 'decision' },
   { re: /\bprogress(ed|ing)\b|\byour application\b|\bnext (round|stage|step)s?\b/i, label: 'decision' },
-  // What happens to this person next. Worded around the candidate ("you",
-  // "your application") so a story about their own work — "we moved forward
-  // with Qualtrics", "I advanced the migration" — is still theirs to tell.
+  // What happens to this person next. Worded around the candidate, so a story
+  // about their own work — "we moved forward with Qualtrics" — is still theirs.
   { re: /\b(mov(e|es|ed|ing)|tak(e|es|ing)|put(ting)?|push(ing)?) (you|your application|things|this) (forward|through|on)\b/i, label: 'decision' },
   { re: /\b(advanc|progress|proceed|move)\w* (you|your application)\b|\bwe (will |would |are going to )?proceed\b/i, label: 'decision' },
   { re: /\byou (are|were|have been|will be|are being) (not )?(selected|chosen|shortlisted|progressed|advanced)\b/i, label: 'decision' },
@@ -242,78 +376,73 @@ const VERDICT_PATTERNS: ReadonlyArray<{ readonly re: RegExp; readonly label: str
   { re: /\bartificial intelligence\b|\bautomat(ed|ic|ically)\b|\balgorithm\w*|\bmachine learning\b|\blanguage model\b|\bchat ?bot\b/i, label: 'AI' },
 ];
 
-/**
- * Take out the quotes WE inserted, and nothing else.
- *
- * Provenance is the whole point. The evidence wording quotes the candidate
- * verbatim from the assessment, and those strings are known here; anything
- * else between quotation marks was written by the model and is checked like
- * any other prose. The match is on the exact known string, so a model that
- * appends its own verdict inside the same pair of quotes is still caught.
- */
-function withoutOurQuotes(text: string, evidenceQuotes: readonly string[]): string {
-  let out = text;
-  for (const quote of evidenceQuotes) {
-    if (!quote) continue;
-    for (const [open, close] of [['"', '"'], ['“', '”']] as const) {
-      out = out.split(`${open}${quote}${close}`).join(`${open}${close}`);
-    }
-  }
+/** Applies to everything, ours or theirs. */
+function personChecks(text: string): string[] {
+  const out: string[] = [];
+  for (const issue of lintJd(text)) out.push(`exclusionary:${issue.term.toLowerCase()}`);
+  out.push(...screenQuestion(text).violations, ...validateNoProtectedInference(text).violations);
   return out;
 }
 
-/**
- * Every reason this content may not go to a candidate; empty when it may.
- *
- * `evidenceQuotes` are the candidate's own words as this module quoted them.
- * Without them, every character is treated as ours — which is what must
- * happen for model output.
- *
- * Exclusionary and protected-characteristic checks run over everything,
- * quotes included: a candidate mentioning their children should not see it
- * quoted back in an email about their interview.
- */
-export function feedbackGuardrailViolations(
-  content: FeedbackContent,
-  opts: { readonly evidenceQuotes?: readonly string[] } = {},
-): string[] {
+/** Every reason this content may not go to a candidate; empty when it may. */
+export function feedbackGuardrailViolations(content: FeedbackContent): string[] {
   const parsed = feedbackContentSchema.safeParse(content);
   const violations: string[] = parsed.success ? [] : ['shape'];
-  const points = [...content.strengths, ...content.develop, ...content.suggestions];
-  const evidenceQuotes = opts.evidenceQuotes ?? [];
-  for (const text of points) {
-    const prose = withoutOurQuotes(text, evidenceQuotes);
+
+  const ours = [
+    ...content.swot.strengths, ...content.swot.weaknesses, ...content.swot.opportunities, ...content.swot.watchOuts,
+    ...content.nextSteps,
+    ...content.competencies.flatMap((c) => [c.name, c.whatWeHeard, c.toGoFurther]),
+  ];
+  for (const text of ours) {
     for (const p of VERDICT_PATTERNS) {
-      if (p.re.test(prose)) violations.push(`verdict:${p.label}`);
+      if (p.re.test(text)) violations.push(`verdict:${p.label}`);
     }
-    for (const issue of lintJd(text)) violations.push(`exclusionary:${issue.term.toLowerCase()}`);
-    violations.push(...screenQuestion(text).violations, ...validateNoProtectedInference(text).violations);
+    violations.push(...personChecks(text));
+  }
+  // Theirs: the candidate's words and the employer's description of the role.
+  for (const text of content.competencies.flatMap((c) => [c.quote, c.roleAsks])) {
+    if (text) violations.push(...personChecks(text));
   }
   return [...new Set(violations)];
 }
 
 /**
- * Pick what goes out: the model's wording if it passes, else the evidence
- * wording if that passes, else the generic wording. `rejected` lists why the
- * earlier choices were refused, for the log — never for the candidate.
+ * Pick what goes out: the model's wording if it passes, else the wording built
+ * from the evidence, else the generic wording over the same facts. `rejected`
+ * lists why the earlier choices were refused, for the log — never for the
+ * candidate.
  */
 export function chooseFeedbackContent(opts: {
-  model: FeedbackContent | null;
-  result: AssessmentResult;
+  model: ModelFeedback | null;
+  input: FeedbackInput;
 }): { content: FeedbackContent; source: FeedbackContentSource; rejected: string[] } {
   const rejected: string[] = [];
+  const evidence = buildEvidenceFeedback(opts.input);
+
   if (opts.model) {
-    // No provenance for model wording: every word of it is treated as ours,
-    // quotation marks included.
-    const problems = feedbackGuardrailViolations(opts.model);
-    if (!problems.length) return { content: opts.model, source: 'model', rejected };
+    const composed = composeFeedbackContent({ facts: evidence.competencies, model: opts.model });
+    const problems = feedbackGuardrailViolations(composed);
+    if (!problems.length) return { content: composed, source: 'model', rejected };
     rejected.push(...problems.map((p) => `model:${p}`));
   }
-  const evidence = buildEvidenceFeedback(opts.result);
-  if (evidence !== GENERIC_FEEDBACK) {
-    const problems = feedbackGuardrailViolations(evidence, { evidenceQuotes: quotedEvidence(opts.result) });
-    if (!problems.length) return { content: evidence, source: 'evidence', rejected };
-    rejected.push(...problems.map((p) => `evidence:${p}`));
-  }
-  return { content: GENERIC_FEEDBACK, source: 'generic', rejected };
+
+  const problems = feedbackGuardrailViolations(evidence);
+  if (!problems.length) return { content: evidence, source: 'evidence', rejected };
+  rejected.push(...problems.map((p) => `evidence:${p}`));
+
+  // Last resort: our own safe wording over the same facts, with anything the
+  // checks objected to — a quote, a line from the job description — left out.
+  const generic: FeedbackContent = {
+    swot: GENERIC_SWOT,
+    competencies: evidence.competencies.map((c) => ({
+      ...c,
+      roleAsks: `Showing ${c.name.toLowerCase()} in the work you do day to day.`,
+      whatWeHeard: HEARD_TEMPLATES[c.marker](c.name),
+      quote: '',
+      toGoFurther: FURTHER_TEMPLATES[c.marker](c.name),
+    })),
+    nextSteps: [...GENERIC_NEXT_STEPS],
+  };
+  return { content: generic, source: 'generic', rejected };
 }

@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { REASONING_EFFORTS, type ReasoningEffort } from './providers/llm/types.js';
+import { DEFAULT_REVIEW_WINDOW_HOURS } from './services/autoFeedbackModel.js';
 
 function env(key: string, fallback = ''): string {
   return process.env[key] ?? fallback;
@@ -44,6 +45,24 @@ export function parseDurationMsSetting(variable: string, raw: string | undefined
     throw new Error(
       `${variable} must be a whole number of milliseconds, 0 or more (got "${raw}"). `
       + 'Fix the environment variable; the server will not start with an unusable duration.',
+    );
+  }
+  return value;
+}
+
+/**
+ * Read a non-negative whole number of hours, or refuse to start. Same
+ * reasoning as the duration above: a typo here would decide how long a real
+ * candidate waits for their feedback.
+ */
+export function parseHoursSetting(variable: string, raw: string | undefined, fallback: number): number {
+  if (raw === undefined) return fallback;
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (trimmed === '' || !Number.isInteger(value) || value < 0 || value > 168) {
+    throw new Error(
+      `${variable} must be a whole number of hours between 0 and 168 (got "${raw}"). `
+      + 'Fix the environment variable; the server will not start with an unusable window.',
     );
   }
   return value;
@@ -157,6 +176,13 @@ export const config = {
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
   webhookV1Signature: parseV1SignatureSetting(env('WEBHOOK_V1_SIGNATURE')),
   signupApproverEmail: env('SIGNUP_APPROVER_EMAIL'),
+  /**
+   * How long the hiring team has to complete a review before the candidate's
+   * feedback email goes out on its own. A completed review sends it at once;
+   * this is only the backstop, so nobody is left waiting on a review that
+   * never comes. An organisation can set its own window in tenant policy.
+   */
+  feedbackReviewWindowHours: parseHoursSetting('FEEDBACK_REVIEW_WINDOW_HOURS', process.env.FEEDBACK_REVIEW_WINDOW_HOURS, DEFAULT_REVIEW_WINDOW_HOURS),
   platformOperatorEmails: parseCommaList(env('PLATFORM_OPERATOR_EMAILS')).map((email) => email.toLowerCase()),
   /**
    * How long a stopping process waits for interviews it is serving to end

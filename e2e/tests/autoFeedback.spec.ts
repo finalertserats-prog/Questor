@@ -63,27 +63,71 @@ test('a completed typed interview shows its assessment at once and records the f
   expect(done).toBe(true);
 
   // The interview page now says what happened instead of offering a resend.
-  await page.goto(interviewUrl);
-  await expect(page.getByTestId('invitation-status')).toContainText('Interview completed on');
+  // Polled with a reload: the last answer returns as soon as the assessment is
+  // written, and the session's own state lands a moment later.
+  await expect.poll(async () => {
+    await page.goto(interviewUrl);
+    return (await page.getByTestId('invitation-status').textContent({ timeout: 5_000 }).catch(() => '')) ?? '';
+  }, { timeout: 30_000 }).toContain('Interview completed on');
   await expect(page.getByRole('button', { name: 'Resend email' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /Open interview room/ })).toHaveCount(0);
   await page.getByRole('link', { name: 'Open the assessment' }).click();
+  await expect(page).toHaveURL(/\/assessments\//);
+  const assessmentUrl = page.url();
 
-  // The assessment, straight away: scores shown, no blind gate, blind review still offered.
+  // The assessment, straight away: no blind gate, and the AI's reading is
+  // there to be read.
   await expect(page.getByRole('heading', { name: 'Assessment', exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('Independent review required')).toHaveCount(0);
-  await expect(page.getByText('Overall score')).toBeVisible();
   await expect(page.getByRole('link', { name: 'Review this blind' })).toBeVisible();
 
-  // The feedback email went from the background job; the page records it.
+  // Three readings, and nobody has reviewed this one yet.
+  await expect(page.getByRole('tab', { name: 'Human review' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'AI assessment' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Overall score')).toBeVisible();
+  await page.getByRole('tab', { name: 'Human review' }).click();
+  await expect(page.getByText(/No review has been recorded/)).toBeVisible();
+  await page.getByRole('tab', { name: 'Key differences' }).click();
+  await expect(page.getByText(/Nothing to compare yet/)).toBeVisible();
+  await expect(page).toHaveURL(/\/differences$/);
+
+  // The feedback email is prepared but waiting for the hiring team.
+  await page.goto(assessmentUrl);
+  await expect(page.getByTestId('feedback-email-status')).toContainText(/on its way|has been sent|No feedback/);
+
+  // A reviewer records their verdict, changing one level along the way.
+  await page.getByRole('tab', { name: 'Human review' }).click();
+  await page.getByLabel('Disposition').selectOption('CONSIDER');
+  const firstLevel = page.locator('select[id^="level-"]').first();
+  await firstLevel.selectOption('2');
+  await page.locator('input[id^="level-reason-"]').first().fill('Read the transcript differently.');
+  await page.getByLabel('Reason (required)').fill('I read the evidence on this one differently from the AI.');
+  await page.getByRole('button', { name: 'Submit review' }).click();
+  await expect(page.getByText('Review submitted.')).toBeVisible({ timeout: 20_000 });
+
+  // The human reading is now the one the page leads with.
+  await expect(page.getByRole('tab', { name: 'Human review' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText("The reviewer's verdict")).toBeVisible();
+  await page.getByRole('tab', { name: 'Key differences' }).click();
+  await expect(page.getByText(/The reviewer changed 1 of/)).toBeVisible();
+  await expect(page.getByText('Read the transcript differently.')).toBeVisible();
+
+  // The completed review releases the candidate's feedback at once.
   const status = page.getByTestId('feedback-email-status');
   await expect.poll(async () => {
-    await page.reload();
+    await page.goto(assessmentUrl);
     return (await status.textContent({ timeout: 10_000 })) ?? '';
   }, { timeout: 60_000 }).toContain('Feedback sent to the candidate on');
   const panel = page.getByTestId('feedback-email');
   await panel.getByText('View', { exact: true }).click();
-  await expect(panel.getByText(/Thank you for your interview for .+ at /)).toBeVisible();
-  await expect(panel.getByText(/The .+ hiring team/)).toBeVisible();
+  await expect(panel.getByText(/AT A GLANCE/)).toBeVisible();
+  await expect(panel.getByText(/YOUR SWOT FROM THIS INTERVIEW/)).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Send feedback now' })).toHaveCount(0);
+
+  // And it lays out on a phone without pushing the page sideways.
+  await page.setViewportSize({ width: 375, height: 800 });
+  await page.goto(assessmentUrl);
+  await expect(page.getByRole('heading', { name: 'Assessment', exact: true })).toBeVisible({ timeout: 20_000 });
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
 });

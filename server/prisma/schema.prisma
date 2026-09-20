@@ -541,6 +541,13 @@ model CandidateFeedbackEmail {
   tenantId          String
   trigger           String   @default("auto") // auto | manual
   requestedByUserId String?
+  // Why it left the waiting room: the review window passed, a reviewer
+  // completed their review, or a person pressed send. Empty while it waits.
+  releaseReason     String   @default("")
+  // Which state of the assessment the stored words were written from: "ai", or
+  // "review:<id>". A review landing after the words were prepared changes it,
+  // so the candidate never receives feedback a human had already corrected.
+  contentBasis      String   @default("")
   // DRAFT (previewed, not sent) | QUEUED | SENDING | SENT | FAILED | SKIPPED
   status            String   @default("QUEUED")
   skipReason        String   @default("")

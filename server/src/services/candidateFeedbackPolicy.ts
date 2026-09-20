@@ -1,5 +1,6 @@
 import { prisma, parseJsonOptional } from '../db.js';
-import { autoCandidateFeedbackEnabled, blindReviewRequired } from './autoFeedbackModel.js';
+import { config } from '../config.js';
+import { autoCandidateFeedbackEnabled, blindReviewRequired, feedbackSignOff, reviewWindowHours } from './autoFeedbackModel.js';
 
 function truthyBoolean(value: unknown): boolean {
   return value === true;
@@ -19,6 +20,16 @@ export async function candidateFeedbackEnabledForTenant(tenantId: string): Promi
 /** The automatic email after every completed interview. On unless switched off. */
 export async function autoCandidateFeedbackEnabledForTenant(tenantId: string): Promise<boolean> {
   return autoCandidateFeedbackEnabled(await readTenantPolicy(tenantId));
+}
+
+/** Hours the hiring team has to review before the feedback email goes on its own. */
+export async function feedbackReviewWindowHoursForTenant(tenantId: string): Promise<number> {
+  return reviewWindowHours(await readTenantPolicy(tenantId), config.feedbackReviewWindowHours);
+}
+
+/** Whether the candidate's letter is signed by Questor or by the organisation. */
+export async function feedbackSignOffForTenant(tenantId: string): Promise<'questor' | 'company'> {
+  return feedbackSignOff(await readTenantPolicy(tenantId));
 }
 
 /** Whether reviewers must judge blind before the assessment opens. Off unless switched on. */

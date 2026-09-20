@@ -41,15 +41,33 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
 });
 
 const MODEL_CONTENT = {
-  strengths: [
-    'You walked through the billing pipeline you owned in a way that made each step easy to follow.',
-    'You were specific about how you made recovery safe to repeat after a failed load.',
+  swot: {
+    strengths: [
+      'You walked through the billing pipeline you owned in a way that made each step easy to follow.',
+      'You were specific about how you made recovery safe to repeat after a failed load.',
+    ],
+    weaknesses: [
+      'Your examples often stop before the result, so the impact is left unsaid.',
+      'Work with the people who depend on the data is described only briefly.',
+    ],
+    opportunities: [
+      'Your habit of tuning queries before anyone complains is worth leading with.',
+      'One concrete detail per story would lift every answer you give.',
+    ],
+    watchOuts: [
+      'Long answers drift, and the strongest point often arrives last.',
+      'Saying "we" where it was you reads as a smaller part than you had.',
+    ],
+  },
+  notes: [
+    { competencyId: 'sql', whatWeHeard: 'A billing query you rewrote yourself, with the effect on run time spelled out.', toGoFurther: 'Name what the slow query was costing the team before you touched it.' },
+    { competencyId: 'stake', whatWeHeard: 'A report you sent on, with little about how you kept people involved afterwards.', toGoFurther: 'Describe how you brought a sceptical colleague along with a change.' },
   ],
-  develop: [
-    'When stakeholders came up, there was room to say more about how you kept them involved in changes.',
-    'Talking through how you choose what to test first would show more of your engineering approach.',
+  nextSteps: [
+    'Add the ending to three of your stories: what changed, and how you knew.',
+    'Re-tell one story naming your own decisions rather than the team’s.',
+    'Keep a short example ready about growing the people around you.',
   ],
-  suggestions: ['Before your next interview, prepare one example of bringing a sceptical stakeholder along with a change.'],
 };
 
 const llm = vi.hoisted(() => ({ reply: '' as string, calls: 0 }));
@@ -96,8 +114,14 @@ const RESULT = {
   strengths: [], concerns: [], contradictions: [], openQuestions: [], limitations: [], summary: 'Scored 41/100.',
 };
 
-async function completedInterview(opts: { state?: string; isDemo?: boolean; email?: string } = {}) {
+/**
+ * A finished interview with an assessment stored. The review window is zero
+ * unless a test is about the waiting itself, so tests about sending, skipping
+ * and retrying are not also tests of the clock.
+ */
+async function completedInterview(opts: { state?: string; isDemo?: boolean; email?: string; windowHours?: number } = {}) {
   const ids = await createDemoData();
+  await setPolicy(ids.tenantId, { feedbackReviewWindowHours: opts.windowHours ?? 0 });
   await prisma.interviewSession.update({
     where: { id: ids.sessionId },
     data: { state: opts.state ?? 'REVIEW_READY', completedAt: new Date() },
@@ -166,6 +190,129 @@ describe('queueing when the assessment is stored', () => {
   });
 });
 
+/**
+ * The owner's rule: the hiring team has a window to review, the candidate
+ * hears the moment a review lands, and nobody waits on a review that never
+ * comes.
+ */
+describe('when the letter goes', () => {
+  const HOURS = 60 * 60_000;
+  const hoursFromNow = (h: number) => new Date(Date.now() + h * HOURS);
+
+  async function completeReview(ids: Awaited<ReturnType<typeof completedInterview>>, overrides: unknown[] = []) {
+    const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides });
+    expect(res.status).toBe(201);
+    return res;
+  }
+
+  it('does not send while the hiring team still has time to review', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    await deliverDueFeedbackEmails(hoursFromNow(11));
+
+    expect({ sent: mail.sent.length, status: (await rowFor(ids.sessionId)).status }).toEqual({ sent: 0, status: 'QUEUED' });
+  });
+
+  it('waits twelve hours by default', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    const due = (await rowFor(ids.sessionId)).nextAttemptAt?.getTime() ?? 0;
+
+    expect(Math.round((due - Date.now()) / HOURS)).toBe(12);
+  });
+
+  it('sends as soon as a reviewer completes their review', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    await completeReview(ids);
+    await deliverDueFeedbackEmails(new Date());
+
+    expect({ sent: mail.sent.length, row: await rowFor(ids.sessionId) })
+      .toMatchObject({ sent: 1, row: { status: 'SENT', releaseReason: 'review' } });
+  });
+
+  it('lets a review at the eleventh hour win', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    await deliverDueFeedbackEmails(hoursFromNow(11.983)); // 11h59
+    expect(mail.sent).toHaveLength(0);
+    await completeReview(ids);
+    await deliverDueFeedbackEmails(hoursFromNow(11.984));
+
+    expect((await rowFor(ids.sessionId)).releaseReason).toBe('review');
+  });
+
+  it('sends once the window has passed with no review', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    await deliverDueFeedbackEmails(hoursFromNow(12.5));
+
+    expect({ sent: mail.sent.length, row: await rowFor(ids.sessionId) })
+      .toMatchObject({ sent: 1, row: { status: 'SENT', releaseReason: 'window' } });
+  });
+
+  it('does not send a second letter when a review lands afterwards', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await deliverDueFeedbackEmails(hoursFromNow(12.5));
+
+    await completeReview(ids);
+    await deliverDueFeedbackEmails(hoursFromNow(13));
+
+    expect({ sent: mail.sent.length, status: (await rowFor(ids.sessionId)).status }).toEqual({ sent: 1, status: 'SENT' });
+  });
+
+  it("writes the letter from the reviewer's own reading of the interview", async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    // The reviewer thought the candidate handled stakeholders far better than
+    // the AI did; the candidate should be told that, not the AI's version.
+    await completeReview(ids, [{ competencyId: 'stake', from: 2, to: 5, reason: 'Clear in the second half.' }]);
+    await deliverDueFeedbackEmails(new Date());
+
+    expect(mail.sent[0].text).toContain('Stakeholder management: Clear strength');
+  });
+
+  it('writes it again when a review changes the picture after it was prepared', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    // Someone looks at the preview first, which stores the AI's version.
+    const preview = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/preview`).set(ids.auth).send({});
+    expect(preview.body.preview.text).toContain('Stakeholder management: Partly shown');
+
+    await completeReview(ids, [{ competencyId: 'stake', from: 2, to: 5, reason: 'Clear in the second half.' }]);
+    await deliverDueFeedbackEmails(new Date());
+
+    expect((await rowFor(ids.sessionId)).bodyText).toContain('Stakeholder management: Clear strength');
+  });
+
+  it('honours an organisation that wants a different window', async () => {
+    const ids = await completedInterview({ windowHours: 2 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    await deliverDueFeedbackEmails(hoursFromNow(3));
+
+    expect(mail.sent).toHaveLength(1);
+  });
+
+  it('sends by hand without waiting for the window at all', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+
+    const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth).send({});
+
+    expect({ status: res.status, sent: mail.sent.length, release: (await rowFor(ids.sessionId)).releaseReason })
+      .toEqual({ status: 200, sent: 1, release: 'manual' });
+  });
+});
+
 describe('sending from the background job', () => {
   it('emails the candidate', async () => {
     const ids = await completedInterview();
@@ -202,11 +349,11 @@ describe('sending from the background job', () => {
     const ids = await completedInterview();
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
     await deliverDueFeedbackEmails(LATER());
-    expect(mail.sent[0].text).toContain(MODEL_CONTENT.strengths[0]);
+    expect(mail.sent[0].text).toContain(MODEL_CONTENT.swot.strengths[0]);
   });
 
   it('falls back to evidence wording when the model mentions a score', async () => {
-    llm.reply = JSON.stringify({ ...MODEL_CONTENT, strengths: ['You scored 4 out of 5 on SQL, which is excellent work.', MODEL_CONTENT.strengths[1]] });
+    llm.reply = JSON.stringify({ ...MODEL_CONTENT, swot: { ...MODEL_CONTENT.swot, strengths: ['You scored 4 out of 5 on SQL, which is excellent work.', MODEL_CONTENT.swot.strengths[1]] } });
     const ids = await completedInterview();
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
     await deliverDueFeedbackEmails(LATER());
@@ -311,7 +458,7 @@ describe('retries', () => {
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
     await deliverDueFeedbackEmails(new Date());
     const before = (await rowFor(ids.sessionId)).bodyText;
-    llm.reply = JSON.stringify({ ...MODEL_CONTENT, suggestions: ['A different suggestion that would only appear if the text were regenerated.'] });
+    llm.reply = JSON.stringify({ ...MODEL_CONTENT, nextSteps: ['A different step that would only appear if the text were written again.', MODEL_CONTENT.nextSteps[1], MODEL_CONTENT.nextSteps[2]] });
     await deliverDueFeedbackEmails(LATER());
     expect({ status: (await rowFor(ids.sessionId)).status, same: (await rowFor(ids.sessionId)).bodyText === before })
       .toEqual({ status: 'SENT', same: true });
@@ -424,14 +571,14 @@ describe('the assessment page', () => {
     const ids = await completedInterview();
     const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/preview`).set(ids.auth).send({});
     expect({ status: res.status, subject: res.body.preview?.subject }).toEqual({
-      status: 200, subject: expect.stringMatching(/^Thank you for your interview for .+ at Acme Corp$/),
+      status: 200, subject: expect.stringMatching(/^Your interview feedback — .+ at Acme Corp$/),
     });
   });
 
   it('sends by hand the text that was previewed', async () => {
     const ids = await completedInterview();
     const preview = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/preview`).set(ids.auth).send({});
-    llm.reply = JSON.stringify({ ...MODEL_CONTENT, suggestions: ['A different suggestion that would only appear if the text were regenerated.'] });
+    llm.reply = JSON.stringify({ ...MODEL_CONTENT, nextSteps: ['A different step that would only appear if the text were written again.', MODEL_CONTENT.nextSteps[1], MODEL_CONTENT.nextSteps[2]] });
     const sent = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth).send({});
     expect({ status: sent.status, email: sent.body.email?.status, same: sent.body.email?.bodyText === preview.body.preview.text })
       .toEqual({ status: 200, email: 'SENT', same: true });
