@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
+import { smtpTransportOptions } from './timing.js';
 
 export interface EmailMessage {
   to: string;
@@ -84,12 +85,10 @@ class SmtpEmailProvider implements EmailProvider {
   private transport: { sendMail: (o: Record<string, unknown>) => Promise<{ messageId?: string }>; verify: () => Promise<boolean> };
 
   constructor(o: { host: string; port: number; user: string; pass: string }) {
-    // `secure` is implicit-TLS (port 465). Everything else negotiates STARTTLS,
-    // which nodemailer does automatically when the server advertises it.
-    this.transport = nodemailer.createTransport({
-      host: o.host, port: o.port, secure: o.port === 465,
-      auth: { user: o.user, pass: o.pass },
-    }) as never;
+    // Every timeout the transport has is set (providers/email/timing.ts): an
+    // SMTP send cannot be aborted, so these are what stop a hung relay from
+    // delivering a message after the sender has given up on it.
+    this.transport = nodemailer.createTransport(smtpTransportOptions(o)) as never;
   }
 
   /** Prove the credentials work without sending anything to a candidate. */

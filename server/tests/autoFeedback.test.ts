@@ -18,6 +18,8 @@ const mail = vi.hoisted(() => ({
   started: null as null | (() => void),
   /** The abort signal the last send was handed, if any. */
   lastSignal: null as null | AbortSignal,
+  /** Awaited inside a held send before it blocks: for interleaving a write deterministically. */
+  beforeHold: null as null | (() => Promise<void>),
 }));
 
 vi.mock('../src/providers/email/index.js', async (orig) => {
@@ -34,6 +36,7 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
       }
       if (mail.hold) {
         mail.started?.();
+        await mail.beforeHold?.();
         await mail.hold;
       }
       mail.sent.push(msg);
@@ -171,6 +174,7 @@ beforeEach(async () => {
   mail.hold = null;
   mail.started = null;
   mail.lastSignal = null;
+  mail.beforeHold = null;
   _setFeedbackSendTimeoutForTest(null);
   llm.reply = JSON.stringify(MODEL_CONTENT);
   llm.calls = 0;
@@ -741,6 +745,51 @@ describe('retries', () => {
       await deliverDueFeedbackEmails(new Date(Date.now() + 60 * 60 * 60_000));
       // The one delivery is the original provider call finishing late.
       expect({ sent: mail.sent.length, status: (await rowFor(ids.sessionId)).status }).toEqual({ sent: 1, status: 'SENT_UNVERIFIED' });
+    });
+
+    // The heartbeat renews claimedAt while the provider is being waited on.
+    // A timeout write keyed on the claim it started with would then match
+    // nothing, and the row would sit in SENDING for ever.
+    it('is recorded even when the heartbeat moved the claim while the provider was being waited on', async () => {
+      _setFeedbackSendTimeoutForTest(50);
+      let release = () => {};
+      mail.hold = new Promise<void>((resolve) => { release = resolve; });
+      const ids = await completedInterview({ windowHours: 12 });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      const queued = await rowFor(ids.sessionId);
+      mail.beforeHold = async () => {
+        // A heartbeat tick, interleaved before the timeout write.
+        await prisma.candidateFeedbackEmail.updateMany({ where: { id: queued.id, status: 'SENDING' }, data: { claimedAt: new Date(Date.now() + 5) } });
+      };
+
+      await deliverDueFeedbackEmails(new Date(Date.now() + 13 * 60 * 60_000));
+      const row = await rowFor(ids.sessionId);
+      release();
+      mail.hold = null;
+
+      expect({ status: row.status, claim: row.claimedAt }).toEqual({ status: 'SENT_UNVERIFIED', claim: null });
+    });
+
+    it('says so, loudly, if the row could not be recorded at all', async () => {
+      _setFeedbackSendTimeoutForTest(50);
+      let release = () => {};
+      mail.hold = new Promise<void>((resolve) => { release = resolve; });
+      const ids = await completedInterview({ windowHours: 12 });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      const queued = await rowFor(ids.sessionId);
+      // Something else moved the row on while the provider was being waited on.
+      mail.beforeHold = async () => {
+        await prisma.candidateFeedbackEmail.updateMany({ where: { id: queued.id }, data: { status: 'FAILED', claimedAt: null } });
+      };
+
+      await deliverDueFeedbackEmails(new Date(Date.now() + 13 * 60 * 60_000));
+      release();
+      mail.hold = null;
+
+      expect({
+        status: (await rowFor(ids.sessionId)).status,
+        noted: await prisma.auditEvent.count({ where: { action: 'feedback.email.inconsistent', entityId: ids.sessionId } }),
+      }).toEqual({ status: 'FAILED', noted: 1 });
     });
 
     it('is not offered for a second send by hand while the lock stands, even with the risk accepted', async () => {

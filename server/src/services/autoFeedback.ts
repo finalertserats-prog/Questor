@@ -5,6 +5,7 @@ import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
 import { getEmail, type EmailMessage, type EmailProvider } from '../providers/email/index.js';
+import { EMAIL_SEND_TIMEOUT_MS } from '../providers/email/timing.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
@@ -77,7 +78,7 @@ export const FEEDBACK_SEND_STALE_MS = 10 * 60_000;
  * purpose: a provider that hangs for longer than that would otherwise still
  * be sending while another instance declared the claim abandoned.
  */
-export const FEEDBACK_SEND_TIMEOUT_MS = 60_000;
+export const FEEDBACK_SEND_TIMEOUT_MS = EMAIL_SEND_TIMEOUT_MS;
 
 /** How often an in-flight send renews its claim, so a slow send is not swept. */
 export const FEEDBACK_SEND_HEARTBEAT_MS = 60_000;
@@ -85,7 +86,9 @@ export const FEEDBACK_SEND_HEARTBEAT_MS = 60_000;
 /**
  * Slack past the provider timeout before a send lock counts as gone. A minute,
  * because a timed-out provider call may still be running: SMTP cannot be
- * aborted, and the lock has to outlive whatever that call might still do.
+ * aborted, so its transport is configured to give up within the send timeout
+ * (providers/email/timing.ts) and this grace puts the lock's expiry strictly
+ * after that — tests/emailSmtpTimeouts.test.ts holds the two to it.
  */
 export const SEND_LOCK_GRACE_MS = 60_000;
 
@@ -374,8 +377,11 @@ export async function attemptFeedbackEmail(id: string, now = new Date()): Promis
   try {
     return await sendClaimed(id, claim);
   } catch (err) {
-    if (err instanceof SendTimeoutError) return recordTimedOutSend(id, claim, err);
-    return recordFailure(id, claim, err);
+    // Stopped before the outcome is written, so no further tick can move
+    // claimedAt out from under the write.
+    stopHeartbeat();
+    if (err instanceof SendTimeoutError) return await recordTimedOutSend(id, claim, err);
+    return await recordFailure(id, claim, err);
   } finally {
     stopHeartbeat();
     await releaseSendLock(id, claim);
@@ -604,13 +610,33 @@ async function recordTimedOutSend(id: string, claim: Claim, err: SendTimeoutErro
   const sentAt = new Date();
   const note = `The mail provider did not answer within ${err.seconds}s; the message may still have been delivered. `
     + 'Check with the candidate before sending again.';
-  await prisma.candidateFeedbackEmail.updateMany({
-    where: { id, status: 'SENDING', claimedAt: claim.at },
+  // Keyed on the status alone, not on the claim: a heartbeat tick already in
+  // flight when the heartbeat was stopped may still land and move claimedAt,
+  // and a write keyed on it would then match nothing, leaving the row SENDING
+  // for ever. The lock, which only this attempt holds, is what protects the row.
+  const { count } = await prisma.candidateFeedbackEmail.updateMany({
+    where: { id, status: 'SENDING' },
     data: {
       status: 'SENT_UNVERIFIED', sentAt, delivered: getEmail().delivers, attempts: row.attempts + 1,
       lastError: note, claimedAt: null, nextAttemptAt: null,
     },
   });
+  if (count !== 1) {
+    // The row is not where this attempt left it. Whatever moved it owns it
+    // now; this attempt says so where it will be seen, rather than silently
+    // leaving a send nobody can account for.
+    const fresh = await prisma.candidateFeedbackEmail.findUnique({ where: { id }, select: { status: true, claimedAt: true, sendLockUntil: true } });
+    logger.error(
+      { feedbackEmailId: id, sessionId: row.sessionId, status: fresh?.status ?? null, claimedAt: fresh?.claimedAt ?? null },
+      'Timed-out feedback send could not be recorded: the row had already moved on',
+    );
+    await logAudit({
+      tenantId: row.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
+      action: 'feedback.email.inconsistent', entityType: 'InterviewSession', entityId: row.sessionId,
+      after: { assessmentId: row.assessmentId, expected: 'SENDING', found: fresh?.status ?? null, timeoutSeconds: err.seconds },
+    });
+    return 'sent-unverified';
+  }
   logger.error({ feedbackEmailId: id, sessionId: row.sessionId, timeoutSeconds: err.seconds }, 'Candidate feedback email timed out; outcome unknown, send lock left to expire');
   await logAudit({
     tenantId: row.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
