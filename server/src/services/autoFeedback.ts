@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { CorruptRecordError, parseJson, parseJsonStrict, prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
@@ -54,6 +55,13 @@ import {
  *   - If the provider accepted the message but the claim had been taken
  *     anyway, the row says SENT_UNVERIFIED rather than FAILED, and "Send
  *     feedback now" refuses it until someone accepts the risk of a duplicate.
+ *   - SENDING AND REVIEWING EXCLUDE EACH OTHER. A send takes a lock on the row
+ *     (sendLockUntil) before it composes a word, and completing a review is
+ *     refused for as long as that lock is held (gateReviewCompletion). An
+ *     email cannot be unsent, so the review is what waits — never more than
+ *     the provider timeout plus a little slack, after which a dead worker's
+ *     lock is simply expired. Conditional updateMany is row-atomic on
+ *     Postgres as well as SQLite, so no SELECT FOR UPDATE is needed.
  *
  * Every skip rule is checked again at send time, not just at queue time: a
  * candidate can withdraw, say no, or lose their address in between.
@@ -73,6 +81,13 @@ export const FEEDBACK_SEND_TIMEOUT_MS = 60_000;
 
 /** How often an in-flight send renews its claim, so a slow send is not swept. */
 export const FEEDBACK_SEND_HEARTBEAT_MS = 60_000;
+
+/** Slack past the provider timeout before a dead worker's send lock counts as gone. */
+export const SEND_LOCK_GRACE_MS = 30_000;
+
+/** The refusal a reviewer gets while the candidate's letter is being sent. */
+export const FEEDBACK_SENDING = 'feedback_sending';
+export const FEEDBACK_SENDING_MESSAGE = "The candidate's feedback email is being sent right now. Please submit your review again in a minute.";
 
 let sendTimeoutMs: number = FEEDBACK_SEND_TIMEOUT_MS;
 
@@ -206,20 +221,30 @@ export async function enqueueAutoFeedback(opts: {
  * of anything, and the hiring team can write to the candidate themselves if
  * the review changed the picture.
  */
-export async function releaseFeedbackForReview(assessmentId: string, now = new Date()): Promise<boolean> {
-  const waiting = await prisma.candidateFeedbackEmail.updateMany({
-    where: { assessmentId, status: 'QUEUED', releaseReason: '' },
-    data: { nextAttemptAt: now, releaseReason: 'review' },
+export async function gateReviewCompletion(tx: Prisma.TransactionClient, assessmentId: string, now = new Date()): Promise<boolean> {
+  const row = await tx.candidateFeedbackEmail.findFirst({ where: { assessmentId }, select: { id: true, status: true } });
+  // Already sent, skipped, failed or never queued: a review changes nothing
+  // about the letter, so nothing stands in its way.
+  if (!row || (row.status !== 'QUEUED' && row.status !== 'SENDING')) return false;
+
+  // The gate itself: one conditional write. It succeeds only while no send
+  // holds the lock, and it is the same row a send must lock before composing,
+  // so exactly one of the two gets through.
+  const { count } = await tx.candidateFeedbackEmail.updateMany({
+    where: { id: row.id, status: row.status, OR: [{ sendLockUntil: null }, { sendLockUntil: { lt: now } }] },
+    data: { releaseReason: 'review', ...(row.status === 'QUEUED' ? { nextAttemptAt: now } : {}) },
   });
-  // A send already under way is marked too. The sender looks again for a
-  // completed review just before anything leaves (sendClaimed), and after the
-  // send it can tell from this mark that the review landed while the message
-  // was with the provider.
-  const inFlight = await prisma.candidateFeedbackEmail.updateMany({
-    where: { assessmentId, status: 'SENDING', releaseReason: '' },
-    data: { releaseReason: 'review' },
-  });
-  return waiting.count + inFlight.count >= 1;
+  if (count === 1) return true;
+
+  // Refused, or the row moved on between the read and the write. Look once
+  // more: a live lock means the review waits; anything else means it goes.
+  const fresh = await tx.candidateFeedbackEmail.findUnique({ where: { id: row.id }, select: { status: true, sendLockUntil: true } });
+  const locked = fresh !== null
+    && (fresh.status === 'QUEUED' || fresh.status === 'SENDING')
+    && fresh.sendLockUntil !== null
+    && fresh.sendLockUntil.getTime() >= now.getTime();
+  if (locked) throw new HttpError(409, FEEDBACK_SENDING_MESSAGE, FEEDBACK_SENDING);
+  return false;
 }
 
 /**
@@ -259,7 +284,34 @@ export async function rescheduleLegacyFeedbackEmails(now = new Date()): Promise<
  * conditional write this attempt makes is keyed on the current value — so a
  * claim that was taken from us elsewhere can never be written over.
  */
-interface Claim { at: Date }
+interface Claim {
+  at: Date;
+  /** The send lock this attempt holds, so only its own lock is ever cleared. */
+  lockUntil: Date | null;
+}
+
+/**
+ * Take the send lock, or find that a review has the row. Keyed on this
+ * attempt's own claim, so a claim that was lost cannot lock a row that has
+ * since been re-claimed by another worker.
+ */
+async function takeSendLock(id: string, claim: Claim, now: Date): Promise<boolean> {
+  const lockUntil = new Date(now.getTime() + sendTimeoutMs + SEND_LOCK_GRACE_MS);
+  const { count } = await prisma.candidateFeedbackEmail.updateMany({
+    where: { id, status: 'SENDING', claimedAt: claim.at, OR: [{ sendLockUntil: null }, { sendLockUntil: { lt: now } }] },
+    data: { sendLockUntil: lockUntil },
+  });
+  if (count === 1) claim.lockUntil = lockUntil;
+  return count === 1;
+}
+
+/** Let the lock go, whatever happened. Only the exact lock this attempt set. */
+async function releaseSendLock(id: string, claim: Claim): Promise<void> {
+  if (!claim.lockUntil) return;
+  await prisma.candidateFeedbackEmail.updateMany({ where: { id, sendLockUntil: claim.lockUntil }, data: { sendLockUntil: null } })
+    .catch((err: unknown) => logger.error({ feedbackEmailId: id, err: errorText(err) }, 'Could not release the feedback send lock; it will expire'));
+  claim.lockUntil = null;
+}
 
 /**
  * Keep saying "still working" while a send is in flight, so a slow provider
@@ -282,7 +334,7 @@ function startClaimHeartbeat(id: string, claim: Claim): () => void {
  * safe to call from anywhere, any number of times at once.
  */
 export async function attemptFeedbackEmail(id: string, now = new Date()): Promise<Outcome> {
-  const claim: Claim = { at: now };
+  const claim: Claim = { at: now, lockUntil: null };
   const claimed = await prisma.candidateFeedbackEmail.updateMany({
     where: { id, status: 'QUEUED', nextAttemptAt: { lte: now } },
     data: { status: 'SENDING', claimedAt: claim.at },
@@ -295,6 +347,7 @@ export async function attemptFeedbackEmail(id: string, now = new Date()): Promis
     return recordFailure(id, claim, err);
   } finally {
     stopHeartbeat();
+    await releaseSendLock(id, claim);
   }
 }
 
@@ -397,11 +450,17 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   }
 
   const s = row.session;
+  // The lock, before a word is composed. From here until the provider answers
+  // no review can be completed, so what is read next is what the candidate
+  // gets. One retry: a lock refused on our own claim means a previous run of
+  // ours died within the grace period and its lock has just expired.
+  if (!await takeSendLock(id, claim, new Date()) && !await takeSendLock(id, claim, new Date())) {
+    throw new Error('Another send still holds this letter; it will be tried again.');
+  }
   let { content, source, basis } = await contentFor(row, await completedReviewFor(row.assessmentId));
-  // Composing takes a model call; a reviewer can finish in that time. One
-  // last look before anything leaves: if a review is now on file that the
-  // words were not written from, they are written again from it. The
-  // candidate must never receive an account a human had already corrected.
+  // Composing takes a model call. A review that landed between the claim and
+  // the lock is on file now, and the words are checked against it once more
+  // before anything leaves — nothing can land after the lock.
   const latest = await completedReviewFor(row.assessmentId);
   if (basisOf(latest) !== basis) ({ content, source, basis } = await contentFor(row, latest));
   const rendered = renderAutoFeedbackEmail({
@@ -430,18 +489,19 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   await sendWithinTimeout(email, rendered.message);
 
   const sentAt = new Date();
-  // A review can still land while the provider holds the message. Nothing
-  // can be unsent, so the fact is recorded where the hiring team sees it
-  // and they can write to the candidate themselves.
+  // Defensive only: the lock makes a review during the send impossible, so
+  // this is never expected to be true. If it ever is, the lock is broken and
+  // the fact must not pass quietly.
   const afterSend = await completedReviewFor(row.assessmentId);
   const reviewMissed = basisOf(afterSend) !== basis;
   const confirmed = await prisma.candidateFeedbackEmail.updateMany({
     where: { id, status: 'SENDING', claimedAt: claim.at },
     data: {
       status: 'SENT', sentAt, delivered: email.delivers, attempts: row.attempts + 1,
-      lastError: '', claimedAt: null, nextAttemptAt: null,
+      lastError: '', claimedAt: null, nextAttemptAt: null, sendLockUntil: null,
     },
   });
+  claim.lockUntil = null;
   // The claim was taken from us while the provider had the message: the email
   // went, but the row now says something else (the sweep marks an abandoned
   // claim FAILED). Leaving it there would invite a person to send a second
@@ -450,7 +510,7 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
 
   if (reviewMissed) {
     await prisma.candidateFeedbackEmail.updateMany({ where: { id, status: 'SENT' }, data: { lastError: REVIEW_MISSED_NOTE } });
-    logger.warn({ feedbackEmailId: id, sessionId: row.sessionId }, 'A review was completed while the feedback email was being sent');
+    logger.error({ feedbackEmailId: id, sessionId: row.sessionId }, 'A review was completed during a locked send; the send lock did not hold');
     await logAudit({
       tenantId: row.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
       action: 'feedback.email.sent_before_review', entityType: 'InterviewSession', entityId: row.sessionId,
@@ -484,7 +544,7 @@ async function recordUnverifiedSend(
     where: { id, status: { in: ['QUEUED', 'FAILED', 'SKIPPED', 'DRAFT', 'SENT_UNVERIFIED'] } },
     data: {
       status: 'SENT_UNVERIFIED', sentAt: outcome.sentAt, delivered: outcome.delivered,
-      attempts: row.attempts + 1, lastError: SENT_UNVERIFIED_REASON, claimedAt: null, nextAttemptAt: null,
+      attempts: row.attempts + 1, lastError: SENT_UNVERIFIED_REASON, claimedAt: null, nextAttemptAt: null, sendLockUntil: null,
     },
   });
   logger.error(
@@ -507,7 +567,7 @@ async function recordFailure(id: string, claim: Claim, err: unknown): Promise<Ou
   const next = afterFailedAttempt(attempts, new Date());
   await prisma.candidateFeedbackEmail.updateMany({
     where: { id, status: 'SENDING', claimedAt: claim.at },
-    data: { status: next.status, nextAttemptAt: next.nextAttemptAt, attempts, lastError: message, claimedAt: null },
+    data: { status: next.status, nextAttemptAt: next.nextAttemptAt, attempts, lastError: message, claimedAt: null, sendLockUntil: null },
   });
   if (next.status === 'FAILED') {
     logger.error({ feedbackEmailId: id, attempts, err: message }, 'Candidate feedback email failed after every retry');
@@ -531,7 +591,7 @@ async function releaseInterruptedSends(now: Date): Promise<number> {
   for (const s of stale) {
     const { count } = await prisma.candidateFeedbackEmail.updateMany({
       where: { id: s.id, status: 'SENDING', claimedAt: s.claimedAt },
-      data: { status: 'FAILED', lastError: INTERRUPTED_NOTE, claimedAt: null, nextAttemptAt: null },
+      data: { status: 'FAILED', lastError: INTERRUPTED_NOTE, claimedAt: null, nextAttemptAt: null, sendLockUntil: null },
     });
     if (count !== 1) continue;
     released += 1;

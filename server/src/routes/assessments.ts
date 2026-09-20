@@ -19,7 +19,7 @@ import { feedbackConsentView, requestFeedbackOptIn } from '../services/candidate
 import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedbackEmail.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
-import { feedbackEmailState, previewFeedbackEmail, releaseFeedbackForReview, sendFeedbackNow } from '../services/autoFeedback.js';
+import { feedbackEmailState, gateReviewCompletion, previewFeedbackEmail, sendFeedbackNow } from '../services/autoFeedback.js';
 import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from '../services/assessmentReview.js';
 import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import {
@@ -568,13 +568,23 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // visible in the compliance record instead of absent from it.
   const selfReview = await ranTheInterview(req.auth!.userId, a.sessionId);
   const comments = body.comments ?? '';
-  const review = await prisma.humanReview.create({
-    data: {
-      assessmentId: a.id, reviewerId: req.auth!.userId, status: 'COMPLETED', disposition: body.disposition,
-      reason: body.reason,
-      comments: selfReview ? (comments ? `${comments}\n\n${SELF_REVIEW_NOTE}` : SELF_REVIEW_NOTE) : comments,
-      overridesJson: JSON.stringify(body.overrides), completedAt: new Date(),
-    },
+  // The review and the release of the candidate's letter are one transaction:
+  // the gate refuses (409 feedback_sending) while a send holds the row, and
+  // the review then does not exist — the email cannot be unsent, so the
+  // review is what waits. When the gate opens, the review becomes visible in
+  // the same commit that releases the letter, so no send can read one
+  // without the other (services/autoFeedback.ts).
+  const { review, feedbackReleased } = await prisma.$transaction(async (tx) => {
+    const released = await gateReviewCompletion(tx, a.id);
+    const created = await tx.humanReview.create({
+      data: {
+        assessmentId: a.id, reviewerId: req.auth!.userId, status: 'COMPLETED', disposition: body.disposition,
+        reason: body.reason,
+        comments: selfReview ? (comments ? `${comments}\n\n${SELF_REVIEW_NOTE}` : SELF_REVIEW_NOTE) : comments,
+        overridesJson: JSON.stringify(body.overrides), completedAt: new Date(),
+      },
+    });
+    return { review: created, feedbackReleased: released };
   });
   // Session -> HUMAN_REVIEWED -> CLOSED
   if (a.session.state === 'REVIEW_READY') {
@@ -599,10 +609,6 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // Where this reviewer parted company with the AI, kept for later analysis
   // (services/assessmentReview.ts). Written now, at the moment the fact exists.
   await recordReviewDifference(req.auth!.tenantId, a.id, review.id);
-  // The candidate has been waiting on exactly this. Their feedback email is
-  // released now and written from the reviewed assessment; a letter that has
-  // already gone is left alone (services/autoFeedback.ts).
-  const feedbackReleased = await releaseFeedbackForReview(a.id);
   res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview }, feedbackReleased });
 }));
 

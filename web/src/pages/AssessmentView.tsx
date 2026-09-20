@@ -8,7 +8,8 @@ import { CandidateFeedbackPanel } from '../components/CandidateFeedbackPanel';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import {
-  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored, type Disposition,
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored, reviewRefusal,
+  type Disposition,
 } from '../components/assessmentModel';
 import { FeedbackEmailPanel } from '../components/FeedbackEmailPanel';
 import { AssessmentTabList, DifferencesPanel, HumanReviewPanel, type DifferencesView } from '../components/AssessmentTabs';
@@ -178,6 +179,9 @@ export function AssessmentView() {
   const [levels, setLevels] = useState<Record<string, string>>({});
   const [levelReasons, setLevelReasons] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  // The candidate's letter is being sent and the review has to wait a minute:
+  // shown as information with a retry, not as a red error.
+  const [reviewWait, setReviewWait] = useState('');
 
   const { user } = useAuth();
   const [exportStatus, setExportStatus] = useState('');
@@ -275,13 +279,14 @@ export function AssessmentView() {
   const { candidate, role, result, reviews } = data;
   const scored = isScored(result);
 
-  const submitReview = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitReview = async (e?: React.FormEvent) => {
+    e?.preventDefault();
     // The browser's own disabled button is not the only route here (Enter in a
     // field submits too), so the rule is checked rather than assumed.
     if (!canSubmitVerdict({ disposition, reason, scored, submitting })) return;
     setError('');
     setNotice('');
+    setReviewWait('');
     setSubmitting(true);
     try {
       // Only the levels the reviewer actually changed travel: an untouched
@@ -303,7 +308,9 @@ export function AssessmentView() {
       // state from before the review landed.
       await load();
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Could not submit your review.');
+      const refusal = reviewRefusal(err instanceof ApiError ? err : { message: err instanceof Error ? err.message : '' });
+      if (refusal.kind === 'wait') setReviewWait(refusal.message);
+      else setError(refusal.message);
     } finally {
       setSubmitting(false);
     }
@@ -424,6 +431,14 @@ export function AssessmentView() {
           <label htmlFor="review-comments">Comments (optional)</label>
           <textarea id="review-comments" value={comments} onChange={(e) => setComments(e.target.value)} disabled={!scored}
             style={{ minHeight: 60 }} />
+          {reviewWait && (
+            <Banner kind="info">
+              {reviewWait}{' '}
+              <button type="button" className="btn secondary sm" onClick={() => void submitReview()} disabled={submitting}>
+                Try again
+              </button>
+            </Banner>
+          )}
           <div className="row" style={{ marginTop: 12 }}>
             <button className="btn" type="submit" disabled={!canSubmitVerdict({ disposition, reason, scored, submitting })}>
               <Icon name={submitting ? 'hourglass' : 'send'} size={16} />

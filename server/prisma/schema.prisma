@@ -593,6 +593,11 @@ model CandidateFeedbackEmail {
   nextAttemptAt     DateTime?
   claimedAt         DateTime?
   lastError         String   @default("")
+  // Held by the one send that may compose and post this letter. A review
+  // cannot be completed while it is held (the email cannot be unsent), and a
+  // send cannot start while a review holds the row. Expires on its own if the
+  // worker that took it dies.
+  sendLockUntil     DateTime?
   subject           String   @default("")
   bodyText          String   @default("")
   // The checked points themselves (strengths, develop, suggestions), so a retry

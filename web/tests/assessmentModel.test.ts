@@ -1,7 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored,
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored, reviewRefusal,
 } from '../src/components/assessmentModel';
+
+// The candidate's feedback email is being sent and the review has to wait a
+// minute. That is a state of the world, not something the reviewer did wrong.
+describe('reviewRefusal', () => {
+  it('asks the reviewer to wait when the feedback email is on its way', () => {
+    expect(reviewRefusal({ status: 409, code: 'feedback_sending', message: 'Being sent right now.' }))
+      .toEqual({ kind: 'wait', message: 'Being sent right now.' });
+  });
+
+  it('reports any other refusal as an error', () => {
+    expect(reviewRefusal({ status: 409, code: undefined, message: 'Already reviewed.' }))
+      .toEqual({ kind: 'error', message: 'Already reviewed.' });
+  });
+
+  it('has a fallback for an error with no message', () => {
+    expect(reviewRefusal({ message: '' }).message).toBe('Could not submit your review.');
+  });
+});
 
 // The assessment opens straight away unless the organisation requires a blind
 // review first; only that refusal shows the "Independent review required" page.
