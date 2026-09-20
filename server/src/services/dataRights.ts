@@ -121,6 +121,10 @@ async function deleteSessionCascade(
 ): Promise<void> {
   if (!sessionIds.length) return;
 
+  // The feedback email quotes the candidate and holds foreign keys onto the
+  // session and the assessment, so it goes before either.
+  await count('feedbackEmails', () => tx.candidateFeedbackEmail.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+
   const assessments = await tx.assessmentVersion.findMany({
     where: { sessionId: { in: sessionIds } },
     select: { id: true },
@@ -267,6 +271,7 @@ export async function eraseCandidate(o: {
     // candidate, so a row whose session was already gone would otherwise block
     // the delete below.
     await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId: o.candidateId } }));
+    await count('feedbackEmails', () => tx.candidateFeedbackEmail.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
@@ -495,6 +500,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
         await count('atsLinks', () => tx.candidateAtsLink.deleteMany({ where: { candidateId } }));
         await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { candidateId } }));
+        await count('feedbackEmails', () => tx.candidateFeedbackEmail.deleteMany({ where: { candidateId } }));
         await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId } }));
         await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));

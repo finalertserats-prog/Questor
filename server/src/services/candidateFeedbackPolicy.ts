@@ -1,13 +1,29 @@
 import { prisma, parseJsonOptional } from '../db.js';
+import { autoCandidateFeedbackEnabled, blindReviewRequired } from './autoFeedbackModel.js';
 
 function truthyBoolean(value: unknown): boolean {
   return value === true;
 }
 
-export async function candidateFeedbackEnabledForTenant(tenantId: string): Promise<boolean> {
+/** The tenant's policy blob, or {} when there is none to read. */
+export async function readTenantPolicy(tenantId: string): Promise<Record<string, unknown>> {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { policyJson: true } });
-  const tenantPolicy = parseJsonOptional<Record<string, unknown>>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: tenantId, field: 'policyJson' });
-  return truthyBoolean(tenantPolicy.candidateFeedbackEnabled);
+  return parseJsonOptional<Record<string, unknown>>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: tenantId, field: 'policyJson' });
+}
+
+/** The reviewed draft -> approve -> send flow. Off unless switched on. */
+export async function candidateFeedbackEnabledForTenant(tenantId: string): Promise<boolean> {
+  return truthyBoolean((await readTenantPolicy(tenantId)).candidateFeedbackEnabled);
+}
+
+/** The automatic email after every completed interview. On unless switched off. */
+export async function autoCandidateFeedbackEnabledForTenant(tenantId: string): Promise<boolean> {
+  return autoCandidateFeedbackEnabled(await readTenantPolicy(tenantId));
+}
+
+/** Whether reviewers must judge blind before the assessment opens. Off unless switched on. */
+export async function blindReviewRequiredForTenant(tenantId: string): Promise<boolean> {
+  return blindReviewRequired(await readTenantPolicy(tenantId));
 }
 
 /**

@@ -10,6 +10,7 @@ import { isInFlight } from './CandidatesList';
 import { formatDateTime } from '../components/dateFormat';
 import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
+import { invitationPanel } from '../components/invitationPanelModel';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn {
@@ -20,7 +21,10 @@ interface Turn {
 interface Invitation { token: string; status: string; portalUrl: string; sentAt: string | null; openedAt: string | null; }
 interface Session {
   id: string; state: string; provider: string; language: string; durationMinutes: number;
-  scheduledAt: string | null; persona: { name?: string | null; tone?: string; interviewerId?: string }; consent: unknown;
+  scheduledAt: string | null;
+  /** Absent on an older server. */
+  startedAt?: string | null; completedAt?: string | null;
+  persona: { name?: string | null; tone?: string; interviewerId?: string }; consent: unknown;
 }
 interface InterviewResp {
   session: Session;
@@ -92,6 +96,12 @@ export function InterviewDetail() {
   }
 
   const { session, plan, turns, assessment, invitation } = data;
+  const invitationView = invitation
+    ? invitationPanel({
+      state: session.state, startedAt: session.startedAt ?? null, completedAt: session.completedAt ?? null,
+      sentAt: invitation.sentAt, openedAt: invitation.openedAt, assessmentId: assessment?.id ?? null,
+    }, formatDateTime)
+    : null;
 
   // Which action is running, not merely that one is: a single flag put
   // "Sending…" on the resend button while the person had pressed Schedule.
@@ -215,7 +225,19 @@ export function InterviewDetail() {
 
       <div className="card">
         <h2 className="card-title"><Icon name="mail" />Invitation</h2>
-        {invitation ? (
+        {invitation && invitationView?.kind === 'status' ? (
+          // Once the candidate has started, the link has done its job: the
+          // card says what happened rather than offering a resend the server
+          // refuses (see invitationPanelModel.ts).
+          <div data-testid="invitation-status">
+            <p style={{ margin: '0 0 8px' }}>{invitationView.text}</p>
+            {invitationView.assessmentId && (
+              <Link className="btn secondary" to={`/assessments/${invitationView.assessmentId}`}>
+                <Icon name="evidence" size={16} />Open the assessment
+              </Link>
+            )}
+          </div>
+        ) : invitation ? (
           <div>
             {/* Delivery is reported in three distinct states, because "sent"
                 alone told recruiters nothing useful: a mail provider accepting
@@ -235,7 +257,7 @@ export function InterviewDetail() {
                 </span>
               )}
             </div>
-            {invitation.sentAt && !invitation.openedAt && (
+            {invitationView?.kind === 'not-started' && invitationView.showNotOpenedHint && (
               <div className="muted small" style={{ marginBottom: 8 }}>
                 Delivered to the mail provider, but the candidate hasn’t opened the link.
                 If it’s been a day, ask them to check their spam folder.

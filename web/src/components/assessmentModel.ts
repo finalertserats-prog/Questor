@@ -70,3 +70,17 @@ export function canSubmitVerdict({ disposition, reason, scored, submitting }: Ve
   if (!isDisposition(disposition)) return false;
   return reason.trim().length >= MIN_REASON;
 }
+
+/** The server's code for "record your blind verdict first" (shadowModeBlind.ts). */
+export const BLIND_REVIEW_REQUIRED = 'blind_review_required';
+
+/**
+ * Is this refusal the blind-review gate? The gate only applies when the
+ * organisation requires it; everywhere else the assessment opens straight away.
+ * Read from the status and code, never the prose. A 409 with no code comes
+ * from a server that predates the code, where the gate was the only 409.
+ */
+export function isBlindReviewGate(err: { readonly status?: number; readonly code?: string }): boolean {
+  if (err.status !== 409) return false;
+  return err.code === undefined || err.code === BLIND_REVIEW_REQUIRED;
+}

@@ -9,6 +9,7 @@ import { evaluate } from '../engines/evaluator.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { emitEvent } from '../services/webhooks.js';
 import { logAudit } from '../services/audit.js';
+import { enqueueAutoFeedback } from '../services/autoFeedback.js';
 import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
 import { assertAcceptingNewInterviews } from '../services/drainState.js';
@@ -701,7 +702,10 @@ export async function submitCandidateAnswer(
 }
 
 /** Close the interview, run the independent evaluator and persist the assessment. */
-export async function finalizeInterview(sessionId: string): Promise<{ assessmentId: string }> {
+export async function finalizeInterview(
+  sessionId: string,
+  opts: { readonly partial?: boolean } = {},
+): Promise<{ assessmentId: string }> {
   const { session, profile, turns, plan } = await loadContext(sessionId);
   if (!FINALIZABLE_STATES.includes(session.state)) {
     const existing = await prisma.assessmentVersion.findFirst({
@@ -787,6 +791,15 @@ export async function finalizeInterview(sessionId: string): Promise<{ assessment
     await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
     await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
     await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
+    // The candidate's feedback email (services/autoFeedback.ts): queued here,
+    // sent in the background. Caught rather than thrown: the assessment is
+    // already stored, and a queueing failure must not turn a finished interview
+    // into a failed finalisation. The page offers "Send feedback now" when no
+    // email is on record.
+    await enqueueAutoFeedback({ sessionId, assessmentId: assessment.id, partial: opts.partial === true })
+      .catch((err: unknown) => {
+        logger.error({ sessionId, err: err instanceof Error ? err.message : String(err) }, 'Could not queue the candidate feedback email');
+      });
     return { assessmentId: assessment.id };
   } catch (err) {
     await releaseStalledFinalisation(sessionId, err);

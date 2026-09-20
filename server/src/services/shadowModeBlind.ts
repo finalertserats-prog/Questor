@@ -4,6 +4,7 @@ import { assertCanAccessAssessment, ranTheInterview } from './access.js';
 import type { AuthClaims } from './auth.js';
 import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
 import { BLIND_BYPASS_ACTION, BLIND_REVIEW_STATUS, type Disposition } from './shadowModeCommon.js';
+import { blindReviewRequiredForTenant } from './candidateFeedbackPolicy.js';
 
 // ---------------------------------------------------------------------------
 // Blind view — the assessment with every AI conclusion withheld
@@ -299,18 +300,29 @@ export async function hasUnblindedAccess(assessmentId: string, reviewerId: strin
  *
  * A reviewer who has recorded a verdict, or consciously bypassed, keeps access
  * for good: the anchoring risk exists once, before they form a view.
+ *
+ * And only when the organisation asks for it (`requireBlindReview`). The owner
+ * decided hiring teams see the assessment straight away: the blind review stays
+ * one click away on the assessment page for anyone who wants their own read
+ * first, and shadow-mode metrics count whatever blind verdicts are filed, but
+ * nobody is locked out of a finished assessment by default.
  */
+export const BLIND_REVIEW_REQUIRED = 'blind_review_required';
+
 export async function assertUnblindedReadAllowed(o: {
   assessmentId: string;
   userId: string;
   canReview: boolean;
+  tenantId: string;
 }): Promise<void> {
   if (!o.canReview) return;
+  if (!await blindReviewRequiredForTenant(o.tenantId)) return;
   if (await hasUnblindedAccess(o.assessmentId, o.userId)) return;
   throw new HttpError(
     409,
     'Record your independent verdict first, or state a reason for skipping it. '
     + 'The AI recommendation and scores stay hidden until then so your judgement is your own.',
+    BLIND_REVIEW_REQUIRED,
   );
 }
 

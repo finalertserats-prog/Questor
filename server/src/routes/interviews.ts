@@ -311,7 +311,7 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   ]);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
-    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
+    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
     plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
     turns: turns.map((t) => ({
       id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId,
@@ -648,7 +648,9 @@ interviewsRouter.post('/:id/assess-partial', requireCapability('interview:drive'
   if (!await transitionIfInState(session.id, 'INCOMPLETE', 'CLOSING')) {
     throw new HttpError(409, 'This interview is already being assessed. Refresh to see the result.');
   }
-  const { assessmentId } = await finalizeInterview(session.id);
+  // `partial` so the candidate is not emailed feedback on an interview they
+  // did not finish (services/autoFeedback.ts).
+  const { assessmentId } = await finalizeInterview(session.id, { partial: true });
 
   // Recorded after the assessment exists, so the trail never claims a person
   // assessed a partial interview when the request was refused or failed.
