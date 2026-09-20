@@ -30,6 +30,7 @@ import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
+import { replanPending } from '../services/interviewReplan.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -305,17 +306,21 @@ interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), bul
 // lifting another's portal link.
 interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  const [plan, turns, assessment, invitation, integrityEvents] = await Promise.all([
+  const [plan, turns, assessment, invitation, integrityEvents, planPending] = await Promise.all([
     prisma.interviewPlanVersion.findUnique({ where: { sessionId: session.id } }),
     prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
     prisma.assessmentVersion.findFirst({ where: { sessionId: session.id }, orderBy: { version: 'desc' } }),
     prisma.invitation.findUnique({ where: { sessionId: session.id } }),
     prisma.integrityEvent.findMany({ where: { sessionId: session.id }, orderBy: { createdAt: 'asc' }, select: { type: true, createdAt: true } }),
+    replanPending(session),
   ]);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
     session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
     plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
+    // The plan above is what was built at setup; a newer approved scorecard
+    // means the interview will be re-planned from it when it starts.
+    replanPending: planPending,
     turns: turns.map((t) => ({
       id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId,
       // A reviewer must be able to tell the Leave button from anything said.

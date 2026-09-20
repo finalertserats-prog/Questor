@@ -9,6 +9,8 @@ import { evaluate } from '../engines/evaluator.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { emitEvent } from '../services/webhooks.js';
 import { logAudit } from '../services/audit.js';
+import { replanFromLatestScorecard } from '../services/interviewReplan.js';
+import { lockSession, type TransactionClient } from '../services/sessionLock.js';
 import { enqueueAutoFeedback } from '../services/autoFeedback.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { HttpError } from '../middleware/index.js';
@@ -127,22 +129,9 @@ function elapsedMinutes(turns: TurnRecord[]): number {
   return (turns.length * AVG_MS_PER_TURN) / 60000;
 }
 
-type TransactionClient = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
-
-/**
- * Queue appenders to one session behind a row lock.
- *
- * SQLite serialises writers, so read-tail-then-insert is already safe there.
- * Postgres runs the two transactions side by side: both read the same tail,
- * both insert the same index, and each answer writes two turns (the answer and
- * the next question), so the loser collides again on its retry and the answer
- * is lost. Locking the session row makes the second appender wait and then read
- * the tail the first one committed.
- */
-async function lockSessionForAppend(tx: TransactionClient, sessionId: string): Promise<void> {
-  if (!/^postgres(ql)?:/.test(process.env.DATABASE_URL ?? '')) return;
-  await tx.$queryRaw`SELECT "id" FROM "InterviewSession" WHERE "id" = ${sessionId} FOR UPDATE`;
-}
+// The session row lock lives in services/sessionLock.ts, shared with the
+// start-time re-plan so a re-plan and an append never decide side by side.
+const lockSessionForAppend = lockSession;
 
 /** A check made under the append lock; throwing refuses the append. */
 type AppendGuard = (tx: TransactionClient, tail: { id: string; index: number } | null) => Promise<void> | void;
@@ -598,7 +587,15 @@ export async function startOrResumeInterview(sessionId: string): Promise<StartOu
       data: { state: 'ASSESSING', startedAt: new Date() },
     });
     if (count === 0) return joinRacingStart(sessionId);
+    // Only the start that claimed the session gets here, so the plan is
+    // rebuilt at most once: the scorecard approved since this interview was
+    // set up is the one it is asked and scored against.
+    await replanFromLatestScorecard(sessionId);
   } else {
+    // Live but with no opening on record: a start that failed after claiming
+    // the session. The re-plan it may not have reached runs here again; it is
+    // a no-op once done.
+    await replanFromLatestScorecard(sessionId);
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
   }
   await logAudit({ tenantId: session.tenantId, action: 'interview.started', entityType: 'InterviewSession', entityId: sessionId });
@@ -618,6 +615,10 @@ async function joinRacingStart(sessionId: string): Promise<StartOutcome> {
   }
   const existing = await recordedOutcome(sessionId, fresh.state, false);
   if (existing) return existing;
+  // Before producing anything: the plan the winner may still be rebuilding is
+  // the one this opening must come from. The swap is conditional, so whichever
+  // start gets there first rebuilds it and the other finds it done.
+  await replanFromLatestScorecard(sessionId);
   // The winner is still generating. Racing it is safe: both write only onto
   // the transcript as it stands now, so whichever opening lands second is
   // refused and hands back the first.

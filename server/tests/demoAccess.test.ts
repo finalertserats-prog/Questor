@@ -255,6 +255,16 @@ describe('purgeExpiredDemoTenants', () => {
     const left = await prisma.tenant.findMany({ select: { id: true } });
     expect({ sandboxGone: !left.some((t) => t.id === p.tenantId), realKept: left.some((t) => t.id === real.id), sessions: await prisma.interviewSession.count({ where: { tenantId: p.tenantId } }) }).toEqual({ sandboxGone: true, realKept: true, sessions: 0 });
   });
+
+  it('removes a sandbox that saved a competency to its organisation library', async () => {
+    const p = await provisionDemoTenant({ ...VISITOR });
+    await prisma.orgCompetency.create({ data: { tenantId: p.tenantId, name: 'Vendor Management', nameKey: 'vendor management', category: 'domain' } });
+    await prisma.tenant.update({ where: { id: p.tenantId }, data: { demoExpiresAt: new Date(Date.now() - 1000) } });
+
+    await purgeExpiredDemoTenants();
+
+    expect(await prisma.tenant.count({ where: { id: p.tenantId } })).toBe(0);
+  });
 });
 
 describe('demo interview and role creation', () => {

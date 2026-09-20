@@ -40,9 +40,11 @@ export interface FitResult {
 
 export function computeFitScore(profile: NormalizedProfile, rawText: string, role: RoleSuccessProfile): FitResult {
   const text = rawText || JSON.stringify(profile);
-  const essential = role.competencies.filter((c) => c.classification === 'essential');
-  const technical = role.competencies.filter((c) => c.category === 'technical' || c.category === 'domain');
-  const preferred = role.competencies.filter((c) => c.classification === 'preferred');
+  // A retired competency is no longer part of what the role asks for.
+  const competencies = role.competencies.filter((c) => c.retired !== true);
+  const essential = competencies.filter((c) => c.classification === 'essential');
+  const technical = competencies.filter((c) => c.category === 'technical' || c.category === 'domain');
+  const preferred = competencies.filter((c) => c.classification === 'preferred');
 
   const perCompetency: FitResult['perCompetency'] = [];
   const missing: string[] = [];
@@ -70,7 +72,7 @@ export function computeFitScore(profile: NormalizedProfile, rawText: string, rol
     return { score: Math.round(sum / group.length), evidence: allEvidence.slice(0, 6) };
   }
 
-  const essentialResult = scoreGroup(essential.length ? essential : role.competencies);
+  const essentialResult = scoreGroup(essential.length ? essential : competencies);
   const technicalResult = scoreGroup(technical);
   const preferredResult = scoreGroup(preferred);
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Proficiency } from './types.js';
 
 /**
  * What a role's success profile may contain when a person edits it.
@@ -19,7 +20,8 @@ export const RED_FLAG_MAX_LENGTH = 160;
 export const RED_FLAG_MAX_COUNT = 20;
 export const COMPETENCY_MAX_COUNT = 40;
 
-const proficiency = z.number().int().min(0).max(5);
+// Narrowed after the range check so a validated profile is a RoleSuccessProfile as typed.
+const proficiency = z.number().int().min(0).max(5).transform((n) => n as Proficiency);
 
 export const competencySchema = z.object({
   id: z.string().trim().min(1).max(64),
@@ -34,7 +36,13 @@ export const competencySchema = z.object({
   evidenceModes: shortList(10, 60).default([]),
   sourceText: shortText(2000).optional(),
   confidence: z.number().min(0).max(1).optional(),
+  retired: z.boolean().optional(),
 });
+
+/** Whether a competency still counts towards the score: not retired, not non-scoring. */
+export function isScored(c: { readonly classification: string; readonly retired?: boolean }): boolean {
+  return c.classification !== 'non_scoring' && c.retired !== true;
+}
 
 export const roleSuccessProfileSchema = z.object({
   roleContext: shortText(4000).default(''),
@@ -64,6 +72,10 @@ export const roleSuccessProfileSchema = z.object({
       }
       ids.add(c.id);
     }
+    // A must-pass competency is a promise to assess it, so it has to be one
+    // that is scored: a non-scoring or retired one would be "required" and
+    // never checked.
+    const scoredIds = new Set(profile.competencies.filter(isScored).map((c) => c.id));
     for (const id of profile.scoringRules.mustPassCompetencyIds) {
       if (!ids.has(id)) {
         ctx.addIssue({
@@ -71,15 +83,29 @@ export const roleSuccessProfileSchema = z.object({
           path: ['scoringRules', 'mustPassCompetencyIds'],
           message: `Must-pass competency "${id}" is not one of the competencies.`,
         });
+      } else if (!scoredIds.has(id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['scoringRules', 'mustPassCompetencyIds'],
+          message: `Must-pass competency "${profile.competencies.find((c) => c.id === id)?.name ?? id}" is not scored, so it cannot be must-pass.`,
+        });
       }
     }
     // The engines treat weights as shares of one whole. The extractor
     // normalises them to sum to 1 (rounded to three places), and an editor that
     // saved 340% would have every later fit and assessment score wrong with no
     // visible symptom. Non-scoring competencies carry no weight and sit outside
-    // the total.
+    // the total, and so does a retired one.
+    for (const c of profile.competencies) {
+      if (c.retired === true && c.weight !== 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['competencies'], message: `Retired competency "${c.name}" carries no weight; set it to 0.` });
+      }
+    }
+    if (!profile.competencies.some((c) => c.retired !== true)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['competencies'], message: 'A scorecard needs at least one competency that is not retired.' });
+    }
     const scoredTotal = profile.competencies
-      .filter((c) => c.classification !== 'non_scoring')
+      .filter(isScored)
       .reduce((sum, c) => sum + c.weight, 0);
     if (Math.abs(scoredTotal - 1) > WEIGHT_SUM_TOLERANCE) {
       ctx.addIssue({

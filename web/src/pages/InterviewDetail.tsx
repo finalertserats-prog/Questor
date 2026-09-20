@@ -29,6 +29,8 @@ interface Session {
 interface InterviewResp {
   session: Session;
   plan: { blocks: Block[] } | null;
+  /** The role's scorecard was approved again after this plan was built; the interview re-plans at start. */
+  replanPending?: boolean;
   turns: Turn[];
   assessment: { id: string; recommendation: string; result: unknown } | null;
   invitation: Invitation | null;
@@ -203,6 +205,12 @@ export function InterviewDetail() {
 
       <div className="card">
         <h2 className="card-title"><Icon name="list" />Interview plan</h2>
+        {data.replanPending && (
+          <p className="muted small" data-testid="replan-pending">
+            [ will be re-planned ] The role's competencies were approved again after this plan was built. When the
+            interview starts it is planned from the current scorecard, and assessed against it.
+          </p>
+        )}
         {plan && (plan.blocks ?? []).length > 0 ? (
           <div className="table-scroll" tabIndex={0} role="region" aria-label="Interview plan">
             <table>

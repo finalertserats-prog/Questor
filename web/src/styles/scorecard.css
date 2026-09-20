@@ -1,0 +1,99 @@
+/* ==========================================================================
+   Scorecard competency editor (RoleDetail → components/scorecard/*)
+   State is marked with rules and brackets, never a tinted fill.
+   ========================================================================== */
+
+.comp-table th:last-child,
+.comp-table td:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.comp-table input:not([type='checkbox']),
+.comp-table select {
+  min-width: 110px;
+}
+
+.comp-row-retired td {
+  color: var(--ink-3);
+}
+.comp-row-retired input,
+.comp-row-retired select {
+  text-decoration: line-through;
+}
+
+.comp-weight-cell {
+  min-width: 120px;
+}
+
+.comp-mustpass {
+  display: inline-flex;
+  margin: 0;
+}
+
+.comp-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  align-items: baseline;
+}
+
+.comp-details td {
+  border-left: var(--rail) solid var(--rule);
+  padding: 10px 14px 14px;
+}
+
+.comp-details-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.comp-details-grid textarea {
+  min-height: 72px;
+}
+@media (max-width: 720px) {
+  .comp-details-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.comp-add {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border-left: var(--rail) solid var(--accent);
+  border-top: var(--hair) solid var(--rule);
+  border-bottom: var(--hair) solid var(--rule);
+}
+.comp-add-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.comp-add-field {
+  margin-bottom: 10px;
+}
+.comp-add textarea {
+  min-height: 60px;
+}
+
+.comp-confirm {
+  margin: 8px 0 12px;
+  padding: 10px 14px;
+  border-left: var(--rail) solid var(--stop);
+}
+.comp-confirm p {
+  margin: 0 0 8px;
+}
+
+.comp-warnings {
+  margin: 10px 0 0;
+  padding: 6px 0 6px 12px;
+  list-style: none;
+  border-left: var(--rail) solid var(--warn, var(--ink-3));
+  font-size: 13px;
+}
+.comp-warnings li::before {
+  content: '[ ! ] ';
+  color: var(--ink-3);
+}

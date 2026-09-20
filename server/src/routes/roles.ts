@@ -18,9 +18,15 @@ import { getRoleMetrics } from '../services/roleMetrics.js';
 import { findRoleIdsMatching } from '../services/roleSearch.js';
 import { BANDS } from '../engines/experienceBands.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
+import { roleCompetenciesRouter } from './roleCompetencies.js';
+import { scorecardWarnings } from '../domain/scorecardEdits.js';
+import { competencyIdsWithHistory } from '../services/competencyHistory.js';
+import { latestScorecard, writeScorecardProfile } from '../services/scorecardVersions.js';
 
 export const rolesRouter = Router();
 rolesRouter.use(authenticate);
+// One competency at a time: add, edit, remove, draft with AI, reuse from the library.
+rolesRouter.use('/:id/scorecard/competencies', roleCompetenciesRouter);
 
 // List roles
 //
@@ -229,8 +235,13 @@ async function respondWithExistingRole(roleId: string, res: Response) {
 rolesRouter.get('/:id', requireCapability('role:read'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   const fullRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
-  const scorecards = await prisma.roleScorecardVersion.findMany({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
-  res.json({ role: shapeRole(fullRole), scorecards: scorecards.map(shapeScorecard) });
+  const [scorecards, history] = await Promise.all([
+    prisma.roleScorecardVersion.findMany({ where: { roleId: role.id }, orderBy: { version: 'desc' } }),
+    competencyIdsWithHistory(role.id),
+  ]);
+  // Which competencies an interview has used: the page offers "retire" rather
+  // than "remove" for those, so nobody meets the distinction as a surprise.
+  res.json({ role: shapeRole(fullRole), scorecards: scorecards.map(shapeScorecard), competencyHistory: [...history] });
 }));
 
 // Bounded on purpose. This used to be `z.any()`, and one Save could store a
@@ -242,15 +253,8 @@ rolesRouter.put('/:id/scorecard', requireCapability('role:edit_scorecard'), asyn
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   await assertRoleOpen(role.id);
   const { profile } = updateScorecardSchema.parse(req.body);
-  const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
-  if (!latest) throw new HttpError(404, 'No scorecard to update');
-
-  let target = latest;
-  if (latest.status === 'approved') {
-    target = await prisma.roleScorecardVersion.create({ data: { roleId: role.id, version: latest.version + 1, status: 'draft', profileJson: JSON.stringify(profile) } });
-  } else {
-    target = await prisma.roleScorecardVersion.update({ where: { id: latest.id }, data: { profileJson: JSON.stringify(profile) } });
-  }
+  const latest = await latestScorecard(role.id);
+  const target = await writeScorecardProfile(role.id, latest, profile);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'role.scorecard.updated', entityType: 'RoleScorecardVersion', entityId: target.id });
   res.json({ scorecard: shapeScorecard(target) });
 }));
@@ -322,7 +326,8 @@ async function assertNotSelfApproval(
 ): Promise<void> {
   if (auth.role === 'admin') return;
   const lastEdit = await prisma.auditEvent.findFirst({
-    where: { tenantId: auth.tenantId, action: 'role.scorecard.updated', entityType: 'RoleScorecardVersion', entityId: scorecard.id },
+    // Any scorecard edit, whole-profile or one competency at a time.
+    where: { tenantId: auth.tenantId, action: { startsWith: 'role.scorecard.' }, entityType: 'RoleScorecardVersion', entityId: scorecard.id },
     orderBy: { createdAt: 'desc' },
     select: { actorId: true },
   });
@@ -362,5 +367,9 @@ function shapeRole(r: ShapedRole) {
   return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }), jdDraftId: r.jdDraftId, jdOrigin: r.jdOrigin }; 
 }
 function shapeScorecard(s: { readonly id: string; readonly version: number; readonly status: string; readonly profileJson: string; readonly approvedAt: Date | null }) {
-  return { id: s.id, version: s.version, status: s.status, profile: parseJsonStrict(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' }), approvedAt: s.approvedAt };
+  const profile = parseJsonStrict<RoleSuccessProfile>(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' });
+  // What the planner and the feedback letter will leave out of this scorecard,
+  // said here rather than discovered after an interview.
+  const warnings = Array.isArray(profile.competencies) ? scorecardWarnings(profile) : [];
+  return { id: s.id, version: s.version, status: s.status, profile, approvedAt: s.approvedAt, warnings };
 }

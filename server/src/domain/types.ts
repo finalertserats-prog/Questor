@@ -18,6 +18,12 @@ export interface Competency {
   evidenceModes: string[];        // behavioral_example | technical_explanation | work_sample | case | certification
   sourceText?: string;            // JD span the competency was derived from
   confidence?: number;            // extraction confidence 0..1
+  /**
+   * Kept for the record, no longer assessed. A competency with interview
+   * history is retired rather than deleted so an older assessment, review or
+   * feedback letter can still resolve its id to a name.
+   */
+  retired?: boolean;
 }
 
 export interface RoleSuccessProfile {

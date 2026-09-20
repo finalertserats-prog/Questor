@@ -439,6 +439,7 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
     await tx.candidate.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.roleScorecardVersion.deleteMany({ where: { role: { tenantId: { in: tenantIds } } } });
     await tx.role.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.orgCompetency.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.auditEvent.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.user.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.tenant.deleteMany({ where: { id: { in: tenantIds }, isDemo: true } });

@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
-import { Badge, Banner } from '../components/ui';
+import { Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
-import { humanise } from '../components/statusModel';
 import { canApproveRoles } from '../components/profileMenuModel';
 import { approvePayload, archiveAction, isCurrentResponse, isRoleOpen, type LoadTicket } from '../components/roleDetailModel';
 import { Icon } from '../components/Icon';
@@ -22,33 +21,25 @@ import {
   removeRedFlag,
 } from '../components/scorecardModel';
 import { hasScore } from '../components/scoreFormat';
-import { weightsProblem, weightsTotal } from '../components/scorecardModel';
+import { weightsProblem } from '../components/scorecardModel';
+import { CompetencyEditor } from '../components/scorecard/CompetencyEditor';
+import type { EditableCompetency } from '../components/scorecard/competencyEditModel';
 
-type Category = 'technical' | 'domain' | 'behavioral' | 'situational' | 'communication';
-type Classification = 'essential' | 'preferred' | 'trainable' | 'non_scoring';
-
-interface Competency {
-  id: string; name: string; definition: string; category: Category;
-  classification: Classification; weight: number; requiredLevel: number; targetLevel: number;
-  indicators: string[];
-}
+type Competency = EditableCompetency;
 interface Profile {
   roleContext: string; seniority: string; outcomes: string[]; responsibilities: string[];
   redFlags: string[]; competencies: Competency[];
   scoringRules: { mustPassCompetencyIds: string[]; passThreshold: number };
   policyRules: { prohibitedTopics: string[] };
 }
-interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; }
+interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; warnings?: string[] }
 interface RoleResp {
   role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; techStack: readonly string[] };
   scorecards: Scorecard[];
+  /** Competency ids an interview has used; removing one of these retires it. */
+  competencyHistory?: string[];
 }
 
-const CLASSIFICATIONS: Classification[] = ['essential', 'preferred', 'trainable', 'non_scoring'];
-
-function catKind(c: Category): 'blue' | 'gray' {
-  return c === 'technical' || c === 'domain' ? 'blue' : 'gray';
-}
 export function RoleDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -72,9 +63,6 @@ export function RoleDetail() {
   const [notice, setNotice] = useState('');
   const [newFlag, setNewFlag] = useState('');
   const [flagProblem, setFlagProblem] = useState('');
-  // Half-typed weights, by competency id. They live here rather than in the
-  // profile so that "" never reaches the scorecard as 0%.
-  const [weightDrafts, setWeightDrafts] = useState<Record<string, string>>({});
 
   // Every load takes a ticket; only the newest ticket for the role still on
   // screen may write, so a slow response for the previous role (or an older
@@ -114,7 +102,6 @@ export function RoleDetail() {
     setLoadError('');
     setActionError('');
     setNotice('');
-    setWeightDrafts({});
     setNewFlag('');
     setFlagProblem('');
     setArchiveUnavailable(false);
@@ -154,24 +141,10 @@ export function RoleDetail() {
   const mayApprove = user ? canApproveRoles(user.role) : false;
   const archive = archiveAction(role.status);
 
-  const clearWeightDraft = (competencyId: string) =>
-    setWeightDrafts((drafts) => Object.fromEntries(Object.entries(drafts).filter(([key]) => key !== competencyId)));
-
   const weightsError = weightsProblem(profile.competencies ?? []);
-  const total = weightsTotal(profile.competencies ?? []);
 
-  const updateComp = (i: number, patch: Partial<Competency>) => {
-    setProfile((p) => {
-      if (!p) return p;
-      const competencies = p.competencies.map((c, idx) => {
-        if (idx !== i) return c;
-        const next = { ...c, ...patch };
-        // A non-scoring competency weighs nothing by definition. Leaving its old
-        // weight behind would keep it in a total it no longer contributes to.
-        return next.classification === 'non_scoring' ? { ...next, weight: 0 } : next;
-      });
-      return { ...p, competencies };
-    });
+  const updateCompetencies = (next: { competencies: Competency[]; mustPassIds: string[] }) => {
+    setProfile((p) => (p ? { ...p, competencies: next.competencies, scoringRules: { ...p.scoringRules, mustPassCompetencyIds: next.mustPassIds } } : p));
   };
 
   // Points out of 100, unlike the weights above, which are fractions. Mixing
@@ -336,70 +309,20 @@ export function RoleDetail() {
         </div>
       </div>
 
+      <CompetencyEditor
+        roleId={role.id}
+        competencies={profile.competencies ?? []}
+        mustPassIds={profile.scoringRules?.mustPassCompetencyIds ?? []}
+        historyIds={data.competencyHistory ?? []}
+        warnings={scorecard?.warnings ?? []}
+        dirty={dirty}
+        locked={!isRoleOpen(role.status)}
+        onChange={updateCompetencies}
+        onStored={(message) => { setNotice(message); setActionError(''); load(false); }}
+      />
+
       <div className="card">
-        <h3 className="card-title"><Icon name="skills-assessment" size={16} />Competencies</h3>
-        <div className="table-scroll" tabIndex={0} role="region" aria-label="Competencies">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th><th>Category</th><th>Classification</th><th>Weight</th><th>Req/Target</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(profile.competencies ?? []).map((c, i) => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td><Badge kind={catKind(c.category)}>{humanise(c.category)}</Badge></td>
-                <td>
-                  <select
-                    aria-label={`Classification for ${c.name}`}
-                    value={c.classification}
-                    onChange={(e) => {
-                      // A non-scoring competency has its weight zeroed, so any
-                      // half-typed weight beside it is no longer what it says.
-                      clearWeightDraft(c.id);
-                      updateComp(i, { classification: e.target.value as Classification });
-                    }}
-                  >
-                    {CLASSIFICATIONS.map((k) => <option key={k} value={k}>{humanise(k)}</option>)}
-                  </select>
-                </td>
-                <td style={{ minWidth: 120 }}>
-                  <div className="row" style={{ gap: 6 }}>
-                    {/* An empty field is someone part-way through typing, not a
-                        weight of nothing: Number('') is 0, and clearing the box
-                        used to set the competency to 0% on the spot. The draft
-                        holds the half-typed value; the stored weight only moves
-                        when there is a number to move it to. */}
-                    <input
-                      type="number" min={0} max={100} step={5}
-                      aria-label={`Weight for ${c.name}, percent`}
-                      value={weightDrafts[c.id] ?? String(Math.round(c.weight * 100))}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        setWeightDrafts((drafts) => ({ ...drafts, [c.id]: raw }));
-                        if (!raw.trim() || !Number.isFinite(Number(raw))) return;
-                        updateComp(i, { weight: Math.max(0, Math.min(100, Number(raw))) / 100 });
-                      }}
-                      onBlur={() => clearWeightDraft(c.id)}
-                      style={{ width: 70 }}
-                    />
-                    <span className="muted small">%</span>
-                  </div>
-                </td>
-                <td className="muted">{c.requiredLevel} / {c.targetLevel}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        </div>
-        {/* The total the server checks, shown where the weights are edited —
-            otherwise the first anyone hears of it is a refused save. */}
-        <div className="row spread" style={{ marginTop: 8 }}>
-          <span className="small">Scored weights total {total}%</span>
-          {weightsError && <span className="small">[ must total 100% ]</span>}
-        </div>
-        {weightsError && <Banner kind="error">{weightsError}</Banner>}
+        <h3 className="card-title"><Icon name="scale" size={16} />Scoring</h3>
         <div className="row" style={{ marginTop: 10, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <label htmlFor="pass-threshold" className="muted small" style={{ margin: 0 }}>Pass threshold</label>
           <input

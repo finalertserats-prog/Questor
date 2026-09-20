@@ -145,8 +145,11 @@ describe('the weights as shares of one score', () => {
     const scored = competencies.filter((c) => c.classification !== 'non_scoring');
     const total = scored.reduce((sum, c) => sum + (c.weight as number), 0);
     const rebalanced = competencies.map((c) => (c.classification === 'non_scoring' ? c : { ...c, weight: (c.weight as number) / total }));
+    // A non-scoring competency cannot stay must-pass; this test is about the total, not that rule.
+    const scoringRules = drafted.scoringRules as { mustPassCompetencyIds: string[] };
+    const mustPassCompetencyIds = scoringRules.mustPassCompetencyIds.filter((id) => id !== (competencies[0] as { id: string }).id);
 
-    const res = await put({ ...drafted, competencies: rebalanced });
+    const res = await put({ ...drafted, competencies: rebalanced, scoringRules: { ...scoringRules, mustPassCompetencyIds } });
 
     expect(res.status).toBe(200);
   });

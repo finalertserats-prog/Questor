@@ -20,6 +20,7 @@ import './styles/tour.css';
 import './styles/observer.css';
 import './styles/catalogReview.css';
 import './styles/room.css';
+import './styles/scorecard.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

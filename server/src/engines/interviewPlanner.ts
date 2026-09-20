@@ -2,6 +2,7 @@ import type { Competency, FitScore, InterviewPlan, PlanBlock, RoleSuccessProfile
 import { isWorkSampleEligible } from './workSample.js';
 import { bandForRoleSeniority, bandGuidanceFor } from './bandCalibration.js';
 import type { BandId } from './experienceBands.js';
+import { isScored } from '../domain/profileSchema.js';
 
 // Interview plan builder (BRD FR-016, Appendix 25.1). Produces comparable
 // competency coverage while reserving process, warmup, resume-validation and
@@ -26,7 +27,8 @@ export function buildInterviewPlan(opts: {
   const modules = opts.modules ?? [];
   const band = opts.band ?? bandForRoleSeniority(opts.role.seniority).id;
   const bandGuidance = bandGuidanceFor(band);
-  const scored = opts.role.competencies.filter((c) => c.classification !== 'non_scoring');
+  // Retired competencies stay on the scorecard for old assessments to resolve, but a new plan never asks about them.
+  const scored = opts.role.competencies.filter(isScored);
 
   // Fit the plan to the time it actually has.
   //

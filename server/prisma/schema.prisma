@@ -34,6 +34,7 @@ model Tenant {
   atsRequisitions AtsRequisitionImport[]
   atsLinks        CandidateAtsLink[]
   demoGrants     DemoGrant[]
+  competencies   OrgCompetency[]
 }
 
 model User {
@@ -258,6 +259,28 @@ model RoleScorecardVersion {
   createdAt      DateTime @default(now())
   interviews     InterviewSession[]
   assessments    AssessmentVersion[]
+}
+
+// An organisation's own competency library: every custom competency HR has
+// added to a scorecard, kept so the next role can reuse the definition rather
+// than retype it. Private to the tenant; the shared catalog is roles, not this.
+model OrgCompetency {
+  id             String   @id @default(cuid())
+  tenantId       String
+  tenant         Tenant   @relation(fields: [tenantId], references: [id])
+  name           String
+  // The name lower-cased and single-spaced, so "Vendor management" and
+  // "vendor  Management" are one entry per organisation.
+  nameKey        String
+  category       String
+  definition     String   @default("")
+  // JSON string[] of observable indicators
+  indicatorsJson String   @default("[]")
+  createdBy      String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([tenantId, nameKey])
 }
 
 model Candidate {
