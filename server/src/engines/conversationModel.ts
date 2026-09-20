@@ -105,7 +105,22 @@ export function nonAnswerStreak(turns: readonly TurnRecord[]): number {
 // a story however it opens — a bare "Yes" answers neither, and scoring one as
 // the answer puts an empty turn in front of a reviewer as evidence.
 const AUXILIARY_OPENING = /^(?:so|and|but|just|ok|okay|right|now|then)?\s*(?:did|do|does|have|has|had|can|could|were|was|is|are|am|will|would|should|shall|may|might)\b/;
-const ASKS_FOR_AN_ACCOUNT = /\b(?:what|how|why|which|who|whom|where|when|example|examples|instance|story|tell me|walk me|talk me|take me through|describe|explain|elaborate|share|give me|in detail|step by step)\b/;
+
+// A wh-word anywhere asks for an account, whatever the sentence around it.
+const ASKS_FOR_DETAIL = /\b(?:what|how|why|which|who|whom|where|when|in detail|step by step)\b/;
+
+// The other kind of account request: one where the ASK itself is "tell me…",
+// "walk me through…", "share an example". The verb has to be the request —
+// "Did you share the tracker with the client?" is a yes/no question whose
+// predicate happens to use one of these words, and reading it as an invitation
+// to tell a story threw away the candidate's "Yes."
+const REQUEST_VERB = String.raw`(?:tell me|walk me|talk me|take me through|show me|give me|describe|explain|elaborate|share|list|outline)`;
+const ASKS_FOR_AN_ACCOUNT = new RegExp(
+  String.raw`(?:^|[.?!]\s*)(?:so\s+|and\s+|but\s+|just\s+|now\s+|ok(?:ay)?\s+|please\s+)?${REQUEST_VERB}\b`
+  + String.raw`|\b(?:can|could|would|will|may)\s+you\s+(?:please\s+)?${REQUEST_VERB}\b`
+  + String.raw`|\b(?:an?|any|some|another)\s+(?:example|instance|story|case)\b|\bexamples\b`,
+  'i',
+);
 
 /** The sentences of an utterance, in order. */
 function sentences(text: string): string[] {
@@ -124,7 +139,7 @@ export function isYesNoQuestion(question: string): boolean {
   if (!whole.trim()) return false;
   // Judged over the whole utterance: one clause asking for an account is
   // enough, wherever it sits.
-  if (ASKS_FOR_AN_ACCOUNT.test(whole)) return false;
+  if (ASKS_FOR_DETAIL.test(whole) || ASKS_FOR_AN_ACCOUNT.test(question ?? '')) return false;
   return AUXILIARY_OPENING.test(finalQuestion(question).toLowerCase());
 }
 

@@ -206,9 +206,14 @@ describe('isYesNoQuestion', () => {
     ['Can you give me an example of that?', false],
     ['Have you got a story about a wave that went wrong?', false],
     ['Would you describe how that decision was made?', false],
-    // …and the genuine yes/no question still is one.
+    // …and the genuine yes/no question still is one, including when its own
+    // predicate happens to contain a word the account-request list uses.
     ['Did you personally write the survey scripts?', true],
     ['Were you the owner of that tracker?', true],
+    ['Did you share the tracker with the client?', true],
+    ['Did you give the client the QA report?', true],
+    ['Can you share an example?', false],
+    ['Could you share a time that went wrong?', false],
   ])('"%s" -> %s', (question, expected) => {
     expect(isYesNoQuestion(question)).toBe(expected);
   });

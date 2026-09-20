@@ -162,6 +162,16 @@ describe('a bare yes or no', () => {
     expect(u.kind).toBe('rephrase');
   });
 
+  // The predicate uses a word the account-request list also uses; the question
+  // is still a yes/no question, and "Yes." is still the answer to it.
+  it('counts "Yes." to "Did you share the tracker with the client?"', async () => {
+    const c = await intoFirstCompetency();
+    c.ask('Did you share the tracker with the client?');
+    const u = await c.say('Yes.');
+    expect(u.kind).toBe('followup');
+    expect(coverageState(plan, c.turns).c_prog).toBeGreaterThan(0);
+  });
+
   it('is nothing when the question invited an example, however it opened', async () => {
     const c = await intoFirstCompetency();
     c.ask('Is there an example you can share?');

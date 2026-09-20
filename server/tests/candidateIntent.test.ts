@@ -132,6 +132,24 @@ const POSTPONE_DETERMINISTIC = table('postpone', [
   'to be honest I would rather we continue another day',
   "sorry, could we do this later please",
   'can we continue tomorrow if that works',
+  // With the reason people give, before or after the request.
+  'sorry, my manager just called, can we do this later?',
+  'can we do this later because my manager just called',
+  'my kid just woke up, can we continue tomorrow?',
+  "can we pick this up tomorrow, I'm on a client call",
+  'can we do this another time, my exam starts in 10 minutes',
+  "I'd like to pick this up tomorrow since something came up at home",
+]);
+
+// A bare stop, then the reason for it. The stop word opens the message, so it
+// is not the verb of a sentence about work.
+const STOP_WITH_REASON = table('stop', [
+  'stop, I need to go',
+  'stop, I have to leave',
+  'stop please, something came up',
+  'sorry, stop — I need to go',
+  'stop, my next meeting is starting',
+  "stop, I can't do this",
 ]);
 
 // The same words inside a sentence about the work. A postponement is the
@@ -145,6 +163,10 @@ const WORK_TALK_NOT_POSTPONE = table('answer', [
   'later in the pipeline we add a QA step',
   'the team wanted to continue after the weekend, so we replanned the wave',
   "I'd like to continue working on that tracker later this year",
+  // The stop word as an ordinary verb, with an object: still work talk.
+  'we had to stop the project because the client changed the brief',
+  'I need to stop using Excel because it falls over at 50 markets',
+  'stop the survey when the quota for that cell is full',
 ]);
 
 const ANSWER = table('answer', [
@@ -168,7 +190,7 @@ const ANSWER = table('answer', [
 ]);
 
 describe('detectCandidateIntent', () => {
-  it.each([...STOP, ...POSTPONE, ...POSTPONE_DETERMINISTIC, ...PAUSE, ...NON_ANSWER, ...SKIP, ...RESUME, ...REPEAT, ...CORRECTION, ...QUESTION, ...ANSWER, ...WORK_TALK_NOT_STOP, ...WORK_TALK_NOT_POSTPONE])(
+  it.each([...STOP, ...POSTPONE, ...POSTPONE_DETERMINISTIC, ...PAUSE, ...NON_ANSWER, ...SKIP, ...RESUME, ...REPEAT, ...CORRECTION, ...QUESTION, ...ANSWER, ...WORK_TALK_NOT_STOP, ...WORK_TALK_NOT_POSTPONE, ...STOP_WITH_REASON])(
     '"%s" reads as %s',
     (text, intent) => {
       expect(detectCandidateIntent(text).intent).toBe(intent);

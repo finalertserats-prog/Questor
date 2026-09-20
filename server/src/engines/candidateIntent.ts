@@ -86,6 +86,11 @@ const STOP_PHRASES: RegExp[] = [
   /\blet'?s\s+(?:stop|end|finish|quit)\s+(?:this|it|here|now|the interview)\b/,
   /\bi\s+(?:don'?t|do not)\s+(?:want|wanna)\s+to\s+(?:continue|carry on|go on|do this|do the interview|do this interview|do it any ?more)\b(?!\s+(?:with|using|working|to)\b(?!\s+(?:this|the interview)))/,
   /\bi'?m\s+not\s+doing\s+this\b/,
+  // "stop, I need to go" — the stop word opens the message as its own clause,
+  // and what follows is the reason for it, not its object. Anchored at the
+  // start, so "we had to stop the project because…" and "I need to stop using
+  // Excel because…" stay what they are: talk about the work.
+  new RegExp(String.raw`^${PAD}(?:stop|cancel|quit|enough|no more)(?:\s+(?:please|now|here|it|this))*\s+(?:i|we|my|our|something|someone|there'?s|it'?s|because|as|since|sorry)\b`),
 ];
 
 // --- Postpone ---------------------------------------------------------------
@@ -120,10 +125,28 @@ const POSTPONE_WHOLE = whole(String.raw`(?:(?:maybe|perhaps|can we|could we|let'
  * requests to end the interview. A candidate asking for another time stops
  * there; a candidate describing their work carries on into the sentence.
  */
-const POLITE_TAIL = String.raw`(?:\s+(?:please|thanks|thank you|if possible|if that'?s ok(?:ay)?|if that works|if you don'?t mind|if we can|if that'?s fine|ok(?:ay)?|alright|yeah|yes))*\s*$`;
+const POLITE = String.raw`(?:\s+(?:please|thanks|thank you|if possible|if that'?s ok(?:ay)?|if that works|if you don'?t mind|if we can|if that'?s fine|ok(?:ay)?|alright|yeah|yes))*`;
 
-/** The filler people put in front of a request — "honestly", "sorry", "to be honest". */
-const REQUEST_LEAD = String.raw`^(?:\w+\s+){0,3}`;
+/**
+ * The reason people give for asking — "…because my manager just called", "…,
+ * I'm on a client call", "…, my exam starts in ten minutes".
+ *
+ * Deliberately a short list of clause openers rather than "any words": it is
+ * what separates a request with a reason from "I'll do it later in the
+ * pipeline", where the sentence simply carries on about the work.
+ */
+const REASON_TAIL = String.raw`(?:\s+(?:because|since|as|due to|cos|coz|i'?m|i am|i'?ve|i have|i need|i'?ll need|i got|i have got|my|our|something|someone|there'?s|it'?s|the baby|sorry)\b.{0,70})?`;
+
+/** What may follow the time and still be the same request: politeness, a reason, or nothing. */
+const REQUEST_TAIL = String.raw`${POLITE}${REASON_TAIL}${POLITE}\s*$`;
+
+/**
+ * What may come before the request: the reason again, on the other side of it
+ * ("sorry, my manager just called, can we do this later?"). Bounded rather
+ * than unlimited, and reported speech is excluded separately, so a story about
+ * what a client asked for is still a story.
+ */
+const REQUEST_LEAD = String.raw`^(?:\w+\s+){0,12}`;
 
 /** Ways of opening a request of one's own: "I'd prefer we…", "I'd like to…", "I'll…". */
 const REQUEST_OPENER = String.raw`(?:let'?s|we can|we could|i can|i could|i'?ll|i will|i'?d (?:rather|prefer|like)(?:\s+(?:to|we))?|i would (?:rather|prefer|like)(?:\s+(?:to|we))?)`;
@@ -133,13 +156,13 @@ const POSTPONE_PHRASES: RegExp[] = [
   // "can we continue after class", "can I come back once my exams are over".
   // Anchored at both ends: the candidate's own request, and nothing after the
   // time but politeness.
-  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${TIME_LATER}${POLITE_TAIL}`),
+  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${TIME_LATER}${REQUEST_TAIL}`),
   // "let's do it tomorrow", "I'll do it later", "I can come back after exams",
   // "honestly I'd prefer we pick this up once my exams are over".
-  new RegExp(String.raw`${REQUEST_LEAD}${REQUEST_OPENER}\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${POLITE_TAIL}`),
+  new RegExp(String.raw`${REQUEST_LEAD}${REQUEST_OPENER}\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${REQUEST_TAIL}`),
   // "could we pick this up once my exams are over" — the request verb carries
   // it even when the time marker is the only thing after it.
-  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${POLITE_TAIL}`),
+  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${REQUEST_TAIL}`),
   // "can we reschedule", "I need to reschedule", "please postpone"
   /\b(?:can|could|shall|should)\s+(?:we|you|i)\s+(?:please\s+)?(?:reschedule|postpone|move\s+(?:it|this|the interview))\b/,
   /\b(?:i\s+(?:need|want|would like|'?d like)\s+to|please|let'?s)\s+(?:reschedule|postpone)\b/,
