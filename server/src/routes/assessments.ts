@@ -20,8 +20,8 @@ import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedba
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { feedbackEmailState, previewFeedbackEmail, releaseFeedbackForReview, sendFeedbackNow } from '../services/autoFeedback.js';
-import { completedReviewFor } from '../services/assessmentReview.js';
-import { applyReviewOverrides, assessmentDifferences, reviewedOutcome } from '../domain/reviewedAssessment.js';
+import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from '../services/assessmentReview.js';
+import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
@@ -479,7 +479,7 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
         },
       }
       : null,
-    differences: assessmentDifferences(result, completed),
+    differences: await reviewDifferenceView(req.auth!.tenantId, a.id, completed),
     // What the rest of the product should report: the human verdict once there
     // is one, the AI's until then.
     outcome: reviewedOutcome(result, completed),
@@ -539,10 +539,22 @@ const reviewSchema = z.object({
     to: z.unknown(),
     reason: z.string().max(MAX_TEXT_CHARS),
   }).strict()).max(MAX_COMPETENCY_ENTRIES).default([]),
+  // Replacing a completed review is deliberate: it needs saying, and a reason,
+  // because the candidate may already have been written to on the strength of
+  // the first one.
+  supersede: z.object({ reason: z.string().min(10, 'Give a real reason (at least 10 characters).').max(MAX_TEXT_CHARS) }).strict().optional(),
 }).strict();
 assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const body = reviewSchema.parse(req.body);
+
+  // "Final" has to mean something. Once a review is completed it is the
+  // version the team acts on and the version the candidate's feedback is
+  // written from, so a second one does not quietly replace it.
+  const previous = await completedReviewFor(a.id);
+  if (previous && !body.supersede) {
+    throw new HttpError(409, 'This assessment has already been reviewed. To replace that review, say that you mean to and give a reason.');
+  }
 
   // Separation of duties, recorded rather than enforced.
   //
@@ -575,6 +587,18 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     after: { disposition: body.disposition, reason: body.reason, selfReview },
   });
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, disposition: body.disposition });
+  if (previous && body.supersede) {
+    await prisma.humanReview.update({ where: { id: previous.id }, data: { supersededAt: new Date(), supersededReason: body.supersede.reason } });
+    await logAudit({
+      tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.superseded',
+      entityType: 'AssessmentVersion', entityId: a.id,
+      before: { reviewId: previous.id, disposition: previous.disposition },
+      after: { reviewId: review.id, supersededReviewId: previous.id, disposition: body.disposition, reason: body.supersede.reason },
+    });
+  }
+  // Where this reviewer parted company with the AI, kept for later analysis
+  // (services/assessmentReview.ts). Written now, at the moment the fact exists.
+  await recordReviewDifference(req.auth!.tenantId, a.id, review.id);
   // The candidate has been waiting on exactly this. Their feedback email is
   // released now and written from the reviewed assessment; a letter that has
   // already gone is left alone (services/autoFeedback.ts).

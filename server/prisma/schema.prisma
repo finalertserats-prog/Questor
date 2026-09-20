@@ -474,6 +474,7 @@ model AssessmentVersion {
   modelExecId   String?
   createdAt     DateTime @default(now())
   reviews       HumanReview[]
+  reviewDifferences ReviewDifference[]
   candidateFeedback CandidateFeedbackDelivery?
   feedbackEmails CandidateFeedbackEmail[]
 }
@@ -492,6 +493,43 @@ model HumanReview {
   reason         String   @default("")
   createdAt      DateTime @default(now())
   completedAt    DateTime?
+  // Superseded by a later completed review, with the reason it was replaced.
+  supersededAt   DateTime?
+  supersededReason String @default("")
+  difference     ReviewDifference?
+}
+
+// Where a completed human review parted company with the AI's assessment,
+// written once at the moment the review is completed.
+//
+// The owner wants these kept so the AI can be taught how people assess
+// differently. HumanReview already holds the overrides, and AssessmentVersion
+// the AI's output, but the comparison between the two is what analysis needs
+// and recomputing it on every read gave nothing durable to analyse. Only what
+// that analysis needs is stored: levels either side per competency, the two
+// verdicts, and the reviewer's reasons — never the transcript or the
+// candidate's details, which are reached through the assessment when required.
+model ReviewDifference {
+  id                String   @id @default(cuid())
+  tenantId          String
+  assessmentId      String
+  assessment        AssessmentVersion @relation(fields: [assessmentId], references: [id])
+  reviewId          String   @unique
+  review            HumanReview @relation(fields: [reviewId], references: [id])
+  reviewerId        String
+  aiRecommendation  String
+  humanDisposition  String
+  agreed            Boolean
+  changedCount      Int
+  competencyCount   Int
+  // JSON: [{competencyId, competencyName, aiLevel, humanLevel, changed, reason}]
+  competenciesJson  String   @default("[]")
+  reason            String   @default("")
+  summary           String   @default("")
+  createdAt         DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([assessmentId])
 }
 
 model CandidateFeedbackDelivery {

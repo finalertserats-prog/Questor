@@ -109,6 +109,13 @@ const ASSESS_PARTIAL_ACTION = 'interview.assess_partial';
 const MAX_ERROR_CHARS = 500;
 const INTERRUPTED_NOTE = 'The send was interrupted and may or may not have reached the candidate. '
   + 'Check with them before sending again.';
+const REVIEW_MISSED_NOTE = 'A review was completed while this email was being sent, so the candidate received the version '
+  + 'written before it. Write to them yourself if the review changed the picture.';
+
+/** What the words were written from: the review they follow, or the AI's own reading. */
+function basisOf(review: CompletedReview | null): string {
+  return review ? `review:${review.id}` : 'ai';
+}
 
 type Outcome = 'not-due' | 'sent' | 'sent-unverified' | 'skipped' | 'retry' | 'failed';
 
@@ -160,6 +167,9 @@ export async function enqueueAutoFeedback(opts: {
   else if (!await autoCandidateFeedbackEnabledForTenant(session.tenantId)) skip = 'POLICY_OFF';
 
   const windowHours = await feedbackReviewWindowHoursForTenant(session.tenantId);
+  // A reviewer can be quicker than the finalisation's own bookkeeping. A
+  // review already on file means the wait is over before it began.
+  const alreadyReviewed = !skip && (await completedReviewFor(opts.assessmentId)) !== null;
   let id: string;
   try {
     const row = await prisma.candidateFeedbackEmail.create({
@@ -167,7 +177,8 @@ export async function enqueueAutoFeedback(opts: {
         sessionId: opts.sessionId, assessmentId: opts.assessmentId,
         candidateId: session.candidateId, tenantId: session.tenantId, trigger: 'auto',
         status: skip ? 'SKIPPED' : 'QUEUED', skipReason: skip ?? '',
-        nextAttemptAt: skip ? null : feedbackDueAt(now, windowHours),
+        nextAttemptAt: skip ? null : alreadyReviewed ? now : feedbackDueAt(now, windowHours),
+        releaseReason: alreadyReviewed ? 'review' : '',
       },
     });
     id = row.id;
@@ -196,11 +207,47 @@ export async function enqueueAutoFeedback(opts: {
  * the review changed the picture.
  */
 export async function releaseFeedbackForReview(assessmentId: string, now = new Date()): Promise<boolean> {
-  const { count } = await prisma.candidateFeedbackEmail.updateMany({
+  const waiting = await prisma.candidateFeedbackEmail.updateMany({
     where: { assessmentId, status: 'QUEUED', releaseReason: '' },
     data: { nextAttemptAt: now, releaseReason: 'review' },
   });
-  return count === 1;
+  // A send already under way is marked too. The sender looks again for a
+  // completed review just before anything leaves (sendClaimed), and after the
+  // send it can tell from this mark that the review landed while the message
+  // was with the provider.
+  const inFlight = await prisma.candidateFeedbackEmail.updateMany({
+    where: { assessmentId, status: 'SENDING', releaseReason: '' },
+    data: { releaseReason: 'review' },
+  });
+  return waiting.count + inFlight.count >= 1;
+}
+
+/**
+ * Letters queued before the review window existed were due the moment they
+ * were written. Left alone, every one of them would fire on the first tick
+ * after the deploy that introduced the window, straight past it. Run once at
+ * start-up; a row moved once no longer matches, so running it again is free.
+ */
+export async function rescheduleLegacyFeedbackEmails(now = new Date()): Promise<number> {
+  const rows = await prisma.candidateFeedbackEmail.findMany({
+    where: { status: 'QUEUED', trigger: 'auto', releaseReason: '' },
+    select: { id: true, tenantId: true, createdAt: true, nextAttemptAt: true },
+  });
+  let moved = 0;
+  for (const row of rows) {
+    // Due within a minute of being written is the old behaviour; anything
+    // later was queued with a window and is left where it is.
+    if (!row.nextAttemptAt || row.nextAttemptAt.getTime() > row.createdAt.getTime() + 60_000) continue;
+    const windowHours = await feedbackReviewWindowHoursForTenant(row.tenantId);
+    if (windowHours <= 0) continue;
+    const { count } = await prisma.candidateFeedbackEmail.updateMany({
+      where: { id: row.id, status: 'QUEUED', releaseReason: '', nextAttemptAt: row.nextAttemptAt },
+      data: { nextAttemptAt: feedbackDueAt(row.createdAt, windowHours) },
+    });
+    moved += count;
+  }
+  if (moved > 0) logger.info({ moved, at: now.toISOString() }, 'Rescheduled feedback emails queued before the review window existed');
+  return moved;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +349,7 @@ async function contentFor(row: {
   // What the words were written from. A review landing after they were
   // prepared changes this, and the letter is written again — the candidate
   // must never receive an account a human had already corrected.
-  const basis = review ? `review:${review.id}` : 'ai';
+  const basis = basisOf(review);
   const stored = storedContent(row.contentJson);
   if (stored && row.contentBasis === basis) return { content: stored, source: row.contentSource, basis };
 
@@ -350,8 +397,13 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   }
 
   const s = row.session;
-  const review = await completedReviewFor(row.assessmentId);
-  const { content, source, basis } = await contentFor(row, review);
+  let { content, source, basis } = await contentFor(row, await completedReviewFor(row.assessmentId));
+  // Composing takes a model call; a reviewer can finish in that time. One
+  // last look before anything leaves: if a review is now on file that the
+  // words were not written from, they are written again from it. The
+  // candidate must never receive an account a human had already corrected.
+  const latest = await completedReviewFor(row.assessmentId);
+  if (basisOf(latest) !== basis) ({ content, source, basis } = await contentFor(row, latest));
   const rendered = renderAutoFeedbackEmail({
     to: s.candidate.email, candidateName: s.candidate.fullName, roleTitle: s.role.title,
     companyName: s.tenant.name, content, talkUrl: await talkLink(s),
@@ -365,10 +417,12 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
     data: {
       contentJson: JSON.stringify(content), contentSource: source, contentBasis: basis,
       subject: rendered.message.subject, bodyText: rendered.storedText,
-      // A release reason is only missing when the window itself ran out.
-      releaseReason: row.releaseReason || 'window',
     },
   });
+  // A release reason is only missing when the window itself ran out. Written
+  // conditionally, so a review that marked this row while it was in flight
+  // is not overwritten.
+  await prisma.candidateFeedbackEmail.updateMany({ where: { id, releaseReason: '' }, data: { releaseReason: 'window' } });
 
   const email = getEmail();
   // Bounded well inside the stale window, so a provider that never answers
@@ -376,6 +430,11 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   await sendWithinTimeout(email, rendered.message);
 
   const sentAt = new Date();
+  // A review can still land while the provider holds the message. Nothing
+  // can be unsent, so the fact is recorded where the hiring team sees it
+  // and they can write to the candidate themselves.
+  const afterSend = await completedReviewFor(row.assessmentId);
+  const reviewMissed = basisOf(afterSend) !== basis;
   const confirmed = await prisma.candidateFeedbackEmail.updateMany({
     where: { id, status: 'SENDING', claimedAt: claim.at },
     data: {
@@ -389,12 +448,22 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   // copy, so the row says "probably sent, unconfirmed" and names the doubt.
   if (confirmed.count !== 1) return recordUnverifiedSend(id, row, { sentAt, delivered: email.delivers });
 
+  if (reviewMissed) {
+    await prisma.candidateFeedbackEmail.updateMany({ where: { id, status: 'SENT' }, data: { lastError: REVIEW_MISSED_NOTE } });
+    logger.warn({ feedbackEmailId: id, sessionId: row.sessionId }, 'A review was completed while the feedback email was being sent');
+    await logAudit({
+      tenantId: row.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
+      action: 'feedback.email.sent_before_review', entityType: 'InterviewSession', entityId: row.sessionId,
+      after: { assessmentId: row.assessmentId, sentFrom: basis, reviewId: afterSend?.id ?? null },
+    });
+  }
+
   await logAudit({
     tenantId: row.tenantId,
     actorType: row.trigger === 'manual' && row.requestedByUserId ? 'user' : 'system',
     actorId: row.trigger === 'manual' && row.requestedByUserId ? row.requestedByUserId : 'candidate-feedback-email',
     action: 'feedback.email.sent', entityType: 'InterviewSession', entityId: row.sessionId,
-    after: { assessmentId: row.assessmentId, trigger: row.trigger, contentSource: source, delivered: email.delivers, sentAt },
+    after: { assessmentId: row.assessmentId, trigger: row.trigger, contentSource: source, contentBasis: basis, delivered: email.delivers, sentAt },
   });
   return 'sent';
 }
@@ -601,7 +670,7 @@ export async function previewFeedbackEmail(opts: {
   // The stored words are reused only when they were written from the same
   // state of the assessment; otherwise the preview shows what would actually
   // be sent now, review included.
-  const basis = review ? `review:${review.id}` : 'ai';
+  const basis = basisOf(review);
   let content = row && row.contentBasis === basis ? storedContent(row.contentJson) : null;
   if (!content) {
     let generated: { content: FeedbackContent; source: string; basis: string };

@@ -70,7 +70,13 @@ const MODEL_CONTENT = {
   ],
 };
 
-const llm = vi.hoisted(() => ({ reply: '' as string, calls: 0 }));
+const llm = vi.hoisted(() => ({
+  reply: '' as string,
+  calls: 0,
+  /** Set to hold the model open, so a review landing mid-send can be tested deterministically. */
+  hold: null as null | Promise<void>,
+  started: null as null | (() => void),
+}));
 
 vi.mock('../src/config.js', async (orig) => {
   const actual = await orig<typeof import('../src/config.js')>();
@@ -83,6 +89,10 @@ vi.mock('../src/providers/llm/anthropic.js', () => ({
     get enabled(): boolean { return true; }
     async generate() {
       llm.calls += 1;
+      if (llm.hold) {
+        llm.started?.();
+        await llm.hold;
+      }
       return { text: llm.reply, model: 'fake-model', inputTokens: 1, outputTokens: 1, latencyMs: 1 };
     }
   },
@@ -95,7 +105,7 @@ const { signToken } = await import('../src/services/auth.js');
 const { _resetLlm } = await import('../src/providers/llm/index.js');
 const {
   attemptFeedbackEmail, deliverDueFeedbackEmails, enqueueAutoFeedback, FEEDBACK_SEND_STALE_MS,
-  _setFeedbackSendTimeoutForTest,
+  rescheduleLegacyFeedbackEmails, _setFeedbackSendTimeoutForTest,
 } = await import('../src/services/autoFeedback.js');
 const { MAX_SEND_ATTEMPTS } = await import('../src/services/autoFeedbackModel.js');
 const { TALK_LINK_PLACEHOLDER } = await import('../src/providers/email/autoFeedbackEmail.js');
@@ -160,6 +170,8 @@ beforeEach(async () => {
   _setFeedbackSendTimeoutForTest(null);
   llm.reply = JSON.stringify(MODEL_CONTENT);
   llm.calls = 0;
+  llm.hold = null;
+  llm.started = null;
   _resetLlm();
 });
 
@@ -302,6 +314,47 @@ describe('when the letter goes', () => {
     expect(mail.sent).toHaveLength(1);
   });
 
+  // The window ran out and the send is already under way when the reviewer
+  // finishes. Their reading must still be the one the candidate receives.
+  it('sends the reviewed content when a review lands while the letter is being written', async () => {
+    let release = () => {};
+    llm.hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { llm.started = resolve; });
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const queued = await rowFor(ids.sessionId);
+
+    const inFlight = attemptFeedbackEmail(queued.id, hoursFromNow(13));
+    await started;
+    await completeReview(ids, [{ competencyId: 'stake', from: 2, to: 5, reason: 'Clear in the second half.' }]);
+    release();
+    llm.hold = null;
+    await inFlight;
+
+    expect({ sent: mail.sent.length, text: mail.sent[0]?.text ?? '', row: await rowFor(ids.sessionId) })
+      .toMatchObject({ sent: 1, text: expect.stringContaining('Stakeholder management: Clear strength'), row: { status: 'SENT' } });
+  });
+
+  it("pins the letter to the review it was written from", async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const res = await completeReview(ids);
+    await deliverDueFeedbackEmails(new Date());
+    expect((await rowFor(ids.sessionId)).contentBasis).toBe(`review:${res.body.review.id}`);
+  });
+
+  // The reviewer was quicker than the finalisation's own bookkeeping.
+  it('goes at once when the review was completed before the letter was even queued', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await completeReview(ids);
+
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const row = await rowFor(ids.sessionId);
+
+    expect({ release: row.releaseReason, due: (row.nextAttemptAt?.getTime() ?? Infinity) <= Date.now() })
+      .toEqual({ release: 'review', due: true });
+  });
+
   it('sends by hand without waiting for the window at all', async () => {
     const ids = await completedInterview({ windowHours: 12 });
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
@@ -310,6 +363,50 @@ describe('when the letter goes', () => {
 
     expect({ status: res.status, sent: mail.sent.length, release: (await rowFor(ids.sessionId)).releaseReason })
       .toEqual({ status: 200, sent: 1, release: 'manual' });
+  });
+});
+
+/**
+ * Rows queued before the review window existed were due at once. Left alone,
+ * every one of them would fire on the first tick after deploy.
+ */
+describe('letters queued before the review window existed', () => {
+  async function legacyRow(ids: Awaited<ReturnType<typeof completedInterview>>) {
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const row = await rowFor(ids.sessionId);
+    // As f19e753 wrote them: due the moment they were created.
+    await prisma.candidateFeedbackEmail.update({ where: { id: row.id }, data: { nextAttemptAt: row.createdAt } });
+    return row;
+  }
+
+  it('are moved to the end of the window at start-up', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    const row = await legacyRow(ids);
+
+    const moved = await rescheduleLegacyFeedbackEmails();
+    const due = (await rowFor(ids.sessionId)).nextAttemptAt?.getTime() ?? 0;
+
+    expect({ moved, hours: Math.round((due - row.createdAt.getTime()) / (60 * 60_000)) }).toEqual({ moved: 1, hours: 12 });
+  });
+
+  it('are not moved twice', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await legacyRow(ids);
+    await rescheduleLegacyFeedbackEmails();
+    expect(await rescheduleLegacyFeedbackEmails()).toBe(0);
+  });
+
+  it('leaves a letter a reviewer or a person already released alone', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    const row = await legacyRow(ids);
+    await prisma.candidateFeedbackEmail.update({ where: { id: row.id }, data: { releaseReason: 'review' } });
+    expect(await rescheduleLegacyFeedbackEmails()).toBe(0);
+  });
+
+  it('leaves an organisation with no window alone', async () => {
+    const ids = await completedInterview({ windowHours: 0 });
+    await legacyRow(ids);
+    expect(await rescheduleLegacyFeedbackEmails()).toBe(0);
   });
 });
 

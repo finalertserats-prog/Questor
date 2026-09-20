@@ -105,6 +105,14 @@ describe('Questor API end-to-end', () => {
     expect(await prisma.candidateFeedbackEmail.count({ where: { sessionId, assessmentId } })).toBe(1);
   });
 
+  // Queued BEFORE the assessment is announced as ready: a reviewer who acts
+  // on the announcement at once must find a letter to release, not a gap.
+  it('queues the feedback email before the assessment is announced as ready', async () => {
+    const row = await prisma.candidateFeedbackEmail.findUniqueOrThrow({ where: { sessionId } });
+    const ready = await prisma.auditEvent.findFirstOrThrow({ where: { action: 'assessment.ready', entityId: assessmentId } });
+    expect(row.createdAt.getTime()).toBeLessThanOrEqual(ready.createdAt.getTime());
+  });
+
   // Where the organisation requires it, blind-first is enforced, not merely
   // offered: a reviewer reaching the score by typing the URL would lose the
   // independence that keeps the AI advisory. (Off by default — see

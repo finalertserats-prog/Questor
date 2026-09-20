@@ -1,7 +1,9 @@
 import { parseJson, parseJsonOptional, prisma } from '../db.js';
 import { logger } from '../logger.js';
-import type { RoleSuccessProfile } from '../domain/types.js';
-import type { CompletedReview, ReviewOverride } from '../domain/reviewedAssessment.js';
+import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
+import {
+  assessmentDifferences, type AssessmentDifferences, type CompetencyDifference, type CompletedReview, type ReviewOverride,
+} from '../domain/reviewedAssessment.js';
 
 /**
  * Reading a completed human review, and the scorecard the role was approved
@@ -33,13 +35,10 @@ function readOverrides(raw: string, reviewId: string): ReviewOverride[] {
     .filter((o) => o.competencyId !== '');
 }
 
-/** The most recent completed review of this assessment, or null. */
-export async function completedReviewFor(assessmentId: string): Promise<CompletedReview | null> {
-  const review = await prisma.humanReview.findFirst({
-    where: { assessmentId, status: REVIEW_COMPLETED },
-    orderBy: { completedAt: 'desc' },
-  });
-  if (!review) return null;
+function asCompleted(review: {
+  id: string; reviewerId: string; disposition: string | null; reason: string | null; comments: string | null;
+  completedAt: Date | null; overridesJson: string;
+}): CompletedReview {
   return {
     id: review.id,
     reviewerId: review.reviewerId,
@@ -48,6 +47,79 @@ export async function completedReviewFor(assessmentId: string): Promise<Complete
     comments: review.comments ?? '',
     completedAt: review.completedAt,
     overrides: readOverrides(review.overridesJson, review.id),
+  };
+}
+
+/**
+ * The completed review this assessment is acted on, or null. A superseded
+ * review is not it: it was replaced deliberately, with a reason on the record.
+ */
+export async function completedReviewFor(assessmentId: string): Promise<CompletedReview | null> {
+  const review = await prisma.humanReview.findFirst({
+    where: { assessmentId, status: REVIEW_COMPLETED, supersededAt: null },
+    orderBy: { completedAt: 'desc' },
+  });
+  return review ? asCompleted(review) : null;
+}
+
+// ---------------------------------------------------------------------------
+// The record of the differences
+// ---------------------------------------------------------------------------
+
+/**
+ * Write down where this review parted company with the AI. Once per review,
+ * at the moment it is completed, so the comparison is durable and can be
+ * analysed later without recomputing it from whatever the two rows look like
+ * by then. Nothing about the candidate goes in beyond the assessment id.
+ */
+export async function recordReviewDifference(tenantId: string, assessmentId: string, reviewId: string): Promise<void> {
+  const [assessment, review] = await Promise.all([
+    prisma.assessmentVersion.findUnique({ where: { id: assessmentId }, select: { resultJson: true } }),
+    prisma.humanReview.findUnique({ where: { id: reviewId } }),
+  ]);
+  if (!assessment || !review) return;
+  const result = parseJson<AssessmentResult | null>(assessment.resultJson, null);
+  if (!result || !Array.isArray(result.competencies)) {
+    logger.error({ assessmentId, reviewId }, 'Assessment result unreadable; the review difference was not recorded');
+    return;
+  }
+  const differences = assessmentDifferences(result, asCompleted(review));
+  if (!differences) return;
+  const changedCount = differences.competencies.filter((c) => c.changed).length;
+  const data = {
+    tenantId, assessmentId, reviewerId: review.reviewerId,
+    aiRecommendation: differences.disposition.ai, humanDisposition: differences.disposition.human,
+    agreed: differences.disposition.agreed, changedCount, competencyCount: differences.competencies.length,
+    competenciesJson: JSON.stringify(differences.competencies), reason: differences.reason, summary: differences.summary,
+  };
+  await prisma.reviewDifference.upsert({ where: { reviewId }, create: { reviewId, ...data }, update: data });
+}
+
+/**
+ * The differences as the assessment page shows them: read from the record,
+ * and written first for a review completed before the record existed.
+ * `comments` come from the review itself — they are the reviewer's free text
+ * about a person and are not copied into the analysis record.
+ */
+export async function reviewDifferenceView(
+  tenantId: string, assessmentId: string, review: CompletedReview | null,
+): Promise<AssessmentDifferences | null> {
+  if (!review) return null;
+  let stored = await prisma.reviewDifference.findUnique({ where: { reviewId: review.id } });
+  if (!stored) {
+    await recordReviewDifference(tenantId, assessmentId, review.id);
+    stored = await prisma.reviewDifference.findUnique({ where: { reviewId: review.id } });
+    if (!stored) return null;
+  }
+  const competencies = parseJson<CompetencyDifference[]>(stored.competenciesJson, []);
+  return {
+    competencies: Array.isArray(competencies) ? competencies : [],
+    disposition: { ai: stored.aiRecommendation, human: stored.humanDisposition, agreed: stored.agreed },
+    reason: stored.reason,
+    comments: review.comments,
+    reviewerId: stored.reviewerId,
+    reviewedAt: review.completedAt,
+    summary: stored.summary,
   };
 }
 

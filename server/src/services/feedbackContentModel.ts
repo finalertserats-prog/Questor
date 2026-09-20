@@ -151,25 +151,44 @@ function trimQuote(quote: string): string {
   return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
-/** The first of the candidate's own words for this competency, or nothing. */
+/**
+ * The first of the candidate's own words for this competency that can be put
+ * in front of them, or nothing.
+ *
+ * Their words are theirs, but "I passed with 90%" or "they put me at level 5"
+ * quoted back in a letter that otherwise carries no number reads as our
+ * verdict on them. A quote that trips the same checks as our prose is passed
+ * over for the next one, and the row is simply left out when none is clean.
+ */
 function firstQuote(c: CompetencyScore, used: Set<string>): string {
   for (const span of c.evidence ?? []) {
     const quote = span.quote?.trim() ? trimQuote(span.quote) : '';
-    if (quote && !used.has(quote)) {
-      used.add(quote);
-      return quote;
-    }
+    if (!quote || used.has(quote) || verdictChecks(quote).length > 0) continue;
+    used.add(quote);
+    return quote;
   }
   return '';
 }
 
-/** What the role asks, in the employer's own words from the approved scorecard. */
+/** How a competency is described when the scorecard's own words cannot be used. */
+function plainRoleAsks(name: string): string {
+  return `Showing ${name} in the work you do day to day.`;
+}
+
+/**
+ * What the role asks, in the employer's own words from the approved scorecard.
+ *
+ * A job description is about the job, but it can still say "Level 5" or
+ * "shortlist criterion", and in this letter that reads as a mark against the
+ * person. Wording that trips the checks is replaced by the plain form rather
+ * than shown or dropped.
+ */
 function roleAsksFor(name: string, defined: Competency | undefined): string {
   const definition = defined?.definition?.trim() ?? '';
-  if (definition.length >= 10) return definition;
-  const indicator = defined?.indicators?.find((i) => i.trim().length >= 10)?.trim();
-  if (indicator) return indicator;
-  return `Showing ${name.toLowerCase()} in the work you do day to day.`;
+  const indicator = defined?.indicators?.find((i) => i.trim().length >= 10)?.trim() ?? '';
+  const candidate = definition.length >= 10 ? definition : indicator;
+  if (!candidate) return plainRoleAsks(name);
+  return verdictChecks(candidate).length > 0 ? plainRoleAsks(name) : candidate;
 }
 
 const HEARD_TEMPLATES: Readonly<Record<CoverageMarker, (name: string) => string>> = {
@@ -384,25 +403,35 @@ function personChecks(text: string): string[] {
   return out;
 }
 
-/** Every reason this content may not go to a candidate; empty when it may. */
+/** Numbers, levels, verdicts, promises and AI: the sweep for anything that reads as our judgement. */
+function verdictChecks(text: string): string[] {
+  return VERDICT_PATTERNS.filter((p) => p.re.test(text)).map((p) => `verdict:${p.label}`);
+}
+
+/**
+ * Every reason one sentence may not go to a candidate. The same sweep the
+ * letter gets, exposed so the email template can be held to it too.
+ */
+export function textGuardrailViolations(text: string): string[] {
+  return [...new Set([...verdictChecks(text), ...personChecks(text)])];
+}
+
+/**
+ * Every reason this content may not go to a candidate; empty when it may.
+ * Every field is swept the same way, the candidate's quoted words and the
+ * employer's role description included: those are sanitised when the letter
+ * is built (firstQuote, roleAsksFor), and this is the check that they were.
+ */
 export function feedbackGuardrailViolations(content: FeedbackContent): string[] {
   const parsed = feedbackContentSchema.safeParse(content);
   const violations: string[] = parsed.success ? [] : ['shape'];
-
-  const ours = [
+  const texts = [
     ...content.swot.strengths, ...content.swot.weaknesses, ...content.swot.opportunities, ...content.swot.watchOuts,
     ...content.nextSteps,
-    ...content.competencies.flatMap((c) => [c.name, c.whatWeHeard, c.toGoFurther]),
+    ...content.competencies.flatMap((c) => [c.name, c.whatWeHeard, c.toGoFurther, c.quote, c.roleAsks]),
   ];
-  for (const text of ours) {
-    for (const p of VERDICT_PATTERNS) {
-      if (p.re.test(text)) violations.push(`verdict:${p.label}`);
-    }
-    violations.push(...personChecks(text));
-  }
-  // Theirs: the candidate's words and the employer's description of the role.
-  for (const text of content.competencies.flatMap((c) => [c.quote, c.roleAsks])) {
-    if (text) violations.push(...personChecks(text));
+  for (const text of texts) {
+    if (text) violations.push(...textGuardrailViolations(text));
   }
   return [...new Set(violations)];
 }
@@ -437,7 +466,7 @@ export function chooseFeedbackContent(opts: {
     swot: GENERIC_SWOT,
     competencies: evidence.competencies.map((c) => ({
       ...c,
-      roleAsks: `Showing ${c.name.toLowerCase()} in the work you do day to day.`,
+      roleAsks: plainRoleAsks(c.name),
       whatWeHeard: HEARD_TEMPLATES[c.marker](c.name),
       quote: '',
       toGoFurther: FURTHER_TEMPLATES[c.marker](c.name),

@@ -39,10 +39,11 @@ async function assessment() {
 
 const OVERRIDES = [{ competencyId: 'stake', from: 2, to: 4, reason: 'Much stronger in the second half than the transcript reads.' }];
 
-async function review(ids: Awaited<ReturnType<typeof assessment>>, disposition = 'CONSIDER') {
+async function review(ids: Awaited<ReturnType<typeof assessment>>, disposition = 'CONSIDER', extra: Record<string, unknown> = {}) {
   const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-    .send({ disposition, reason: 'My own read of the evidence.', comments: 'Worth a second conversation.', overrides: OVERRIDES });
+    .send({ disposition, reason: 'My own read of the evidence.', comments: 'Worth a second conversation.', overrides: OVERRIDES, ...extra });
   expect(res.status).toBe(201);
+  return res;
 }
 
 const load = (ids: Awaited<ReturnType<typeof assessment>>) =>
@@ -126,5 +127,106 @@ describe('once a reviewer has been through it', () => {
     const ids = await assessment();
     await review(ids, 'PROCEED');
     expect((await load(ids)).body.differences.disposition.agreed).toBe(true);
+  });
+});
+
+// "Final" has to mean something: once a review is completed, the candidate
+// may have been written to on the strength of it. A second opinion replaces
+// it only deliberately, with a reason, and on the record.
+describe('a second review of the same assessment', () => {
+  it('is refused', async () => {
+    const ids = await assessment();
+    await review(ids);
+    const again = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'PROCEED', reason: 'Changed my mind.', overrides: [] });
+    expect({ status: again.status, reviews: await prisma.humanReview.count({ where: { assessmentId: ids.assessmentId, status: 'COMPLETED' } }) })
+      .toEqual({ status: 409, reviews: 1 });
+  });
+
+  it('says why', async () => {
+    const ids = await assessment();
+    await review(ids);
+    const again = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'PROCEED', reason: 'Changed my mind.', overrides: [] });
+    expect(again.body.error).toMatch(/already been reviewed/i);
+  });
+
+  it('replaces the first when someone says they mean to, and why', async () => {
+    const ids = await assessment();
+    const first = await review(ids);
+    const second = await review(ids, 'PROCEED', { supersede: { reason: 'Second interviewer had notes the first had not seen.' } });
+    const outcome = (await load(ids)).body.outcome;
+    const superseded = await prisma.humanReview.findUniqueOrThrow({ where: { id: first.body.review.id } });
+    expect({ status: second.status, outcome: outcome.recommendation, superseded: superseded.supersededAt instanceof Date, why: superseded.supersededReason })
+      .toEqual({ status: 201, outcome: 'PROCEED', superseded: true, why: 'Second interviewer had notes the first had not seen.' });
+  });
+
+  it('is written to the audit log when it replaces the first', async () => {
+    const ids = await assessment();
+    const first = await review(ids);
+    await review(ids, 'PROCEED', { supersede: { reason: 'Second interviewer had notes the first had not seen.' } });
+    const event = await prisma.auditEvent.findFirst({ where: { action: 'review.superseded', entityId: ids.assessmentId } });
+    expect(event?.afterJson ?? '').toContain(first.body.review.id);
+  });
+
+  it('refuses a supersede with no real reason', async () => {
+    const ids = await assessment();
+    await review(ids);
+    const again = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'PROCEED', reason: 'Changed my mind.', overrides: [], supersede: { reason: 'meh' } });
+    expect(again.status).toBe(400);
+  });
+});
+
+// The owner wants the differences kept, so how people assess differently
+// from the AI can be studied later — not recomputed on every page view.
+describe('the record of the differences', () => {
+  it('is written when the review is completed', async () => {
+    const ids = await assessment();
+    const res = await review(ids);
+    const snapshot = await prisma.reviewDifference.findUnique({ where: { reviewId: res.body.review.id } });
+    expect(snapshot).toMatchObject({
+      tenantId: ids.tenantId, assessmentId: ids.assessmentId, reviewerId: ids.userId,
+      aiRecommendation: 'PROCEED', humanDisposition: 'CONSIDER', agreed: false, changedCount: 1, competencyCount: 2,
+    });
+  });
+
+  it('keeps each competency, both readings and the reason', async () => {
+    const ids = await assessment();
+    const res = await review(ids);
+    const snapshot = await prisma.reviewDifference.findUniqueOrThrow({ where: { reviewId: res.body.review.id } });
+    const rows = JSON.parse(snapshot.competenciesJson) as Array<{ competencyId: string; changed: boolean; reason: string }>;
+    expect(rows.find((r) => r.competencyId === 'stake')).toMatchObject({ aiLevel: 2, humanLevel: 4, changed: true, reason: OVERRIDES[0].reason });
+  });
+
+  it('keeps nothing about the candidate beyond the ids that reach the assessment', async () => {
+    const ids = await assessment();
+    const res = await review(ids);
+    const snapshot = await prisma.reviewDifference.findUniqueOrThrow({ where: { reviewId: res.body.review.id } });
+    expect(JSON.stringify(snapshot)).not.toMatch(/priya|sharma|example\.com/i);
+  });
+
+  it('is what the differences tab reads', async () => {
+    const ids = await assessment();
+    const res = await review(ids);
+    // Tamper with the stored record: if the tab still recomputed, it would not notice.
+    await prisma.reviewDifference.update({ where: { reviewId: res.body.review.id }, data: { summary: 'From the record.' } });
+    expect((await load(ids)).body.differences.summary).toBe('From the record.');
+  });
+
+  it('is written for a review completed before the record existed, the first time it is read', async () => {
+    const ids = await assessment();
+    const res = await review(ids);
+    await prisma.reviewDifference.delete({ where: { reviewId: res.body.review.id } });
+    await load(ids);
+    expect(await prisma.reviewDifference.count({ where: { reviewId: res.body.review.id } })).toBe(1);
+  });
+
+  it('goes with the interview when the candidate is erased', async () => {
+    const ids = await assessment();
+    await review(ids);
+    const erase = await request(app).delete(`/api/candidates/${ids.candidateId}`).set(ids.auth).send({ reason: 'Candidate asked to be forgotten.' });
+    expect({ status: erase.status, left: await prisma.reviewDifference.count({ where: { assessmentId: ids.assessmentId } }) })
+      .toEqual({ status: 200, left: 0 });
   });
 });
