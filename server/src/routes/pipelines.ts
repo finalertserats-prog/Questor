@@ -16,6 +16,7 @@ import { formatRoundTime } from '../services/roundTime.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
+import { resolveTransition } from '../domain/pipelineAutonomy.js';
 import {
   createMeeting, initialMeetingFields, isStaleCreation, tenantMeetingProvider, MEETING_STATUS, type MeetingOutcome,
 } from '../services/roundMeeting.js';
@@ -394,6 +395,31 @@ pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('intervi
     after: { roundId: round.id, stage: round.stageKey },
   });
   res.json({ round: presentRound(await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } })) });
+}));
+
+// Finalising a candidate: the one move to the last stage (Diamond) that the
+// process never makes on its own. Held to assessment:review, like the
+// decision, so it stays a person's call. Forward only, from any earlier stage.
+pipelinesRouter.post('/:id/finalize', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const pipeline = await loadPipeline(req, req.params.id);
+  if (pipeline.status !== 'ACTIVE') throw new HttpError(409, DECIDED);
+
+  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
+  const transition = resolveTransition(stages, pipeline.currentStageKey, 'candidate.finalized');
+  if (!transition) throw new HttpError(409, 'This candidate is already at the final stage.');
+
+  const moved = await prisma.candidatePipeline.updateMany({
+    where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: transition.from },
+    data: { currentStageKey: transition.to },
+  });
+  if (moved.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
+
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
+    action: 'pipeline.finalized', entityType: 'CandidatePipeline', entityId: pipeline.id,
+    before: { stage: transition.from }, after: { stage: transition.to },
+  });
+  res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
 }));
 
 const decisionSchema = z.object({

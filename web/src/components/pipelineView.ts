@@ -41,3 +41,13 @@ export function nextStage(stages: readonly PipelineStageView[], currentKey: stri
   const index = stages.findIndex((stage) => stage.key === currentKey);
   return index >= 0 && index < stages.length - 1 ? stages[index + 1] : null;
 }
+
+/**
+ * The stage a person finalises the candidate into — the last one, Diamond by
+ * default — or null when the candidate is already there. Nothing reaches it on
+ * its own, so the panel offers it as a separate, confirmed action.
+ */
+export function finalStage(stages: readonly PipelineStageView[], currentKey: string): PipelineStageView | null {
+  const index = stages.findIndex((stage) => stage.key === currentKey);
+  return index >= 0 && index < stages.length - 1 ? stages[stages.length - 1] : null;
+}

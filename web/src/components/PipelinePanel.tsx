@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
-import { nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
+import { finalStage, nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
 import { decisionStatus, interviewStatus } from './statusModel';
 import { sessionOptionLabels } from './roleLabelModel';
 import { interviewerName } from './candidateJourney';
@@ -99,10 +99,14 @@ function StageBadge({ stageKey }: { stageKey: string }) {
  * `onChanged` fires after any action that altered the pipeline, so a page
  * showing the same data elsewhere — the candidate journey board — refreshes
  * with it rather than sitting on a stale copy until someone reloads.
+ *
+ * `refreshKey` works the other way: the server moves candidates on its own
+ * (an analysed resume, a scheduled interview), so when the page re-reads for
+ * any reason the panel re-reads too and never shows a stage already left.
  */
 export function PipelinePanel(
-  { candidateId, candidateName, interviews, onChanged }:
-  { candidateId: string; candidateName: string; interviews: InterviewOption[]; onChanged?: () => void },
+  { candidateId, candidateName, interviews, onChanged, refreshKey = 0 }:
+  { candidateId: string; candidateName: string; interviews: InterviewOption[]; onChanged?: () => void; refreshKey?: number },
 ) {
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -134,6 +138,8 @@ export function PipelinePanel(
   const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
   // The stage a move is waiting to be confirmed for.
   const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
+  // Set while finalising the candidate waits to be confirmed.
+  const [pendingFinalize, setPendingFinalize] = useState(false);
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -158,7 +164,7 @@ export function PipelinePanel(
     load()
       .catch((e: unknown) => { if (latestLoad.current === loadId) setLoadError(errorMessage(e)); })
       .finally(() => { if (latestLoad.current === loadId) setLoading(false); });
-  }, [load, reloadKey]);
+  }, [load, reloadKey, refreshKey]);
 
   // Which provider will create links for human rounds. Only read by people who
   // can schedule; without it the form simply asks for a link.
@@ -229,6 +235,7 @@ export function PipelinePanel(
   const states = stageStates(pipeline.stages, pipeline.currentStageKey, pipeline.status);
   const current = pipeline.stages.find((s) => s.key === pipeline.currentStageKey);
   const next = nextStage(pipeline.stages, pipeline.currentStageKey);
+  const final = finalStage(pipeline.stages, pipeline.currentStageKey);
   const labelFor = (key: string | null) => pipeline.stages.find((s) => s.key === key)?.label ?? key ?? '';
   const isInterviewStage = current?.kind === 'ai_interview' || current?.kind === 'human_interview';
   const openHumanRounds = pipeline.rounds.filter((r) => r.conductedBy === 'HUMAN' && r.status === 'SCHEDULED');
@@ -308,6 +315,15 @@ export function PipelinePanel(
     void run(() => api.post(`/pipelines/${pipeline.id}/advance`, { toStageKey: next.key }));
   };
 
+  // Finalising is the one move the process never makes by itself, and it
+  // skips every stage in between — so it is confirmed before it is sent.
+  const finalize = () => {
+    if (!final) return;
+    if (!pendingFinalize) { setPendingFinalize(true); return; }
+    setPendingFinalize(false);
+    void run(() => api.post(`/pipelines/${pipeline.id}/finalize`, {}));
+  };
+
   return (
     <section className="card pipeline">
       <div className="row spread" style={{ marginBottom: 12 }}>
@@ -371,6 +387,20 @@ export function PipelinePanel(
               </>
             ) : (
               <p className="muted small">This is the final stage. Record a decision when ready.</p>
+            )}
+            {final && (
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="btn secondary" disabled={busy} onClick={finalize} data-testid="pipeline-finalize">
+                  <Icon name="check-circle" size={16} />
+                  {pendingFinalize ? `Confirm finalise as ${final.label}` : `Finalise (${final.label})`}
+                </button>
+                {pendingFinalize && (
+                  <p className="muted small" style={{ marginTop: 6 }}>
+                    {candidateName} is finalised and moves straight to {final.label}. This is recorded against your name.{' '}
+                    <button type="button" className="btn ghost sm" onClick={() => setPendingFinalize(false)}>Not yet</button>
+                  </p>
+                )}
+              </div>
             )}
           </div>
 

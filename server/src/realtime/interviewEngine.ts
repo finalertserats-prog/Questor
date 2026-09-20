@@ -10,6 +10,7 @@ import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { emitEvent } from '../services/webhooks.js';
 import { logAudit } from '../services/audit.js';
 import { enqueueAutoFeedback } from '../services/autoFeedback.js';
+import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
 import { assertAcceptingNewInterviews } from '../services/drainState.js';
@@ -872,6 +873,8 @@ export async function finalizeInterview(
     await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
     await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
     await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
+    // The assessed AI interview is the Silver evidence; the candidate is at Gold.
+    await notePipelineEvent({ tenantId: session.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.assessed', trigger: 'assessment.ready' });
     await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
     return { assessmentId: assessment.id };
   } catch (err) {

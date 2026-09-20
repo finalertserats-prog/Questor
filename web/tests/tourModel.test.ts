@@ -75,9 +75,14 @@ describe('TOUR_STEPS', () => {
 
   it('explains the medallion stages including the AI-run Silver round', () => {
     const stages = TOUR_STEPS.find((step) => step.id === 'pipeline-stages')!;
-    for (const word of ['Participation', 'Bronze', 'Silver', 'AI interviewer', 'Gold', 'Platinum', 'Diamond']) {
+    for (const word of ['Participation', 'Bronze', 'Silver', 'AI interviewer', 'Gold', 'Diamond']) {
       expect(stages.body).toContain(word);
     }
+  });
+
+  it('no longer mentions the retired Platinum stage', () => {
+    const stages = TOUR_STEPS.find((step) => step.id === 'pipeline-stages')!;
+    expect(stages.body).not.toContain('Platinum');
   });
 
   it('tells the reader where to restart the tour on the final step', () => {

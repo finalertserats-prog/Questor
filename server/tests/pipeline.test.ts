@@ -6,8 +6,8 @@ import { createDemoData, wipe } from '../src/seed/demoData.js';
 
 /**
  * The medallion pipeline: a candidate moves through ordered stages for one
- * role — Participation, Bronze, Silver, Gold, Platinum, Diamond — and a person
- * can record a final decision at any stage.
+ * role — Participation, Bronze, Silver, Gold, Diamond — and a person can
+ * record a final decision at any stage.
  */
 
 const app = createApp();
@@ -34,7 +34,7 @@ describe('creating a pipeline', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.pipeline.currentStageKey).toBe('participation');
-    expect(res.body.pipeline.stages.map((s: { label: string }) => s.label)).toEqual(['Participation', 'Bronze', 'Silver', 'Gold', 'Platinum', 'Diamond']);
+    expect(res.body.pipeline.stages.map((s: { label: string }) => s.label)).toEqual(['Participation', 'Bronze', 'Silver', 'Gold', 'Diamond']);
   });
 
   it('refuses a second pipeline for the same candidate and role', async () => {
@@ -109,7 +109,7 @@ describe('moving through stages', () => {
 
     const res = await request(app).get(`/api/pipelines/${created.body.pipeline.id}`).set('Authorization', ids.auth);
 
-    expect(res.body.pipeline.stages).toHaveLength(6);
+    expect(res.body.pipeline.stages).toHaveLength(5);
   });
 
   it('fails loudly when the snapshotted stage plan is corrupt', async () => {
@@ -215,7 +215,7 @@ describe('who runs each stage', () => {
     const res = await createPipeline(ids);
 
     expect(res.body.pipeline.stages.map((s: { kind: string }) => s.kind))
-      .toEqual(['intake', 'profile_review', 'ai_interview', 'human_interview', 'human_interview', 'human_interview']);
+      .toEqual(['intake', 'profile_review', 'ai_interview', 'human_interview', 'human_interview']);
   });
 
   it('schedules the Silver round with the AI conducting and HR as an optional observer', async () => {

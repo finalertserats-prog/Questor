@@ -455,6 +455,9 @@ export function CandidateDetail() {
           // candidate's own record, so it is joined on here.
           interviews={(interviews ?? []).map((iv) => ({ ...iv, personaName: sessions[iv.id]?.personaName ?? null }))}
           onChanged={refresh}
+          // A resume upload or any other change on this page may have moved the
+          // candidate on its own; the panel re-reads with the rest of the page.
+          refreshKey={version}
         />
 
         {/* Where exports for this candidate land; the server allows admins only. */}

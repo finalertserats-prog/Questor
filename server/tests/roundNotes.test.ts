@@ -8,7 +8,7 @@ import { signToken } from '../src/services/auth.js';
 /**
  * What the interviewers wrote after a human round travels with the round.
  *
- * Questor does not host Gold/Platinum/Diamond rounds, so those notes are the
+ * Questor does not host Gold/Diamond rounds, so those notes are the
  * ONLY record of what happened in them — the candidate journey shows them
  * beside the AI assessment as the evidence a person decides on. They are also
  * candidate personal data written about a named individual, so the tests below

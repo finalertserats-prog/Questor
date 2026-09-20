@@ -206,7 +206,7 @@ export function Dashboard() {
                     compact
                     icon="funnel"
                     title="No active pipelines"
-                    message="A candidate joins the pipeline when you move them into a medallion stage. Nobody is in one yet."
+                    message="A candidate joins the pipeline the moment they are onboarded, and moves on as their resume is analysed, interviews are scheduled and assessed. Nobody is in one yet."
                     action={<Link className="btn sm" to="/candidates">Go to candidates</Link>}
                   />
                 ) : (

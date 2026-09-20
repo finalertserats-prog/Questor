@@ -29,6 +29,7 @@ import { invitationLink, invitationSecretColumns, mintInvitationToken } from '..
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
+import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -176,6 +177,8 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   });
   await prisma.interviewPlanVersion.create({ data: { sessionId: session.id, version: 1, planJson: JSON.stringify(plan) } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.approved', entityType: 'InterviewSession', entityId: session.id });
+  // An interview exists for the candidate: their pipeline reaches Silver on its own.
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'interview.scheduled', trigger: 'interview.approved' });
 
   res.status(201).json({ session: { id: session.id, state: session.state, provider: session.provider }, plan, meetingCapability: meetingCapability(body.provider) });
 }));
@@ -491,6 +494,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
     after: { attemptNumber: retake.attemptNumber, reason, originalClosed: true },
   });
   await emitEvent(req.auth!.tenantId, 'interview.retake_created', { originalSessionId: original.id, sessionId: retake.id, candidateId: candidate.id, attemptNumber: retake.attemptNumber });
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: original.roleId, event: 'interview.scheduled', trigger: 'interview.retake_created' });
   res.status(201).json({ session: { id: retake.id, state: retake.state, attemptNumber: retake.attemptNumber, retakeOfSessionId: original.id }, plan });
 }));
 
@@ -570,6 +574,7 @@ interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), 
     throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled.`);
   }
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at } });
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'interview.scheduled' });
   res.json({ ok: true, scheduledAt: at });
 }));
 
@@ -792,6 +797,8 @@ async function inviteSession(req: Request, session: InvitableSession) {
 
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
+  // Covers the bulk path too: a candidate invited to an interview is at Silver.
+  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'invitation.sent' });
   await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
   return { token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote };
 }

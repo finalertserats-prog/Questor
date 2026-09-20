@@ -8,6 +8,7 @@ import { assertCanAccessCandidate, assertCanAccessRole, assignCandidate } from '
 import { atsFailure, requireTenantAts, type TenantAts } from './atsConnections.js';
 import { logAudit } from './audit.js';
 import { assertRoleOpen } from './roleOpen.js';
+import { notePipelineEvent } from './pipelineAutonomy.js';
 
 /**
  * What came from an organisation's ATS, and which ATS record a Questor
@@ -154,6 +155,7 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
       tenantId, actorId: o.auth.userId, actorType: 'user', action: 'candidate.created',
       entityType: 'Candidate', entityId: candidate.id, after: { source: 'ats' }, requestId: o.requestId,
     });
+    await notePipelineEvent({ tenantId, candidateId: candidate.id, roleId: o.roleId, event: 'candidate.onboarded', trigger: 'candidate.created' });
     return { candidate, created: true };
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
