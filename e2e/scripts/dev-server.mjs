@@ -22,6 +22,9 @@ const child = spawn('npm', ['run', 'dev'], {
     // can reach /catalog-review. Unset, nobody could (it fails closed).
     PLATFORM_OPERATOR_EMAILS: process.env.PLATFORM_OPERATOR_EMAILS ?? 'demo@questor.local',
     EMAIL_PROVIDER: process.env.EMAIL_PROVIDER ?? 'console',
+    // The question library is dark in production; the suite needs its read API
+    // and the owner's screen mounted. The worker stays off: nothing is spent.
+    LIBRARY_ENABLED: process.env.LIBRARY_ENABLED ?? 'true',
   },
   shell: true,
   stdio: 'inherit',

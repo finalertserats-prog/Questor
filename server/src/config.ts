@@ -160,6 +160,35 @@ export function parseReasoningEffortSetting(raw: string | undefined): ReasoningE
 /** Default ceiling on one interviewer model call before the built-in question is used. */
 export const DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS = 12_000;
 
+/**
+ * A feature switch. Only the spellings below are accepted: "yes", "enabled"
+ * or a typo would otherwise read as off (or on) and nobody would know which.
+ */
+export function parseBooleanSetting(variable: string, raw: string | undefined, fallback: boolean): boolean {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = raw.trim().toLowerCase();
+  if (value === 'true' || value === '1' || value === 'on') return true;
+  if (value === 'false' || value === '0' || value === 'off') return false;
+  throw new Error(`${variable} must be "true" or "false" (got "${raw}").`);
+}
+
+export const CRITIC_PROVIDERS = ['anthropic', 'openai'] as const;
+export type CriticProvider = (typeof CRITIC_PROVIDERS)[number];
+
+/**
+ * LIBRARY_CRITIC_PROVIDER: which model family judges the library's generated
+ * questions. It must differ from the generator's, so the default is Anthropic
+ * (the generator is the OpenAI model LLM_PROVIDER names). The worker refuses
+ * to run, rather than guess, when the two would be the same family.
+ */
+export function parseCriticProviderSetting(raw: string | undefined): CriticProvider {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === '') return 'anthropic';
+  const known = CRITIC_PROVIDERS.find((p) => p === value);
+  if (known) return known;
+  throw new Error(`LIBRARY_CRITIC_PROVIDER must be one of ${CRITIC_PROVIDERS.join(', ')} (got "${raw}").`);
+}
+
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: parsePortSetting('PORT', env('PORT', '4000')),
@@ -269,6 +298,26 @@ export const config = {
     /** Pause between ESCO requests: a free public API, asked politely and one at a time. */
     escoDelayMs: parseDurationMsSetting('CATALOG_ESCO_DELAY_MS', process.env.CATALOG_ESCO_DELAY_MS, 500),
     fetchTimeoutMs: parseTimeoutMsSetting('CATALOG_FETCH_TIMEOUT_MS', process.env.CATALOG_FETCH_TIMEOUT_MS, 60_000),
+  },
+  /**
+   * The Question & Answer Library (docs/plans/question-answer-library-plan-v2.md).
+   * Dark by default: with both switches off the API mounts only its status
+   * route and the worker process exits at start. Caps are what the worker may
+   * spend, not what it will: it stops at the cap and resumes the next day.
+   */
+  library: {
+    /** Tenant-facing read API (select, entries) and the admin screen. */
+    enabled: parseBooleanSetting('LIBRARY_ENABLED', process.env.LIBRARY_ENABLED, false),
+    /** The fill worker (its own process) and, with it, the admin screen. */
+    workerEnabled: parseBooleanSetting('LIBRARY_WORKER_ENABLED', process.env.LIBRARY_WORKER_ENABLED, false),
+    /** Model calls (generator + critic together) the worker may make per UTC day. */
+    dailyCallCap: parsePositiveIntSetting('LIBRARY_DAILY_CALL_CAP', process.env.LIBRARY_DAILY_CALL_CAP, 3000),
+    /** Tokens (in + out, both models) over any rolling 30 days. */
+    monthlyTokenCap: parsePositiveIntSetting('LIBRARY_MONTHLY_TOKEN_CAP', process.env.LIBRARY_MONTHLY_TOKEN_CAP, 100_000_000),
+    criticProvider: parseCriticProviderSetting(process.env.LIBRARY_CRITIC_PROVIDER),
+    criticModel: env('LIBRARY_CRITIC_MODEL', 'claude-sonnet-5'),
+    /** Batches the worker runs side by side; each is one generator call and one critic call. */
+    workerConcurrency: parsePositiveIntSetting('LIBRARY_WORKER_CONCURRENCY', process.env.LIBRARY_WORKER_CONCURRENCY, 4),
   },
 };
 

@@ -17,6 +17,7 @@ const MENU_ICONS: Record<string, IconName> = {
   signups: 'inbox',
   audit: 'audit',
   'catalog-review': 'list',
+  'library-admin': 'list',
   about: 'about',
   contact: 'contact',
   tour: 'tour',

@@ -228,3 +228,43 @@ Each phase releases on its own with the usual gate. L0 starts the fill, so the 2
 | Assessment drift when anchors change | Plan stores the snapshot and `rubricVersion`; evaluator uses the snapshot; standard changes create new versions |
 | Scope creep | L0 is questions + anchors only; each later feature has a measured gate before it ships |
 | The conversation still feels scripted | Callback turn, ladders, form mix and probes-as-suggestions are the specific counters; the interleaved trial’s confusion-marker comparison is the test, and the kill switch is the exit |
+
+## Operating the worker (L0, as built)
+
+The library is dark until its switches are on. Everything below reads `server/.env`, like the API. There are two switches on purpose and both default to `false`, so a deployment that sets neither is inert: no tenant-facing route, no worker process, no spend. `LIBRARY_WORKER_ENABLED` is the owner's deliberate second step: it lets the worker fill the library (and spend against the caps) while `LIBRARY_ENABLED=false` still keeps every organisation-facing route dark, which is how the L0 rollout phase ("dark") is defined. Switching it on without an Anthropic key spends nothing: the worker pauses as `critic_unavailable`.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `LIBRARY_ENABLED` | `false` | Mounts the tenant-facing read API (`POST /api/library/select`, `GET /api/library/entries/:id`) and the owner's screen. Off: only `GET /api/library/status` exists and answers `{ "enabled": false }`. |
+| `LIBRARY_WORKER_ENABLED` | `false` | Lets the worker process run (it exits at once with one log line otherwise). It mounts nothing: the owner's screen needs `LIBRARY_ENABLED` too, so the API has one kill switch. |
+| `LIBRARY_DAILY_CALL_CAP` | `3000` | Model calls per UTC day, generator and critic together (3 are reserved per batch: standard, questions, critique; the unused one is released). The worker pauses at the cap and resumes after midnight UTC. |
+| `LIBRARY_MONTHLY_TOKEN_CAP` | `100000000` | Tokens in + out, both models, over any rolling 30 days. |
+| `LIBRARY_CRITIC_PROVIDER` | `anthropic` | `anthropic` or `openai`. Must be a different model family from the generator (`LLM_PROVIDER`); the worker refuses to run (`critic_unavailable: same_family`) rather than critique with the generator's family. |
+| `LIBRARY_CRITIC_MODEL` | `claude-sonnet-5` | The critic's model. |
+| `ANTHROPIC_API_KEY` | — | Required for the Anthropic critic. Missing: the worker pauses as `critic_unavailable: no_key` and the owner's screen says so. Nothing is spent. |
+| `LIBRARY_WORKER_CONCURRENCY` | `4` | Batches run side by side. |
+
+**The process.** `npm run library:worker` locally (`tsx src/library/workerMain.ts`); in production `node dist/library/workerMain.js` under pm2 as `questor-library`, registered by `scripts/deploy.sh` on first sight in fork mode with `--kill-timeout 300000` (SIGTERM finishes the batch in flight, then it stops), `--restart-delay 60000`, and `renice 10`. The deploy script stops it before migrations and restarts it only after the API's health check passes, and only if it was online before the deploy. By hand: `pm2 stop questor-library`, `pm2 restart questor-library --update-env`, `pm2 logs questor-library`.
+
+**Lease.** One `JobLease` row, `library-worker`, holder `INSTANCE_ID#token`, TTL 10 minutes, renewed every ~3 minutes. A second worker exits with "lease held elsewhere". A worker that loses its lease stops at the next checkpoint.
+
+**States** (row `LibraryWorkerState`, shown on the owner's screen):
+
+| State | Meaning | What happens next |
+| --- | --- | --- |
+| `running` | batches in flight | — |
+| `idle` | every pool at target | looks again in 5 minutes |
+| `paused` | daily call cap, monthly token cap, generator has no key, rate limit, or a failed batch | resumes after midnight UTC / in 6 h / hourly / 5 min / 1 min respectively |
+| `waiting_for_credits` | the provider answered 429 `insufficient_quota` | retries once an hour; never hammers |
+| `critic_unavailable` | no key for the configured critic, or the same family as the generator | retries once an hour; nothing is spent |
+| `stopped` | SIGTERM, lease lost, or never started | pm2 restarts it on deploy; a stopped worker resumes from the demand queue |
+
+**Demand.** Pools come from tenant roles that link a catalog role, carry a band and an approved scorecard: one pool per scored competency. A global pool is written from shared text only — the catalog role's title and summary and the shared catalog JD draft for that band — never from an organisation's own job description; the scorecard's competency name, definition and indicators are the pool's key and are bounded as data in the prompt. Organisation-scoped pools (L3) may use the organisation's own text. Priority: roles with a scheduled interview and no live entries → roles an organisation created → top 50 roles by interviews in the last 60 days → the long tail at base depth 6. Within a priority the largest deficit first. Targets (`LibraryPoolTarget`) are recomputed once a day by the worker.
+
+**Budget** (`LibraryBudget`, one row per UTC day): calls are reserved before a batch runs and tokens are recorded straight after each model call, so a batch that fails at the linter or the database still counts what it spent. The owner's screen shows both bars.
+
+**Smoke test.** `cd server && npm run library:smoke` (`node scripts/library-smoke.mjs`) runs one batch for the thinnest pool against the configured providers and prints counts only; exit 1 on failure; exit 0 without spending when `LIBRARY_WORKER_ENABLED` is not true or no pool is below target.
+
+**Gate and lifecycle as built.** Generator → within-batch dedupe → critic (one call for the batch, verdicts matched by number) → linter and injection screen → lexical near-duplicate check against the pool and its family (2-token shingles, Jaccard; near ≥ 0.5 → owner queue, ≥ 0.8 → rejected) → policy gate. Pass → `probational`; unsure (lint warning, near-duplicate, critic confidence in [0.55, 0.8), wrong band/form/answerability) → owner queue; fail (not a question, generic, anchors leaked, confidence < 0.55, lint error, duplicate) → `rejected` with reasons. Every entry of a stratum (scope × role × band × form × generator version) goes to the owner queue until twenty of that stratum are approved untouched (`LibraryStratum.cleanApprovals`); a rejection in the daily sample tightens the stratum for its next 200 entries. Owner approve → `probational`; edit → new draft superseding the old, which is retired; reject → `rejected` (live entries retire). `probational → live` after 5 clean uses with no non-answer spike (`promoteIfEligible`; no usage rows are produced until L1). Every change writes a `LibraryReview` row and an `AuditEvent` (global entries under the platform operator's organisation).
+
+**Select ladder.** Live entries only (probational too for the demo sandbox when asked); no entry or supersession ancestor asked for that role in that organisation inside the no-repeat window (30 days); never-asked entries first, shuffled among the top five, then least recently asked; one rung per difficulty 1–3, gaps filled from what is left; no form used twice in a ladder; fewer than two usable rungs → empty ladder, never an error.

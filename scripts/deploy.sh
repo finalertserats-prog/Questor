@@ -33,6 +33,10 @@ BRANCH="${BRANCH:-claude/open-source-app-build-lnrqia}"
 WEB_ROOT="${WEB_ROOT:-/var/www/questor}"
 APP_URL="${APP_URL:-https://questor.187-127-166-193.sslip.io}"
 PM2_NAME="${PM2_NAME:-questor}"
+# The question-library worker: its own pm2 process, paused for the migration
+# and restarted after the API passes its health check. It reads server/.env
+# like the API and exits at once unless LIBRARY_WORKER_ENABLED=true there.
+LIBRARY_PM2_NAME="${LIBRARY_PM2_NAME:-questor-library}"
 BACKUP_SCRIPT="${BACKUP_SCRIPT:-/root/Questor/backup-questor.sh}"
 LOG_DIR="$(mktemp -d)"
 WAIT_MAX_MIN="${WAIT_MAX_MIN:-45}"
@@ -225,6 +229,22 @@ PREV_COMMIT="$(git rev-parse HEAD)"
 ok "current commit $PREV_COMMIT (rollback target)"
 
 # ---------------------------------------------------------------------------
+say "Pause library worker"
+
+# Stopped BEFORE the migration so it never writes to a table mid-change, and
+# never runs the old build against the new schema. A worker that was not
+# registered yet is not an error: the first deploy with the library creates it.
+LIBRARY_WAS_ONLINE=0
+if pm2 describe "$LIBRARY_PM2_NAME" >/dev/null 2>&1; then
+  if pm2 jlist 2>/dev/null | grep -q "\"name\":\"$LIBRARY_PM2_NAME\".*\"status\":\"online\""; then LIBRARY_WAS_ONLINE=1; fi
+  # SIGTERM lets it finish the batch in flight; 5 min is longer than any batch.
+  pm2 stop "$LIBRARY_PM2_NAME" --kill-timeout 300000 >"$LOG_DIR/pm2-library-stop.log" 2>&1 || die "could not stop $LIBRARY_PM2_NAME"
+  ok "$LIBRARY_PM2_NAME stopped (was $([ "$LIBRARY_WAS_ONLINE" -eq 1 ] && echo online || echo offline))"
+else
+  ok "$LIBRARY_PM2_NAME not registered yet"
+fi
+
+# ---------------------------------------------------------------------------
 say "Fetch"
 
 run_logged fetch git fetch origin "$BRANCH"
@@ -383,6 +403,34 @@ done
 code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 15 "$APP_URL/" || echo 000)"
 [ "$code" = "200" ] || die "app root returned $code"
 ok "app root serving ($code)"
+
+# ---------------------------------------------------------------------------
+say "Resume library worker"
+# Registered only when server/.env switches it on. A disabled worker exits at
+# once, and pm2 would restart an exiting process forever; so with the switch
+# off it is not started, and one already registered is left stopped.
+LIBRARY_WORKER_ENABLED="$(grep -E '^LIBRARY_WORKER_ENABLED=' server/.env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '" ' || true)"
+
+# Only after the API is healthy: the worker shares the database and the
+# model budget, and must never be the first thing the new build runs. It is
+# registered on first sight, in fork mode at low priority, and left in
+# whatever state it was in before (a worker the owner had stopped stays stopped).
+if [ "$LIBRARY_WORKER_ENABLED" != "true" ]; then
+  ok "$LIBRARY_PM2_NAME not started: LIBRARY_WORKER_ENABLED is not true in server/.env"
+elif pm2 describe "$LIBRARY_PM2_NAME" >/dev/null 2>&1; then
+  if [ "$LIBRARY_WAS_ONLINE" -eq 1 ]; then
+    pm2 restart "$LIBRARY_PM2_NAME" --update-env >"$LOG_DIR/pm2-library.log" 2>&1 || die "could not restart $LIBRARY_PM2_NAME"
+    ok "$LIBRARY_PM2_NAME restarted"
+  else
+    ok "$LIBRARY_PM2_NAME left stopped (it was not online before the deploy)"
+  fi
+else
+  pm2 start server/dist/library/workerMain.js --name "$LIBRARY_PM2_NAME" --cwd "$REPO_DIR/server" --node-args="--max-old-space-size=512" \
+    --kill-timeout 300000 --restart-delay 60000 --max-restarts 20 >"$LOG_DIR/pm2-library.log" 2>&1 || die "could not start $LIBRARY_PM2_NAME"
+  renice -n 10 -p "$(pm2 pid "$LIBRARY_PM2_NAME" 2>/dev/null || echo 0)" >/dev/null 2>&1 || true
+  pm2 save >/dev/null 2>&1 || true
+  ok "$LIBRARY_PM2_NAME registered and started"
+fi
 
 say "Deployed"
 printf '    %s\n' "$(git log --oneline -1)"

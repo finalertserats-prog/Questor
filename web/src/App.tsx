@@ -52,6 +52,7 @@ import { ObserverRoom } from './pages/ObserverRoom';
 import { ObserverConsent } from './pages/ObserverConsent';
 import { FeedbackConsent } from './pages/FeedbackConsent';
 import { CatalogReview } from './pages/CatalogReview';
+import { LibraryAdmin } from './pages/LibraryAdmin';
 
 // Below this width the sidebar is an overlay drawer; above it, it is docked
 // beside the page. Kept in step with the breakpoint in styles/sidebar.css.
@@ -438,6 +439,7 @@ export function App() {
       <Route path="/assessments/:id/review" element={<Protected><BlindReview /></Protected>} />
       {/* The platform owner's queue; the page itself refuses anyone else, as the API does. */}
       <Route path="/catalog-review" element={<Protected><CatalogReview /></Protected>} />
+      <Route path="/library-admin" element={<Protected><LibraryAdmin /></Protected>} />
       <Route path="/admin" element={<Protected><Admin /></Protected>} />
       <Route path="/admin/signups" element={<Protected><SignupQueue /></Protected>} />
       {/* The console's sub-tabs; /admin itself is the System health tab. */}

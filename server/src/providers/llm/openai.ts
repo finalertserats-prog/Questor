@@ -1,4 +1,4 @@
-import type { LlmGenerateOptions, LlmMessage, LlmProvider, LlmResult, ReasoningEffort } from './types.js';
+import { LlmApiError, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult, type ReasoningEffort } from './types.js';
 
 /** The reply budget when a caller does not set one. */
 const DEFAULT_MAX_TOKENS = 1500;
@@ -74,7 +74,7 @@ export class OpenAiLlmProvider implements LlmProvider {
       },
       body: JSON.stringify(openAiRequestBody(this.model, messages, opts, this.defaultEffort)),
     });
-    if (!res.ok) throw new Error(`OpenAI API error ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new LlmApiError('OpenAI', res.status, await res.text());
     const data = (await res.json()) as ChatCompletion;
     const choice = data.choices?.[0];
     const text = typeof choice?.message?.content === 'string' ? choice.message.content : '';

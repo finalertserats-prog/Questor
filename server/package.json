@@ -22,6 +22,8 @@
     "sim:voice": "tsx sim/voiceAB.ts",
     "sim:report": "tsx sim/report.ts",
     "sim:scripted": "tsx sim/scripted.ts",
+    "library:worker": "tsx src/library/workerMain.ts",
+    "library:smoke": "node scripts/library-smoke.mjs",
     "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json"
   },
   "dependencies": {

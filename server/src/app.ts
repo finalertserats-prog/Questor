@@ -35,6 +35,8 @@ import { connectorsRouter } from './routes/connectors.js';
 import { atsConnectionRouter } from './routes/atsConnection.js';
 import { candidateAtsRouter } from './routes/candidateAts.js';
 import { observerConsentRouter, observerRouter } from './routes/observer.js';
+import { libraryRouter, libraryStatusRouter } from './routes/library.js';
+import { libraryAdminRouter } from './routes/libraryAdmin.js';
 
 
 export function createApp() {
@@ -229,6 +231,14 @@ export function createApp() {
   app.use('/api/observer', observerRouter);
   app.use('/api/portal', portalRouter);
   app.use('/api/assessments', assessmentsRouter);
+  // The Q&A library is dark until LIBRARY_ENABLED is true: only /status
+  // answers then. One switch mounts the owner's screen and the tenant read
+  // API together; the worker has its own switch but is a separate process.
+  app.use('/api/library', libraryStatusRouter);
+  if (config.library.enabled) {
+    app.use('/api/library/admin', libraryAdminRouter);
+    app.use('/api/library', libraryRouter);
+  }
   const blockDemoTenant = async (req: express.Request, _res: express.Response, next: express.NextFunction) => {
     try {
       if (!req.auth) { next(); return; }

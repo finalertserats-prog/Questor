@@ -45,6 +45,7 @@ const MENU_ENTRIES: readonly MenuEntry[] = [
   { key: 'signups', label: 'Account requests', kind: 'link', to: '/admin/signups', roles: ADMIN_ROLES },
   { key: 'audit', label: 'Audit log', kind: 'link', to: '/audit', roles: AUDIT_ROLES },
   { key: 'catalog-review', label: 'Catalog review', kind: 'link', to: '/catalog-review', platformOperatorOnly: true },
+  { key: 'library-admin', label: 'Question library', kind: 'link', to: '/library-admin', platformOperatorOnly: true },
   { key: 'about', label: 'About', kind: 'link', to: '/about' },
   { key: 'contact', label: 'Contact', kind: 'link', to: '/contact' },
   // Last among the entries, beside the other help: the tour is for everyone,

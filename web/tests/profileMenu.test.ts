@@ -51,7 +51,7 @@ describe('profileMenuItems', () => {
   });
 
   it('offers Catalog review to the platform owner, after the audit log', () => {
-    expect(profileMenuItems('admin', { platformOperator: true }).map((item) => item.key)).toEqual(['settings', 'admin', 'signups', 'audit', 'catalog-review', 'about', 'contact', 'tour']);
+    expect(profileMenuItems('admin', { platformOperator: true }).map((item) => item.key)).toEqual(['settings', 'admin', 'signups', 'audit', 'catalog-review', 'library-admin', 'about', 'contact', 'tour']);
   });
 
   it('offers Catalog review to a platform owner whatever their organisation role', () => {

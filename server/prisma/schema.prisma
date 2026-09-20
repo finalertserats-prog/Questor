@@ -1202,3 +1202,163 @@ model VoiceProfile {
   updatedAt       DateTime       @updatedAt
   interviewer     AIInterviewer?
 }
+
+// ---------------------------------------------------------------------------
+// Question & Answer Library (docs/plans/question-answer-library-plan-v2.md).
+// Own tables, additive only; nothing outside server/src/library writes here.
+
+model LibraryEntry {
+  id                     String   @id @default(cuid())
+  scope                  String   @default("global") // global | org
+  tenantId               String?
+  roleSlug               String
+  familySlug             String
+  competencyKey          String
+  competencyVersion      String?
+  band                   String
+  form                   String   // QuestionForm from engines/conversationRuntime
+  questionText           String
+  bodyJson               String   @default("{}") // { anchors[] } now; probes/exemplars/variants reserved
+  status                 String   @default("draft") // draft | probational | live | retired | rejected
+  gateOutcome            String   @default("") // pass | unsure | fail
+  gateReason             String   @default("")
+  stratumKey             String   @default("")
+  sampledOn              String   @default("") // YYYY-MM-DD of the owner sample it was drawn into
+  difficultyTag          Int      @default(2)
+  difficultyEmpirical    Float?
+  supersedesId           String?
+  standardId             String?
+  standard               LibraryStandard? @relation(fields: [standardId], references: [id])
+  generatorPromptVersion String
+  generatorModel         String   @default("")
+  criticModel            String   @default("")
+  criticVerdictJson      String   @default("{}")
+  policyVersion          Int      @default(1)
+  rubricVersion          String   @default("")
+  createdBy              String   @default("worker") // worker | user id
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  usages                 LibraryUsage[]
+  reviews                LibraryReview[]
+
+  @@index([roleSlug, competencyKey, band, status])
+  @@index([tenantId, status])
+  @@index([status, gateOutcome, createdAt])
+  @@index([stratumKey, createdAt])
+}
+
+model LibraryStandard {
+  id                     String   @id @default(cuid())
+  familySlug             String
+  competencyKey          String
+  band                   String
+  anchorsJson            String   @default("[]")
+  exemplarsJson          String   @default("")
+  version                Int      @default(1)
+  status                 String   @default("live") // live | retired
+  generatorPromptVersion String   @default("")
+  generatorModel         String   @default("")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+  entries                LibraryEntry[]
+
+  @@index([familySlug, competencyKey, band, status])
+}
+
+model LibraryUsage {
+  id                 String   @id @default(cuid())
+  entryId            String
+  entry              LibraryEntry @relation(fields: [entryId], references: [id])
+  interviewSessionId String   // no relation: erased with the session, never blocks it
+  tenantId           String
+  roleId             String   @default("")
+  roleSlug           String   @default("")
+  askedAt            DateTime @default(now())
+  outcome            String   @default("answered") // answered | non-answer | skipped
+  evidenceYield      Float?
+  probeCount         Int      @default(0)
+  reviewerDelta      Float?
+  blockSource        String   @default("library") // library | builtin
+
+  @@index([entryId, askedAt])
+  @@index([tenantId, roleSlug, askedAt])
+  @@index([interviewSessionId])
+}
+
+model LibraryPoolTarget {
+  id            String   @id @default(cuid())
+  scope         String   @default("global")
+  tenantId      String   @default("") // empty for global pools, so the unique key holds
+  roleSlug      String
+  competencyKey String
+  band          String
+  depthTarget   Int
+  formMixJson   String   @default("{}")
+  computedFrom  String   @default("{}")
+  computedAt    DateTime @default(now())
+
+  @@unique([scope, tenantId, roleSlug, competencyKey, band])
+}
+
+model LibraryReview {
+  id            String   @id @default(cuid())
+  entryId       String
+  entry         LibraryEntry @relation(fields: [entryId], references: [id])
+  actor         String   // policy | owner | worker | org user | trial
+  actorId       String   @default("")
+  action        String
+  fromStatus    String   @default("")
+  toStatus      String   @default("")
+  reason        String   @default("")
+  sampleStratum String   @default("")
+  at            DateTime @default(now())
+
+  @@index([entryId, at])
+  @@index([action, at])
+}
+
+model LibraryPolicy {
+  id                    String   @id @default(cuid())
+  version               Int      @unique
+  promotionUses         Int      @default(5)
+  sampleSize            Int      @default(20)
+  stratumCleanApprovals Int      @default(20)
+  tightenWindow         Int      @default(200)
+  criticPassMin         Float    @default(0.8)
+  criticGreyMin         Float    @default(0.55)
+  nearDuplicate         Float    @default(0.5)
+  duplicate             Float    @default(0.8)
+  noRepeatWindowDays    Int      @default(30)
+  overridesJson         String   @default("{}")
+  createdAt             DateTime @default(now())
+}
+
+model LibraryBudget {
+  day          String   @id // YYYY-MM-DD (UTC)
+  callsUsed    Int      @default(0)
+  callsCap     Int
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+model LibraryStratum {
+  key                String   @id
+  cleanApprovals     Int      @default(0)
+  approvals          Int      @default(0)
+  rejections         Int      @default(0)
+  tightenedRemaining Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model LibraryWorkerState {
+  id          String    @id @default("worker")
+  state       String    @default("stopped") // running | idle | paused | waiting_for_credits | critic_unavailable | stopped
+  reason      String    @default("")
+  holder      String    @default("")
+  since       DateTime  @default(now())
+  lastBatchAt DateTime?
+  lastError   String    @default("")
+  updatedAt   DateTime  @updatedAt
+}
