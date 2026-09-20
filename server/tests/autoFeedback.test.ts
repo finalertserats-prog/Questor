@@ -315,24 +315,110 @@ describe('when the letter goes', () => {
   });
 
   // The window ran out and the send is already under way when the reviewer
-  // finishes. Their reading must still be the one the candidate receives.
-  it('sends the reviewed content when a review lands while the letter is being written', async () => {
+  // finishes. Nothing can be unsent, so the review is the thing that waits:
+  // it is refused for as long as the send holds the row, and goes through
+  // once the provider has answered. The letter that went is the one the
+  // reviewer had not yet corrected — and it says so honestly, because the
+  // review did not exist when it left.
+  it('refuses a review while the letter is being sent, then takes it', async () => {
     let release = () => {};
-    llm.hold = new Promise<void>((resolve) => { release = resolve; });
-    const started = new Promise<void>((resolve) => { llm.started = resolve; });
+    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { mail.started = resolve; });
     const ids = await completedInterview({ windowHours: 12 });
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
     const queued = await rowFor(ids.sessionId);
 
     const inFlight = attemptFeedbackEmail(queued.id, hoursFromNow(13));
     await started;
-    await completeReview(ids, [{ competencyId: 'stake', from: 2, to: 5, reason: 'Clear in the second half.' }]);
+    const during = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     release();
-    llm.hold = null;
+    mail.hold = null;
     await inFlight;
+    const after = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
 
-    expect({ sent: mail.sent.length, text: mail.sent[0]?.text ?? '', row: await rowFor(ids.sessionId) })
-      .toMatchObject({ sent: 1, text: expect.stringContaining('Stakeholder management: Clear strength'), row: { status: 'SENT' } });
+    expect({
+      during: { status: during.status, code: during.body.code },
+      after: after.status,
+      reviews: await prisma.humanReview.count({ where: { assessmentId: ids.assessmentId, status: 'COMPLETED' } }),
+      sent: mail.sent.length,
+      row: (await rowFor(ids.sessionId)).status,
+    }).toEqual({ during: { status: 409, code: 'feedback_sending' }, after: 201, reviews: 1, sent: 1, row: 'SENT' });
+  });
+
+  it('tells the reviewer, in words, to try again in a minute', async () => {
+    let release = () => {};
+    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { mail.started = resolve; });
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const inFlight = attemptFeedbackEmail((await rowFor(ids.sessionId)).id, hoursFromNow(13));
+    await started;
+    const during = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+    release();
+    mail.hold = null;
+    await inFlight;
+    expect(during.body.error).toBe("The candidate's feedback email is being sent right now. Please submit your review again in a minute.");
+  });
+
+  // A review refused during the send never existed, so the "sent before the
+  // review" note has nothing to say. It stays only as a defensive log.
+  it('never records a review as missed by the send', async () => {
+    let release = () => {};
+    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+    const started = new Promise<void>((resolve) => { mail.started = resolve; });
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const inFlight = attemptFeedbackEmail((await rowFor(ids.sessionId)).id, hoursFromNow(13));
+    await started;
+    await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+    release();
+    mail.hold = null;
+    await inFlight;
+    expect({
+      note: (await rowFor(ids.sessionId)).lastError,
+      missed: await prisma.auditEvent.count({ where: { action: 'feedback.email.sent_before_review', entityId: ids.sessionId } }),
+    }).toEqual({ note: '', missed: 0 });
+  });
+
+  it('releases the row for the next tick when the worker that held it died', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const row = await rowFor(ids.sessionId);
+    // A crash between taking the lock and clearing it: the lock has since expired.
+    await prisma.candidateFeedbackEmail.update({
+      where: { id: row.id }, data: { nextAttemptAt: new Date(), sendLockUntil: new Date(Date.now() - 1000) },
+    });
+
+    await deliverDueFeedbackEmails(new Date());
+
+    expect({ sent: mail.sent.length, row: await rowFor(ids.sessionId) })
+      .toMatchObject({ sent: 1, row: { status: 'SENT', sendLockUntil: null } });
+  });
+
+  it('lets a review through once a dead worker\'s lock has expired', async () => {
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    const row = await rowFor(ids.sessionId);
+    await prisma.candidateFeedbackEmail.update({
+      where: { id: row.id }, data: { status: 'SENDING', claimedAt: new Date(), sendLockUntil: new Date(Date.now() - 1000) },
+    });
+    const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+    expect(res.status).toBe(201);
+  });
+
+  it('clears the lock when the provider refuses, so the review is not held up by a failure', async () => {
+    mail.failNext = 1;
+    const ids = await completedInterview({ windowHours: 12 });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await deliverDueFeedbackEmails(hoursFromNow(13));
+    const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+    expect({ status: res.status, lock: (await rowFor(ids.sessionId)).sendLockUntil }).toEqual({ status: 201, lock: null });
   });
 
   it("pins the letter to the review it was written from", async () => {

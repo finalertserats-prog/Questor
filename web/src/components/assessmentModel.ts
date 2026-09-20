@@ -71,6 +71,24 @@ export function canSubmitVerdict({ disposition, reason, scored, submitting }: Ve
   return reason.trim().length >= MIN_REASON;
 }
 
+/** The server's code for "the candidate's feedback email is being sent" (autoFeedback.ts). */
+export const FEEDBACK_SENDING = 'feedback_sending';
+
+export interface ReviewRefusal {
+  readonly kind: 'wait' | 'error';
+  readonly message: string;
+}
+
+/**
+ * What a refused review means for the reviewer. A send in progress is a
+ * state of the world that clears within a minute or so — a banner and a
+ * retry, not a red error for something they did not do wrong.
+ */
+export function reviewRefusal(err: { readonly status?: number; readonly code?: string; readonly message: string }): ReviewRefusal {
+  const message = err.message || 'Could not submit your review.';
+  return { kind: err.code === FEEDBACK_SENDING ? 'wait' : 'error', message };
+}
+
 /** The server's code for "record your blind verdict first" (shadowModeBlind.ts). */
 export const BLIND_REVIEW_REQUIRED = 'blind_review_required';
 
