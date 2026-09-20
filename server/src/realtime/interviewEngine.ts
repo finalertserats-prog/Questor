@@ -111,12 +111,13 @@ async function loadContext(sessionId: string) {
  * question again without its lead-in. A damaged or absent record reads as
  * neither, which the conversation treats as an ordinary question.
  */
-function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question'> {
+function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed'> {
   try {
-    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown };
+    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown };
     return {
       ...(typeof meta.kind === 'string' ? { kind: meta.kind } : {}),
       ...(typeof meta.question === 'string' ? { question: meta.question } : {}),
+      ...(meta.sittingClosed === true ? { sittingClosed: true } : {}),
     };
   } catch {
     return {};
@@ -451,9 +452,55 @@ function toTranscript(turns: { speaker: string; text: string }[]): TranscriptLin
  *
  * Returns null when a live session somehow has no agent turn yet.
  */
+/**
+ * The rows of the sitting now in progress.
+ *
+ * A postponed interview that is re-invited keeps the earlier sitting on record.
+ * The re-invite marks that sitting's sign-off closed (closeSittingForReinvite),
+ * and only a closed sign-off is a boundary: a sign-off that has just been
+ * said, while the session is still settling into RESCHEDULE_REQUIRED, is this
+ * sitting's own ending and stays the outcome a repeat read hands back. A
+ * marker on the row, not a timestamp, so no two clocks have to agree.
+ */
+function currentSittingRows<T extends { speaker: string; metaJson: string | null }>(rows: readonly T[]): T[] {
+  let from = 0;
+  rows.forEach((r, i) => {
+    if (r.speaker !== 'agent') return;
+    const meta = parseJsonOptional<{ kind?: unknown; sittingClosed?: unknown }>(r.metaJson ?? '{}', {}, { model: 'Turn', id: 'row', field: 'metaJson' });
+    if (meta.kind === 'postponed' && meta.sittingClosed === true) from = i + 1;
+  });
+  return rows.slice(from);
+}
+
+/**
+ * Close the sitting a postponed session ended, so its sign-off is no longer
+ * "the question still owed an answer" once the candidate is invited again.
+ * Stamped by the re-invite (closeSittingForReinvite) and again, as the
+ * safety net for any other way back to a startable state, by the start
+ * that claims the session — under the same transaction as the claim.
+ */
+async function closePreviousSitting(db: TransactionClient | typeof prisma, sessionId: string): Promise<void> {
+  const last = await db.turn.findFirst({ where: { sessionId, speaker: 'agent' }, orderBy: { index: 'desc' }, select: { id: true, metaJson: true } });
+  if (!last) return;
+  const meta = parseJsonOptional<Record<string, unknown>>(last.metaJson ?? '{}', {}, { model: 'Turn', id: last.id, field: 'metaJson' });
+  if (meta.kind !== 'postponed' || meta.sittingClosed === true) return;
+  await db.turn.update({ where: { id: last.id }, data: { metaJson: JSON.stringify({ ...meta, sittingClosed: true }) } });
+}
+
+/** The re-invite's explicit close, before the session leaves RESCHEDULE_REQUIRED. */
+export async function closeSittingForReinvite(sessionId: string): Promise<void> {
+  await closePreviousSitting(prisma, sessionId);
+}
+
 async function recordedOutcome(sessionId: string, state: string, resumed: boolean): Promise<StartOutcome | null> {
   const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' } });
-  const pending = [...turns].reverse().find((t) => t.speaker === 'agent');
+  // While the session is live, only this sitting's turns can be "the question
+  // still owed an answer": a postponed interview that was re-invited keeps
+  // the earlier sitting on record, and its sign-off must not be handed back
+  // as the start of this one. Once the session has ended, the sign-off that
+  // ended it is exactly what a repeat read should get.
+  const candidates = LIVE_STATES.includes(state) ? currentSittingRows(turns) : turns;
+  const pending = [...candidates].reverse().find((t) => t.speaker === 'agent');
   if (!pending) return null;
   const kindValue = parseJsonOptional<{ kind?: unknown }>(pending.metaJson, {}, { model: 'Turn', id: pending.id, field: 'metaJson' }).kind;
   const kind = typeof kindValue === 'string' ? kindValue : 'question';
@@ -582,11 +629,22 @@ export async function startOrResumeInterview(sessionId: string): Promise<StartOu
     // Conditional on the state we read, so of two starts racing (two tabs, the
     // socket and the portal fallback) exactly one begins the interview. The
     // other joins it below instead of announcing and opening it a second time.
-    const { count } = await prisma.interviewSession.updateMany({
-      where: { id: sessionId, state: session.state },
-      data: { state: 'ASSESSING', startedAt: new Date() },
+    // The claim and the closing of any earlier sitting commit together: a
+    // start that loses the claim reads the transcript afterwards and must see
+    // the previous sign-off already marked, or it would hand it back as this
+    // sitting's opening. From a pre-live state, any postponement on record is
+    // by definition a previous sitting's, however the session was reopened.
+    const claimed = await prisma.$transaction(async (tx) => {
+      await lockSession(tx, sessionId);
+      const { count } = await tx.interviewSession.updateMany({
+        where: { id: sessionId, state: session.state },
+        data: { state: 'ASSESSING', startedAt: new Date() },
+      });
+      if (count === 0) return false;
+      await closePreviousSitting(tx, sessionId);
+      return true;
     });
-    if (count === 0) return joinRacingStart(sessionId);
+    if (!claimed) return joinRacingStart(sessionId);
     // Only the start that claimed the session gets here, so the plan is
     // rebuilt at most once: the scorecard approved since this interview was
     // set up is the one it is asked and scored against.
@@ -598,32 +656,58 @@ export async function startOrResumeInterview(sessionId: string): Promise<StartOu
     await replanFromLatestScorecard(sessionId);
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { startedAt: new Date() } });
   }
-  await logAudit({ tenantId: session.tenantId, action: 'interview.started', entityType: 'InterviewSession', entityId: sessionId });
-  await emitEvent(session.tenantId, 'interview.started', { sessionId });
   // Only onto the transcript as it stood when this start began: if a racing
   // start's opening landed first, this one is discarded and theirs handed back.
-  const { turn } = await produceOrCurrent(sessionId, tailAtStart);
+  const { turn, produced } = await produceOrCurrent(sessionId, tailAtStart);
+  // Announced by whichever start actually put the opening on record — not by
+  // the claim, which a retry entering the live branch above would announce a
+  // second time while the first start was still generating.
+  if (produced) await announceStart(session.tenantId, sessionId);
   const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' }, select: { speaker: true, text: true } });
   return { turn, resumed: false, history: toTranscript(turns), awaitingReply: false, elapsedMs: 0 };
 }
 
-/** The start that lost the race: take the opening the winner produced, or produce it if theirs has not landed. */
+/** The interview has begun: once per sitting, by the start that produced the opening. */
+async function announceStart(tenantId: string, sessionId: string): Promise<void> {
+  await logAudit({ tenantId, action: 'interview.started', entityType: 'InterviewSession', entityId: sessionId });
+  await emitEvent(tenantId, 'interview.started', { sessionId });
+}
+
+/**
+ * The start that lost the race: take the opening the winner produced, or
+ * produce it if theirs has not landed.
+ *
+ * One read of the transcript both decides and anchors. Deciding on one read
+ * and writing onto another let the winner's opening arrive in between, and
+ * this start then appended a follow-up question straight after it — a
+ * question the candidate was never given the chance to answer the greeting
+ * before. (The session and its turns are also read by separate queries on
+ * entry, so a caller can see a pre-live state next to a transcript that
+ * already holds the opening; that is why the decision is made here, on the
+ * transcript alone, and not on what the caller saw on the way in.)
+ */
 async function joinRacingStart(sessionId: string): Promise<StartOutcome> {
-  const fresh = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { state: true } });
+  const fresh = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { state: true, tenantId: true } });
   if (!fresh || !LIVE_STATES.includes(fresh.state)) {
     throw new HttpError(409, 'This interview is not open right now. If you think that is wrong, reply to your invitation email and we will look into it.');
   }
-  const existing = await recordedOutcome(sessionId, fresh.state, false);
-  if (existing) return existing;
-  // Before producing anything: the plan the winner may still be rebuilding is
-  // the one this opening must come from. The swap is conditional, so whichever
-  // start gets there first rebuilds it and the other finds it done.
+  // Before reading the transcript: the plan the winner may still be rebuilding
+  // is the one this opening must come from. The swap is conditional, so
+  // whichever start gets there first rebuilds it and the other finds it done.
   await replanFromLatestScorecard(sessionId);
-  // The winner is still generating. Racing it is safe: both write only onto
-  // the transcript as it stands now, so whichever opening lands second is
-  // refused and hands back the first.
-  const tail = await prisma.turn.findFirst({ where: { sessionId }, orderBy: { index: 'desc' }, select: { id: true } });
-  const { turn } = await produceOrCurrent(sessionId, tail?.id ?? null);
+  const rows = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' }, select: { id: true, speaker: true, metaJson: true } });
+  // The winner's opening is on record for this sitting: hand it back. A
+  // previous sitting's sign-off does not count — see currentSittingRows.
+  if (currentSittingRows(rows).some((r) => r.speaker === 'agent')) {
+    const existing = await recordedOutcome(sessionId, fresh.state, false);
+    if (existing) return existing;
+  }
+  // The winner is still generating. Racing it is safe: this start writes only
+  // onto the transcript as read above, so if the winner's opening lands first
+  // this one is refused and theirs handed back.
+  const tail = rows.length > 0 ? rows[rows.length - 1].id : null;
+  const { turn, produced } = await produceOrCurrent(sessionId, tail);
+  if (produced) await announceStart(fresh.tenantId, sessionId);
   const turns = await prisma.turn.findMany({ where: { sessionId }, orderBy: { index: 'asc' }, select: { speaker: true, text: true } });
   return { turn, resumed: false, history: toTranscript(turns), awaitingReply: false, elapsedMs: 0 };
 }

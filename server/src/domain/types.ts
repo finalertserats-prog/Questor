@@ -128,6 +128,13 @@ export interface TurnRecord {
    * pause or a re-ask of it. Absent on candidate turns and older records.
    */
   kind?: string;
+  /**
+   * On a 'postponed' sign-off: the candidate has since been invited again, so
+   * this sign-off closes a sitting and the conversation starts over after it.
+   * Unset while the session is still settling into RESCHEDULE_REQUIRED, when
+   * the sign-off is still the current turn. Set by closeSittingForReinvite.
+   */
+  sittingClosed?: boolean;
   /** For an agent turn: the question it asked, without any lead-in, to put again after a pause. */
   question?: string;
 }

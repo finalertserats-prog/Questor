@@ -247,13 +247,22 @@ describe('a bare yes or no', () => {
 });
 
 describe('currentSitting', () => {
-  it('starts after a postponement, so a rescheduled interview begins again', () => {
+  it('starts after a closed postponement, so a rescheduled interview begins again', () => {
+    const turns = [
+      turn('agent', 'Hi — let us start.', '__process__', 'opening'),
+      turn('candidate', 'can we do this later'),
+      { ...turn('agent', 'Of course — we can do this another time.', '__process__', 'postponed'), sittingClosed: true },
+      turn('agent', 'Hi again.', '__process__', 'opening'),
+    ];
+    expect(currentSitting(turns).map((t) => t.text)).toEqual(['Hi again.']);
+  });
+
+  it('keeps a postponement that has not been re-invited after, so nothing is asked past it', () => {
     const turns = [
       turn('agent', 'Hi — let us start.', '__process__', 'opening'),
       turn('candidate', 'can we do this later'),
       turn('agent', 'Of course — we can do this another time.', '__process__', 'postponed'),
-      turn('agent', 'Hi again.', '__process__', 'opening'),
     ];
-    expect(currentSitting(turns).map((t) => t.text)).toEqual(['Hi again.']);
+    expect(currentSitting(turns).map((t) => t.kind)).toEqual(['opening', undefined, 'postponed']);
   });
 });

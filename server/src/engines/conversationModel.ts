@@ -247,7 +247,11 @@ export function yesNoFollowup(answer: 'yes' | 'no', seed: number): string {
  */
 export function currentSitting(turns: readonly TurnRecord[]): TurnRecord[] {
   let from = 0;
-  turns.forEach((t, i) => { if (t.speaker === 'agent' && t.kind === 'postponed') from = i + 1; });
+  // Only a postponement the candidate has been re-invited after closes a
+  // sitting (sittingClosed, stamped by the re-invite). One just said, while the
+  // session is still live and settling, is this sitting's own ending: nothing
+  // may be asked after it, so it must stay part of the sitting.
+  turns.forEach((t, i) => { if (t.speaker === 'agent' && t.kind === 'postponed' && t.sittingClosed === true) from = i + 1; });
   return turns.slice(from);
 }
 

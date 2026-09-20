@@ -19,7 +19,7 @@ import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap, demoInvitationExpiry } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, endReasonFor, transitionIfInState, leftByButton, LEAVE_SOURCE } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, endReasonFor, transitionIfInState, leftByButton, LEAVE_SOURCE, closeSittingForReinvite } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
@@ -748,6 +748,10 @@ async function inviteSession(req: Request, session: InvitableSession) {
   // Checked before anything is sent. This used to run after the email had
   // gone, so an illegal transition surfaced as a 500 with the mail already out.
   assertTransition(session.state, 'INVITED');
+  // The sitting that ended with "let's do this another time" is over: its
+  // sign-off must not be handed back as the start of the sitting this
+  // invitation opens (interviewEngine.closeSittingForReinvite).
+  if (session.state === 'RESCHEDULE_REQUIRED') await closeSittingForReinvite(session.id);
   // A re-invite must add to the invitation's history, not start it over: the
   // update below used to write a one-element list, erasing every earlier
   // sent / resent / not-delivered event.
