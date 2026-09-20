@@ -22,7 +22,13 @@ export interface EmailProvider {
    * asked why there were no interviews.
    */
   delivers: boolean;
-  send(msg: EmailMessage): Promise<{ status: string; id: string }>;
+  /**
+   * `signal`, where a provider can honour it, stops the request: a caller
+   * that has given up waiting can at least stop what it still holds. SMTP
+   * cannot be aborted mid-conversation and ignores it; the caller must treat
+   * a timed-out send as one that may still have gone.
+   */
+  send(msg: EmailMessage, opts?: { readonly signal?: AbortSignal }): Promise<{ status: string; id: string }>;
 }
 
 class ConsoleEmailProvider implements EmailProvider {
@@ -43,9 +49,10 @@ class SendgridEmailProvider implements EmailProvider {
   configured = true;
   delivers = true;
   constructor(private key: string) {}
-  async send(msg: EmailMessage) {
+  async send(msg: EmailMessage, opts: { readonly signal?: AbortSignal } = {}) {
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
+      signal: opts.signal,
       headers: { authorization: `Bearer ${this.key}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         personalizations: [{ to: [{ email: msg.to }] }],

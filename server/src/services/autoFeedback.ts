@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
-import { getEmail, type EmailMessage } from '../providers/email/index.js';
+import { getEmail, type EmailMessage, type EmailProvider } from '../providers/email/index.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
@@ -82,8 +82,12 @@ export const FEEDBACK_SEND_TIMEOUT_MS = 60_000;
 /** How often an in-flight send renews its claim, so a slow send is not swept. */
 export const FEEDBACK_SEND_HEARTBEAT_MS = 60_000;
 
-/** Slack past the provider timeout before a dead worker's send lock counts as gone. */
-export const SEND_LOCK_GRACE_MS = 30_000;
+/**
+ * Slack past the provider timeout before a send lock counts as gone. A minute,
+ * because a timed-out provider call may still be running: SMTP cannot be
+ * aborted, and the lock has to outlive whatever that call might still do.
+ */
+export const SEND_LOCK_GRACE_MS = 60_000;
 
 /** The refusal a reviewer gets while the candidate's letter is being sent. */
 export const FEEDBACK_SENDING = 'feedback_sending';
@@ -97,23 +101,34 @@ export function _setFeedbackSendTimeoutForTest(ms: number | null): void {
 }
 
 /**
- * Send, but never wait for ever.
- *
- * A timeout is reported as a failure and retried: the message may still have
- * gone, but an email nobody can account for is worse than the risk of a
- * second copy from a provider that had already stopped answering.
+ * The provider did not answer in time. Distinct from a refusal, because it
+ * means something different: a refusal is an outcome, a timeout is not one.
  */
-async function sendWithinTimeout(email: { send: (m: EmailMessage) => Promise<unknown> }, message: EmailMessage): Promise<void> {
+class SendTimeoutError extends Error {
+  constructor(readonly seconds: number) {
+    super(`The mail provider did not answer within ${seconds}s.`);
+  }
+}
+
+/**
+ * Send, but never wait for ever — and stop the request where that is possible.
+ *
+ * A timeout is NOT a failure to retry. The message left our hands; a provider
+ * that stopped answering may still deliver it (SMTP cannot be aborted at all).
+ * The caller records the outcome as unknown and leaves the send lock to expire.
+ */
+async function sendWithinTimeout(email: EmailProvider, message: EmailMessage): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   const expiry = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`The mail provider did not answer within ${Math.round(sendTimeoutMs / 1000)}s.`)),
-      sendTimeoutMs,
-    );
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new SendTimeoutError(Math.round(sendTimeoutMs / 1000)));
+    }, sendTimeoutMs);
     timer.unref?.();
   });
   try {
-    await Promise.race([email.send(message), expiry]);
+    await Promise.race([email.send(message, { signal: controller.signal }), expiry]);
   } finally {
     clearTimeout(timer);
   }
@@ -222,7 +237,13 @@ export async function enqueueAutoFeedback(opts: {
  * the review changed the picture.
  */
 export async function gateReviewCompletion(tx: Prisma.TransactionClient, assessmentId: string, now = new Date()): Promise<boolean> {
-  const row = await tx.candidateFeedbackEmail.findFirst({ where: { assessmentId }, select: { id: true, status: true } });
+  const row = await tx.candidateFeedbackEmail.findFirst({ where: { assessmentId }, select: { id: true, status: true, sendLockUntil: true } });
+  // A send that timed out is over for us but not necessarily for the
+  // provider: its lock stands until sendLockUntil, and so does the refusal.
+  if (row?.status === 'SENT_UNVERIFIED') {
+    if (row.sendLockUntil !== null && row.sendLockUntil.getTime() >= now.getTime()) throw new HttpError(409, FEEDBACK_SENDING_MESSAGE, FEEDBACK_SENDING);
+    return false;
+  }
   // Already sent, skipped, failed or never queued: a review changes nothing
   // about the letter, so nothing stands in its way.
   if (!row || (row.status !== 'QUEUED' && row.status !== 'SENDING')) return false;
@@ -288,6 +309,11 @@ interface Claim {
   at: Date;
   /** The send lock this attempt holds, so only its own lock is ever cleared. */
   lockUntil: Date | null;
+  /**
+   * True once the provider has been called and not answered: the lock then
+   * has to outlive the attempt, because the call it guards may still deliver.
+   */
+  outcomeUnknown: boolean;
 }
 
 /**
@@ -305,9 +331,13 @@ async function takeSendLock(id: string, claim: Claim, now: Date): Promise<boolea
   return count === 1;
 }
 
-/** Let the lock go, whatever happened. Only the exact lock this attempt set. */
+/**
+ * Let the lock go once the attempt has a definite outcome — sent, or refused
+ * by the provider before the timeout. Only the exact lock this attempt set.
+ * After a timeout the lock stays, to expire on its own at sendLockUntil.
+ */
 async function releaseSendLock(id: string, claim: Claim): Promise<void> {
-  if (!claim.lockUntil) return;
+  if (!claim.lockUntil || claim.outcomeUnknown) return;
   await prisma.candidateFeedbackEmail.updateMany({ where: { id, sendLockUntil: claim.lockUntil }, data: { sendLockUntil: null } })
     .catch((err: unknown) => logger.error({ feedbackEmailId: id, err: errorText(err) }, 'Could not release the feedback send lock; it will expire'));
   claim.lockUntil = null;
@@ -334,7 +364,7 @@ function startClaimHeartbeat(id: string, claim: Claim): () => void {
  * safe to call from anywhere, any number of times at once.
  */
 export async function attemptFeedbackEmail(id: string, now = new Date()): Promise<Outcome> {
-  const claim: Claim = { at: now, lockUntil: null };
+  const claim: Claim = { at: now, lockUntil: null, outcomeUnknown: false };
   const claimed = await prisma.candidateFeedbackEmail.updateMany({
     where: { id, status: 'QUEUED', nextAttemptAt: { lte: now } },
     data: { status: 'SENDING', claimedAt: claim.at },
@@ -344,6 +374,7 @@ export async function attemptFeedbackEmail(id: string, now = new Date()): Promis
   try {
     return await sendClaimed(id, claim);
   } catch (err) {
+    if (err instanceof SendTimeoutError) return recordTimedOutSend(id, claim, err);
     return recordFailure(id, claim, err);
   } finally {
     stopHeartbeat();
@@ -559,6 +590,36 @@ async function recordUnverifiedSend(
   return 'sent-unverified';
 }
 
+/**
+ * The provider did not answer. The message may or may not have gone, and a
+ * provider that cannot be aborted may still deliver it, so this is neither a
+ * send nor a failure: it is recorded as an unconfirmed send — the same state
+ * as a claim lost mid-flight — with the lock left standing until it expires.
+ * Never retried on its own; a person decides, and only once the lock is gone.
+ */
+async function recordTimedOutSend(id: string, claim: Claim, err: SendTimeoutError): Promise<Outcome> {
+  claim.outcomeUnknown = true;
+  const row = await prisma.candidateFeedbackEmail.findUnique({ where: { id }, select: { attempts: true, tenantId: true, sessionId: true, assessmentId: true } });
+  if (!row) return 'sent-unverified';
+  const sentAt = new Date();
+  const note = `The mail provider did not answer within ${err.seconds}s; the message may still have been delivered. `
+    + 'Check with the candidate before sending again.';
+  await prisma.candidateFeedbackEmail.updateMany({
+    where: { id, status: 'SENDING', claimedAt: claim.at },
+    data: {
+      status: 'SENT_UNVERIFIED', sentAt, delivered: getEmail().delivers, attempts: row.attempts + 1,
+      lastError: note, claimedAt: null, nextAttemptAt: null,
+    },
+  });
+  logger.error({ feedbackEmailId: id, sessionId: row.sessionId, timeoutSeconds: err.seconds }, 'Candidate feedback email timed out; outcome unknown, send lock left to expire');
+  await logAudit({
+    tenantId: row.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
+    action: 'feedback.email.timed_out', entityType: 'InterviewSession', entityId: row.sessionId,
+    after: { assessmentId: row.assessmentId, timeoutSeconds: err.seconds, lockUntil: claim.lockUntil },
+  });
+  return 'sent-unverified';
+}
+
 async function recordFailure(id: string, claim: Claim, err: unknown): Promise<Outcome> {
   const message = errorText(err);
   const row = await prisma.candidateFeedbackEmail.findUnique({ where: { id }, select: { attempts: true, tenantId: true, sessionId: true } });
@@ -678,7 +739,7 @@ export async function feedbackEmailState(
     prisma.candidateFeedbackEmail.findUnique({ where: { sessionId } }),
     sessionEligibility(sessionId),
   ]);
-  const manual = manualSendAllowed(row, opts);
+  const manual = manualSendAllowed(row, { ...opts, now: new Date() });
   const blockedReason = !manual.allowed ? manual.reason : eligibility.eligible ? null : SKIP_REASON_TEXT[eligibility.reason];
   return {
     email: row
@@ -809,7 +870,7 @@ export async function sendFeedbackNow(opts: {
     // check above: a second press arriving while the first one's email is
     // QUEUED, SENDING or already SENT must not reset it to QUEUED and send
     // the candidate a second copy.
-    const allowed = manualSendAllowed(existing, { confirmDuplicate });
+    const allowed = manualSendAllowed(existing, { confirmDuplicate, now: new Date() });
     if (!allowed.allowed) throw new HttpError(409, allowed.reason);
     const { count } = await prisma.candidateFeedbackEmail.updateMany({
       where: { id: existing.id, status: existing.status, updatedAt: existing.updatedAt },
