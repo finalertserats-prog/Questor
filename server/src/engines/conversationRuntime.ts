@@ -9,13 +9,13 @@ import { bandById, type Abstraction, type BandId } from './experienceBands.js';
 import { WARMUP_QUESTION, buildOpeningGreeting, focusAreas, openingQuestion, spokenRoleTitle } from './openingModel.js';
 import { config } from '../config.js';
 import {
-  detectCandidateIntent, llmIntentSchema, mergeLlmIntent,
+  bareYesNo, couldBeUpgraded, detectCandidateIntent, llmIntentSchema, mergeLlmIntent,
   type CandidateIntent, type IntentReading, type LlmIntent,
 } from './candidateIntent.js';
 import {
   MOVE_ON_LEAD, PAUSE_REPLY, POSTPONE_REPLY,
-  acknowledgement, answerFromRoleFacts, isRepeatedTopic, nonAnswerStreak, pendingQuestion,
-  premiseIsGrounded, simplerQuestion, type PendingQuestion, type RoleFacts,
+  acknowledgement, answerFromRoleFacts, isRepeatedTopic, isYesNoQuestion, nonAnswerStreak, pendingQuestion,
+  premiseIsGrounded, simplerQuestion, yesNoFollowup, type PendingQuestion, type RoleFacts,
 } from './conversationModel.js';
 
 export interface AgentUtterance {
@@ -465,7 +465,7 @@ export async function nextUtterance(opts: UtteranceOptions): Promise<AgentUttera
     // The model is told the identity question is answered, so it does not
     // answer it again in its own words after the fixed answer below.
     composeUtterance({ ...opts, identityAnswered: askedIfAi, reading }),
-    reading && !opts.candidateLeft ? readIntentWithLlm(latest.text, opts) : Promise.resolve(null),
+    reading && couldBeUpgraded(reading) && !opts.candidateLeft ? readIntentWithLlm(latest.text, opts) : Promise.resolve(null),
   ]);
   let utterance = composed;
   if (reading) {
@@ -588,6 +588,13 @@ async function manageConversation(
     }
     case 'non_answer':
     case 'skip': {
+      // "Yes." answers "did you write the scripts yourself?" — it is the whole
+      // answer, and one follow-up turns it into evidence a reviewer can read.
+      const yesNo = reading.intent === 'non_answer' ? bareYesNo(lastText) : null;
+      if (yesNo && isYesNoQuestion(pending.text)) {
+        const followup = yesNoFollowup(yesNo, turns.length);
+        return { text: followup, question: followup, competencyId, kind: 'followup' };
+      }
       // Twice in a row, or an explicit skip: the director has already marked
       // the block covered (interviewDirector coverageState) and moves on.
       if (reading.intent === 'skip' || nonAnswerStreak(turns) >= 2) return null;
@@ -956,6 +963,8 @@ async function tryLlmUtterance(
       'wasted question. ' +
       'NEVER REPEAT A TOPIC. The questions already asked are listed below; do not ask about the same subject again ' +
       'in different words. ' +
+      'ASK OPEN QUESTIONS. Never one that can be answered with a bare yes or no ("have you used X?", "did you own that?"): ' +
+      'ask for the account instead ("what did you do", "how did that go", "walk me through"). ' +
       'VARY THE FORM of your questions — this is as important as their content. A real interview mixes ' +
       'behavioural examples with opinions ("what\'s overrated about X"), disagreement probes ("when did you push back"), ' +
       'grounded hypotheticals, step-by-step walkthroughs, trade-off questions and "what would you do differently". ' +
@@ -1017,6 +1026,10 @@ async function tryLlmUtterance(
   if (!premiseIsGrounded(result.question, said)) return null;
   // The same subject again: build-versus-buy was asked about five times.
   if (isRepeatedTopic(result.question, earlier)) return null;
+  // A question answerable with "yes" gets "yes", and an interview needs an
+  // account. The built-in bank asks open questions, so falling back to it is
+  // the better turn.
+  if (isYesNoQuestion(result.question)) return null;
   const ack = result.acknowledgement && !EVALUATIVE.test(result.acknowledgement) && premiseIsGrounded(result.acknowledgement, said)
     ? capitalise(result.acknowledgement)
     : undefined;

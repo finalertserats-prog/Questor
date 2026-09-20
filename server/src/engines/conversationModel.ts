@@ -1,5 +1,5 @@
 import type { TurnRecord } from '../domain/types.js';
-import { detectCandidateIntent } from './candidateIntent.js';
+import { bareYesNo, detectCandidateIntent, isSubstantiveAnswer } from './candidateIntent.js';
 import { WARMUP_QUESTION, openingQuestion } from './openingModel.js';
 
 /**
@@ -88,13 +88,74 @@ export function nonAnswerStreak(turns: readonly TurnRecord[]): number {
   const pending = pendingQuestion(turns);
   if (!pending) return 0;
   let streak = 0;
-  for (const t of turns.slice(pending.at + 1)) {
+  for (let i = pending.at + 1; i < turns.length; i++) {
+    const t = turns[i];
     if (t.speaker !== 'candidate') continue;
+    if (isAnswerInContext(turns, i)) { streak = 0; continue; }
     const { intent } = detectCandidateIntent(t.text);
     if (intent === 'non_answer' || intent === 'skip') streak += 1;
-    else if (intent === 'answer') streak = 0;
   }
   return streak;
+}
+
+// A question answerable with yes or no: an auxiliary opens it and nothing in
+// it asks for an account. "Can you walk me through…, and what was the
+// context?" opens with an auxiliary but is not one of these.
+const AUXILIARY_OPENING = /^(?:so|and|but|just|ok|okay|right|now|then)?\s*(?:did|do|does|have|has|had|can|could|were|was|is|are|am|will|would|should|shall|may|might)\b/;
+const ASKS_FOR_AN_ACCOUNT = /\b(?:what|how|why|which|who|whom|where|when|tell me|walk me|talk me|describe|explain|give me)\b/;
+
+/** The last thing actually asked in an utterance: its final question, or its final sentence. */
+function finalQuestion(text: string): string {
+  const sentences = (text ?? '').split(/(?<=[.?!])\s+/).map((s) => s.trim()).filter(Boolean);
+  return [...sentences].reverse().find((s) => s.endsWith('?')) ?? sentences[sentences.length - 1] ?? '';
+}
+
+/** Could this question be answered with a bare yes or no, and nothing else? */
+export function isYesNoQuestion(question: string): boolean {
+  const last = finalQuestion(question).toLowerCase();
+  if (!last) return false;
+  return AUXILIARY_OPENING.test(last) && !ASKS_FOR_AN_ACCOUNT.test(last);
+}
+
+/**
+ * Is the candidate turn at `index` an answer, given what was asked?
+ *
+ * Context-free the answer is usually enough — "Oh", "Pause" and "Welcome back"
+ * are nothing whatever the question. The exception is a bare "yes" or "no",
+ * which is the whole answer to a yes/no question and nothing at all to an open
+ * one.
+ */
+export function isAnswerInContext(turns: readonly TurnRecord[], index: number): boolean {
+  const t = turns[index];
+  if (!t || t.speaker !== 'candidate' || !t.text.trim()) return false;
+  if (isSubstantiveAnswer(t.text)) return true;
+  if (!bareYesNo(t.text)) return false;
+  const asked = pendingQuestion(turns.slice(0, index));
+  return !!asked && asked.competencyId !== '__candidate_questions__' && isYesNoQuestion(asked.text);
+}
+
+/** The ids of the candidate turns that are answers — what may be quoted as evidence. */
+export function answeredTurnIds(turns: readonly TurnRecord[]): Set<string> {
+  const ids = new Set<string>();
+  turns.forEach((t, i) => { if (isAnswerInContext(turns, i)) ids.add(t.id); });
+  return ids;
+}
+
+// One follow-up that turns a bare yes or no into evidence, without making the
+// candidate feel caught out. Two wordings each, so a second one in the same
+// interview is not the same sentence.
+const AFTER_YES = [
+  'Thanks — tell me how that went in practice: what did you actually do, and what came of it?',
+  'Good — walk me through how you did it, and what the result was.',
+];
+const AFTER_NO = [
+  'Understood — who handled that part, and what was your own involvement around it?',
+  'That\'s useful to know — who did it instead, and what was your part alongside them?',
+];
+
+/** The follow-up that gets the story behind a bare yes or no. */
+export function yesNoFollowup(answer: 'yes' | 'no', seed: number): string {
+  return pick(answer === 'yes' ? AFTER_YES : AFTER_NO, seed);
 }
 
 /**

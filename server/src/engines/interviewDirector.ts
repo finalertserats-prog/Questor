@@ -1,5 +1,6 @@
 import type { DirectorSignal, InterviewPlan, PlanBlock, TurnRecord } from '../domain/types.js';
-import { detectCandidateIntent, isSubstantiveAnswer } from './candidateIntent.js';
+import { detectCandidateIntent } from './candidateIntent.js';
+import { isAnswerInContext } from './conversationModel.js';
 
 // Interview Director (BRD 14.2, 16.2). Authoritative controller of time,
 // coverage and depth. It does NOT speak — it emits signals the Conversation
@@ -66,10 +67,12 @@ export function coverageState(plan: InterviewPlan, turns: TurnRecord[]): Record<
   for (const b of plan.blocks) state[b.competencyId] = 0;
   const streak: Record<string, number> = {};
   const skipped = new Set<string>();
-  for (const t of turns) {
+  for (const [i, t] of turns.entries()) {
     if (t.speaker !== 'candidate' || !t.competencyId) continue;
     const id = t.competencyId;
-    if (isSubstantiveAnswer(t.text)) {
+    // In context, because "Yes" is the whole answer to "did you write them
+    // yourself?" and nothing at all to "walk me through how you QA a script".
+    if (isAnswerInContext(turns, i)) {
       state[id] = (state[id] ?? 0) + 1;
       streak[id] = 0;
       continue;
@@ -105,7 +108,7 @@ export function directorDecide(opts: {
 
   // The last real answer: depth and follow-ups are decided on what the
   // candidate said, never on "Pause" or "Oh".
-  const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate' && isSubstantiveAnswer(t.text));
+  const lastCandidate = [...turns].reverse().find((t, i) => t.speaker === 'candidate' && isAnswerInContext(turns, turns.length - 1 - i));
   const q = lastCandidate ? answerQuality(lastCandidate.text) : { score: 0, hasSituation: false, hasAction: false, hasResult: false, specific: false };
 
   // One bonus turn on the block the candidate just answered, when the answer was

@@ -112,16 +112,28 @@ export function detectDistress(text: string): boolean {
  * construction, so that describing a past decision — "we decided to stop the
  * rollout", "I want to quit that habit" — does not end the interview.
  */
+/**
+ * What may follow "stop", "end" or "quit" when the thing being stopped is THIS
+ * interview: nothing at all, or a word for the interview itself.
+ *
+ * Anything else is the candidate describing their work — "I need to stop using
+ * Excel for tracker delivery", "I want to end the manual process", "I would
+ * like to quit the spreadsheet habit". Those ended a real interview unscored,
+ * which is the opposite failure to the one this detector exists for, and with
+ * no model configured this pattern is the only thing reading the sentence.
+ */
+export const ENDS_HERE = String.raw`(?:\s+(?:it|this|that|here|now|already|please|everything|for (?:now|today)|with (?:this|it|the interview|this interview)|the (?:interview|call|session|chat)|this (?:interview|call|session)))*\s*(?:[.,;!?]|$)`;
+
 export function detectWithdrawal(text: string): boolean {
   const t = text.trim().toLowerCase();
   return (
     /\b(i|i'?m|im)\s+(am\s+)?(done|finished)\b/.test(t) ||
-    /\bi\s+(want|wanna|would like)\s+to\s+(stop|end|quit|leave|finish)\b/.test(t) ||
-    /\bi'?m\s+going\s+to\s+(end|stop|quit|leave)\b/.test(t) ||
+    new RegExp(String.raw`\bi\s+(?:want|wanna|would like)\s+to\s+(?:stop|end|quit|leave|finish)${ENDS_HERE}`).test(t) ||
+    new RegExp(String.raw`\bi'?m\s+going\s+to\s+(?:end|stop|quit|leave)${ENDS_HERE}`).test(t) ||
     /\b(end|stop)\s+(the\s+)?(interview|call|session)\b/.test(t) ||
-    /\bi\s+don'?t\s+want\s+to\s+(do|continue|carry on)\b/.test(t) ||
+    new RegExp(String.raw`\bi\s+don'?t\s+want\s+to\s+(?:do|continue|carry on)${ENDS_HERE}`).test(t) ||
     /^(no,?\s+)?(i'?m\s+)?done\b/.test(t) ||
-    /\b(can we|let'?s)\s+(stop|end|finish)\b/.test(t)
+    new RegExp(String.raw`\b(?:can we|let'?s)\s+(?:stop|end|finish)${ENDS_HERE}`).test(t)
   );
 }
 

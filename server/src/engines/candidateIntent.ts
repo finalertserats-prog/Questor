@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { detectAiIdentityQuestion, detectDistress, detectRepeatRequest, detectWithdrawal } from './policyEngine.js';
+import { ENDS_HERE, detectAiIdentityQuestion, detectDistress, detectRepeatRequest, detectWithdrawal } from './policyEngine.js';
 
 /**
  * What the candidate meant by their last turn, read BEFORE the interviewer
@@ -78,7 +78,9 @@ function whole(core: string): RegExp {
 const STOP_WHOLE = whole(String.raw`(?:(?:stop|cancel|quit|exit|leave|end|enough)(?:\s+(?:it|this|that|now|here|the interview|the call|the session|this interview|this call|stop|please))*|that'?s enough|i quit|end this|i don'?t want(?: to)?|i do not want(?: to)?|i'?m out|no more)`);
 
 const STOP_PHRASES: RegExp[] = [
-  /\bi\s+(?:(?:want|would like|need)\s+to|wanna)\s+(?:stop|end|quit|leave|finish|cancel)\b(?!\s+(?:the|a|that|our|my|their)\s+(?!interview|call|session)\w)/,
+  // The verb has to end the sentence or name the interview: "I need to stop
+  // using Excel for tracker delivery" is a candidate describing their work.
+  new RegExp(String.raw`\bi\s+(?:(?:want|would like|need)\s+to|wanna)\s+(?:stop|end|quit|leave|finish|cancel)${ENDS_HERE}`),
   /\b(?:can|could|shall)\s+(?:we|you|i)\s+(?:please\s+)?(?:cancel|stop|end|quit)\b(?:\s+(?:this|it|the interview|the call|here|now|please))*\s*$/,
   /\b(?:please\s+)?(?:cancel|stop|end)\s+(?:the|this)\s+(?:interview|call|session)\b/,
   /\blet'?s\s+(?:stop|end|finish|quit)\s+(?:this|it|here|now|the interview)\b/,
@@ -91,14 +93,34 @@ const STOP_PHRASES: RegExp[] = [
 /** "Some other time", in the forms people actually say it. */
 const LATER = String.raw`(?:later|another time|some other time|other time|another day|some other day|some ?time later|tomorrow|next week|next time|another date|a different time|a different day|some other date)`;
 
+/**
+ * The other half of "later": a time named by the thing that has to happen
+ * first. Candidates say "after my exams", "once my shift is over", "when I'm
+ * free" far more often than "at another time", and every one of these was
+ * reaching only the model — so with no model configured (or a call that times
+ * out) the interviewer asked its next question instead of stopping, which is
+ * the production failure this whole layer exists to prevent.
+ */
+const LATER_EVENT = String.raw`(?:(?:after|once)\s+(?:my |the |our |this )?(?:exams?|class(?:es)?|lecture|work|shift|meeting|lunch|break|call|holiday|trip|weekend|appointment)\w*(?:\s+(?:is|are)\s+(?:over|done|finished))?|when i(?:'?m| am) free|when i(?:'?m| am) done|in (?:an hour|a bit|a while|half an hour|\d+ (?:minutes|mins|hours|days)))`;
+
+/** Either way of naming a later time. */
+const TIME_LATER = String.raw`(?:${LATER}|${LATER_EVENT})`;
+
+/** Verbs for taking the interview up again — "come back", "pick this up", "do it". */
+const RESUME_VERB = String.raw`(?:come back(?!\s+to\s+(?:that|the|those|it\b))|pick (?:this|it) (?:up|back up)|get back to (?:this|it)|continue|carry on|finish (?:this|it)|do (?:it|this|the interview)|have (?:it|this|the interview)|take (?:it|this|the interview)|try (?:this|it) again)`;
+
 const POSTPONE_WHOLE = whole(String.raw`(?:(?:maybe|perhaps|can we|could we|let'?s)?\s*(?:do (?:it|this) )?${LATER}|not (?:right )?now|not today|not at the moment|reschedule|postpone|some other day|i'?m not ready|i am not ready)`);
 
 const POSTPONE_PHRASES: RegExp[] = [
-  // "can we have this interview later", "can we do it another time"
+  // "can we have this interview later", "can we do it another time",
+  // "can we continue after class", "can I come back once my exams are over".
   // Anchored near the end, so "can I ask about the later stages" is not a request.
-  new RegExp(String.raw`\b(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${LATER}(?:\s+\S+){0,4}$`),
-  // "let's do it tomorrow", "we can have it sometime later"
-  new RegExp(String.raw`\b(?:let'?s|we can|we could|i can|i could|i'?d rather|i would rather|i'?d prefer to|i would prefer to)\s+(?:do|have|take|continue|finish|try)\s+(?:it|this|the interview|this interview)\b[^.?!]{0,20}\b${LATER}\b`),
+  new RegExp(String.raw`\b(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${TIME_LATER}(?:\s+\S+){0,4}$`),
+  // "let's do it tomorrow", "I'll do it later", "I can come back after exams".
+  new RegExp(String.raw`\b(?:let'?s|we can|we could|i can|i could|i'?ll|i will|i'?d rather|i would rather|i'?d prefer to|i would prefer to)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}(?:\s+\S+){0,4}$`),
+  // "could we pick this up once my exams are over" — the request verb carries
+  // it even when the time marker is the only thing after it.
+  new RegExp(String.raw`\b(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}(?:\s+\S+){0,4}$`),
   // "can we reschedule", "I need to reschedule", "please postpone"
   /\b(?:can|could|shall|should)\s+(?:we|you|i)\s+(?:please\s+)?(?:reschedule|postpone|move\s+(?:it|this|the interview))\b/,
   /\b(?:i\s+(?:need|want|would like|'?d like)\s+to|please|let'?s)\s+(?:reschedule|postpone)\b/,
@@ -106,6 +128,8 @@ const POSTPONE_PHRASES: RegExp[] = [
   /\bi\s+(?:don'?t|do not|can'?t|cannot|can not)\s+(?:want to\s+)?(?:do|take|have|continue|give)\s+(?:this|it|the interview|this interview|an interview)\b[^.?!]{0,20}\b(?:now|today|right now|at the moment|at this time|this time)\b/,
   // "I'm not ready (for this)", but not "the data wasn't ready"
   /^(?:\w+\s+){0,3}i'?(?:m| am)\s+not\s+ready\b(?:\s+(?:for (?:this|it|the interview|an interview)|to (?:do|take) (?:this|it|the interview)))?(?:\s+\w+){0,4}$/,
+  // "I'm not free right now, later?" — said about themselves, near the whole message.
+  /^(?:\w+\s+){0,3}i'?(?:m| am)\s+not\s+(?:free|available)\b(?:\s+\w+){0,6}$/,
 ];
 
 // --- Pause ------------------------------------------------------------------
@@ -216,6 +240,26 @@ const NOT_AN_ANSWER: ReadonlySet<CandidateIntent> = new Set([
   'stop', 'postpone', 'distress', 'pause', 'resume', 'skip', 'repeat', 'correction', 'ai_identity', 'question', 'non_answer',
 ]);
 
+const BARE_YES = whole(String.raw`(?:yes|yeah|yep|yup|sure|correct|that'?s right|absolutely|definitely|of course)`);
+const BARE_NO = whole(String.raw`(?:no|nope|nah|not really|never|negative)`);
+
+/**
+ * A turn that is nothing but "yes" or "no".
+ *
+ * Meaningless on its own, and a real answer to "did you write the scripts
+ * yourself?" — so the caller decides, knowing what was asked (see
+ * conversationModel isAnswerInContext). Treating it as empty everywhere
+ * rephrased a question the candidate had just answered and dropped the answer
+ * from the evidence a reviewer reads.
+ */
+export function bareYesNo(text: string): 'yes' | 'no' | null {
+  const t = normalise(text);
+  if (!t) return null;
+  if (BARE_YES.test(t)) return 'yes';
+  if (BARE_NO.test(t)) return 'no';
+  return null;
+}
+
 /** Whether this candidate turn is an answer to the question — evidence, not conversation management. */
 export function isSubstantiveAnswer(text: string): boolean {
   return !NOT_AN_ANSWER.has(detectCandidateIntent(text).intent);
@@ -239,6 +283,15 @@ export const LLM_INTENT_MIN_CONFIDENCE = 0.8;
 
 /** The deterministic readings an LLM may upgrade. Everything else is already decided. */
 const UPGRADABLE: ReadonlySet<CandidateIntent> = new Set(['answer', 'non_answer', 'question', 'resume', 'skip']);
+
+/**
+ * Whether asking a model about this turn could change anything. A stop, a
+ * postponement or a pause the patterns already caught is decided: asking costs
+ * a call and a second of a candidate's time to be told what we know.
+ */
+export function couldBeUpgraded(reading: IntentReading): boolean {
+  return UPGRADABLE.has(reading.intent);
+}
 
 /**
  * Combine the deterministic reading with the model's.

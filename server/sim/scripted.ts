@@ -6,7 +6,7 @@
  * other lane, and refuses production the same way (sim/session.ts).
  */
 import {
-  SESSION_A, SESSION_A_STOP, SESSION_B, SESSION_B_CLOSING_QUESTION,
+  SESSION_A, SESSION_A_COME_BACK, SESSION_A_STOP, SESSION_B, SESSION_B_CLOSING_QUESTION,
   auditScriptedTranscript, createScriptedSession, renderScripted, runScript,
 } from './scriptedSessions.js';
 
@@ -14,6 +14,7 @@ async function main(): Promise<void> {
   const runs = [
     { label: 'Session A', script: SESSION_A, opts: {} },
     { label: 'Session A (typed Stop)', script: SESSION_A_STOP, opts: {} },
+    { label: 'Session A (come back after exams)', script: SESSION_A_COME_BACK, opts: {} },
     { label: 'Session B', script: SESSION_B, opts: { untilClose: true, closingQuestion: SESSION_B_CLOSING_QUESTION } },
   ];
   let failed = false;

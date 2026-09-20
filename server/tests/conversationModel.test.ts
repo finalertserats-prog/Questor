@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   acknowledgement,
   answerFromRoleFacts,
+  answeredTurnIds,
+  isAnswerInContext,
+  isYesNoQuestion,
   currentSitting,
   isRepeatedTopic,
   nonAnswerStreak,
@@ -184,6 +187,42 @@ describe('answerFromRoleFacts', () => {
     const a = answerFromRoleFacts('what is the salary for this role?', facts);
     expect(a).toMatch(/hiring team/i);
     expect(a).not.toMatch(/\d/);
+  });
+});
+
+describe('isYesNoQuestion', () => {
+  it.each([
+    ['Did you personally write the survey scripts?', true],
+    ['Have you used Qualtrics for a tracker?', true],
+    ['Is that something you would do differently now?', true],
+    ['Can you walk me through how you QA a script?', false],
+    ['Can you set the scene a bit more — what was the context, and what constraints were you working under?', false],
+    ['Tell me about a time Survey Programming was the difference between a project going well and going badly. What did you personally do?', false],
+    ['How do you decide which platform to script in?', false],
+  ])('"%s" -> %s', (question, expected) => {
+    expect(isYesNoQuestion(question)).toBe(expected);
+  });
+});
+
+describe('a bare yes or no', () => {
+  const question = (text: string) => turn('agent', text, 'c1', 'question');
+
+  it('is an answer when the question was a yes/no question', () => {
+    const turns = [question('Did you personally write the survey scripts?'), turn('candidate', 'Yes.')];
+    expect(isAnswerInContext(turns, 1)).toBe(true);
+    expect(answeredTurnIds(turns).has(turns[1].id)).toBe(true);
+  });
+
+  it('is still nothing when the question was open', () => {
+    const turns = [question('Walk me through how you QA a survey script.'), turn('candidate', 'Yes.')];
+    expect(isAnswerInContext(turns, 1)).toBe(false);
+    expect(answeredTurnIds(turns).has(turns[1].id)).toBe(false);
+  });
+
+  it('leaves "Oh" and "Welcome back" as nothing, whatever was asked', () => {
+    const turns = [question('Did you personally write the survey scripts?'), turn('candidate', 'Oh'), turn('candidate', 'Welcome back')];
+    expect(isAnswerInContext(turns, 1)).toBe(false);
+    expect(isAnswerInContext(turns, 2)).toBe(false);
   });
 });
 

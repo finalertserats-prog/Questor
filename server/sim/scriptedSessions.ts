@@ -64,6 +64,16 @@ export const SESSION_A_STOP: readonly string[] = [
   'Stop',
 ];
 
+/**
+ * The same request in the words candidates more often use. Until these were
+ * added to the patterns they were caught only by a model reading — and the
+ * production account has no credits, so nothing caught them at all.
+ */
+export const SESSION_A_COME_BACK: readonly string[] = [
+  'I manage survey delivery for three research teams and script most trackers myself.',
+  'I can come back after exams',
+];
+
 /** A real answer, used where the script only needs the interview to move on. */
 export const FILLER_ANSWER =
   'On that project I planned the timeline with the research manager, had the questionnaire scripted in Decipher, ran QA with two testers, and delivered two days early.';

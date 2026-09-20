@@ -3,7 +3,7 @@ import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { _resetSimTenant } from '../sim/session.js';
 import {
-  SESSION_A, SESSION_A_STOP, SESSION_B, SESSION_B_CLOSING_QUESTION,
+  SESSION_A, SESSION_A_COME_BACK, SESSION_A_STOP, SESSION_B, SESSION_B_CLOSING_QUESTION,
   auditScriptedTranscript, createScriptedSession, renderScripted, runScript,
 } from '../sim/scriptedSessions.js';
 import { MOVE_ON_LEAD, PAUSE_REPLY, POSTPONE_REPLY } from '../src/engines/conversationModel.js';
@@ -44,6 +44,16 @@ describe('Session A — the candidate who wanted to do it later', () => {
     expect(run.lines.at(-2)?.text).toBe('Stop');
     expect(run.lines.some((l) => l.kind === 'work_sample')).toBe(false);
     expect(run.state).toBe('CANDIDATE_WITHDREW');
+    expect(await prisma.assessmentVersion.count({ where: { sessionId } })).toBe(0);
+  });
+
+  it('hears "I can come back after exams" with no model configured at all', async () => {
+    const sessionId = await createScriptedSession({});
+    const run = await runScript(sessionId, SESSION_A_COME_BACK);
+    show('Session A (come back after exams)', renderScripted(run.lines));
+
+    expect(run.last.kind).toBe('postponed');
+    expect(run.state).toBe('RESCHEDULE_REQUIRED');
     expect(await prisma.assessmentVersion.count({ where: { sessionId } })).toBe(0);
   });
 

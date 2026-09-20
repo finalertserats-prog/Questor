@@ -69,6 +69,29 @@ describe('model call latency guard', () => {
     expect(interviewer?.opts?.timeoutMs).toBe(1000);
   });
 
+  // The production account has no credits, so every model call fails or hangs.
+  // A candidate asking for another time must still be heard — by the patterns
+  // alone, before and regardless of any model reading.
+  it.each([
+    "I'll do it later",
+    'I can come back after exams',
+    "let's continue another day",
+  ])('ends politely on "%s" even while the model is hanging', async (said) => {
+    const slow = new FakeProvider(10_000);
+    _setLlmForTests(slow);
+    const asked: TurnRecord[] = [
+      ...turns,
+      { id: 'q', index: 2, speaker: 'agent', text: 'Tell me about a survey you scripted.', startMs: 2, endMs: 3, confidence: 1, competencyId: SURVEY.id, kind: 'question' },
+      { id: 'c', index: 3, speaker: 'candidate', text: said, startMs: 3, endMs: 4, confidence: 1, competencyId: SURVEY.id },
+    ];
+    const started = Date.now();
+    const u = await nextUtterance({ plan: buildInterviewPlan({ role: ROLE, durationMinutes: 30 }), signal, turns: asked, role: ROLE, persona: { name: 'Maya', tone: 'warm' } });
+    expect(u.kind).toBe('postponed');
+    expect(Date.now() - started).toBeLessThan(4_000);
+    // And nothing was asked of the model: the patterns had already decided.
+    expect(slow.calls).toHaveLength(0);
+  });
+
   it('asks for more reasoning when grading than when interviewing', async () => {
     const fake = new FakeProvider(1, '{"level":3,"confidence":0.7,"notEnoughEvidence":false,"rationale":"Specific example."}');
     _setLlmForTests(fake);

@@ -1,5 +1,5 @@
 import type { Competency, EvidenceSpan, TurnRecord } from '../domain/types.js';
-import { isSubstantiveAnswer } from './candidateIntent.js';
+import { answeredTurnIds } from './conversationModel.js';
 import { generateJson, logModelExecution } from '../providers/llm/index.js';
 
 // Evidence extractor (BRD 16.1). Links candidate statements to transcript spans
@@ -75,25 +75,29 @@ function truncate(text: string): string {
 }
 
 /**
- * Only answers are evidence. "Pause", "No", "Nothing", "can you repeat that"
- * and the candidate's own questions are the conversation around the answers;
- * quoted as evidence they read as a candidate with nothing to say.
+ * Only answers are evidence. "Pause", "Nothing", "can you repeat that" and the
+ * candidate's own questions are the conversation around the answers; quoted as
+ * evidence they read as a candidate with nothing to say. Read in context, so a
+ * bare "Yes" to "did you write them yourself?" is kept and a bare "Yes" to an
+ * open question is not (conversationModel isAnswerInContext).
  */
-function isScorableCandidateTurn(t: TurnRecord): boolean {
-  return t.speaker === 'candidate' && t.text.trim().length > 0 && isSubstantiveAnswer(t.text);
+function scorableCandidateTurns(turns: TurnRecord[]): Set<string> {
+  return answeredTurnIds(turns);
 }
 
 /** Slot-based extraction. Retained as the fallback and the auditable baseline. */
 export function extractEvidence(turns: TurnRecord[], competencyId: string): EvidenceSpan[] {
+  const answered = scorableCandidateTurns(turns);
   return turns
-    .filter((t) => isScorableCandidateTurn(t) && t.competencyId === competencyId)
+    .filter((t) => answered.has(t.id) && t.competencyId === competencyId)
     .map((t) => ({ turnId: t.id, startMs: t.startMs, endMs: t.endMs, quote: truncate(t.text) }));
 }
 
 export function evidenceByCompetency(turns: TurnRecord[]): Record<string, EvidenceSpan[]> {
   const map: Record<string, EvidenceSpan[]> = {};
+  const answered = scorableCandidateTurns(turns);
   for (const t of turns) {
-    if (isScorableCandidateTurn(t) && t.competencyId && !t.competencyId.startsWith('__')) {
+    if (answered.has(t.id) && t.competencyId && !t.competencyId.startsWith('__')) {
       (map[t.competencyId] ??= []).push({
         turnId: t.id, startMs: t.startMs, endMs: t.endMs, quote: truncate(t.text),
       });
@@ -126,7 +130,8 @@ export async function attributeEvidence(opts: {
   sessionId?: string;
 }): Promise<EvidenceAttribution> {
   const { competencies } = opts;
-  const answers = opts.turns.filter(isScorableCandidateTurn);
+  const answered = scorableCandidateTurns(opts.turns);
+  const answers = opts.turns.filter((t) => answered.has(t.id));
 
   const slot = slotAttribution(answers, competencies);
   if (answers.length === 0 || competencies.length === 0) return slot;

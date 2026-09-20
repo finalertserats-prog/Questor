@@ -88,6 +88,44 @@ const QUESTION = table('question', [
   'is this role remote?', 'how big is the team?',
 ]);
 
+// The stop patterns must not fire on a candidate describing work they want to
+// change. "I need to stop using Excel" ends a real interview unscored, and with
+// no credits on the model account the deterministic path is the only path.
+const WORK_TALK_NOT_STOP = table('answer', [
+  'I need to stop using Excel for tracker delivery',
+  'I would like to stop relying on vendors',
+  'I want to end the manual process',
+  'I want to stop doing the checks by hand every morning',
+  'I wanna stop wasting a day on every quota change',
+  "I'm going to stop using Decipher for the short pulse work",
+  'We want to end that practice before the next wave',
+  "Let's stop guessing and put a proper QA step in",
+  'Can we stop duplicate records being created at source?',
+  "I don't want to do manual reconciliation for every market",
+  'I would like to quit the spreadsheet habit entirely',
+]);
+
+// Asking for another time, in the words people actually use. Each of these was
+// reaching only the model; with no model the interviewer asked its next
+// question — the exact production failure.
+const POSTPONE_DETERMINISTIC = table('postpone', [
+  "I'll do it later",
+  'I will do it later',
+  'I can come back after exams',
+  'can I come back later',
+  'could we pick this up once my exams are over',
+  'can we pick this up another day',
+  'can I do this tomorrow',
+  "let's continue another day",
+  "I'm not free right now, later?",
+  "I'm not free at the moment",
+  'can we reschedule',
+  'could we do it after my shift',
+  'can we continue after class',
+  'I can do this when I am free',
+  'can we pick this up after work',
+]);
+
 const ANSWER = table('answer', [
   // Must NOT end, pause or skip anything: this is job talk.
   'We had to stop the project when the client changed the brief.',
@@ -109,7 +147,7 @@ const ANSWER = table('answer', [
 ]);
 
 describe('detectCandidateIntent', () => {
-  it.each([...STOP, ...POSTPONE, ...PAUSE, ...NON_ANSWER, ...SKIP, ...RESUME, ...REPEAT, ...CORRECTION, ...QUESTION, ...ANSWER])(
+  it.each([...STOP, ...POSTPONE, ...POSTPONE_DETERMINISTIC, ...PAUSE, ...NON_ANSWER, ...SKIP, ...RESUME, ...REPEAT, ...CORRECTION, ...QUESTION, ...ANSWER, ...WORK_TALK_NOT_STOP])(
     '"%s" reads as %s',
     (text, intent) => {
       expect(detectCandidateIntent(text).intent).toBe(intent);

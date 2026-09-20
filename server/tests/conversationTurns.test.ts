@@ -47,6 +47,11 @@ class Conversation {
     return this.last;
   }
 
+  /** Put a specific question, so a shape the bank does not produce can be tested. */
+  ask(text: string, competencyId = 'c_prog') {
+    this.push('agent', text, competencyId, 'question');
+  }
+
   async say(text: string): Promise<AgentUtterance> {
     const lastAgent = [...this.turns].reverse().find((t) => t.speaker === 'agent');
     this.push('candidate', text, lastAgent?.competencyId ?? '');
@@ -135,6 +140,62 @@ describe('non-answers', () => {
     const c = await intoFirstCompetency();
     const u = await c.say('Welcome back');
     expect(u.kind).toBe('rephrase');
+  });
+});
+
+describe('a bare yes or no', () => {
+  // "Yes." to "Did you write the scripts yourself?" is an answer. Treating it
+  // as an empty turn rephrased the question and dropped the answer from the
+  // evidence a reviewer reads.
+  it('answers a yes/no question, and earns a follow-up rather than a rephrase', async () => {
+    const c = await intoFirstCompetency();
+    c.ask('Did you personally write the survey scripts?');
+    const u = await c.say('Yes.');
+    expect(u.kind).toBe('followup');
+    expect(coverageState(plan, c.turns).c_prog).toBeGreaterThan(0);
+  });
+
+  it('still says nothing when the question was open', async () => {
+    const c = await intoFirstCompetency();
+    c.ask('Walk me through how you QA a survey script before it goes to field.');
+    const u = await c.say('Yes');
+    expect(u.kind).toBe('rephrase');
+  });
+
+  it('follows up on "No" by asking what their part was', async () => {
+    const c = await intoFirstCompetency();
+    c.ask('Did you personally write the survey scripts?');
+    const u = await c.say('No');
+    expect(u.kind).toBe('followup');
+    expect(u.text).toMatch(/who|your (own )?(part|involvement)/i);
+  });
+});
+
+describe('work the candidate wants to change is not a request to stop', () => {
+  it.each([
+    'I need to stop using Excel for tracker delivery',
+    'I want to end the manual process',
+    'I would like to stop relying on vendors',
+  ])('carries on after "%s"', async (said) => {
+    const c = await intoFirstCompetency();
+    const u = await c.say(said);
+    expect(u.kind).not.toBe('withdrawn');
+    expect(u.kind).not.toBe('postponed');
+  });
+});
+
+describe('asking for another time, without a model', () => {
+  it.each([
+    "I'll do it later",
+    'I can come back after exams',
+    'could we pick this up once my exams are over',
+    "let's continue another day",
+    "I'm not free right now, later?",
+  ])('ends politely on "%s"', async (said) => {
+    const c = await intoFirstCompetency();
+    const u = await c.say(said);
+    expect(u.kind).toBe('postponed');
+    expect(u.text).toBe(POSTPONE_REPLY);
   });
 });
 
