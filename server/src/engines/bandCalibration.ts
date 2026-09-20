@@ -31,7 +31,7 @@ import {
   type BandId,
   type ExperienceBand,
 } from './experienceBands.js';
-import type { NormalizedProfile } from '../domain/types.js';
+import type { Competency, NormalizedProfile } from '../domain/types.js';
 
 /** Level words a real job description uses, longest and most specific first. */
 const SENIORITY_PATTERNS: Array<{ re: RegExp; band: BandId }> = [
@@ -104,17 +104,62 @@ export function resolveCandidateBand(opts: {
 }
 
 /**
+ * Band topics that belong to particular kinds of work, and the competency
+ * wording that makes them fair to raise.
+ *
+ * A Project Manager (survey delivery) interview pitched at the principal band
+ * was asked about "build versus buy" about five times and "long-term
+ * consequences / architecture" in nearly every question, because these topics
+ * were pasted into every question prompt whatever the competency. They are
+ * good questions for an architect or a platform owner and noise for everyone
+ * else, so they are offered only where the competency itself is about them.
+ */
+const TOPIC_GATES: ReadonlyArray<{ topic: RegExp; fits: RegExp }> = [
+  {
+    topic: /\barchitecture\b|\bmultiple systems\b|\blong-horizon\b/i,
+    // Not a bare "platform": "Decipher, Qualtrics and similar platforms" is a
+    // survey tool list, not a system to architect.
+    fits: /\barchitect|\binfrastructure|\bsystems? design|\bsoftware|\bengineering|\bcloud|\bdistributed/i,
+  },
+  {
+    topic: /\bbuild-versus-buy\b|\bplatform bet\b/i,
+    fits: /\bvendor|\bprocure|\bsourcing|\bbuy\b|\bplatform (?:strategy|selection|choice)|\barchitect|\btechnology strategy|\btooling strategy/i,
+  },
+  {
+    topic: /\bacross an organisation\b|\bfailed organisationally\b/i,
+    fits: /\bchange\b|\btransformation|\bleadership|\bpeople|\borgani[sz]ation|\bstrategy|\bstakeholder/i,
+  },
+  {
+    topic: /\bcapital allocation\b|\bportfolio\b/i,
+    fits: /\bfinance|\bbudget|\bportfolio|\binvestment|\bstrategy|\bp&l\b/i,
+  },
+];
+
+function topicFitsCompetency(topic: string, competency: Pick<Competency, 'name' | 'definition'>): boolean {
+  const about = `${competency.name} ${competency.definition ?? ''}`;
+  return TOPIC_GATES.every((gate) => !gate.topic.test(topic) || gate.fits.test(about));
+}
+
+/**
  * The band, rendered for a prompt.
+ *
+ * With a competency, the level's topic ideas are narrowed to those that fit
+ * it (see TOPIC_GATES) and the prompt says outright that the level sets depth,
+ * not topic. Without one — the resume-validation block — the full list stands.
  *
  * One string rather than a structured object because every consumer is
  * ultimately pasting it into an LLM prompt or a plan block, and a shape that
  * each caller formats differently is a shape that drifts between callers.
  */
-export function bandGuidanceFor(bandId: BandId): string {
+export function bandGuidanceFor(bandId: BandId, competency?: Pick<Competency, 'name' | 'definition'>): string {
   const b = bandById(bandId);
+  const askAbout = competency ? b.askAbout.filter((topic) => topicFitsCompetency(topic, competency)) : b.askAbout;
   return [
     `CANDIDATE LEVEL: ${b.label}. Their work sits at the ${b.abstraction} level.`,
-    `Ask about: ${b.askAbout.join('; ')}.`,
+    ...(competency
+      ? [`The level sets the depth, not the topic: every question stays on ${competency.name}. Use the ideas below only where they fit ${competency.name}.`]
+      : []),
+    ...(askAbout.length ? [`Ask about: ${askAbout.join('; ')}.`] : []),
     `Do NOT ask about: ${b.avoid.join('; ')}. These are wrong for this level — unanswerable for someone who has never had the scope, or insulting to someone who has long outgrown them.`,
     `A complete answer here looks like: ${b.evidenceBar}`,
   ].join('\n');
@@ -142,7 +187,7 @@ const TEMPLATE_FLOORS: Array<{ re: RegExp; minBand: BandId; why: string }> = [
     why: 'presumes influence beyond a single team',
   },
   {
-    re: /\bbuild[- ]versus[- ]buy\b|\bcapital allocation\b|\bheadcount\b|\bp&l\b|\bportfolio\b/i,
+    re: /\bbuild[- ]?(?:versus|vs\.?|or)[- ]?buy\b|\bcapital allocation\b|\bheadcount\b|\bp&l\b|\bportfolio\b/i,
     minBand: 'principal',
     why: 'presumes budget or organisational authority',
   },

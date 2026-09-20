@@ -116,6 +116,14 @@ export interface TurnRecord {
   endMs: number;
   confidence: number;
   competencyId?: string;
+  /**
+   * What an agent turn was ('question', 'pause', 'postponed', …), from the
+   * turn's stored metadata. Lets the conversation tell a real question from a
+   * pause or a re-ask of it. Absent on candidate turns and older records.
+   */
+  kind?: string;
+  /** For an agent turn: the question it asked, without any lead-in, to put again after a pause. */
+  question?: string;
 }
 
 export interface EvidenceSpan {

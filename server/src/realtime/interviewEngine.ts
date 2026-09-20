@@ -15,6 +15,7 @@ import { assertAcceptingNewInterviews } from '../services/drainState.js';
 import { noteSessionActivity } from './liveSessions.js';
 import { OBSERVER_NOTICE, hasObserverNotice } from '../services/observerPolicy.js';
 import { openingQuestion } from '../engines/openingModel.js';
+import { currentSitting } from '../engines/conversationModel.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -89,11 +90,33 @@ async function loadContext(sessionId: string) {
   // interviewer". Tone keeps its long-standing default.
   const stored = parseJsonOptional<Partial<Persona>>(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' });
   const persona: Persona = { name: typeof stored.name === 'string' ? stored.name : '', tone: stored.tone ?? 'warm' };
-  const turns: TurnRecord[] = session.turns.map((t) => ({
-    id: t.id, index: t.index, speaker: t.speaker as TurnRecord['speaker'], text: t.text,
-    startMs: t.startMs, endMs: t.endMs, confidence: t.confidence, competencyId: t.competencyId,
-  }));
+  const turns: TurnRecord[] = session.turns.map((t) => {
+    const stored = t.speaker === 'agent' ? storedUtterance(t.metaJson) : {};
+    return {
+      id: t.id, index: t.index, speaker: t.speaker as TurnRecord['speaker'], text: t.text,
+      startMs: t.startMs, endMs: t.endMs, confidence: t.confidence, competencyId: t.competencyId,
+      ...stored,
+    };
+  });
   return { session, plan, profile, persona, turns };
+}
+
+/**
+ * The utterance kind and bare question an agent turn was stored with. Lets the
+ * conversation tell a question from a pause or a re-ask of it, and put the
+ * question again without its lead-in. A damaged or absent record reads as
+ * neither, which the conversation treats as an ordinary question.
+ */
+function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question'> {
+  try {
+    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown };
+    return {
+      ...(typeof meta.kind === 'string' ? { kind: meta.kind } : {}),
+      ...(typeof meta.question === 'string' ? { question: meta.question } : {}),
+    };
+  } catch {
+    return {};
+  }
 }
 
 function elapsedMinutes(turns: TurnRecord[]): number {
@@ -215,9 +238,12 @@ class TranscriptMovedError extends Error {
  */
 async function produceAgentTurn(sessionId: string, requireTailId?: string | null): Promise<AgentTurnOut> {
   noteSessionActivity(sessionId);
-  const { session, plan, profile, persona, turns } = await loadContext(sessionId);
-  const readTailId = turns.length > 0 ? turns[turns.length - 1].id : null;
+  const { session, plan, profile, persona, turns: allTurns } = await loadContext(sessionId);
+  const readTailId = allTurns.length > 0 ? allTurns[allTurns.length - 1].id : null;
   if (requireTailId !== undefined && requireTailId !== readTailId) throw new TranscriptMovedError();
+  // A postponed interview that was re-invited starts again from the greeting;
+  // the earlier sitting stays on the record for reviewers.
+  const turns = currentSitting(allTurns);
   const signal = directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) });
   // The AI disclosure is shown and agreed to on the consent screen before the
   // interview; the consent record is what proves it. A damaged record stops
@@ -234,13 +260,13 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
     candidateLeft: leftByButton(session.turns[session.turns.length - 1]),
   });
 
-  const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
+  const lastEnd = allTurns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const agentTurn = await appendTurn(sessionId, {
     speaker: 'agent', text: utter.text,
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.
-  }, { kind: utter.kind }, (_tx, tail) => {
+  }, { kind: utter.kind, ...(utter.question ? { question: utter.question } : {}) }, (_tx, tail) => {
     if ((tail?.id ?? null) !== readTailId) throw new TranscriptMovedError();
   });
 
@@ -248,11 +274,11 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   // reply; the session ends on the sign-off that follows it.
   // 'withdrawn' ends the session like a sign-off: the candidate asked to stop,
   // so the next thing that happens must not be another question.
-  const done = utter.kind === 'signoff' || utter.kind === 'safety' || utter.kind === 'withdrawn';
-  // Safety stops and withdrawals both end the conversation because the person
-  // asked to leave — neither is a completed interview, and neither may be
-  // scored.
-  const withdrawn = utter.kind === 'withdrawn' || utter.kind === 'safety';
+  const done = ENDING_KINDS.includes(utter.kind);
+  // Safety stops, withdrawals and postponements all end the conversation
+  // because the person asked to — none is a completed interview, and none may
+  // be scored.
+  const withdrawn = WITHDRAWN_KINDS.includes(utter.kind);
   return {
     turnId: agentTurn.id, index: agentTurn.index, text: utter.text, competencyId: utter.competencyId,
     kind: utter.kind, state: session.state, done, withdrawn,
@@ -287,10 +313,14 @@ export function leftByButton(turn: { speaker: string; metaJson: string } | undef
  * accommodation follow-up needs the context — but no AssessmentVersion is
  * created, so there is nothing for a reviewer to anchor on.
  */
-export async function withdrawInterview(sessionId: string, reason: 'candidate_withdrew' | 'safety_stop'): Promise<void> {
+export async function withdrawInterview(sessionId: string, reason: EndReason): Promise<void> {
   const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { tenantId: true, state: true } });
   if (!session) return;
-  if (['CANDIDATE_WITHDREW', 'POLICY_STOP', 'CLOSED'].includes(session.state)) return; // already closed
+  if (['CANDIDATE_WITHDREW', 'POLICY_STOP', 'CLOSED', 'RESCHEDULE_REQUIRED'].includes(session.state)) return; // already closed
+  if (reason === 'candidate_postponed') {
+    await postponeInterview(sessionId, session);
+    return;
+  }
 
   await prisma.interviewSession.update({
     where: { id: sessionId },
@@ -305,6 +335,46 @@ export async function withdrawInterview(sessionId: string, reason: 'candidate_wi
     after: { assessed: false, note: 'Ended at the candidate\'s request; no assessment generated.' },
   });
   logger.info({ sessionId, reason }, 'Interview ended at candidate request — not assessed');
+}
+
+/**
+ * Why an interview the candidate ended was closed, from the kind of the
+ * interviewer's last turn. Every caller that closes a withdrawn turn asks this
+ * rather than branching on the kind itself, so a new way of ending cannot be
+ * filed under the wrong one.
+ */
+export type EndReason = 'candidate_withdrew' | 'safety_stop' | 'candidate_postponed';
+
+export function endReasonFor(kind: string): EndReason {
+  if (kind === 'safety') return 'safety_stop';
+  if (kind === 'postponed') return 'candidate_postponed';
+  return 'candidate_withdrew';
+}
+
+/**
+ * The candidate asked to do the interview another time.
+ *
+ * RESCHEDULE_REQUIRED rather than CANDIDATE_WITHDREW or INCOMPLETE, because it
+ * says exactly what happened and exactly what HR should do next: the candidate
+ * still wants the interview, just not now. It is the state the recruiter's
+ * existing re-invite accepts (routes/interviews.ts inviteSession), the
+ * dashboard already files it under "Invited / scheduled", and the candidate's
+ * link then reads "Your interview is being rescheduled". CANDIDATE_WITHDREW
+ * would tell a reviewer they walked away; INCOMPLETE says nobody knows why it
+ * stopped, and its retake counts against the attempt cap. Not scored, and the
+ * invitation is not burned.
+ */
+async function postponeInterview(sessionId: string, session: { tenantId: string; state: string }): Promise<void> {
+  assertTransition(session.state, 'RESCHEDULE_REQUIRED');
+  const moved = await transitionIfInState(sessionId, session.state, 'RESCHEDULE_REQUIRED');
+  if (!moved) return; // another request settled it first
+  await logAudit({
+    tenantId: session.tenantId, actorType: 'user', actorId: 'candidate',
+    action: 'interview.candidate_postponed',
+    entityType: 'InterviewSession', entityId: sessionId,
+    after: { assessed: false, note: 'Candidate asked to do this later. No assessment generated — offer a new time.' },
+  });
+  logger.info({ sessionId }, 'Interview postponed at candidate request — not assessed, awaiting a new time');
 }
 
 /** One line of the conversation as the candidate may see it: who spoke, and what. */
@@ -340,8 +410,8 @@ export interface StartOutcome {
 }
 
 /** Agent turn kinds after which the conversation is over (see produceAgentTurn). */
-const ENDING_KINDS = ['signoff', 'safety', 'withdrawn'];
-const WITHDRAWN_KINDS = ['withdrawn', 'safety'];
+const ENDING_KINDS: readonly string[] = ['signoff', 'safety', 'withdrawn', 'postponed'];
+const WITHDRAWN_KINDS: readonly string[] = ['withdrawn', 'safety', 'postponed'];
 
 /** A beat between the last thing on record and the first thing after a rejoin. */
 const RESUME_GAP_MS = 1_000;

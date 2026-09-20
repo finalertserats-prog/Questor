@@ -11,10 +11,22 @@ export interface LlmResult {
   latencyMs: number;
 }
 
+/** How hard a reasoning model thinks before replying. Ignored by models that do not reason. */
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export interface LlmGenerateOptions {
+  temperature?: number;
+  maxTokens?: number;
+  /** Bounds the call; unset keeps the provider's default (no timeout). */
+  timeoutMs?: number;
+  /** Per-call override of the configured effort, e.g. more for grading than for a spoken turn. */
+  reasoningEffort?: ReasoningEffort;
+}
+
 export interface LlmProvider {
   name: string;
   /** true when a real remote model is configured; false for the built-in heuristic path. */
   enabled: boolean;
-  /** timeoutMs bounds the call; unset keeps the provider's default (no timeout). */
-  generate(messages: LlmMessage[], opts?: { temperature?: number; maxTokens?: number; timeoutMs?: number }): Promise<LlmResult>;
+  generate(messages: LlmMessage[], opts?: LlmGenerateOptions): Promise<LlmResult>;
 }

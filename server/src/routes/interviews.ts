@@ -19,7 +19,7 @@ import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap, demoInvitationExpiry } from '../services/demoAccess.js';
 import { emitEvent } from '../services/webhooks.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, transitionIfInState, leftByButton, LEAVE_SOURCE } from '../realtime/interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, endReasonFor, transitionIfInState, leftByButton, LEAVE_SOURCE } from '../realtime/interviewEngine.js';
 import { disclosureWithProctoringPolicy } from '../services/proctoringPolicy.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
@@ -604,7 +604,7 @@ interviewsRouter.post('/:id/turn', requireCapability('interview:drive'), asyncHa
   const turn = await submitCandidateTurn(req.params.id, text);
   let assessmentId: string | null = null;
   if (turn.withdrawn) {
-    await withdrawInterview(req.params.id, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+    await withdrawInterview(req.params.id, endReasonFor(turn.kind));
   } else if (turn.done) ({ assessmentId } = await finalizeInterview(req.params.id));
   res.json({ turn, assessmentId });
 }));

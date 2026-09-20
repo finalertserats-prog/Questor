@@ -65,6 +65,30 @@ describe('firstName', () => {
   ])('greets "%s" as %s', (full, expected) => {
     expect(firstName(full)).toBe(expected);
   });
+
+  // A real greeting said "Hi K" to a candidate registered as "K JAYESH RAHUL":
+  // an initial is not a name anyone is greeted by, and a name typed in capitals
+  // is not one to be shouted.
+  it.each([
+    ['K JAYESH RAHUL', 'Jayesh'],
+    ['K. Jayesh Rahul', 'Jayesh'],
+    ['J. Smith', 'Smith'],
+    ['A.B. Priya Nair', 'Priya'],
+    ['JAYESH', 'Jayesh'],
+    ['PRIYA SHARMA', 'Priya'],
+    ['SHARMA, Priya', 'Priya'],
+    ['SHARMA, PRIYA', 'Priya'],
+    ['ANNE-MARIE DUBOIS', 'Anne-Marie'],
+    ["SEAN O'NEIL", 'Sean'],
+    ['McKenzie Hall', 'McKenzie'],
+    ['DR. K JAYESH', 'Jayesh'],
+  ])('greets "%s" as %s, skipping initials and capitals', (full, expected) => {
+    expect(firstName(full)).toBe(expected);
+  });
+
+  it('greets without a name rather than by an initial alone', () => {
+    expect(firstName('K')).toBe('');
+  });
 });
 
 describe('spokenRoleTitle', () => {

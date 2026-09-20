@@ -29,16 +29,39 @@ const ROLE_SPECIFIC: ReadonlySet<Competency['category']> = new Set(['technical',
 
 const HONORIFIC = /^(dr|mr|mrs|ms|mx|miss|prof|professor)\.?$/i;
 
+// "K", "K.", "A.B." — an initial, not a name anyone is greeted by.
+const INITIAL = /^(?:\p{L}\.?)+$/u;
+
+/** One letter per part, or dotted letters: "K", "J.", "A.B.". */
+function isInitial(word: string): boolean {
+  return INITIAL.test(word) && word.replace(/\./g, '').length <= 2 && (word.length === 1 || word.includes('.'));
+}
+
+/**
+ * "JAYESH" → "Jayesh", "ANNE-MARIE" → "Anne-Marie". Only a word typed wholly in
+ * capitals is recased: "McKenzie" or "DeShawn" is already how its owner writes it.
+ */
+function recaseShouted(word: string): string {
+  if (word !== word.toUpperCase() || word === word.toLowerCase()) return word;
+  return word.toLowerCase().replace(/(^|[-'])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
+}
+
 /**
  * The name to greet someone by: the given name, without a title, and from
  * "SURNAME, Given" records as ATS exports often write them.
+ *
+ * Initials are skipped — a real greeting said "Hi K" to "K JAYESH RAHUL", where
+ * K is a family initial in the South Indian convention — and a name typed in
+ * capitals is said the way it is spelt, not shouted. When only initials are on
+ * record the greeting goes without a name rather than by a letter.
  */
 export function firstName(fullName: string | null | undefined): string {
   const raw = (fullName ?? '').trim();
   const comma = raw.indexOf(',');
   const given = comma > 0 ? raw.slice(comma + 1) : raw;
   const words = given.trim().split(/\s+/).filter((w) => w && !HONORIFIC.test(w));
-  return words[0] ?? '';
+  const named = words.find((w) => !isInitial(w));
+  return named ? recaseShouted(named) : '';
 }
 
 /**

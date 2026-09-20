@@ -8,7 +8,7 @@ import { assertCanAccessSession, capabilitiesOf } from '../services/access.js';
 import { consume } from '../middleware/rateLimit.js';
 import { findInvitationByToken } from '../services/invitations.js';
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
-import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, INVITATION_CONSUMED } from './interviewEngine.js';
+import { startInterview, submitCandidateTurn, finalizeInterview, withdrawInterview, endReasonFor, INVITATION_CONSUMED } from './interviewEngine.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { HttpError } from '../middleware/index.js';
 import { isDraining, SERVER_RESTARTING_MESSAGE } from '../services/drainState.js';
@@ -281,7 +281,7 @@ export function attachInterviewSocket(httpServer: HttpServer): Server<DefaultEve
         io.to(session.id).emit('agent_turn', turn);
         if (turn.withdrawn) {
           // Ended at the candidate's request — closed, never scored.
-          await withdrawInterview(session.id, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+          await withdrawInterview(session.id, endReasonFor(turn.kind));
         } else if (turn.done) {
           const { assessmentId } = await finalizeInterview(session.id);
           io.to(session.id).emit('assessment_ready', { assessmentId });

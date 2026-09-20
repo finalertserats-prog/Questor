@@ -17,7 +17,7 @@ import {
 } from '../providers/speech.js';
 import { logger } from '../logger.js';
 import {
-  startOrResumeInterview, submitCandidateAnswer, continueAfterAnswer, finalizeInterview, withdrawInterview,
+  startOrResumeInterview, submitCandidateAnswer, continueAfterAnswer, finalizeInterview, withdrawInterview, endReasonFor,
   hasRecordedConsent, INVITATION_CONSUMED, type AgentTurnOut,
 } from '../realtime/interviewEngine.js';
 import { logAudit } from '../services/audit.js';
@@ -182,7 +182,7 @@ function candidateTurn(turn: AgentTurnOut) {
  */
 async function settleTurn(sessionId: string, turn: AgentTurnOut): Promise<boolean> {
   if (turn.withdrawn) {
-    await withdrawInterview(sessionId, turn.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+    await withdrawInterview(sessionId, endReasonFor(turn.kind));
     return false;
   }
   if (turn.done) {

@@ -1,13 +1,13 @@
 import { config } from '../../config.js';
 import { prisma } from '../../db.js';
 import { logger } from '../../logger.js';
-import type { LlmProvider, LlmMessage } from './types.js';
+import type { LlmProvider, LlmMessage, ReasoningEffort } from './types.js';
 import { HeuristicLlmProvider } from './heuristic.js';
 import { AnthropicLlmProvider } from './anthropic.js';
 import { OpenAiLlmProvider } from './openai.js';
 import { inDemoContext, isHeuristicOnlySession } from '../../services/demoPolicy.js';
 
-export type { LlmProvider, LlmMessage } from './types.js';
+export type { LlmProvider, LlmMessage, ReasoningEffort } from './types.js';
 
 let cached: LlmProvider | null = null;
 
@@ -17,7 +17,7 @@ export function getLlm(): LlmProvider {
   if (p === 'anthropic' && config.llm.anthropicKey) {
     cached = new AnthropicLlmProvider(config.llm.anthropicKey, config.llm.anthropicModel);
   } else if (p === 'openai' && config.llm.openaiKey) {
-    cached = new OpenAiLlmProvider(config.llm.openaiKey, config.llm.openaiModel);
+    cached = new OpenAiLlmProvider(config.llm.openaiKey, config.llm.openaiModel, config.llm.openaiReasoningEffort);
   } else {
     if (p !== 'heuristic') {
       logger.warn(`LLM provider "${p}" selected but no API key set; falling back to heuristic engine.`);
@@ -30,6 +30,30 @@ export function getLlm(): LlmProvider {
 // Test hook
 export function _resetLlm() {
   cached = null;
+}
+
+/** Test hook: stand a fake provider in for the configured one; null restores the configured one. */
+export function _setLlmForTests(provider: LlmProvider | null) {
+  cached = provider;
+}
+
+/**
+ * Reject once `ms` has passed. The provider is asked to abort at the same
+ * moment, but not every provider can (a hung socket, a fake in a test), and the
+ * caller's promise is the one a candidate is waiting on — so the deadline is
+ * enforced here as well, not only delegated.
+ */
+function withDeadline<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
+  if (!ms) return work;
+  // The deadline may win the race, and the abandoned call can still fail
+  // afterwards: without a handler that failure is an unhandled rejection, which
+  // takes the whole server down under Node's default policy.
+  work.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`model call exceeded ${ms}ms`)), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -46,6 +70,8 @@ export async function generateJson<T>(opts: {
   maxTokens?: number;
   /** Bound the model call; unset keeps the provider default. */
   timeoutMs?: number;
+  /** Override the configured reasoning effort for this call (reasoning models only). */
+  reasoningEffort?: ReasoningEffort;
 }): Promise<T | null> {
   const llm = getLlm();
   if (!llm.enabled) return null;
@@ -57,7 +83,10 @@ export async function generateJson<T>(opts: {
     { role: 'user', content: opts.user },
   ];
   try {
-    const result = await llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens, timeoutMs: opts.timeoutMs });
+    const result = await withDeadline(
+      llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens, timeoutMs: opts.timeoutMs, reasoningEffort: opts.reasoningEffort }),
+      opts.timeoutMs,
+    );
     const parsed = parseJsonLoose(result.text);
     const validated = opts.validate(parsed);
     await logModelExecution({

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { REASONING_EFFORTS, type ReasoningEffort } from './providers/llm/types.js';
 
 function env(key: string, fallback = ''): string {
   return process.env[key] ?? fallback;
@@ -122,6 +123,24 @@ export function parseFractionSetting(variable: string, raw: string | undefined, 
   return value;
 }
 
+/**
+ * OPENAI_REASONING_EFFORT: how long a reasoning model (gpt-5 family, o-series)
+ * thinks before an interviewer turn. Defaults to "low" because that turn is
+ * spoken — a candidate hears every extra second as the interviewer not
+ * listening — while grading asks for more per call. A value the API would
+ * reject stops the process rather than failing every model call at runtime.
+ */
+export function parseReasoningEffortSetting(raw: string | undefined): ReasoningEffort {
+  const value = (raw ?? '').trim().toLowerCase();
+  if (value === '') return 'low';
+  const known = REASONING_EFFORTS.find((e) => e === value);
+  if (known) return known;
+  throw new Error(`OPENAI_REASONING_EFFORT must be one of ${REASONING_EFFORTS.join(', ')} (got "${raw}").`);
+}
+
+/** Default ceiling on one interviewer model call before the built-in question is used. */
+export const DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS = 12_000;
+
 export const config = {
   nodeEnv: env('NODE_ENV', 'development'),
   port: parsePortSetting('PORT', env('PORT', '4000')),
@@ -153,6 +172,13 @@ export const config = {
     anthropicModel: env('ANTHROPIC_MODEL', 'claude-sonnet-5'),
     openaiKey: env('OPENAI_API_KEY'),
     openaiModel: env('OPENAI_MODEL', 'gpt-4o'),
+    openaiReasoningEffort: parseReasoningEffortSetting(process.env.OPENAI_REASONING_EFFORT),
+    /**
+     * How long a candidate may wait on the model for the interviewer's next
+     * turn before the built-in question is used instead. A slow provider must
+     * never leave someone sitting in silence mid-interview.
+     */
+    interviewerTimeoutMs: parseTimeoutMsSetting('INTERVIEWER_LLM_TIMEOUT_MS', process.env.INTERVIEWER_LLM_TIMEOUT_MS, DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS),
   },
   stt: {
     provider: env('STT_PROVIDER', 'webspeech'),

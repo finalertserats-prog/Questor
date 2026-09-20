@@ -21,6 +21,7 @@
     "sim:smoke": "tsx sim/smoke.ts",
     "sim:voice": "tsx sim/voiceAB.ts",
     "sim:report": "tsx sim/report.ts",
+    "sim:scripted": "tsx sim/scripted.ts",
     "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json"
   },
   "dependencies": {

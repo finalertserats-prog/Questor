@@ -115,3 +115,47 @@ test('portal consent without voice capture starts typed mode and never asks for 
   await expect(portalPage.getByRole('button', { name: 'Join interview' })).toBeVisible();
   await context.close();
 });
+
+// A real candidate typed "Stop" and was handed a work sample. Typing it must
+// end the interview on that turn and show the ended screen.
+test('typing "Stop" ends the interview and shows the ended screen', async ({ browser, page }) => {
+  const id = runId();
+  await createRoleAndCandidate(page, id);
+
+  await page.getByRole('tab', { name: 'Candidate journey' }).click();
+  await page.getByRole('button', { name: 'Approve & create interview' }).click();
+  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+
+  const invitationCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Invitation', exact: true }) });
+  const sendInvitation = invitationCard.getByRole('button', { name: 'Send invitation' });
+  if (await sendInvitation.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await sendInvitation.click();
+    await expect(page.getByText('Invitation created.')).toBeVisible();
+  }
+  const portalInput = invitationCard.getByRole('textbox').first();
+  await expect(portalInput).toHaveValue(/\/portal\//);
+  const portalUrl = await portalInput.inputValue();
+
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const portalPage = await context.newPage();
+  await instrumentCandidateBrowser(context, portalPage);
+  await portalPage.goto(portalUrl);
+  await portalPage.getByRole('button', { name: 'Continue' }).click();
+  await portalPage.getByLabel(/I understand this first round is conducted by/).check();
+  await portalPage.getByRole('button', { name: /I consent/ }).click();
+  await portalPage.getByRole('button', { name: /Continue anyway/ }).click();
+  await portalPage.getByRole('button', { name: 'Join interview' }).click();
+
+  const answer = portalPage.getByPlaceholder(/Type your answer/);
+  await expect(answer).toBeVisible({ timeout: 20_000 });
+  await answer.fill('I manage survey delivery for three research teams and script most trackers myself.');
+  await portalPage.getByRole('button', { name: 'Send' }).click();
+  await expect(answer).toHaveValue('', { timeout: 20_000 });
+
+  await answer.fill('Stop');
+  await portalPage.getByRole('button', { name: 'Send' }).click();
+  await expect(portalPage.getByText(/we'll stop there/).first()).toBeVisible({ timeout: 20_000 });
+  await expect(portalPage.getByRole('heading', { name: "You've left the interview." })).toBeVisible({ timeout: 30_000 });
+  await expect(portalPage.getByPlaceholder(/Type your answer/)).toHaveCount(0);
+  await context.close();
+});

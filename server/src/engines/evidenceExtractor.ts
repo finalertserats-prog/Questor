@@ -1,4 +1,5 @@
 import type { Competency, EvidenceSpan, TurnRecord } from '../domain/types.js';
+import { isSubstantiveAnswer } from './candidateIntent.js';
 import { generateJson, logModelExecution } from '../providers/llm/index.js';
 
 // Evidence extractor (BRD 16.1). Links candidate statements to transcript spans
@@ -73,8 +74,13 @@ function truncate(text: string): string {
   return text.length > MAX_QUOTE_CHARS ? text.slice(0, MAX_QUOTE_CHARS - 3) + '…' : text;
 }
 
+/**
+ * Only answers are evidence. "Pause", "No", "Nothing", "can you repeat that"
+ * and the candidate's own questions are the conversation around the answers;
+ * quoted as evidence they read as a candidate with nothing to say.
+ */
 function isScorableCandidateTurn(t: TurnRecord): boolean {
-  return t.speaker === 'candidate' && t.text.trim().length > 0;
+  return t.speaker === 'candidate' && t.text.trim().length > 0 && isSubstantiveAnswer(t.text);
 }
 
 /** Slot-based extraction. Retained as the fallback and the auditable baseline. */

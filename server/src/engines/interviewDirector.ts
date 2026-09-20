@@ -1,5 +1,5 @@
 import type { DirectorSignal, InterviewPlan, PlanBlock, TurnRecord } from '../domain/types.js';
-import { detectAiIdentityQuestion, detectRepeatRequest } from './policyEngine.js';
+import { detectCandidateIntent, isSubstantiveAnswer } from './candidateIntent.js';
 
 // Interview Director (BRD 14.2, 16.2). Authoritative controller of time,
 // coverage and depth. It does NOT speak — it emits signals the Conversation
@@ -39,21 +39,51 @@ export function answerQuality(text: string): { score: number; hasSituation: bool
 }
 
 /**
- * "Pardon?" or "are you an AI?" in reply to the opening is not the warm-up
- * answer. Counting it closed the warm-up with nothing said, so the candidate's
- * first real answer landed on a competency question they had not been asked.
+ * A block the candidate could not or would not answer is marked covered so
+ * the director moves on. One over the base quota, so the bonus turn a strong
+ * earlier answer can earn does not reopen it.
  */
-function isNonAnswerToOpening(t: TurnRecord): boolean {
-  return t.competencyId === '__process__' && (detectRepeatRequest(t.text) || detectAiIdentityQuestion(t.text));
+function skippedCoverage(block: PlanBlock | undefined): number {
+  return block ? answersNeeded(block) + 1 : 1;
 }
 
+/**
+ * How many answers each block has had.
+ *
+ * Only real answers count. "Pardon?", "are you an AI?", "Pause", "Oh", "No",
+ * "Nothing" and a candidate's own question are the conversation, not answers
+ * to the question: counting them closed blocks with nothing said — a
+ * production transcript followed up "Oh" and "Welcome back" as if they were
+ * answers — and put the candidate's first real answer against a question they
+ * had not been asked.
+ *
+ * Two non-answers in a row to the same block, or an explicit "skip", mark the
+ * block as done so the interview moves on rather than asking the same thing a
+ * third time. The skipped turns are still not evidence (evidenceExtractor).
+ */
 export function coverageState(plan: InterviewPlan, turns: TurnRecord[]): Record<string, number> {
   const state: Record<string, number> = {};
   for (const b of plan.blocks) state[b.competencyId] = 0;
+  const streak: Record<string, number> = {};
+  const skipped = new Set<string>();
   for (const t of turns) {
-    if (t.speaker === 'candidate' && t.competencyId && !isNonAnswerToOpening(t)) {
-      state[t.competencyId] = (state[t.competencyId] ?? 0) + 1;
+    if (t.speaker !== 'candidate' || !t.competencyId) continue;
+    const id = t.competencyId;
+    if (isSubstantiveAnswer(t.text)) {
+      state[id] = (state[id] ?? 0) + 1;
+      streak[id] = 0;
+      continue;
     }
+    const { intent } = detectCandidateIntent(t.text);
+    if (id === '__candidate_questions__') continue;
+    if (intent === 'skip') skipped.add(id);
+    if (intent === 'non_answer') {
+      streak[id] = (streak[id] ?? 0) + 1;
+      if (streak[id] >= 2) skipped.add(id);
+    }
+  }
+  for (const id of skipped) {
+    state[id] = Math.max(state[id] ?? 0, skippedCoverage(plan.blocks.find((b) => b.competencyId === id)));
   }
   // The opening greets and asks the warm-up question in one turn, so the
   // answer to it IS the warm-up answer. Without this the warm-up question was
@@ -73,7 +103,9 @@ export function directorDecide(opts: {
   const timeRemaining = Math.max(0, plan.durationMinutes - elapsedMinutes);
   const cover = coverageState(plan, turns);
 
-  const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate');
+  // The last real answer: depth and follow-ups are decided on what the
+  // candidate said, never on "Pause" or "Oh".
+  const lastCandidate = [...turns].reverse().find((t) => t.speaker === 'candidate' && isSubstantiveAnswer(t.text));
   const q = lastCandidate ? answerQuality(lastCandidate.text) : { score: 0, hasSituation: false, hasAction: false, hasResult: false, specific: false };
 
   // One bonus turn on the block the candidate just answered, when the answer was

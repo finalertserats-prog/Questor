@@ -82,7 +82,7 @@ export function buildInterviewPlan(opts: {
       ],
       prohibited: opts.role.policyRules.prohibitedTopics,
       module,
-      bandGuidance,
+      bandGuidance: bandGuidanceFor(band, c),
     });
   }
 

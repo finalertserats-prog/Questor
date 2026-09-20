@@ -33,9 +33,13 @@ const FORWARD: Record<string, string[]> = {
   CONNECTING: ['DISCLOSURE', 'TECHNICAL_FAILURE'],
   DISCLOSURE: ['CONSENTED', 'CANDIDATE_WITHDREW', 'MANUAL_HANDOFF', 'INCOMPLETE'],
   CONSENTED: ['WARMUP', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'INCOMPLETE'],
-  WARMUP: ['ASSESSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'INCOMPLETE'],
-  ASSESSING: ['CANDIDATE_QUESTIONS', 'CLOSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE'],
-  CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE'],
+  // RESCHEDULE_REQUIRED from the live states: the candidate said "can we do
+  // this later?". It is neither a withdrawal nor an unexplained stop — they
+  // still want the interview — and it is the state the recruiter's re-invite
+  // already starts from (interviewEngine postponeInterview).
+  WARMUP: ['ASSESSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
+  ASSESSING: ['CANDIDATE_QUESTIONS', 'CLOSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
+  CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE', 'RESCHEDULE_REQUIRED'],
   // TECHNICAL_FAILURE is reachable because a finalisation can die between the
   // CLOSING transition and the PROCESSING one. Without it the recovery sweep had
   // no legal move for such a session and it stayed in CLOSING for ever.

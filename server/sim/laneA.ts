@@ -12,6 +12,7 @@ import {
   submitCandidateTurn,
   finalizeInterview,
   withdrawInterview,
+  endReasonFor,
 } from '../src/realtime/interviewEngine.js';
 import { createSimSession } from './session.js';
 import { answerAsCandidate } from './candidateAgent.js';
@@ -79,7 +80,7 @@ export async function runLaneA(opts: {
     // candidate nothing they said will count against them, and finalising anyway
     // would put a score behind that promise.
     if (agent.withdrawn) {
-      await withdrawInterview(sessionId, agent.kind === 'safety' ? 'safety_stop' : 'candidate_withdrew');
+      await withdrawInterview(sessionId, endReasonFor(agent.kind));
       return { ...base, endedEarly: true, durationMs: Date.now() - startedAt };
     }
 
