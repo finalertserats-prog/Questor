@@ -166,6 +166,13 @@ export function createApp() {
   // "Would you like written feedback?", followed from a recruiter's request.
   // Same token scheme and the same reasoning for an IP-keyed budget.
   app.use('/api/feedback-consent', rateLimit({ name: 'feedback-consent', windowMs: 15 * 60_000, max: 60 }), feedbackConsentRouter);
+  // "Send feedback now" and its preview each email a candidate or may call a
+  // paid model. The send is idempotent on its own; this bounds how often the
+  // preview can be asked to generate.
+  app.use(
+    ['/api/assessments/:id/feedback-email/preview', '/api/assessments/:id/feedback-email/send'],
+    rateLimit({ name: 'feedback-email', windowMs: 15 * 60_000, max: 30 }),
+  );
 
   // Signup is public, but approval links carry their own high-entropy token.
   // Mount decisions first so they get the 60-request token-scanning budget, not

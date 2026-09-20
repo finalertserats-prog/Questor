@@ -1,7 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored,
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored,
 } from '../src/components/assessmentModel';
+
+// The assessment opens straight away unless the organisation requires a blind
+// review first; only that refusal shows the "Independent review required" page.
+describe('isBlindReviewGate', () => {
+  it('recognises the blind-review refusal by its code', () => {
+    expect(isBlindReviewGate({ status: 409, code: 'blind_review_required' })).toBe(true);
+  });
+
+  it('treats a 409 from an older server without a code as the gate', () => {
+    expect(isBlindReviewGate({ status: 409 })).toBe(true);
+  });
+
+  it('does not treat a different conflict as the gate', () => {
+    expect(isBlindReviewGate({ status: 409, code: 'stale_question' })).toBe(false);
+  });
+
+  it('does not treat a missing assessment as the gate', () => {
+    expect(isBlindReviewGate({ status: 404 })).toBe(false);
+  });
+});
 
 describe('exportStatusSentence', () => {
   it('says what a queued export means', () => {

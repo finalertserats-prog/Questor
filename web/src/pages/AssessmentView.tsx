@@ -8,8 +8,9 @@ import { CandidateFeedbackPanel } from '../components/CandidateFeedbackPanel';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import {
-  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isDisposition, isScored, type Disposition,
+  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored, type Disposition,
 } from '../components/assessmentModel';
+import { FeedbackEmailPanel } from '../components/FeedbackEmailPanel';
 import { humanise, recommendationStatus } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
 import { useAuth } from '../auth';
@@ -175,12 +176,13 @@ export function AssessmentView() {
       .then((d) => { if (cancelledRef.current) return; setData(d); setBlocked(false); })
       .catch((err: unknown) => {
         if (cancelledRef.current) return;
-        // The server withholds this page from a reviewer who has not yet
-        // recorded their own verdict. That is a workflow state, not a failure,
-        // so it gets a route forward rather than a red error box. Read from the
-        // status, not from the prose: rewording the server's sentence used to
-        // turn this gate into a red error nobody could get past.
-        if (err instanceof ApiError && err.status === 409) setBlocked(true);
+        // Where the organisation requires it, the server withholds this page
+        // from a reviewer who has not yet recorded their own verdict. That is a
+        // workflow state, not a failure, so it gets a route forward rather than
+        // a red error box. Read from the status and code, not from the prose:
+        // rewording the server's sentence used to turn this gate into a red
+        // error nobody could get past. Everywhere else the page opens at once.
+        if (err instanceof ApiError && isBlindReviewGate(err)) setBlocked(true);
         else setError(err instanceof Error ? err.message : 'Could not load this assessment.');
       })
       .finally(() => { if (!cancelledRef.current) setLoading(false); });
@@ -481,6 +483,11 @@ export function AssessmentView() {
           </div>
         )}
       </div>
+
+      {/* What the candidate was emailed automatically after the interview, and
+          "Send feedback now" when nothing went. Keyed so a different
+          assessment starts clean. */}
+      {id && <FeedbackEmailPanel key={`email-${id}`} assessmentId={id} />}
 
       {/* After the review on purpose: feedback can only be drafted once a
           person has completed one. Keyed so a different assessment starts clean. */}

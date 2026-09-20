@@ -92,6 +92,15 @@ describe('assessing an interview that stopped part-way', () => {
     expect(await prisma.auditEvent.count({ where: { action: 'interview.assess_partial', entityId: sessionId } })).toBe(1);
   });
 
+  it('never queues the candidate feedback email for a partial interview', async () => {
+    const sessionId = await incompleteInterview();
+
+    await request(app).post(`/api/interviews/${sessionId}/assess-partial`).set(auth()).send({ reason: REASON });
+
+    expect(await prisma.candidateFeedbackEmail.findUnique({ where: { sessionId }, select: { status: true, skipReason: true } }))
+      .toEqual({ status: 'SKIPPED', skipReason: 'PARTIAL_INTERVIEW' });
+  });
+
   it('does not record an assess decision for a request that was refused', async () => {
     const session = await sessionIn('INVITED');
 
@@ -139,6 +148,20 @@ describe('resending an invitation', () => {
       expect(res.status).toBe(409);
     });
   }
+
+  // The interview page says "Interview completed on <date>" instead of offering
+  // a resend the server would refuse; it needs the dates to say it.
+  it('reports when the interview started and completed', async () => {
+    const session = await invitedSession('REVIEW_READY');
+    const startedAt = new Date('2026-09-19T08:00:00.000Z');
+    const completedAt = new Date('2026-09-19T08:40:00.000Z');
+    await prisma.interviewSession.update({ where: { id: session.id }, data: { startedAt, completedAt } });
+
+    const res = await request(app).get(`/api/interviews/${session.id}`).set(auth());
+
+    expect({ startedAt: res.body.session.startedAt, completedAt: res.body.session.completedAt })
+      .toEqual({ startedAt: startedAt.toISOString(), completedAt: completedAt.toISOString() });
+  });
 });
 
 describe('scheduling an interview', () => {

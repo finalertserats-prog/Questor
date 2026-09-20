@@ -5,6 +5,7 @@ import { api } from '../api/client';
 import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
 import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/RoundMeetingSetting';
+import { HiringPolicySettings } from '../components/HiringPolicySettings';
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
@@ -250,6 +251,7 @@ export function Admin() {
       {panel('health', <SystemHealthPanel />)}
 
       {panel('organisation', loaded(
+      <>
       <div className="card">
         <h2>Organisation sign-in link</h2>
         <p className="muted small">
@@ -287,6 +289,8 @@ export function Admin() {
           </button>
         </form>
       </div>
+      <HiringPolicySettings />
+      </>
       ))}
 
       {panel('connectors', loaded(

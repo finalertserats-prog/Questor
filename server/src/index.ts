@@ -11,6 +11,7 @@ import { startRetentionSweep } from './services/dataRights.js';
 import { startDemoPurge } from './services/demoPurgeJob.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
+import { startFeedbackEmailDelivery } from './services/autoFeedback.js';
 import { backfillInvitationSecrets } from './services/invitations.js';
 import { seedCatalogWithRetry } from './services/catalogSeed.js';
 import { initInterviewers } from './services/interviewers.js';
@@ -33,6 +34,9 @@ startIncompleteSweep();
 // Deliveries are rows with a due time; this job sends whatever is due, on
 // whichever instance holds the lease, so nothing is lost to a restart.
 startWebhookDelivery();
+// Candidates' feedback emails, queued when an assessment is stored. The same
+// row-with-a-due-time pattern, so a restart never loses or repeats one.
+startFeedbackEmailDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();
 startJob({ name: JD_DRAFT_JOB.name, intervalMs: 5_000, ttlMs: JD_DRAFT_JOB.ttlMs, fn: async () => `generated ${await generatePendingDrafts({ limit: JD_DRAFT_JOB.batch })} JD drafts` });

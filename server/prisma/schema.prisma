@@ -279,6 +279,7 @@ model Candidate {
   humanRequests    CandidateHumanRequest[]
   atsLinks         CandidateAtsLink[]
   feedbackOptInRequests CandidateFeedbackOptInRequest[]
+  feedbackEmails   CandidateFeedbackEmail[]
 
   @@index([tenantId, createdAt])
 }
@@ -386,6 +387,7 @@ model InterviewSession {
   feedbackOptIn     CandidateFeedbackOptIn?
   humanRequest      CandidateHumanRequest?
   feedbackOptInRequest CandidateFeedbackOptInRequest?
+  feedbackEmail     CandidateFeedbackEmail?
 
   // The dashboard counts interviews per tenant by when they were created,
   // scheduled and completed, and groups them by state; the lists read newest
@@ -473,6 +475,7 @@ model AssessmentVersion {
   createdAt     DateTime @default(now())
   reviews       HumanReview[]
   candidateFeedback CandidateFeedbackDelivery?
+  feedbackEmails CandidateFeedbackEmail[]
 }
 
 model HumanReview {
@@ -507,6 +510,61 @@ model CandidateFeedbackDelivery {
   // It changes nothing about approval — it tells the reviewer who is waiting.
   candidateRequested Boolean @default(false)
   createdAt        DateTime @default(now())
+}
+
+// The feedback email sent to a candidate automatically once their interview is
+// assessed, or by a person pressing "Send feedback now" (services/autoFeedback.ts).
+//
+// A row is a queued job as well as the record. It is written when the
+// assessment is stored and sent by a background job, so the candidate's request
+// is not held up, and a crash between the two loses nothing. One per session,
+// which is the exactly-once guarantee: a second finalisation, a second
+// instance or a double-clicked button finds this row and does not send again.
+//
+// Kept apart from CandidateFeedbackDelivery on purpose. That row is the
+// reviewed draft -> approve -> send flow and its states mean "a person approved
+// this text"; this one was never approved by anybody, and mixing the two would
+// let one pass for the other.
+//
+// `bodyText` is exactly what the candidate was sent (the talk link excepted —
+// see providers/email/autoFeedbackEmail.ts), so the hiring team can read it.
+model CandidateFeedbackEmail {
+  id                String   @id @default(cuid())
+  sessionId         String   @unique
+  session           InterviewSession @relation(fields: [sessionId], references: [id])
+  assessmentId      String
+  assessment        AssessmentVersion @relation(fields: [assessmentId], references: [id])
+  // Denormalised so erasure and the demo purge reach this row through the
+  // person and the tenant it belongs to.
+  candidateId       String
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  tenantId          String
+  trigger           String   @default("auto") // auto | manual
+  requestedByUserId String?
+  // DRAFT (previewed, not sent) | QUEUED | SENDING | SENT | FAILED | SKIPPED
+  status            String   @default("QUEUED")
+  skipReason        String   @default("")
+  attempts          Int      @default(0)
+  nextAttemptAt     DateTime?
+  claimedAt         DateTime?
+  lastError         String   @default("")
+  subject           String   @default("")
+  bodyText          String   @default("")
+  // The checked points themselves (strengths, develop, suggestions), so a retry
+  // sends the same words the preview showed instead of generating new ones.
+  contentJson       String   @default("")
+  // model | evidence | generic: which wording passed the guardrails.
+  contentSource     String   @default("")
+  // False when the server has no mail provider that delivers (console).
+  delivered         Boolean  @default(false)
+  sentAt            DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, status])
+  @@index([candidateId])
+  @@index([assessmentId])
 }
 
 // The candidate's own answer to "would you like written feedback by email?",

@@ -19,6 +19,7 @@ import { feedbackConsentView, requestFeedbackOptIn } from '../services/candidate
 import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedbackEmail.js';
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
+import { feedbackEmailState, previewFeedbackEmail, sendFeedbackNow } from '../services/autoFeedback.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
@@ -408,13 +409,42 @@ assessmentsRouter.post('/:id/feedback/opt-in-request', requireCapability('assess
   res.json({ request });
 }));
 
+// ---------------------------------------------------------------------------
+// The automatic feedback email (services/autoFeedback.ts)
+//
+// Read with assessment:read: a recruiter following the candidate should see
+// "Feedback sent on <date>" and what it said. Preview and send need
+// assessment:review, the same capability as the reviewed feedback flow above.
+// The bodies are empty and closed: nothing about the message — recipient,
+// wording — is taken from the request.
+// ---------------------------------------------------------------------------
+
+assessmentsRouter.get('/:id/feedback-email', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
+  res.json(await feedbackEmailState(a.sessionId));
+}));
+
+assessmentsRouter.post('/:id/feedback-email/preview', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  z.object({}).strict().parse(req.body ?? {});
+  const a = await getAssessment(req.auth!, req.params.id);
+  res.json({ preview: await previewFeedbackEmail({ sessionId: a.sessionId, assessmentId: a.id }) });
+}));
+
+assessmentsRouter.post('/:id/feedback-email/send', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  z.object({}).strict().parse(req.body ?? {});
+  const a = await getAssessment(req.auth!, req.params.id);
+  res.json(await sendFeedbackNow({ sessionId: a.sessionId, assessmentId: a.id, userId: req.auth!.userId, tenantId: req.auth!.tenantId }));
+}));
+
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
-  // Blind-first is enforced here, not just offered in the UI. Otherwise a
-  // reviewer reaches the score by typing the URL, and the independence that
-  // keeps this advisory rather than automated is lost without anyone noticing.
+  // Where the organisation requires blind-first review, it is enforced here and
+  // not just offered in the UI. Otherwise a reviewer reaches the score by
+  // typing the URL, and the independence that keeps this advisory rather than
+  // automated is lost without anyone noticing.
   await assertUnblindedReadAllowed({
     assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
+    tenantId: req.auth!.tenantId,
   });
   const reviews = await prisma.humanReview.findMany({ where: { assessmentId: a.id }, orderBy: { createdAt: 'desc' } });
   res.json({
@@ -433,6 +463,7 @@ assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), async
   // leave the front door locked and the back door open.
   await assertUnblindedReadAllowed({
     assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
+    tenantId: req.auth!.tenantId,
   });
   const result = readAssessmentResult(a);
   const md = renderReportMarkdown({ candidateName: a.session.candidate.fullName, roleTitle: a.session.role.title, assessment: result });

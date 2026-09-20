@@ -99,9 +99,19 @@ describe('Questor API end-to-end', () => {
     expect(assessmentId).toBeTruthy();
   });
 
-  // Blind-first is enforced, not merely offered: a reviewer reaching the score
-  // by typing the URL would lose the independence that keeps the AI advisory.
+  // Owner decision: the candidate's feedback goes out automatically once the
+  // assessment is stored. Queued as a row, sent by the background job.
+  it('queues exactly one feedback email for the candidate once the interview is assessed', async () => {
+    expect(await prisma.candidateFeedbackEmail.count({ where: { sessionId, assessmentId } })).toBe(1);
+  });
+
+  // Where the organisation requires it, blind-first is enforced, not merely
+  // offered: a reviewer reaching the score by typing the URL would lose the
+  // independence that keeps the AI advisory. (Off by default — see
+  // blindReviewPolicy.test.ts.)
   it('withholds the assessment and its report until the reviewer records a verdict', async () => {
+    const policy = await request(app).put('/api/admin/policy').set('Authorization', `Bearer ${token}`).send({ policy: { requireBlindReview: true } });
+    expect(policy.status).toBe(200);
     const full = await request(app).get(`/api/assessments/${assessmentId}`).set('Authorization', `Bearer ${token}`);
     expect(full.status).toBe(409);
     // The report is the same conclusions in prose, so it must be gated too.

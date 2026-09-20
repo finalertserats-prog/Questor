@@ -513,6 +513,11 @@ const policySchema = z.object({
   disclosureText: z.string().trim().min(1).max(4000).optional(),
   requireHumanReview: z.boolean().optional(),
   candidateFeedbackEnabled: z.boolean().optional(),
+  // Email every candidate who completes an interview their feedback,
+  // automatically. Unset means on (services/autoFeedbackModel.ts).
+  autoCandidateFeedback: z.boolean().optional(),
+  // Reviewers must judge blind before the assessment opens. Unset means off.
+  requireBlindReview: z.boolean().optional(),
   proctoringEnabled: z.boolean().optional(),
   recordingDefault: z.boolean().optional(),
   // Which provider creates meeting links for human rounds. Credentials stay
