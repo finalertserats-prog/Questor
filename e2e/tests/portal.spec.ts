@@ -116,9 +116,10 @@ test('portal consent without voice capture starts typed mode and never asks for 
   await context.close();
 });
 
-// A real candidate typed "Stop" and was handed a work sample. Typing it must
-// end the interview on that turn and show the ended screen.
-test('typing "Stop" ends the interview and shows the ended screen', async ({ browser, page }) => {
+// A real candidate typed "Stop" and was handed a work sample. A stop — typed
+// bare, or with the reason people give for it — must end the interview on that
+// turn and show the ended screen, with no model call available to help.
+test('typing "stop, I need to go" ends the interview and shows the ended screen', async ({ browser, page }) => {
   const id = runId();
   await createRoleAndCandidate(page, id);
 
@@ -152,7 +153,9 @@ test('typing "Stop" ends the interview and shows the ended screen', async ({ bro
   await portalPage.getByRole('button', { name: 'Send' }).click();
   await expect(answer).toHaveValue('', { timeout: 20_000 });
 
-  await answer.fill('Stop');
+  // "stop, I need to go" — a stop with the reason people actually give. It has
+  // to end the interview on this turn, with no model call available.
+  await answer.fill('stop, I need to go');
   await portalPage.getByRole('button', { name: 'Send' }).click();
   await expect(portalPage.getByText(/we'll stop there/).first()).toBeVisible({ timeout: 20_000 });
   await expect(portalPage.getByRole('heading', { name: "You've left the interview." })).toBeVisible({ timeout: 30_000 });

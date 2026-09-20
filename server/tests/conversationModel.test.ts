@@ -214,6 +214,11 @@ describe('isYesNoQuestion', () => {
     ['Did you give the client the QA report?', true],
     ['Can you share an example?', false],
     ['Could you share a time that went wrong?', false],
+    // An auxiliary opening whose object is the account itself: "Yes" answers none.
+    ['Do you have a recent project you can walk me through?', false],
+    ['Have you got an example of that?', false],
+    ['Is there a project you could tell me about?', false],
+    ['Do you have a case where that went wrong?', false],
   ])('"%s" -> %s', (question, expected) => {
     expect(isYesNoQuestion(question)).toBe(expected);
   });

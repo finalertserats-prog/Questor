@@ -25,10 +25,40 @@ export const POSTPONE_REPLY =
 export const MOVE_ON_LEAD = "No problem — let's move on.";
 
 /**
+ * What the interviewer asks when it hears an ending it is not sure about.
+ *
+ * The whole point of the third tier: a hedge ("I might have to stop soon") is
+ * neither acted on nor ignored. One short question costs the candidate a
+ * sentence if we guessed wrong, where acting on it would have cost them their
+ * interview and ignoring it would have left them saying it again.
+ */
+export const CONFIRM_STOP = 'Just to check — would you like to stop the interview here, or carry on?';
+export const CONFIRM_POSTPONE = 'Just to check — would you like to pick this up another time, or carry on?';
+
+/** Which ending a confirming turn asked about. */
+export function confirmCue(text: string): 'stop' | 'postpone' | null {
+  if (text === CONFIRM_STOP) return 'stop';
+  if (text === CONFIRM_POSTPONE) return 'postpone';
+  return null;
+}
+
+// "Yes", "yes please", "let's stop", "another time" — a confirmation. Anything
+// else, including silence-shaped answers, carries on.
+const AFFIRMS = /^(?:(?:ok(?:ay)?|yes|yeah|yep|yup|sure|please|i think|i guess|probably|honestly|sorry)\s+)*(?:yes|yeah|yep|yup|sure|please|correct|that'?s right|i would|i'?d like to|let'?s (?:stop|do that|pick it up)|stop|end it|another time|reschedule|do that)\b/;
+
+/** Does this reply to a confirming question mean "yes, end it"? */
+export function isAffirmative(text: string): boolean {
+  const t = (text ?? '').toLowerCase().replace(/[’‘]/g, "'").replace(/[.!?,;:]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  if (/\b(?:no|nope|not|carry on|continue|keep going|go on|carry)\b/.test(t) && !/\bno (?:let'?s|i'?d|i want)\b/.test(t)) return false;
+  return AFFIRMS.test(t);
+}
+
+/**
  * Agent turns that manage the conversation rather than ask something new. The
  * question they relate to stays the one waiting for an answer.
  */
-const MANAGEMENT_KINDS: ReadonlySet<string> = new Set(['pause', 'reask', 'rephrase', 'candidate_answer']);
+const MANAGEMENT_KINDS: ReadonlySet<string> = new Set(['pause', 'reask', 'rephrase', 'candidate_answer', 'confirm']);
 
 /** Older transcripts carry no kind; these openings identify the same turns. */
 const MANAGEMENT_PREFIXES = [PAUSE_REPLY.slice(0, 30), 'No problem — let me put it', 'Thanks for clarifying', 'Sure — here it is again'];
@@ -118,7 +148,11 @@ const REQUEST_VERB = String.raw`(?:tell me|walk me|talk me|take me through|show 
 const ASKS_FOR_AN_ACCOUNT = new RegExp(
   String.raw`(?:^|[.?!]\s*)(?:so\s+|and\s+|but\s+|just\s+|now\s+|ok(?:ay)?\s+|please\s+)?${REQUEST_VERB}\b`
   + String.raw`|\b(?:can|could|would|will|may)\s+you\s+(?:please\s+)?${REQUEST_VERB}\b`
-  + String.raw`|\b(?:an?|any|some|another)\s+(?:example|instance|story|case)\b|\bexamples\b`,
+  // "…a project you can walk me through", "…an example you could share": the
+  // account is what the question is for, whatever auxiliary opens it.
+  + String.raw`|\byou\s+(?:can|could|would|might|may)\s+(?:please\s+)?${REQUEST_VERB}\b`
+  + String.raw`|\b(?:an?|any|some|another|one|your|the)\s+(?:recent |specific |particular |good |real |concrete )?(?:example|instance|story|stories|case|scenario|project|situation|piece of work)\b`
+  + String.raw`|\bexamples\b`,
   'i',
 );
 
@@ -154,6 +188,9 @@ export function isYesNoQuestion(question: string): boolean {
 export function isAnswerInContext(turns: readonly TurnRecord[], index: number): boolean {
   const t = turns[index];
   if (!t || t.speaker !== 'candidate' || !t.text.trim()) return false;
+  // A reply to a confirming question is about the conversation, not the work.
+  const before = turns[index - 1];
+  if (before?.speaker === 'agent' && before.kind === 'confirm') return false;
   if (isSubstantiveAnswer(t.text)) return true;
   if (!bareYesNo(t.text)) return false;
   const asked = pendingQuestion(turns.slice(0, index));
@@ -178,6 +215,22 @@ const AFTER_NO = [
   'Understood — who handled that part, and what was your own involvement around it?',
   'That\'s useful to know — who did it instead, and what was your part alongside them?',
 ];
+
+// Said when "Yes" answers an invitation to tell a story: the story is still owed.
+const GO_AHEAD = [
+  'Go ahead — tell me about it: what was it, what did you do, and how did it turn out?',
+  "Go ahead, I'm listening — what was it, and what was your part in it?",
+];
+
+/** "Yes" to "do you have an example?" asks for the example, not for a score. */
+export function goAheadReply(seed: number): string {
+  return pick(GO_AHEAD, seed);
+}
+
+/** A question that an auxiliary opens but whose whole point is an account. */
+export function invitesAnAccount(question: string): boolean {
+  return AUXILIARY_OPENING.test(finalQuestion(question).toLowerCase()) && !isYesNoQuestion(question);
+}
 
 /** The follow-up that gets the story behind a bare yes or no. */
 export function yesNoFollowup(answer: 'yes' | 'no', seed: number): string {

@@ -215,6 +215,93 @@ describe('isSubstantiveAnswer', () => {
   });
 });
 
+// Three tiers, because two were never enough: tightening the patterns missed
+// real requests, loosening them ended real interviews. Now an utterance either
+// clearly ends the interview, clearly carries on with the work, or — the new
+// middle — carries a cue the interviewer is not sure about, and asks.
+type Tier = 'end-stop' | 'end-postpone' | 'continue' | 'confirm-stop' | 'confirm-postpone';
+
+function tier(text: string): Tier {
+  const reading = detectCandidateIntent(text);
+  if (reading.unclear) return `confirm-${reading.unclear}` as Tier;
+  if (reading.intent === 'stop') return 'end-stop';
+  if (reading.intent === 'postpone') return 'end-postpone';
+  return 'continue';
+}
+
+const tiers = (t: Tier, phrases: string[]) => phrases.map((p) => [p, t] as const);
+
+const CLEAR_END = tiers('end-stop', [
+  // Everything the earlier rounds pinned, plus the ways people say they must go.
+  'Stop', 'stop please', 'cancel', 'end this', 'stop the interview', 'end the interview please',
+  'stop, I need to go', 'stop please, something came up', "I'm done", 'I want to stop',
+  'I need to go', 'I have to go', "I've got to go", 'I gotta go', 'sorry, I have to go now',
+  'I have to leave', 'I have to leave now', 'I need to leave', 'I must go', 'really, I have to go',
+  "I can't continue", "I can't carry on", "I can't do this", 'I have to jump off',
+  'sorry I need to go now',
+]);
+
+const CLEAR_END_POSTPONE = tiers('end-postpone', [
+  'can we do this later', 'Now can we have this interview later', 'can we reschedule',
+  "I'll do it later", 'I can come back after exams', "let's continue another day",
+  'sorry, my manager just called, can we do this later?', 'not right now', "I'm not ready",
+  "I can't do this right now",
+]);
+
+const CLEAR_CONTINUE = tiers('continue', [
+  // The ending word is a verb with an object, mid-sentence.
+  'stop it because the quota is full, then reopen the cell',
+  'We had to stop the project when the client changed the brief.',
+  'I need to stop using Excel for tracker delivery',
+  'I want to end the manual process',
+  'The survey stops when the quota for that cell is full.',
+  'My job was to stop duplicate records being created',
+  // Reported speech, whoever is reporting it.
+  'I asked the client, can we do this later because the data was late',
+  'the client asked if we could pick this up after work',
+  'the team wanted to continue after the weekend, so we replanned the wave',
+  // The cue is part of a phrase about the work.
+  "I'll do it later in the pipeline",
+  "I'll pick this up after the holidays with the client",
+  'later in the pipeline we add a QA step',
+  'Later we moved to Qualtrics because Decipher licensing got expensive.',
+  // Ordinary answers with no cue at all.
+  'I manage survey delivery for three research teams, from scripting to data checks.',
+  'No, in that project I owned the questionnaire programming end to end in Decipher.',
+]);
+
+const AMBIGUOUS = [
+  ...tiers('confirm-stop', [
+    'I might have to stop soon',
+    'I may need to wrap this up',
+    "I'm not sure I can keep going",
+    'I think I should probably stop',
+  ]),
+  ...tiers('confirm-postpone', [
+    'maybe another time would be better',
+    "tomorrow might be easier for me",
+    'I wonder if later would work',
+  ]),
+];
+
+describe('the three tiers', () => {
+  it.each([...CLEAR_END, ...CLEAR_END_POSTPONE, ...CLEAR_CONTINUE, ...AMBIGUOUS])(
+    '"%s" is %s',
+    (text, expected) => {
+      expect(tier(text)).toBe(expected);
+    },
+  );
+
+  it('never marks a clear ending as unclear', () => {
+    for (const [text] of CLEAR_END) expect(detectCandidateIntent(text).unclear, text).toBeUndefined();
+  });
+
+  it('leaves a long answer that happens to contain a cue alone', () => {
+    const long = 'We stop the wave when the quota fills, and later in the field period we reopen the cells that are short, which means the client gets a clean read on every market without us going back for another sample.';
+    expect(tier(long)).toBe('continue');
+  });
+});
+
 describe('mergeLlmIntent — the model may only add safety', () => {
   const read = (text: string) => detectCandidateIntent(text);
 

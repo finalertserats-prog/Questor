@@ -38,6 +38,19 @@ export interface IntentReading {
   intent: CandidateIntent;
   /** Which rule decided it, for tests and logs. Never shown to anyone. */
   rule: string;
+  /**
+   * An ending cue the patterns are NOT sure about.
+   *
+   * Three rounds of tightening and loosening these patterns taught the same
+   * lesson each time: a binary decision is the wrong shape. Tighten them and a
+   * real request to leave is answered with another question; loosen them and an
+   * interview ends because the candidate said "later" about a pipeline. So an
+   * utterance now lands in one of three tiers — clearly ending, clearly about
+   * the work, or unclear — and an unclear one is neither acted on nor ignored:
+   * the interviewer asks one short question and waits (conversationRuntime).
+   * A false alarm then costs a polite question instead of someone's interview.
+   */
+  unclear?: 'stop' | 'postpone';
 }
 
 /** Intents after which the interview is over. */
@@ -90,8 +103,22 @@ const STOP_PHRASES: RegExp[] = [
   // and what follows is the reason for it, not its object. Anchored at the
   // start, so "we had to stop the project because…" and "I need to stop using
   // Excel because…" stay what they are: talk about the work.
-  new RegExp(String.raw`^${PAD}(?:stop|cancel|quit|enough|no more)(?:\s+(?:please|now|here|it|this))*\s+(?:i|we|my|our|something|someone|there'?s|it'?s|because|as|since|sorry)\b`),
+  new RegExp(String.raw`^${PAD}(?:stop|cancel|quit|enough|no more)(?:\s+(?:please|now|here|it|this))*\s+(?:i\b|we\b|my\b|our\b|something\b|someone\b|there'?s|it'?s|sorry\b|because i\b|since i\b)\b`),
 ];
+
+/**
+ * "I need to go." Said plainly, at the start of the turn, this is as clear an
+ * ending as "stop" — and it was reaching only the model, which production
+ * cannot call. Anchored to the opening of the utterance, so "the client can't
+ * continue with the project" stays a sentence about the work.
+ */
+const MUST_GO = new RegExp(
+  String.raw`^(?:(?:${FILLER}|really|honestly|unfortunately|i'?m afraid)\s+)*`
+  + String.raw`(?:i\s+(?:really\s+)?|i'?ve\s+)(?:`
+  + String.raw`(?:need|have|'?ve got|ve got|got|gotta|must)\s*(?:to\s+)?(?:go|leave|head off|jump off|run|log off|drop off|get going)`
+  + String.raw`|(?:can'?t|cannot|can not)\s+(?:continue|carry on|go on|stay|keep going|do this)`
+  + String.raw`)\b`,
+);
 
 // --- Postpone ---------------------------------------------------------------
 
@@ -229,8 +256,9 @@ function isQuestionToInterviewer(raw: string, t: string): boolean {
 }
 
 // Somebody else's request, reported: "the client asked if we could pick this
-// up after work" is a story about a project, not a candidate asking to leave.
-const REPORTED_SPEECH = /\b(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|they|he|she)\b[^.?!]{0,30}\b(?:asked|said|told|wanted|suggested|requested|preferred)\b/;
+// up after work" and "I asked the client, can we do this later…" are stories
+// about a project, not a candidate asking to leave.
+const REPORTED_SPEECH = /\b(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|they|he|she)\b[^.?!]{0,30}\b(?:asked|said|told|wanted|suggested|requested|preferred)\b|\b(?:i|we)\s+(?:asked|told|emailed|called|checked with|said to|spoke to|pushed back on)\s+(?:the\s+|our\s+|my\s+)?(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|them|him|her)\b/;
 
 // …unless the candidate's own request opens the message, in which case whatever
 // they go on to report about a client does not take it away from them.
@@ -238,6 +266,52 @@ const OWN_REQUEST_FIRST = /^(?:\w+\s+){0,2}(?:can|could|shall|may|let'?s|i'?ll|i
 
 function isReportedRequest(t: string): boolean {
   return REPORTED_SPEECH.test(t) && !OWN_REQUEST_FIRST.test(t);
+}
+
+// --- The three tiers ---------------------------------------------------------
+
+/**
+ * TIER 2, CLEARLY ABOUT THE WORK. The ending word is a verb with an object, or
+ * the subject of the sentence is the work, or somebody else's request is being
+ * reported, or the time word belongs to a phrase about a project. These are
+ * answers, silently — no confirming question, nothing for the candidate to
+ * notice.
+ */
+const CUE_WITH_OBJECT = /\b(?:stop|stops|stopped|stopping|end|ends|ended|ending|cancel|cancels|cancell?ed|pause|pauses|paused|quit)\s+(?!(?:please|now|here|already|then|sorry|i|we|my|our|because|since|and|but|so|soon|later|today|tomorrow|tonight|early|for|at|in|when|if|before|after|until|there|right)\b)(?:the|this|that|a|an|our|my|their|its|all|any|it|them|those|these)?\s*[a-z][a-z'-]*/;
+
+/** "The survey stops when the quota is full" — the thing stopping is the work. */
+const WORK_STOPS = /\b(?:the|our|my|this|that|a|an|each|every)\s+[a-z][a-z'-]*\s+(?:stops?|ends?|pauses?|finishes|finished|stopped|ended)\b/;
+
+/** "Later we moved to Qualtrics", "we rescheduled the fieldwork" — past, and done. */
+const NARRATIVE_CUE = /\b(?:later|afterwards|then|eventually)\s+(?:we|i|they|it|the team)\s+\w+(?:ed|ame|ent|ot)\b|\b(?:we|i|they)\s+(?:rescheduled|postponed|paused|stopped|ended|cancell?ed|delayed|replanned)\b/;
+
+/** "later in the pipeline", "after the holidays with the client" — the time belongs to the work. */
+const CUE_IN_WORK_PHRASE = /\b(?:later|tomorrow|next week|another day|another time)\s+(?:in|on|at|during|within|for|with|alongside|across|of)\b|\bafter\s+(?:the\s+|my\s+|our\s+)?\w+\s+(?:with|for|in|on|at|alongside)\b/;
+
+function isClearlyAboutTheWork(t: string): boolean {
+  return REPORTED_SPEECH.test(t) || CUE_WITH_OBJECT.test(t) || WORK_STOPS.test(t) || NARRATIVE_CUE.test(t) || CUE_IN_WORK_PHRASE.test(t);
+}
+
+/**
+ * TIER 3, UNCLEAR. A hedged ending — "I might have to stop soon", "maybe
+ * another time would be better" — where the candidate has not actually asked
+ * for anything. Deliberately narrow: every one of these costs the candidate a
+ * confirming question, so it covers hedges about ending rather than every
+ * mention of "later".
+ */
+const HEDGED_STOP = /\b(?:i|we)\b[^.?!]{0,40}\b(?:might|may|maybe|probably|not sure|think i|feel like|should|may have|might have)\b[^.?!]{0,40}\b(?:stop|stopping|leave|go|wrap (?:this|it) up|wrap up|quit|cancel|keep going|carry on|continue|do this)\b/;
+
+const HEDGED_POSTPONE = /\b(?:maybe|perhaps|might|may|possibly|probably|i wonder)\b[^.?!]{0,40}\b(?:another time|later|tomorrow|next week|another day|reschedul\w*|postpone)\b|\b(?:another time|later|tomorrow|next week|another day)\b[^.?!]{0,40}\b(?:might|may|would|could)\b[^.?!]{0,25}\b(?:be better|be easier|work|suit|help)\b/;
+
+/** Past this length a turn is an answer that mentions something, not a hedged request. */
+const MAX_WORDS_FOR_UNCLEAR = 25;
+
+/** Which ending the utterance hints at without asking for it, if any. */
+function unclearCue(t: string): 'stop' | 'postpone' | null {
+  if (words(t).length > MAX_WORDS_FOR_UNCLEAR) return null;
+  if (HEDGED_STOP.test(t)) return 'stop';
+  if (HEDGED_POSTPONE.test(t)) return 'postpone';
+  return null;
 }
 
 /** Words after a question that make the turn an answer too: "Are you an AI? Anyway, I built…". */
@@ -261,8 +335,10 @@ export function detectCandidateIntent(text: string): IntentReading {
   const t = normalise(raw);
   if (!t) return { intent: 'non_answer', rule: 'empty' };
 
+  // TIER 1, CLEARLY ENDING: acted on immediately, with no model and no
+  // confirming question.
   const postpone = POSTPONE_WHOLE.test(t) || (!isReportedRequest(t) && POSTPONE_PHRASES.some((re) => re.test(t)));
-  const stop = STOP_WHOLE.test(t) || STOP_PHRASES.some((re) => re.test(t)) || detectWithdrawal(raw);
+  const stop = STOP_WHOLE.test(t) || STOP_PHRASES.some((re) => re.test(t)) || MUST_GO.test(t) || detectWithdrawal(raw);
   const distress = detectDistress(raw);
 
   // A request to do it later is also a request to stop now; the difference is
@@ -286,6 +362,14 @@ export function detectCandidateIntent(text: string): IntentReading {
   if (NON_ANSWER_WHOLE.test(t)) return { intent: 'non_answer', rule: 'non_answer' };
   // Nothing but punctuation, or a single stray syllable.
   if (!/[a-z0-9]{2,}/.test(t)) return { intent: 'non_answer', rule: 'no_words' };
+
+  // TIER 2 / TIER 3. An answer that carries a hedged ending is still an answer
+  // — it usually has content worth scoring — but the interviewer asks about it
+  // before choosing the next question.
+  if (!isClearlyAboutTheWork(t)) {
+    const cue = unclearCue(t);
+    if (cue) return { intent: 'answer', rule: `unclear_${cue}`, unclear: cue };
+  }
   return { intent: 'answer', rule: 'answer' };
 }
 

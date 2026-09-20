@@ -13,8 +13,9 @@ import {
   type CandidateIntent, type IntentReading, type LlmIntent,
 } from './candidateIntent.js';
 import {
-  MOVE_ON_LEAD, PAUSE_REPLY, POSTPONE_REPLY,
-  acknowledgement, answerFromRoleFacts, isRepeatedTopic, isYesNoQuestion, nonAnswerStreak, pendingQuestion,
+  CONFIRM_POSTPONE, CONFIRM_STOP, MOVE_ON_LEAD, PAUSE_REPLY, POSTPONE_REPLY,
+  acknowledgement, answerFromRoleFacts, confirmCue, goAheadReply, invitesAnAccount, isAffirmative,
+  isRepeatedTopic, isYesNoQuestion, nonAnswerStreak, pendingQuestion,
   premiseIsGrounded, simplerQuestion, yesNoFollowup, type PendingQuestion, type RoleFacts,
 } from './conversationModel.js';
 
@@ -30,7 +31,8 @@ export interface AgentUtterance {
     | 'pause'             // "take your time" — the question stays open
     | 'reask'             // the same question again (after a pause, a repeat request or a correction)
     | 'rephrase'          // the same question in plainer words, after a non-answer
-    | 'candidate_answer'; // an answer to the candidate's own question, then back to ours
+    | 'candidate_answer'  // an answer to the candidate's own question, then back to ours
+    | 'confirm';          // "would you like to stop here, or carry on?" — an unclear ending
   /**
    * The question itself, without the acknowledgement or lead-in said before
    * it — what is put again after a pause or a repeat request. Stored on the
@@ -591,6 +593,12 @@ async function manageConversation(
       // "Yes." answers "did you write the scripts yourself?" — it is the whole
       // answer, and one follow-up turns it into evidence a reviewer can read.
       const yesNo = reading.intent === 'non_answer' ? bareYesNo(lastText) : null;
+      // "Do you have a recent project you can walk me through?" — "Yes" is the
+      // start of an answer, not the whole of one: ask for the story itself.
+      if (yesNo === 'yes' && invitesAnAccount(pending.text)) {
+        const goAhead = goAheadReply(turns.length);
+        return { text: goAhead, question: goAhead, competencyId, kind: 'rephrase' };
+      }
       if (yesNo && isYesNoQuestion(pending.text)) {
         const followup = yesNoFollowup(yesNo, turns.length);
         return { text: followup, question: followup, competencyId, kind: 'followup' };
@@ -671,6 +679,33 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   // (interviewEngine withdrawInterview, 'candidate_postponed').
   if (reading?.intent === 'postpone') {
     return { text: POSTPONE_REPLY, competencyId: pending?.competencyId ?? signal.nextCompetencyId ?? '', kind: 'postponed' };
+  }
+
+  // The candidate is answering a confirming question. Their answer decides:
+  // "yes" ends it, anything else carries on with the question still pending,
+  // and neither turn is scored (conversationModel isAnswerInContext).
+  const lastAgent = [...turns].reverse().find((t) => t.speaker === 'agent');
+  const confirming = lastAgent?.kind === 'confirm' ? confirmCue(lastAgent.text) : null;
+  if (confirming && reading) {
+    if (isAffirmative(lastText)) {
+      return confirming === 'stop'
+        ? { text: WITHDRAWN_TEXT, competencyId: pending?.competencyId ?? '', kind: 'withdrawn' }
+        : { text: POSTPONE_REPLY, competencyId: pending?.competencyId ?? '', kind: 'postponed' };
+    }
+    if (pending) {
+      return { text: `No problem — let's carry on. ${pending.text}`, question: pending.text, competencyId: pending.competencyId, kind: 'reask' };
+    }
+  }
+
+  // An ending the patterns are not sure about: ask, rather than guess. One
+  // confirming question at a time, and never two in a row — if the candidate
+  // hedges again after being asked, the interview carries on.
+  if (reading?.unclear && pending && !confirming) {
+    return {
+      text: reading.unclear === 'stop' ? CONFIRM_STOP : CONFIRM_POSTPONE,
+      competencyId: pending.competencyId,
+      kind: 'confirm',
+    };
   }
 
   // Anything else that is not an answer is replied to, and the question that

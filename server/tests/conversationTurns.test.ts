@@ -3,7 +3,7 @@ import type { Competency, RoleSuccessProfile, TurnRecord } from '../src/domain/t
 import { nextUtterance, type AgentUtterance } from '../src/engines/conversationRuntime.js';
 import { coverageState, directorDecide } from '../src/engines/interviewDirector.js';
 import { buildInterviewPlan } from '../src/engines/interviewPlanner.js';
-import { MOVE_ON_LEAD, PAUSE_REPLY, POSTPONE_REPLY } from '../src/engines/conversationModel.js';
+import { CONFIRM_POSTPONE, CONFIRM_STOP, MOVE_ON_LEAD, PAUSE_REPLY, POSTPONE_REPLY } from '../src/engines/conversationModel.js';
 
 // The interviewer answers what the candidate actually said, turn by turn, on
 // the built-in (no model) path. Each case is a moment from a production
@@ -187,6 +187,69 @@ describe('a bare yes or no', () => {
     const u = await c.say('No');
     expect(u.kind).toBe('followup');
     expect(u.text).toMatch(/who|your (own )?(part|involvement)/i);
+  });
+});
+
+describe('an unclear ending cue is confirmed, not acted on', () => {
+  it('asks one short confirming question and waits', async () => {
+    const c = await intoFirstCompetency();
+    const asked = c.last;
+    const u = await c.say('I might have to stop soon');
+    expect(u.kind).toBe('confirm');
+    expect(u.text).toBe(CONFIRM_STOP);
+    expect(u.competencyId).toBe(asked.competencyId);
+  });
+
+  it('ends when the candidate confirms', async () => {
+    const c = await intoFirstCompetency();
+    await c.say('I might have to stop soon');
+    const u = await c.say('yes');
+    expect(u.kind).toBe('withdrawn');
+  });
+
+  it('carries on with the same question when they say no, and scores nothing for the detour', async () => {
+    const c = await intoFirstCompetency();
+    const asked = c.last;
+    const before = coverageState(plan, c.turns)[asked.competencyId] ?? 0;
+    await c.say('I might have to stop soon');
+    const u = await c.say('no, carry on');
+    expect(u.kind).toBe('reask');
+    expect(u.text).toContain(asked.question ?? asked.text);
+    // The confirm and its answer are conversation, not evidence: only the
+    // ambiguous turn itself, which carried real content, may count.
+    expect(coverageState(plan, c.turns)[asked.competencyId] ?? 0).toBeLessThanOrEqual(before + 1);
+  });
+
+  it('does not confirm twice in a row for the same cue', async () => {
+    const c = await intoFirstCompetency();
+    await c.say('I might have to stop soon');
+    const u = await c.say('I might have to stop soon');
+    expect(u.kind).not.toBe('confirm');
+  });
+
+  it('offers to pick it up another time when the cue was a postponement', async () => {
+    const c = await intoFirstCompetency();
+    const u = await c.say('maybe another time would be better');
+    expect(u.text).toBe(CONFIRM_POSTPONE);
+    const end = await c.say('yes please');
+    expect(end.kind).toBe('postponed');
+  });
+
+  it('still ends immediately on a clear one', async () => {
+    const c = await intoFirstCompetency();
+    const u = await c.say('stop, I need to go');
+    expect(u.kind).toBe('withdrawn');
+  });
+});
+
+describe('an invitation to tell a story', () => {
+  it('asks the candidate to go ahead when they answer "Yes", and scores nothing', async () => {
+    const c = await intoFirstCompetency();
+    c.ask('Do you have a recent project you can walk me through?');
+    const before = coverageState(plan, c.turns).c_prog ?? 0;
+    const u = await c.say('Yes.');
+    expect(u.text).toMatch(/go ahead/i);
+    expect(coverageState(plan, c.turns).c_prog ?? 0).toBe(before);
   });
 });
 
