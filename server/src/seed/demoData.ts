@@ -89,6 +89,7 @@ export async function wipe(): Promise<void> {
   await prisma.candidateFeedbackOptInRequest.deleteMany();
   await prisma.candidateFeedbackDelivery.deleteMany();
   await prisma.candidateFeedbackEmail.deleteMany();
+  await prisma.reviewDifference.deleteMany();
   await prisma.humanReview.deleteMany();
   await prisma.assessmentVersion.deleteMany();
   await prisma.integrityEvent.deleteMany();

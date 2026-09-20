@@ -137,6 +137,9 @@ async function deleteSessionCascade(
     // key onto AssessmentVersion: without this line the delete below fails the
     // constraint and the whole erasure — a legal obligation — errors out.
     await count('candidateFeedback', () => tx.candidateFeedbackDelivery.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
+    // The record of how a reviewer differed from the AI keys onto the review
+    // and the assessment, so it goes before both.
+    await count('reviewDifferences', () => tx.reviewDifference.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('humanReviews', () => tx.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('assessments', () => tx.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
   }

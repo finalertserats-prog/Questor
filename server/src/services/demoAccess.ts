@@ -414,6 +414,7 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
     await tx.candidateProfileVersion.deleteMany({ where: { candidateId: { in: candidateIds } } });
     await tx.candidateFeedbackDelivery.deleteMany({ where: { assessment: { sessionId: { in: sessionIds } } } });
     await tx.candidateFeedbackEmail.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.reviewDifference.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.humanReview.deleteMany({ where: { assessment: { sessionId: { in: sessionIds } } } });
     await tx.assessmentVersion.deleteMany({ where: { sessionId: { in: sessionIds } } });
     await tx.candidateFeedbackOptIn.deleteMany({ where: { tenantId: { in: tenantIds } } });

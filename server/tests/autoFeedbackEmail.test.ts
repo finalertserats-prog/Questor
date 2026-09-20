@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { renderAutoFeedbackEmail, TALK_LINK_PLACEHOLDER } from '../src/providers/email/autoFeedbackEmail.js';
-import { buildEvidenceFeedback, MARKER_LABEL, type FeedbackContent } from '../src/services/feedbackContentModel.js';
+import { FIXED_COPY, renderAutoFeedbackEmail, TALK_LINK_PLACEHOLDER } from '../src/providers/email/autoFeedbackEmail.js';
+import { buildEvidenceFeedback, MARKER_LABEL, textGuardrailViolations, type FeedbackContent } from '../src/services/feedbackContentModel.js';
 import type { AssessmentResult, CompetencyScore, RoleSuccessProfile } from '../src/domain/types.js';
 
 /**
@@ -71,8 +71,8 @@ describe('the header band', () => {
     expect(render().message.text).toContain('Hi Jayesh,');
   });
 
-  it('says plainly that this is about the interview and not a decision', () => {
-    expect(render().message.text).toMatch(/not a decision/i);
+  it('says plainly that this describes the interview only', () => {
+    expect(render().message.text).toMatch(/describes the interview itself/i);
   });
 });
 
@@ -147,6 +147,12 @@ describe('the closing sections', () => {
 
   it('says what happens next without promising anything', () => {
     expect(render().message.text).toMatch(/What happens next/i);
+  });
+
+  // The template's own words get the same sweep as the model's: a promise or
+  // a verdict is no better for being hard-coded.
+  it.each(FIXED_COPY.map((line) => [line.slice(0, 40), line] as const))('keeps its own fixed wording within the guardrails: %s', (_head, line) => {
+    expect(textGuardrailViolations(line)).toEqual([]);
   });
 
   it('offers to speak to a person when a link was issued', () => {
@@ -255,25 +261,9 @@ const CASES: ReadonlyArray<readonly [string, AssessmentResult]> = [
   ['an interview grading could not score', result('SCORING_UNAVAILABLE', null, [competency('sql', 'SQL', null, 3, '')])],
 ];
 
-/**
- * The frame the owner approved says twice, in as many words, that this is not
- * a decision — so those two fixed sentences are taken out before the sweep
- * below, which is about the wording generated from each assessment.
- */
-function generatedProse(text: string): string {
-  return text
-    .replace(/Thank you for your time\..*?not a decision\./s, '')
-    .replace(/The hiring team is reviewing interviews now.*?makes that call\./s, '')
-    .replace(/"[^"]*"/g, '""');
-}
-
 describe('the email never carries a score or a decision', () => {
   it.each(CASES)('for %s', (_label, assessment) => {
     const { message } = render({ content: buildEvidenceFeedback({ result: assessment, profile: PROFILE }) });
-    expect(generatedProse(message.text)).not.toMatch(DECISION_WORDS);
-  });
-
-  it('and the fixed wording says twice, plainly, that it is not a decision', () => {
-    expect(render().message.text.match(/not a decision/g)).toHaveLength(2);
+    expect(message.text.replace(/"[^"]*"/g, '""')).not.toMatch(DECISION_WORDS);
   });
 });

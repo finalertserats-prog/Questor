@@ -3,7 +3,7 @@ import type { AssessmentResult, Competency, CompetencyScore, RoleSuccessProfile 
 import {
   GENERIC_SWOT, MARKER_LABEL, MARKER_SEGMENTS, buildEvidenceFeedback, chooseFeedbackContent,
   coverageMarker, feedbackContentSchema, feedbackGuardrailViolations, feedbackPromptInput,
-  modelFeedbackSchema, type FeedbackContent, type ModelFeedback,
+  modelFeedbackSchema, textGuardrailViolations, type FeedbackContent, type ModelFeedback,
 } from '../src/services/feedbackContentModel.js';
 
 /**
@@ -244,6 +244,84 @@ describe('guardrails on what a candidate may be told', () => {
       competencies: base.competencies.map((c, i) => (i === 0 ? { ...c, whatWeHeard: 'You scored higher than most on this.' } : c)),
     };
     expect(feedbackGuardrailViolations(risky).length).toBeGreaterThan(0);
+  });
+});
+
+// The candidate's own words and the employer's job description reach the
+// letter verbatim, so they get the same sweep for numbers, levels, verdicts
+// and AI — and the field is dropped or plain-worded, never the whole letter.
+const RISKY_QUOTES: ReadonlyArray<readonly [string, string]> = [
+  ['a score', 'I passed the last assessment with 90%.'],
+  ['a level', 'They put me at level 5 straight away.'],
+  ['a verdict', 'We were told we had been shortlisted for the panel.'],
+  ['a ranking', 'I was ranked first in my cohort.'],
+  ['AI', 'I used an AI to draft the first version of the script.'],
+];
+
+describe("the candidate's own words, when they carry a number or a verdict", () => {
+  it.each(RISKY_QUOTES)('are left out of the letter when they carry %s', (_label, quote) => {
+    const risky = assessment([competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
+      evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote }] })]);
+    const content = buildEvidenceFeedback({ result: risky, profile: PROFILE });
+    expect(content.competencies[0].quote).toBe('');
+  });
+
+  it('are replaced by the next clean quote when there is one', () => {
+    const risky = assessment([competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
+      evidence: [
+        { turnId: 't1', startMs: 0, endMs: 1, quote: 'I passed the last assessment with 90%.' },
+        { turnId: 't2', startMs: 0, endMs: 1, quote: 'I rewrote the billing query with a window function.' },
+      ] })]);
+    expect(buildEvidenceFeedback({ result: risky, profile: PROFILE }).competencies[0].quote).toContain('window function');
+  });
+
+  it('still leave the rest of the letter intact', () => {
+    const risky = assessment([competency({ id: 'sql', name: 'SQL', level: 4, requiredLevel: 3,
+      evidence: [{ turnId: 't', startMs: 0, endMs: 1, quote: 'I passed the last assessment with 90%.' }] })]);
+    const content = buildEvidenceFeedback({ result: risky, profile: PROFILE });
+    expect({ marker: content.competencies[0].marker, violations: feedbackGuardrailViolations(content) })
+      .toEqual({ marker: 'strength', violations: [] });
+  });
+});
+
+const RISKY_DEFINITIONS: ReadonlyArray<readonly [string, string]> = [
+  ['a level', 'Level 5 SQL; anything below is a shortlist criterion.'],
+  ['a score', 'Must score at least 80% on the take-home.'],
+  ['a decision word', 'Candidates we would hire on this alone.'],
+  ['AI', 'Uses AI tooling to write queries.'],
+];
+
+describe('what the role asks for, when the scorecard wording would read as a verdict', () => {
+  it.each(RISKY_DEFINITIONS)('is put in plain words when it carries %s', (_label, definition) => {
+    const profile = { ...PROFILE, competencies: [profileCompetency('sql', 'SQL', definition)] };
+    const content = buildEvidenceFeedback({ result: MIXED, profile });
+    expect(content.competencies[0].roleAsks).toBe('Showing SQL in the work you do day to day.');
+  });
+
+  it('is kept when the wording is clean', () => {
+    expect(buildEvidenceFeedback(INPUT).competencies[0].roleAsks).toContain('reporting stack');
+  });
+});
+
+describe('the guardrails, on what is already in the letter', () => {
+  it('refuse a quote that slipped through with a verdict in it', () => {
+    const base = buildEvidenceFeedback(INPUT);
+    const quoted = { ...base, competencies: base.competencies.map((c, i) => (i === 0 ? { ...c, quote: 'I passed with 90%.' } : c)) };
+    expect(feedbackGuardrailViolations(quoted).length).toBeGreaterThan(0);
+  });
+
+  it('refuse a role description that slipped through with a level in it', () => {
+    const base = buildEvidenceFeedback(INPUT);
+    const risky = { ...base, competencies: base.competencies.map((c, i) => (i === 0 ? { ...c, roleAsks: 'Level 5 SQL only.' } : c)) };
+    expect(feedbackGuardrailViolations(risky).length).toBeGreaterThan(0);
+  });
+
+  it('check a single sentence the same way, for the fixed wording of the email', () => {
+    expect(textGuardrailViolations('We will be in touch about next steps.').length).toBeGreaterThan(0);
+  });
+
+  it('let a plain sentence through', () => {
+    expect(textGuardrailViolations('Thank you for your time.')).toEqual([]);
   });
 });
 

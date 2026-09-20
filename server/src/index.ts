@@ -11,7 +11,7 @@ import { startRetentionSweep } from './services/dataRights.js';
 import { startDemoPurge } from './services/demoPurgeJob.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
-import { startFeedbackEmailDelivery } from './services/autoFeedback.js';
+import { rescheduleLegacyFeedbackEmails, startFeedbackEmailDelivery } from './services/autoFeedback.js';
 import { backfillInvitationSecrets } from './services/invitations.js';
 import { seedCatalogWithRetry } from './services/catalogSeed.js';
 import { initInterviewers } from './services/interviewers.js';
@@ -36,6 +36,11 @@ startIncompleteSweep();
 startWebhookDelivery();
 // Candidates' feedback emails, queued when an assessment is stored. The same
 // row-with-a-due-time pattern, so a restart never loses or repeats one.
+// Letters queued before the review window existed would otherwise all go on
+// the first tick. Awaited before the job starts, so none slip through first.
+await rescheduleLegacyFeedbackEmails().catch((err: unknown) => {
+  logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not reschedule feedback emails queued before the review window');
+});
 startFeedbackEmailDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();

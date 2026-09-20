@@ -83,14 +83,30 @@ const SWOT_QUARTERS = [
 ] as const;
 
 function glanceNote(durationMinutes: number): string {
-  return `Based on what the conversation covered in ${durationMinutes} minutes. "Not covered" means the subject did not `
-    + 'come up, not that anything was wrong.';
+  return `Based on what the conversation covered in ${durationMinutes} minutes. ${NOT_COVERED_NOTE}`;
 }
 
-const WHAT_NEXT = 'The hiring team is reviewing interviews now and will be in touch about next steps. This summary '
-  + 'describes your interview; it is not a decision, and a person makes that call.';
-
+/**
+ * The letter's own fixed wording, held to the same guardrails as the model's
+ * (tests/autoFeedbackEmail.test.ts). A promise or a verdict is no better for
+ * being hard-coded: "will be in touch about next steps" and "not a decision"
+ * were exactly the phrases the checks reject when a model writes them.
+ */
+const INTRO = 'Thank you for your time. Here is an honest picture of how the conversation went, what the role asks for, and '
+  + 'what would make the strongest difference next time. It describes the interview itself.';
+const WHAT_NEXT = 'The hiring team is reviewing interviews now. This summary describes your '
+  + 'interview only.';
 const TALK_PROMPT = 'Would you like to talk this through with someone?';
+const TALK_HELP = 'If the button does not work, copy this link:';
+const SIGN_OFF = 'All the best,';
+const NOT_COVERED_NOTE = '"Not covered" means the subject did not come up, not that anything was wrong.';
+
+export const FIXED_COPY: readonly string[] = [
+  INTRO, WHAT_NEXT, TALK_PROMPT, TALK_HELP, SIGN_OFF, NOT_COVERED_NOTE,
+  'Interview feedback', 'At a glance', 'Your SWOT from this interview', 'What the role asks, and what we heard',
+  'Your next three steps', 'What happens next.', 'The role asks for', 'What we heard', 'Your words', 'To go further',
+  'Ask to speak to someone', 'Strengths', 'Weaknesses', 'Opportunities', 'Watch-outs',
+];
 
 function whoLine(companyName: string, signOff: FeedbackSignOff): string {
   if (signOff === 'company') return companyName ? `The ${companyName} hiring team` : 'The hiring team';
@@ -117,8 +133,7 @@ function textBody(input: AutoFeedbackEmailInput, first: string, talkLine: string
     '',
     `Hi ${first},`,
     '',
-    'Thank you for your time. Here is an honest picture of how the conversation went, what the role asks for, and '
-    + 'what would make the strongest difference next time. It is about the interview itself, not a decision.',
+    INTRO,
     '',
     'AT A GLANCE',
     ...c.competencies.map((comp) => `- ${comp.name}: ${MARKER_LABEL[comp.marker]}`),
@@ -143,7 +158,7 @@ function textBody(input: AutoFeedbackEmailInput, first: string, talkLine: string
     WHAT_NEXT,
     ...(talkLine ? ['', TALK_PROMPT, talkLine] : []),
     '',
-    'All the best,',
+    SIGN_OFF,
     whoLine(company, input.signOff),
     '',
     footerLine(company, input.signOff),
@@ -209,7 +224,7 @@ function talkSection(talkUrl: string): string {
   const url = escapeHtml(talkUrl);
   return `<p style="margin:0 0 8px">${TALK_PROMPT}</p>
 <p style="margin:0 0 8px"><a href="${url}" style="display:inline-block;background:${BRAND};color:#ffffff;text-decoration:none;padding:10px 18px;border-radius:6px;font-weight:600;font-size:14px">Ask to speak to someone</a></p>
-<p style="margin:0 0 18px;font-size:12.5px;color:${MUTED}">If the button does not work, copy this link:<br><span style="color:${INK};word-break:break-all">${url}</span></p>`;
+<p style="margin:0 0 18px;font-size:12.5px;color:${MUTED}">${TALK_HELP}<br><span style="color:${INK};word-break:break-all">${url}</span></p>`;
 }
 
 function htmlBody(input: AutoFeedbackEmailInput, first: string): string {
@@ -229,7 +244,7 @@ function htmlBody(input: AutoFeedbackEmailInput, first: string): string {
 
 <tr><td style="padding:24px 32px 6px;font-size:15px;line-height:1.65;color:${INK}">
 <p style="margin:0 0 6px">Hi ${escapeHtml(first)},</p>
-<p style="margin:0 0 4px">Thank you for your time. Here is an honest picture of how the conversation went, what the role asks for, and what would make the strongest difference next time. It is about the interview itself, not a decision.</p>
+<p style="margin:0 0 4px">${escapeHtml(INTRO)}</p>
 </td></tr>
 
 <tr><td style="padding:22px 32px 0">
@@ -269,7 +284,7 @@ ${c.nextSteps.map((step, i) => stepRow(step, i, i === c.nextSteps.length - 1)).j
 
 <tr><td style="padding:20px 32px 30px;font-size:14px;line-height:1.6;color:${INK}">
 ${input.talkUrl ? talkSection(input.talkUrl) : ''}
-<p style="margin:0 0 2px">All the best,</p>
+<p style="margin:0 0 2px">${SIGN_OFF}</p>
 <p style="margin:0">${escapeHtml(whoLine(company, input.signOff))}</p>
 </td></tr>
 
