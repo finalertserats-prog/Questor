@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
-import { smtpTransportOptions } from './timing.js';
+import { SMTP_KILL_DEADLINE_MS, smtpTransportOptions } from './timing.js';
+import { sendViaSmtpChild } from './smtpChild.js';
 
 export interface EmailMessage {
   to: string;
@@ -80,25 +81,35 @@ class SmtpEmailProvider implements EmailProvider {
   name = 'smtp';
   configured = true;
   delivers = true;
+  private readonly options: ReturnType<typeof smtpTransportOptions>;
   // Typed loosely because nodemailer's Transporter generic pulls in its whole
-  // type surface for no benefit here; the two calls used are stable.
-  private transport: { sendMail: (o: Record<string, unknown>) => Promise<{ messageId?: string }>; verify: () => Promise<boolean> };
+  // type surface for no benefit here; the one call used is stable.
+  private readonly transport: { verify: () => Promise<boolean> };
 
   constructor(o: { host: string; port: number; user: string; pass: string }) {
-    // Every timeout the transport has is set (providers/email/timing.ts): an
-    // SMTP send cannot be aborted, so these are what stop a hung relay from
-    // delivering a message after the sender has given up on it.
-    this.transport = nodemailer.createTransport(smtpTransportOptions(o)) as never;
+    // Every timeout the transport has is set (providers/email/timing.ts) as a
+    // first line. The send itself runs in a child process that is killed at
+    // the deadline (smtpChild.ts): an SMTP send cannot be aborted, and only
+    // ending the process ends the conversation for certain.
+    this.options = smtpTransportOptions(o);
+    this.transport = nodemailer.createTransport(this.options) as never;
   }
 
   /** Prove the credentials work without sending anything to a candidate. */
   async verify(): Promise<void> { await this.transport.verify(); }
 
+  /**
+   * `signal` is ignored: SMTP cannot be aborted mid-conversation. The child
+   * is killed at SMTP_KILL_DEADLINE_MS instead, which the caller sees as a
+   * SendTimeoutError.
+   */
   async send(msg: EmailMessage) {
-    const info = await this.transport.sendMail({
-      from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html,
+    const info = await sendViaSmtpChild({
+      transport: this.options,
+      mail: { from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html },
+      deadlineMs: SMTP_KILL_DEADLINE_MS,
     });
-    return { status: 'sent', id: info.messageId ?? 'smtp' };
+    return { status: 'sent', id: info.messageId };
   }
 }
 

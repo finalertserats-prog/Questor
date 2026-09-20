@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:net';
 import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EMAIL_SEND_TIMEOUT_MS, SMTP_TIMEOUTS, smtpMaxLifetimeMs, smtpTransportOptions } from '../src/providers/email/timing.js';
+import { EMAIL_SEND_TIMEOUT_MS, SMTP_KILL_DEADLINE_MS, SMTP_TIMEOUTS, smtpPhaseBudgetMs, smtpTransportOptions } from '../src/providers/email/timing.js';
 import { FEEDBACK_SEND_TIMEOUT_MS, SEND_LOCK_GRACE_MS } from '../src/services/autoFeedback.js';
 
 /**
@@ -17,8 +17,11 @@ describe('the SMTP transport timeouts', () => {
     expect(phases.every((ms) => ms > 0 && ms <= EMAIL_SEND_TIMEOUT_MS)).toBe(true);
   });
 
-  it('add up to no more than the send timeout, so sendMail rejects by then', () => {
-    expect(smtpMaxLifetimeMs()).toBeLessThanOrEqual(EMAIL_SEND_TIMEOUT_MS);
+  // Honest about what this is: the sum of the per-phase timeouts, which bound
+  // silence, not the whole conversation. A server that keeps talking slowly
+  // can outlast it — which is why the child is killed at the deadline.
+  it('give each phase no more than its share of the send timeout', () => {
+    expect(smtpPhaseBudgetMs()).toBeLessThanOrEqual(EMAIL_SEND_TIMEOUT_MS);
   });
 
   it('are what the transport is created with', () => {
@@ -39,8 +42,12 @@ describe('the feedback send lock against the transport', () => {
     expect(FEEDBACK_SEND_TIMEOUT_MS).toBe(EMAIL_SEND_TIMEOUT_MS);
   });
 
-  it('expires strictly after the longest a send can run', () => {
-    expect(FEEDBACK_SEND_TIMEOUT_MS + SEND_LOCK_GRACE_MS).toBeGreaterThan(smtpMaxLifetimeMs());
+  it('expires strictly after the child is killed, so nothing can be accepted after it opens', () => {
+    expect(FEEDBACK_SEND_TIMEOUT_MS + SEND_LOCK_GRACE_MS).toBeGreaterThan(SMTP_KILL_DEADLINE_MS);
+  });
+
+  it('kills the child at the send timeout itself', () => {
+    expect(SMTP_KILL_DEADLINE_MS).toBe(EMAIL_SEND_TIMEOUT_MS);
   });
 });
 

@@ -8,15 +8,37 @@
  * can be aborted at the timeout. SMTP cannot: a hung sendMail keeps running,
  * and if it ran past the lock it could deliver a letter a reviewer had already
  * corrected. So the transport's own timeouts — the only thing that ends a hung
- * SMTP conversation — are derived here so that every phase together can never
- * outlast the send timeout, and tests/emailSmtpTimeouts.test.ts proves the
- * lock outlives them.
+ * SMTP conversation — are derived here as a first line. They bound silence,
+ * not time: a relay that keeps answering slowly can outlast them, which is
+ * why the SMTP send runs in a child process that is killed outright at
+ * SMTP_KILL_DEADLINE_MS (smtpChild.ts). tests/emailSmtpTimeouts.test.ts proves
+ * the lock outlives that deadline.
  *
  * Kept out of providers/email/index.ts so the sender can import the constant
  * without importing the providers, which import the sender's callers.
  */
 
 export const EMAIL_SEND_TIMEOUT_MS = 60_000;
+
+/**
+ * When the SMTP child is killed, whatever it is doing. The send timeout
+ * itself: past this point the sender has given up, and the kill is what
+ * makes "given up" true on the wire as well.
+ */
+export const SMTP_KILL_DEADLINE_MS = EMAIL_SEND_TIMEOUT_MS;
+
+/**
+ * The provider did not answer in time. Distinct from a refusal, because it
+ * means something different: a refusal is an outcome, a timeout is not one.
+ * Thrown by the feedback sender's own race and by the SMTP child driver when
+ * it kills the child, so the sender treats both the same way.
+ */
+export class SendTimeoutError extends Error {
+  constructor(readonly seconds: number) {
+    super(`The mail provider did not answer within ${seconds}s.`);
+    this.name = 'SendTimeoutError';
+  }
+}
 
 /**
  * nodemailer runs the phases one after another: resolve the host, connect,
@@ -45,8 +67,12 @@ function timeoutsFor(sendTimeoutMs: number): SmtpTimeouts {
   return { dnsTimeout: phase, connectionTimeout: phase, greetingTimeout: phase, socketTimeout: phase };
 }
 
-/** The longest a sendMail can run before the transport itself gives up. */
-export function smtpMaxLifetimeMs(t: SmtpTimeouts = SMTP_TIMEOUTS): number {
+/**
+ * The per-phase budget added up. Honest about what it is: a bound on how long
+ * the transport tolerates silence in each phase, not on the conversation as a
+ * whole — a server that keeps talking slowly is bounded by the kill instead.
+ */
+export function smtpPhaseBudgetMs(t: SmtpTimeouts = SMTP_TIMEOUTS): number {
   return t.dnsTimeout + t.connectionTimeout + t.greetingTimeout + t.socketTimeout;
 }
 

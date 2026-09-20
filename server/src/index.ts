@@ -12,6 +12,7 @@ import { startDemoPurge } from './services/demoPurgeJob.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
 import { rescheduleLegacyFeedbackEmails, startFeedbackEmailDelivery } from './services/autoFeedback.js';
+import { killInFlightSmtpSenders } from './providers/email/smtpChild.js';
 import { backfillInvitationSecrets } from './services/invitations.js';
 import { seedCatalogWithRetry } from './services/catalogSeed.js';
 import { initInterviewers } from './services/interviewers.js';
@@ -117,6 +118,10 @@ const shutdown = createShutdown({
         setTimeout(() => httpServer.closeAllConnections(), HTTP_CLOSE_GRACE_MS).unref();
       }),
     },
+    // Sender processes still running are killed, not waited for: a message
+    // cut off mid-conversation is never accepted, and a review can be
+    // released once the lock expires.
+    { name: 'smtp-senders', run: () => killInFlightSmtpSenders() },
     { name: 'leases', run: () => releaseHeldLeases() },
     { name: 'database', run: () => prisma.$disconnect() },
   ],

@@ -5,7 +5,7 @@ import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
 import { getEmail, type EmailMessage, type EmailProvider } from '../providers/email/index.js';
-import { EMAIL_SEND_TIMEOUT_MS } from '../providers/email/timing.js';
+import { EMAIL_SEND_TIMEOUT_MS, SendTimeoutError } from '../providers/email/timing.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
@@ -104,21 +104,14 @@ export function _setFeedbackSendTimeoutForTest(ms: number | null): void {
 }
 
 /**
- * The provider did not answer in time. Distinct from a refusal, because it
- * means something different: a refusal is an outcome, a timeout is not one.
- */
-class SendTimeoutError extends Error {
-  constructor(readonly seconds: number) {
-    super(`The mail provider did not answer within ${seconds}s.`);
-  }
-}
-
-/**
  * Send, but never wait for ever — and stop the request where that is possible.
  *
  * A timeout is NOT a failure to retry. The message left our hands; a provider
- * that stopped answering may still deliver it (SMTP cannot be aborted at all).
- * The caller records the outcome as unknown and leaves the send lock to expire.
+ * that stopped answering may still have delivered it. SendGrid is aborted
+ * through the signal; the SMTP provider kills its own child at the same
+ * deadline (providers/email/smtpChild.ts) and reports a SendTimeoutError of
+ * its own, which is treated exactly like this race's. The caller records the
+ * outcome as unknown and leaves the send lock to expire.
  */
 async function sendWithinTimeout(email: EmailProvider, message: EmailMessage): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
