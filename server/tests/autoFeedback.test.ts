@@ -16,6 +16,8 @@ const mail = vi.hoisted(() => ({
   hold: null as null | Promise<void>,
   /** Called the moment a held send starts. */
   started: null as null | (() => void),
+  /** The abort signal the last send was handed, if any. */
+  lastSignal: null as null | AbortSignal,
 }));
 
 vi.mock('../src/providers/email/index.js', async (orig) => {
@@ -24,7 +26,8 @@ vi.mock('../src/providers/email/index.js', async (orig) => {
     name: 'fake',
     configured: true,
     get delivers() { return mail.delivers; },
-    async send(msg: { to: string; subject: string; text: string; html: string }) {
+    async send(msg: { to: string; subject: string; text: string; html: string }, opts?: { signal?: AbortSignal }) {
+      mail.lastSignal = opts?.signal ?? null;
       if (mail.failNext > 0) {
         mail.failNext -= 1;
         throw new Error('SMTP 451 try again later');
@@ -167,6 +170,7 @@ beforeEach(async () => {
   mail.delivers = true;
   mail.hold = null;
   mail.started = null;
+  mail.lastSignal = null;
   _setFeedbackSendTimeoutForTest(null);
   llm.reply = JSON.stringify(MODEL_CONTENT);
   llm.calls = 0;
@@ -659,20 +663,114 @@ describe('retries', () => {
     expect(await rowFor(ids.sessionId)).toMatchObject({ status: 'FAILED', attempts: MAX_SEND_ATTEMPTS });
   });
 
-  it('gives up on a provider that never answers, and says so', async () => {
-    _setFeedbackSendTimeoutForTest(50);
-    let release = () => {};
-    mail.hold = new Promise<void>((resolve) => { release = resolve; });
+  // A provider that has not answered may still deliver: the message is
+  // out of our hands. So a timeout is not a failure to retry — it is an
+  // unknown outcome, recorded as such, with the lock left to expire.
+  describe('a provider that does not answer in time', () => {
+    async function timedOut() {
+      _setFeedbackSendTimeoutForTest(50);
+      let release = () => {};
+      mail.hold = new Promise<void>((resolve) => { release = resolve; });
+      const ids = await completedInterview({ windowHours: 12 });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(new Date(Date.now() + 13 * 60 * 60_000));
+      return { ids, release: () => { release(); mail.hold = null; } };
+    }
+
+    it('is recorded as an unconfirmed send, never as a failure to retry', async () => {
+      const { ids, release } = await timedOut();
+      const row = await rowFor(ids.sessionId);
+      release();
+      expect({ status: row.status, attempts: row.attempts, next: row.nextAttemptAt, sent: row.sentAt instanceof Date })
+        .toEqual({ status: 'SENT_UNVERIFIED', attempts: 1, next: null, sent: true });
+    });
+
+    it('says the message may still have been delivered', async () => {
+      const { ids, release } = await timedOut();
+      release();
+      expect((await rowFor(ids.sessionId)).lastError).toMatch(/did not answer within .*may still have been delivered/i);
+    });
+
+    it('keeps the text that went out', async () => {
+      const { ids, release } = await timedOut();
+      release();
+      expect((await rowFor(ids.sessionId)).bodyText).toContain('Hi Priya,');
+    });
+
+    it('is written to the audit log', async () => {
+      const { ids, release } = await timedOut();
+      release();
+      expect(await prisma.auditEvent.count({ where: { action: 'feedback.email.timed_out', entityId: ids.sessionId } })).toBe(1);
+    });
+
+    it('leaves the send lock in place, to expire on its own', async () => {
+      const { ids, release } = await timedOut();
+      const row = await rowFor(ids.sessionId);
+      release();
+      expect((row.sendLockUntil?.getTime() ?? 0) > Date.now()).toBe(true);
+    });
+
+    it('tells the provider to stop, where it can', async () => {
+      const { release } = await timedOut();
+      release();
+      expect(mail.lastSignal?.aborted).toBe(true);
+    });
+
+    it('refuses a review for as long as the lock stands', async () => {
+      const { ids, release } = await timedOut();
+      const during = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+        .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      release();
+      expect({ status: during.status, code: during.body.code }).toEqual({ status: 409, code: 'feedback_sending' });
+    });
+
+    it('takes the review once the lock has expired', async () => {
+      const { ids, release } = await timedOut();
+      release();
+      await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { sendLockUntil: new Date(Date.now() - 1000) } });
+      const after = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
+        .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      expect(after.status).toBe(201);
+    });
+
+    it('is never sent again on its own', async () => {
+      const { ids, release } = await timedOut();
+      release();
+      await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { sendLockUntil: new Date(Date.now() - 1000) } });
+      await deliverDueFeedbackEmails(new Date(Date.now() + 30 * 60 * 60_000));
+      await deliverDueFeedbackEmails(new Date(Date.now() + 60 * 60 * 60_000));
+      // The one delivery is the original provider call finishing late.
+      expect({ sent: mail.sent.length, status: (await rowFor(ids.sessionId)).status }).toEqual({ sent: 1, status: 'SENT_UNVERIFIED' });
+    });
+
+    it('is not offered for a second send by hand while the lock stands, even with the risk accepted', async () => {
+      const { ids, release } = await timedOut();
+      const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth)
+        .send({ confirmPossibleDuplicate: true });
+      release();
+      // Let the held provider call finish: the one delivery counted is its.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect({ status: res.status, sent: mail.sent.length }).toEqual({ status: 409, sent: 1 });
+    });
+
+    it('is offered for a second send by hand once the lock has expired, with the risk accepted', async () => {
+      const { ids, release } = await timedOut();
+      release();
+      await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { sendLockUntil: new Date(Date.now() - 1000) } });
+      const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth)
+        .send({ confirmPossibleDuplicate: true });
+      expect({ status: res.status, sent: mail.sent.length }).toEqual({ status: 200, sent: 2 });
+    });
+  });
+
+  it('clears the lock and moves on when the provider refuses outright', async () => {
+    mail.failNext = 1;
     const ids = await completedInterview();
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
-
     await deliverDueFeedbackEmails(LATER());
     const row = await rowFor(ids.sessionId);
-    release();
-    mail.hold = null;
-
-    expect({ status: row.status, attempts: row.attempts, error: row.lastError })
-      .toEqual({ status: 'QUEUED', attempts: 1, error: expect.stringMatching(/did not answer/i) });
+    expect({ status: row.status, lock: row.sendLockUntil, error: row.lastError })
+      .toEqual({ status: 'QUEUED', lock: null, error: 'SMTP 451 try again later' });
   });
 
   // The stall the sweeper is for, run for real: the send is still in flight

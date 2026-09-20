@@ -160,11 +160,19 @@ export function afterFailedAttempt(
  */
 const OVERRIDABLE_SKIPS: ReadonlySet<string> = new Set<FeedbackSkipReason>(['POLICY_OFF', 'NO_EMAIL', 'DEMO_RECIPIENT', 'NO_ASSESSMENT']);
 
+export const SEND_STILL_RUNNING_REASON = 'The mail provider has not answered yet, and the first message may still be on its way. '
+  + 'Try again in a couple of minutes.';
+
 export function manualSendAllowed(
-  row: { readonly status: string; readonly skipReason: string; readonly nextAttemptAt?: Date | null } | null,
+  row: { readonly status: string; readonly skipReason: string; readonly nextAttemptAt?: Date | null; readonly sendLockUntil?: Date | null } | null,
   opts: { readonly confirmDuplicate?: boolean; readonly now?: Date } = {},
 ): { allowed: true } | { allowed: false; reason: string; requiresConfirmation?: boolean } {
   if (!row || row.status === 'FAILED' || row.status === 'DRAFT') return { allowed: true };
+  // A timed-out send whose provider call may still be running: not even an
+  // accepted risk buys a second copy until that call can no longer deliver.
+  const lockStands = row.sendLockUntil !== null && row.sendLockUntil !== undefined
+    && row.sendLockUntil.getTime() >= (opts.now ?? new Date()).getTime();
+  if (row.status === 'SENT_UNVERIFIED' && lockStands) return { allowed: false, reason: SEND_STILL_RUNNING_REASON };
   // A letter waiting out the review window is exactly what this button is for:
   // the reviewer has seen enough and wants the candidate told now.
   const waiting = row.status === 'QUEUED' && row.nextAttemptAt !== null && row.nextAttemptAt !== undefined

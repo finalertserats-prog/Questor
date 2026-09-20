@@ -188,6 +188,20 @@ describe('when "Send feedback now" is offered', () => {
     expect(manualSendAllowed({ status: 'SENT_UNVERIFIED', skipReason: '' }, { confirmDuplicate: true })).toEqual({ allowed: true });
   });
 
+  // While the timed-out provider call may still be running, even an accepted
+  // risk is not enough: the first message could still be on its way.
+  it('waits for a timed-out send to be over before a second copy is even offered', () => {
+    const stillRunning = { status: 'SENT_UNVERIFIED', skipReason: '', sendLockUntil: new Date('2026-09-20T10:01:00.000Z') };
+    const verdict = manualSendAllowed(stillRunning, { confirmDuplicate: true, now: new Date('2026-09-20T10:00:00.000Z') });
+    expect(verdict.allowed === false && verdict.requiresConfirmation).toBeFalsy();
+  });
+
+  it('says why, in words', () => {
+    const stillRunning = { status: 'SENT_UNVERIFIED', skipReason: '', sendLockUntil: new Date('2026-09-20T10:01:00.000Z') };
+    const verdict = manualSendAllowed(stillRunning, { now: new Date('2026-09-20T10:00:00.000Z') });
+    expect(verdict.allowed === false && verdict.reason).toMatch(/has not answered yet/i);
+  });
+
   it('never lets that confirmation resend an email that is already on its way', () => {
     expect(manualSendAllowed({ status: 'SENDING', skipReason: '' }, { confirmDuplicate: true }).allowed).toBe(false);
   });
