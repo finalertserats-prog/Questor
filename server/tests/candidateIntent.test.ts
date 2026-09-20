@@ -124,6 +124,27 @@ const POSTPONE_DETERMINISTIC = table('postpone', [
   'can we continue after class',
   'I can do this when I am free',
   'can we pick this up after work',
+  // Asked politely, with the filler people put in front of it.
+  "honestly I'd prefer we pick this up once my exams are over",
+  "I'd prefer we continue tomorrow",
+  "I'd like to continue tomorrow",
+  "I'd like to pick this up after class",
+  'to be honest I would rather we continue another day',
+  "sorry, could we do this later please",
+  'can we continue tomorrow if that works',
+]);
+
+// The same words inside a sentence about the work. A postponement is the
+// candidate asking, now, for another time — not a plan for a pipeline and not
+// something a client once asked for.
+const WORK_TALK_NOT_POSTPONE = table('answer', [
+  "I'll do it later in the pipeline",
+  'the client asked if we could pick this up after work',
+  'we rescheduled the fieldwork',
+  "I'll pick this up after the holidays with the client",
+  'later in the pipeline we add a QA step',
+  'the team wanted to continue after the weekend, so we replanned the wave',
+  "I'd like to continue working on that tracker later this year",
 ]);
 
 const ANSWER = table('answer', [
@@ -147,7 +168,7 @@ const ANSWER = table('answer', [
 ]);
 
 describe('detectCandidateIntent', () => {
-  it.each([...STOP, ...POSTPONE, ...POSTPONE_DETERMINISTIC, ...PAUSE, ...NON_ANSWER, ...SKIP, ...RESUME, ...REPEAT, ...CORRECTION, ...QUESTION, ...ANSWER, ...WORK_TALK_NOT_STOP])(
+  it.each([...STOP, ...POSTPONE, ...POSTPONE_DETERMINISTIC, ...PAUSE, ...NON_ANSWER, ...SKIP, ...RESUME, ...REPEAT, ...CORRECTION, ...QUESTION, ...ANSWER, ...WORK_TALK_NOT_STOP, ...WORK_TALK_NOT_POSTPONE])(
     '"%s" reads as %s',
     (text, intent) => {
       expect(detectCandidateIntent(text).intent).toBe(intent);

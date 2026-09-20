@@ -162,6 +162,15 @@ describe('a bare yes or no', () => {
     expect(u.kind).toBe('rephrase');
   });
 
+  it('is nothing when the question invited an example, however it opened', async () => {
+    const c = await intoFirstCompetency();
+    c.ask('Is there an example you can share?');
+    const before = coverageState(plan, c.turns).c_prog ?? 0;
+    const u = await c.say('Yes.');
+    expect(u.kind).toBe('rephrase');
+    expect(coverageState(plan, c.turns).c_prog ?? 0).toBe(before);
+  });
+
   it('follows up on "No" by asking what their part was', async () => {
     const c = await intoFirstCompetency();
     c.ask('Did you personally write the survey scripts?');

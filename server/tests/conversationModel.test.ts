@@ -199,6 +199,16 @@ describe('isYesNoQuestion', () => {
     ['Can you set the scene a bit more — what was the context, and what constraints were you working under?', false],
     ['Tell me about a time Survey Programming was the difference between a project going well and going badly. What did you personally do?', false],
     ['How do you decide which platform to script in?', false],
+    // Asks for an account, however it opens — a bare "Yes" answers none of these.
+    ['Is there an example you can share?', false],
+    ['Were you the owner? Tell me what happened.', false],
+    ['Did you script it yourself? Walk me through how.', false],
+    ['Can you give me an example of that?', false],
+    ['Have you got a story about a wave that went wrong?', false],
+    ['Would you describe how that decision was made?', false],
+    // …and the genuine yes/no question still is one.
+    ['Did you personally write the survey scripts?', true],
+    ['Were you the owner of that tracker?', true],
   ])('"%s" -> %s', (question, expected) => {
     expect(isYesNoQuestion(question)).toBe(expected);
   });

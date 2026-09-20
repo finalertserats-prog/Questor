@@ -111,16 +111,35 @@ const RESUME_VERB = String.raw`(?:come back(?!\s+to\s+(?:that|the|those|it\b))|p
 
 const POSTPONE_WHOLE = whole(String.raw`(?:(?:maybe|perhaps|can we|could we|let'?s)?\s*(?:do (?:it|this) )?${LATER}|not (?:right )?now|not today|not at the moment|reschedule|postpone|some other day|i'?m not ready|i am not ready)`);
 
+/**
+ * What may follow the time and still be the same request: politeness, and
+ * nothing else.
+ *
+ * It used to allow any four words, which made "I'll do it later in the
+ * pipeline" and "I'll pick this up after the holidays with the client" read as
+ * requests to end the interview. A candidate asking for another time stops
+ * there; a candidate describing their work carries on into the sentence.
+ */
+const POLITE_TAIL = String.raw`(?:\s+(?:please|thanks|thank you|if possible|if that'?s ok(?:ay)?|if that works|if you don'?t mind|if we can|if that'?s fine|ok(?:ay)?|alright|yeah|yes))*\s*$`;
+
+/** The filler people put in front of a request — "honestly", "sorry", "to be honest". */
+const REQUEST_LEAD = String.raw`^(?:\w+\s+){0,3}`;
+
+/** Ways of opening a request of one's own: "I'd prefer we…", "I'd like to…", "I'll…". */
+const REQUEST_OPENER = String.raw`(?:let'?s|we can|we could|i can|i could|i'?ll|i will|i'?d (?:rather|prefer|like)(?:\s+(?:to|we))?|i would (?:rather|prefer|like)(?:\s+(?:to|we))?)`;
+
 const POSTPONE_PHRASES: RegExp[] = [
   // "can we have this interview later", "can we do it another time",
   // "can we continue after class", "can I come back once my exams are over".
-  // Anchored near the end, so "can I ask about the later stages" is not a request.
-  new RegExp(String.raw`\b(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${TIME_LATER}(?:\s+\S+){0,4}$`),
-  // "let's do it tomorrow", "I'll do it later", "I can come back after exams".
-  new RegExp(String.raw`\b(?:let'?s|we can|we could|i can|i could|i'?ll|i will|i'?d rather|i would rather|i'?d prefer to|i would prefer to)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}(?:\s+\S+){0,4}$`),
+  // Anchored at both ends: the candidate's own request, and nothing after the
+  // time but politeness.
+  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${TIME_LATER}${POLITE_TAIL}`),
+  // "let's do it tomorrow", "I'll do it later", "I can come back after exams",
+  // "honestly I'd prefer we pick this up once my exams are over".
+  new RegExp(String.raw`${REQUEST_LEAD}${REQUEST_OPENER}\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${POLITE_TAIL}`),
   // "could we pick this up once my exams are over" — the request verb carries
   // it even when the time marker is the only thing after it.
-  new RegExp(String.raw`\b(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}(?:\s+\S+){0,4}$`),
+  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${POLITE_TAIL}`),
   // "can we reschedule", "I need to reschedule", "please postpone"
   /\b(?:can|could|shall|should)\s+(?:we|you|i)\s+(?:please\s+)?(?:reschedule|postpone|move\s+(?:it|this|the interview))\b/,
   /\b(?:i\s+(?:need|want|would like|'?d like)\s+to|please|let'?s)\s+(?:reschedule|postpone)\b/,
@@ -186,6 +205,18 @@ function isQuestionToInterviewer(raw: string, t: string): boolean {
   return /\?\s*$/.test(raw.trim()) && words(t).length <= 20 && /\b(?:you|your|this|the)\b/.test(t) && !/\bi\s+(?:built|did|led|ran|managed|owned|used|made)\b/.test(t);
 }
 
+// Somebody else's request, reported: "the client asked if we could pick this
+// up after work" is a story about a project, not a candidate asking to leave.
+const REPORTED_SPEECH = /\b(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|they|he|she)\b[^.?!]{0,30}\b(?:asked|said|told|wanted|suggested|requested|preferred)\b/;
+
+// …unless the candidate's own request opens the message, in which case whatever
+// they go on to report about a client does not take it away from them.
+const OWN_REQUEST_FIRST = /^(?:\w+\s+){0,2}(?:can|could|shall|may|let'?s|i'?ll|i will|i'?d|i would)\b/;
+
+function isReportedRequest(t: string): boolean {
+  return REPORTED_SPEECH.test(t) && !OWN_REQUEST_FIRST.test(t);
+}
+
 /** Words after a question that make the turn an answer too: "Are you an AI? Anyway, I built…". */
 const ANSWER_AFTER_QUESTION_WORDS = 4;
 /** Without punctuation (speech), a turn this short is only the question. */
@@ -207,7 +238,7 @@ export function detectCandidateIntent(text: string): IntentReading {
   const t = normalise(raw);
   if (!t) return { intent: 'non_answer', rule: 'empty' };
 
-  const postpone = POSTPONE_WHOLE.test(t) || POSTPONE_PHRASES.some((re) => re.test(t));
+  const postpone = POSTPONE_WHOLE.test(t) || (!isReportedRequest(t) && POSTPONE_PHRASES.some((re) => re.test(t)));
   const stop = STOP_WHOLE.test(t) || STOP_PHRASES.some((re) => re.test(t)) || detectWithdrawal(raw);
   const distress = detectDistress(raw);
 

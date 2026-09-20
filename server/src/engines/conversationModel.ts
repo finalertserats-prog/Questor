@@ -98,23 +98,34 @@ export function nonAnswerStreak(turns: readonly TurnRecord[]): number {
   return streak;
 }
 
-// A question answerable with yes or no: an auxiliary opens it and nothing in
-// it asks for an account. "Can you walk me through…, and what was the
-// context?" opens with an auxiliary but is not one of these.
+// A question answerable with yes or no: an auxiliary opens it and NOTHING
+// anywhere in the utterance asks for an account. Reading only the final
+// question mark made "Were you the owner? Tell me what happened." a yes/no
+// question, and "Is there an example you can share?" is an invitation to tell
+// a story however it opens — a bare "Yes" answers neither, and scoring one as
+// the answer puts an empty turn in front of a reviewer as evidence.
 const AUXILIARY_OPENING = /^(?:so|and|but|just|ok|okay|right|now|then)?\s*(?:did|do|does|have|has|had|can|could|were|was|is|are|am|will|would|should|shall|may|might)\b/;
-const ASKS_FOR_AN_ACCOUNT = /\b(?:what|how|why|which|who|whom|where|when|tell me|walk me|talk me|describe|explain|give me)\b/;
+const ASKS_FOR_AN_ACCOUNT = /\b(?:what|how|why|which|who|whom|where|when|example|examples|instance|story|tell me|walk me|talk me|take me through|describe|explain|elaborate|share|give me|in detail|step by step)\b/;
 
-/** The last thing actually asked in an utterance: its final question, or its final sentence. */
-function finalQuestion(text: string): string {
-  const sentences = (text ?? '').split(/(?<=[.?!])\s+/).map((s) => s.trim()).filter(Boolean);
-  return [...sentences].reverse().find((s) => s.endsWith('?')) ?? sentences[sentences.length - 1] ?? '';
+/** The sentences of an utterance, in order. */
+function sentences(text: string): string[] {
+  return (text ?? '').split(/(?<=[.?!])\s+/).map((s) => s.trim()).filter(Boolean);
 }
 
-/** Could this question be answered with a bare yes or no, and nothing else? */
+/** The last thing actually asked: the final question, or the final sentence. */
+function finalQuestion(text: string): string {
+  const parts = sentences(text);
+  return [...parts].reverse().find((s) => s.endsWith('?')) ?? parts[parts.length - 1] ?? '';
+}
+
+/** Could this be answered with a bare yes or no, and nothing else? */
 export function isYesNoQuestion(question: string): boolean {
-  const last = finalQuestion(question).toLowerCase();
-  if (!last) return false;
-  return AUXILIARY_OPENING.test(last) && !ASKS_FOR_AN_ACCOUNT.test(last);
+  const whole = (question ?? '').toLowerCase();
+  if (!whole.trim()) return false;
+  // Judged over the whole utterance: one clause asking for an account is
+  // enough, wherever it sits.
+  if (ASKS_FOR_AN_ACCOUNT.test(whole)) return false;
+  return AUXILIARY_OPENING.test(finalQuestion(question).toLowerCase());
 }
 
 /**
