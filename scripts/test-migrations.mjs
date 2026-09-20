@@ -3,10 +3,11 @@
 //
 //   TEST_DATABASE_URL="postgresql://questor:questor@localhost:5432/questor?schema=public" npm run test:pg -w server
 //
-// The database/schema named by TEST_DATABASE_URL is reset. With the local
-// compose service:
-//   docker compose up -d db
-//   TEST_DATABASE_URL="postgresql://questor:questor@localhost:5432/questor?schema=public" node scripts/test-migrations.mjs
+// The database/schema named by TEST_DATABASE_URL is reset. This project does
+// not use Docker: use a local Postgres you already run (the release lane uses
+// an embedded Postgres on port 54329) with a UTF8 database of its own —
+// concurrent runs against one database reset each other's test_w* schemas:
+//   TEST_DATABASE_URL="postgresql://questor:<password>@127.0.0.1:54329/questor_test_mine" node scripts/test-migrations.mjs
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';

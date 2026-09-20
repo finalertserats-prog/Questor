@@ -6,11 +6,11 @@
 //   SHADOW_DATABASE_URL="postgresql://questor:questor@localhost:5432/questor_shadow?schema=public" \
 //     node scripts/migrations.mjs new add_candidate_flags
 //
-// `new` needs a scratch Postgres database for Prisma's shadow database. With
-// the local compose service, one simple setup is:
-//   docker compose up -d db
-//   docker compose exec db createdb -U questor questor_shadow
-//   export SHADOW_DATABASE_URL="postgresql://questor:questor@localhost:5432/questor_shadow?schema=public"
+// `new` needs a scratch Postgres database for Prisma's shadow database. This
+// project does not use Docker: point SHADOW_DATABASE_URL at any local Postgres
+// you already run (the release lane uses an embedded Postgres on port 54329)
+// and create the scratch database once, e.g. with createdb or `CREATE DATABASE`:
+//   export SHADOW_DATABASE_URL="postgresql://questor:<password>@127.0.0.1:54329/questor_shadow?schema=public"
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,7 +95,7 @@ function baseline() {
 function newMigration(rawName) {
   if (!process.env.SHADOW_DATABASE_URL?.startsWith('postgresql://') && !process.env.SHADOW_DATABASE_URL?.startsWith('postgres://')) {
     console.error('Set SHADOW_DATABASE_URL to a scratch Postgres database URL.');
-    console.error('Local example: docker compose up -d db && docker compose exec db createdb -U questor questor_shadow');
+    console.error('Local example (no Docker): create questor_shadow on your local Postgres, then export SHADOW_DATABASE_URL=postgresql://questor:<password>@127.0.0.1:54329/questor_shadow?schema=public');
     process.exit(2);
   }
   const name = sanitizeName(rawName);
