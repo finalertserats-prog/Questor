@@ -37,7 +37,10 @@ interface InterviewResp {
   /** The role's scorecard was approved again after this plan was built; the interview re-plans at start. */
   replanPending?: boolean;
   turns: Turn[];
-  assessment: { id: string; recommendation: string; result: unknown } | null;
+  /** Set while the candidate may be on the call and was not told someone may observe; turns is empty. */
+  transcriptWithheld?: boolean;
+  /** recommendation and result are left out, with blindReviewPending set, while your independent review comes first. */
+  assessment: { id: string; recommendation?: string; result?: unknown; blindReviewPending?: boolean } | null;
   invitation: Invitation | null;
   /** Who and what the interview is for. Optional: older servers do not send them. */
   candidate?: { id: string; name: string } | null;
@@ -198,8 +201,17 @@ export function InterviewDetail() {
       {assessment && (
         <Banner kind="ok">
           <span className="row" style={{ display: 'inline-flex' }}>
-            Assessment ready — {recBadge(assessment.recommendation)}
-            <Link className="link-action" to={`/assessments/${assessment.id}`}><Icon name="evidence" size={15} />View assessment</Link>
+            {assessment.blindReviewPending ? (
+              <>
+                Assessment ready. Record your own verdict before the AI's call is shown.
+                <Link className="link-action" to={`/assessments/${assessment.id}/review`}><Icon name="eye-off" size={15} />Review blind</Link>
+              </>
+            ) : (
+              <>
+                Assessment ready — {recBadge(assessment.recommendation)}
+                <Link className="link-action" to={`/assessments/${assessment.id}`}><Icon name="evidence" size={15} />View assessment</Link>
+              </>
+            )}
           </span>
         </Banner>
       )}
@@ -341,7 +353,9 @@ export function InterviewDetail() {
 
       <div className="card">
         <h2 className="card-title"><Icon name="interviews" />Transcript</h2>
-        {(turns ?? []).length === 0 ? (
+        {data.transcriptWithheld ? (
+          <EmptyState compact icon="interviews" title="Transcript after the interview" message="The candidate was not told someone may observe, so the transcript shows once the interview ends." />
+        ) : (turns ?? []).length === 0 ? (
           <EmptyState compact icon="interviews" title="No transcript yet" message="The conversation appears here once the candidate starts the interview." />
         ) : (
           <div className="transcript">

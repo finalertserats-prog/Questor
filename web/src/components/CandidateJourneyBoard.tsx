@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
-import { Badge, recBadge, Meter } from './ui';
+import { Badge, aiCallCell, Meter } from './ui';
 import { formatScoreOutOf100 } from './scoreFormat';
 import { formatDateTime, formatScheduled } from './dateFormat';
 import { useOrgTimeZone } from './useOrgTimeZone';
@@ -261,7 +261,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
         <Column column={decision}>
           <Block title="Assessment">
             <div className="journey-links" style={{ marginBottom: 6 }}>
-              {recBadge(decision.recommendation)}
+              {aiCallCell(decision)}
             </div>
             {decision.assessment.available ? (
               <>

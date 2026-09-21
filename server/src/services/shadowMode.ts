@@ -47,7 +47,7 @@ export {
 } from './shadowModeCommon.js';
 export { computeCohenKappa, type KappaResult } from './shadowModeKappa.js';
 export {
-  assertBlindVerdictRecorded, assertUnblindedReadAllowed, getBlindView, hasUnblindedAccess,
+  aiConclusionVisible, assertBlindVerdictRecorded, assertUnblindedReadAllowed, getBlindView, hasUnblindedAccess,
   recordBlindVerdict, BLIND_REVIEW_REQUIRED, SELF_REVIEW_NOTE, UNBLINDED_READ_ACTION,
   type BlindAssessmentView, type BlindCompetency, type BlindCompetencyVerdict, type BlindEvidenceSpan,
   type BlindTurn, type BlindVerdictInput,

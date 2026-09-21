@@ -38,6 +38,15 @@ class ConsoleEmailProvider implements EmailProvider {
   configured = true;
   delivers = false;
   async send(msg: EmailMessage) {
+    // Production may run on this provider (ALLOW_UNDELIVERED_EMAIL). There the
+    // address is personal data an erasure cannot reach once it is in a log
+    // sink, and the body carries bearer links (the candidate portal, sign-in,
+    // feedback). Some subjects name the person too. Only a developer's own
+    // machine gets any of it.
+    if (config.nodeEnv !== 'development') {
+      logger.info({ delivered: false }, '📧 [console email — NOT DELIVERED]');
+      return { status: 'logged', id: `console-${Date.now()}` };
+    }
     logger.info({ to: msg.to, subject: msg.subject }, `📧 [console email — NOT DELIVERED] ${msg.subject} -> ${msg.to}`);
     logger.info(`\n----- EMAIL BODY -----\n${msg.text}\n----------------------`);
     // 'logged', never 'sent'. The caller decides what to tell the user, and it
