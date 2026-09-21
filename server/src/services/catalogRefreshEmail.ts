@@ -68,19 +68,32 @@ function render(to: string, summary: RefreshSummary) {
   });
 }
 
-export async function notifyOperators(runId: string): Promise<void> {
-  const summary = await summarizeRun(runId);
-  if (summary.total === 0) return;
-  const recipients = catalogReviewRecipients();
-  if (recipients.length === 0) {
-    logger.warn({ runId, pending: summary.total }, 'Catalog refresh queued proposals but no PLATFORM_OPERATOR_EMAILS or SIGNUP_APPROVER_EMAIL is set to tell');
-    return;
-  }
-  for (const to of recipients) {
-    try {
-      await getEmail().send(render(to, summary));
-    } catch (err) {
-      logger.error({ runId, err: err instanceof Error ? err.message : String(err) }, 'Could not send the catalog refresh summary');
+/**
+ * Tell the operators a run left proposals to review. False when a send
+ * failed, so the run can say nobody was told; never throws, because a notice
+ * that could not go out must not turn a finished run into a failed one.
+ */
+export async function notifyOperators(runId: string): Promise<boolean> {
+  try {
+    const summary = await summarizeRun(runId);
+    if (summary.total === 0) return true;
+    const recipients = catalogReviewRecipients();
+    if (recipients.length === 0) {
+      logger.warn({ runId, pending: summary.total }, 'Catalog refresh queued proposals but no PLATFORM_OPERATOR_EMAILS or SIGNUP_APPROVER_EMAIL is set to tell');
+      return true;
     }
+    let delivered = true;
+    for (const to of recipients) {
+      try {
+        await getEmail().send(render(to, summary));
+      } catch (err) {
+        delivered = false;
+        logger.error({ runId, err: err instanceof Error ? err.message : String(err) }, 'Could not send the catalog refresh summary');
+      }
+    }
+    return delivered;
+  } catch (err) {
+    logger.error({ runId, err: err instanceof Error ? err.message : String(err) }, 'Could not prepare the catalog refresh summary');
+    return false;
   }
 }

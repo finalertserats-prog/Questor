@@ -192,15 +192,30 @@ async function releaseLease(name: string, holder: string): Promise<void> {
 const ALERT_WINDOW_MS = 60 * 60_000;
 const lastAlertAt = new Map<string, number>();
 
-async function alertOperator(job: string, message: string): Promise<void> {
+/**
+ * Email the operator that `job` failed, at most once an hour per job. Exported
+ * for long-lived loops (the library worker) whose failures never reach
+ * runExclusive's catch.
+ */
+export async function alertOperator(job: string, message: string): Promise<void> {
   const to = config.signupApproverEmail.trim();
   if (!to) return;
   const now = Date.now();
-  const last = lastAlertAt.get(job) ?? 0;
-  if (now - last < ALERT_WINDOW_MS) return;
+  const last = lastAlertAt.get(job);
+  if (now - (last ?? 0) < ALERT_WINDOW_MS) return;
+  // Claimed before the send so two failures racing do not both email; handed
+  // back when nothing went out, so the next failure tries again instead of the
+  // operator hearing nothing for an hour.
   lastAlertAt.set(job, now);
+  const release = () => {
+    if (last === undefined) lastAlertAt.delete(job);
+    else lastAlertAt.set(job, last);
+  };
   const email = getEmail();
-  if (!email.delivers) return;
+  if (!email.delivers) {
+    release();
+    return;
+  }
   try {
     await email.send({
       to,
@@ -209,6 +224,7 @@ async function alertOperator(job: string, message: string): Promise<void> {
       html: `<p>The background job <b>${job}</b> failed on ${INSTANCE_ID} at ${new Date().toISOString()}.</p><pre>${message.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c] ?? c))}</pre><p>See <code>GET /api/admin/ops</code> for recent runs. This alert is sent at most once an hour per job.</p>`,
     });
   } catch (err) {
+    release();
     logger.error({ job, err: err instanceof Error ? err.message : String(err) }, 'Could not send job-failure alert');
   }
 }

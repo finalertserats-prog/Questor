@@ -2,13 +2,21 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { EmailMessage } from '../src/providers/email/index.js';
 
 const sent: EmailMessage[] = [];
+const mail = { failNext: false };
 vi.mock('../src/providers/email/index.js', async (orig) => {
   const actual = await orig<typeof import('../src/providers/email/index.js')>();
   return {
     ...actual,
     getEmail: () => ({
       name: 'test', configured: true, delivers: true,
-      send: vi.fn(async (msg: EmailMessage) => { sent.push(msg); return { status: 'sent', id: `t${sent.length}` }; }),
+      send: vi.fn(async (msg: EmailMessage) => {
+        if (mail.failNext) {
+          mail.failNext = false;
+          throw new Error('mail relay down');
+        }
+        sent.push(msg);
+        return { status: 'sent', id: `t${sent.length}` };
+      }),
     }),
   };
 });
@@ -24,6 +32,7 @@ import { runExclusive, latestJobRuns, _resetJobAlerts } from '../src/services/jo
  */
 beforeEach(async () => {
   sent.length = 0;
+  mail.failNext = false;
   _resetJobAlerts();
   config.signupApproverEmail = 'operator@example.com';
   await prisma.jobRun.deleteMany();
@@ -154,6 +163,14 @@ describe('when a job fails', () => {
     await runExclusive('noisy-job', 60_000, async () => { throw new Error('boom again'); });
 
     expect(sent.filter((m) => m.subject.includes('noisy-job'))).toHaveLength(1);
+  });
+
+  it('tries the alert again on the next failure when the alert itself could not be sent', async () => {
+    mail.failNext = true;
+    await runExclusive('unlucky-job', 60_000, async () => { throw new Error('boom'); });
+    await runExclusive('unlucky-job', 60_000, async () => { throw new Error('boom again'); });
+
+    expect(sent.filter((m) => m.subject.includes('unlucky-job'))).toHaveLength(1);
   });
 
   it('still frees the lease', async () => {

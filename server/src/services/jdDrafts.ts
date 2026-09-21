@@ -6,6 +6,7 @@ import { BANDS, type BandId } from '../engines/experienceBands.js';
 import { draftJdFromDescriptionHeuristic, draftJdFromDescriptionWithLlm, draftJdHeuristic, draftJdWithLlm, globalLint, isGlobalRegion, lintJd, locationSpecificClaims, PROMPT_VERSION } from '../engines/jdDraft.js';
 import type { AuthClaims } from './auth.js';
 import { consume } from '../middleware/rateLimit.js';
+import { logger } from '../logger.js';
 
 const BAND_IDS = new Set<string>(BANDS.map((b) => b.id));
 const FAILED_COOLDOWN_MS = 5 * 60_000;
@@ -56,11 +57,34 @@ export async function getOrQueueDraft(
 }
 
 export async function generatePendingDrafts(opts: { readonly limit: number }): Promise<number> {
+  return (await generatePendingDraftBatch(opts)).generated;
+}
+
+/**
+ * The background job's run: a batch whose every draft failed (a bad model key,
+ * say) fails the run, so it is recorded and the operator is alerted instead of
+ * HR alone seeing "We could not prepare this draft yet".
+ */
+export async function runJdDraftJob(): Promise<string> {
+  const { generated, failed } = await generatePendingDraftBatch({ limit: JD_DRAFT_JOB.batch });
+  const note = `generated ${generated} JD drafts, ${failed} failed`;
+  if (failed > 0 && generated === 0) throw new Error(note);
+  return note;
+}
+
+async function generatePendingDraftBatch(opts: { readonly limit: number }): Promise<{ generated: number; failed: number }> {
   // A row claimed as 'generating' by a process that stopped part-way would
-  // otherwise stay claimed for ever; hand it back once the claim is stale.
+  // otherwise stay claimed for ever; hand it back once the claim is stale. The
+  // lost claim counts as an attempt: a draft that crashes the process every
+  // time must not be retried for ever.
+  const staleBefore = new Date(Date.now() - STALE_CLAIM_MS);
   await prisma.catalogJdDraft.updateMany({
-    where: { status: 'generating', updatedAt: { lt: new Date(Date.now() - STALE_CLAIM_MS) } },
-    data: { status: 'pending' },
+    where: { status: 'generating', updatedAt: { lt: staleBefore }, attempts: { gte: 2 } },
+    data: { status: 'failed', attempts: { increment: 1 }, lastError: 'Generation stopped part-way.' },
+  });
+  await prisma.catalogJdDraft.updateMany({
+    where: { status: 'generating', updatedAt: { lt: staleBefore } },
+    data: { status: 'pending', attempts: { increment: 1 } },
   });
   const pending = await prisma.catalogJdDraft.findMany({
     where: { status: 'pending', attempts: { lt: 3 } },
@@ -68,6 +92,7 @@ export async function generatePendingDrafts(opts: { readonly limit: number }): P
     take: Math.max(1, opts.limit),
   });
   let generated = 0;
+  let failed = 0;
   for (const row of pending) {
     const claimAt = new Date();
     const claimed = await prisma.catalogJdDraft.updateMany({ where: { id: row.id, status: 'pending', updatedAt: row.updatedAt }, data: { status: 'generating', updatedAt: claimAt } });
@@ -75,14 +100,17 @@ export async function generatePendingDrafts(opts: { readonly limit: number }): P
     try {
       if (await generateOne(row.id, claimAt)) generated += 1;
     } catch (err) {
+      failed += 1;
       const attempts = row.attempts + 1;
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error({ draftId: row.id, attempts, err: message.slice(0, 300) }, 'JD draft generation failed');
       await prisma.catalogJdDraft.updateMany({
         where: { id: row.id, status: 'generating', updatedAt: claimAt },
-        data: { status: attempts >= 3 ? 'failed' : 'pending', attempts, lastError: err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500) },
+        data: { status: attempts >= 3 ? 'failed' : 'pending', attempts, lastError: message.slice(0, 500) },
       });
     }
   }
-  return generated;
+  return { generated, failed };
 }
 
 async function generateOne(id: string, claimAt: Date): Promise<boolean> {

@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
-import { draftFromDescription, generatePendingDrafts, getOrQueueDraft, JD_DRAFT_JOB, shapeDraft } from '../services/jdDrafts.js';
+import { draftFromDescription, getOrQueueDraft, JD_DRAFT_JOB, runJdDraftJob, shapeDraft } from '../services/jdDrafts.js';
 import { runExclusive } from '../services/jobs.js';
 
 export const jdDraftsRouter = Router();
@@ -19,7 +19,7 @@ jdDraftsRouter.get('/', requireCapability('role:create'), asyncHandler(async (re
   const draft = await getOrQueueDraft(query, req.auth!);
   // Nudge the single leased worker; if another instance holds the lease this
   // is a no-op, and the draft is written on that instance's next tick.
-  if (draft.status === 'pending') void runExclusive(JD_DRAFT_JOB.name, JD_DRAFT_JOB.ttlMs, async () => `generated ${await generatePendingDrafts({ limit: JD_DRAFT_JOB.batch })} JD drafts`);
+  if (draft.status === 'pending') void runExclusive(JD_DRAFT_JOB.name, JD_DRAFT_JOB.ttlMs, runJdDraftJob);
   const body = shapeDraft(draft);
   if (draft.status === 'ready') res.status(200).json(body);
   else if (draft.status === 'failed') res.status(200).json({ ...body, message: 'We could not prepare this draft yet. You can try again or paste your own JD.' });

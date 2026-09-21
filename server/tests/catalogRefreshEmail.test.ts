@@ -2,18 +2,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmailMessage } from '../src/providers/email/index.js';
 
 const sent: EmailMessage[] = [];
+const mail = { fail: false };
 vi.mock('../src/providers/email/index.js', async (orig) => {
   const actual = await orig<typeof import('../src/providers/email/index.js')>();
   return {
     ...actual,
     getEmail: () => ({
       name: 'test', configured: true, delivers: true,
-      send: vi.fn(async (msg: EmailMessage) => { sent.push(msg); return { status: 'sent', id: `t${sent.length}` }; }),
+      send: vi.fn(async (msg: EmailMessage) => {
+        if (mail.fail) throw new Error('mail relay down');
+        sent.push(msg);
+        return { status: 'sent', id: `t${sent.length}` };
+      }),
     }),
   };
 });
 
 import { config } from '../src/config.js';
+import { prisma } from '../src/db.js';
 import { logger } from '../src/logger.js';
 import { runCatalogRefresh } from '../src/services/catalogRefresh.js';
 import { configureCatalogRefresh, seedSmallCatalog, testDeps } from './catalogRefreshFixtures.js';
@@ -25,6 +31,8 @@ import { configureCatalogRefresh, seedSmallCatalog, testDeps } from './catalogRe
 
 beforeEach(async () => {
   sent.length = 0;
+  mail.fail = false;
+  vi.restoreAllMocks();
   configureCatalogRefresh();
   config.platformOperatorEmails = ['owner@questor.test', 'second@questor.test'];
   config.signupApproverEmail = 'approver@questor.test';
@@ -86,5 +94,36 @@ describe('the operator summary email', () => {
     const warn = vi.spyOn(logger, 'warn');
     const result = await runCatalogRefresh({ trigger: 'schedule', deps: testDeps({}).deps });
     expect({ outcome: result.outcome, sent: sent.length, warned: warn.mock.calls.some((call) => String(call[1]).includes('PLATFORM_OPERATOR_EMAILS')) }).toEqual({ outcome: 'ran', sent: 0, warned: true });
+  });
+});
+
+describe('when the operator summary cannot be sent', () => {
+  it('keeps the run completed', async () => {
+    mail.fail = true;
+    const result = await runCatalogRefresh({ trigger: 'schedule', deps: testDeps({}).deps });
+    const run = await prisma.catalogRefreshRun.findUniqueOrThrow({ where: { id: result.runId } });
+    expect(run.status).toBe('completed');
+  });
+
+  it('records on the run that nobody was told, for the review page', async () => {
+    mail.fail = true;
+    const result = await runCatalogRefresh({ trigger: 'schedule', deps: testDeps({}).deps });
+    const run = await prisma.catalogRefreshRun.findUniqueOrThrow({ where: { id: result.runId } });
+    expect(run.error).toBe('notice_not_sent');
+  });
+
+  it('keeps the run completed when building the summary itself fails', async () => {
+    const original = prisma.catalogProposal.findMany.bind(prisma.catalogProposal);
+    // Only the summary reads exactly kind + sourcesJson; every other read passes through.
+    vi.spyOn(prisma.catalogProposal, 'findMany').mockImplementation(((args: Parameters<typeof original>[0]) => {
+      const select = args?.select ?? {};
+      const isSummary = Object.keys(select).sort().join(',') === 'kind,sourcesJson';
+      return isSummary ? Promise.reject(new Error('database went away')) : original(args);
+    }) as unknown as typeof prisma.catalogProposal.findMany);
+
+    const result = await runCatalogRefresh({ trigger: 'schedule', deps: testDeps({}).deps });
+
+    const run = await prisma.catalogRefreshRun.findUniqueOrThrow({ where: { id: result.runId } });
+    expect({ status: run.status, outcome: result.outcome, error: run.error }).toEqual({ status: 'completed', outcome: 'ran', error: 'notice_not_sent' });
   });
 });

@@ -18,7 +18,7 @@ import { seedCatalogWithRetry } from './services/catalogSeed.js';
 import { initInterviewers } from './services/interviewers.js';
 import { startRateLimitPurge } from './middleware/rateLimit.js';
 import { releaseHeldLeases, runningJobCount, startJob, stopAllJobs } from './services/jobs.js';
-import { generatePendingDrafts, JD_DRAFT_JOB } from './services/jdDrafts.js';
+import { JD_DRAFT_JOB, runJdDraftJob } from './services/jdDrafts.js';
 import { startCatalogRefreshSchedule } from './services/catalogRefresh.js';
 import { reportMissingOperatorAccounts } from './middleware/platformOperator.js';
 import { markDraining } from './services/drainState.js';
@@ -45,7 +45,7 @@ await rescheduleLegacyFeedbackEmails().catch((err: unknown) => {
 startFeedbackEmailDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();
-startJob({ name: JD_DRAFT_JOB.name, intervalMs: 5_000, ttlMs: JD_DRAFT_JOB.ttlMs, fn: async () => `generated ${await generatePendingDrafts({ limit: JD_DRAFT_JOB.batch })} JD drafts` });
+startJob({ name: JD_DRAFT_JOB.name, intervalMs: 5_000, ttlMs: JD_DRAFT_JOB.ttlMs, fn: runJdDraftJob });
 startCatalogRefreshSchedule();
 reportMissingOperatorAccounts().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not check platform operator accounts');

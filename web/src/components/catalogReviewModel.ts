@@ -256,11 +256,13 @@ export function runStatusLine(run: CatalogRunView): string {
   const line = parts.join(' · ');
   if (run.status === 'running') return `Running · ${line}`;
   if (run.status === 'failed') return `${runErrorText(run.error)} · ${line}`;
-  return line;
+  // A finished run can still carry a code: its operator notice did not go out.
+  return run.error ? `${line} · ${runErrorText(run.error)}` : line;
 }
 
 const RUN_ERRORS: Record<string, string> = {
   abandoned: 'Stopped and not resumed within 7 days; a fresh run started instead.',
+  notice_not_sent: 'The email about these proposals could not be sent.',
 };
 
 /**

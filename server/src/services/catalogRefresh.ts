@@ -11,7 +11,7 @@ import type { RunState } from './catalogRefreshChunk.js';
 import { notifyOperators } from './catalogRefreshEmail.js';
 import { parseCursor, parseStats, type SourceKey } from './catalogRefreshState.js';
 import {
-  CATALOG_REFRESH_LEASE, claimRun, failRun, finishRun, isCatalogRefreshActive, manualRunAllowedAt, queuedCounts, saveRunProgress,
+  CATALOG_REFRESH_LEASE, claimRun, failRun, finishRun, isCatalogRefreshActive, manualRunAllowedAt, markNoticeNotSent, queuedCounts, saveRunProgress,
   shouldRunScheduledCatalogRefresh, spendLimits, type ClaimedRun, type RunTrigger,
 } from './catalogRefreshRun.js';
 
@@ -120,9 +120,14 @@ async function executeRun(run: ClaimedRun, lease: LeaseHandle, deps: CatalogRefr
     }, await initialState(run, deps.now()));
     await saveRunProgress(run.id, final);
     await finishRun(run.id, deps.now());
-    await notifyOperators(run.id);
     const proposed = final.stats.onet.proposed + final.stats.esco.proposed + final.stats.web.proposed;
-    return `catalog refresh ${run.id}: ${proposed} proposals`;
+    if (await notifyOperators(run.id)) return `catalog refresh ${run.id}: ${proposed} proposals`;
+    // The run finished; only the notice is missing, so the review page says so
+    // instead of the proposals waiting on approval nobody was told about.
+    await markNoticeNotSent(run.id).catch((err: unknown) => {
+      logger.error({ runId: run.id, err: err instanceof Error ? err.message : String(err) }, 'Could not record the unsent catalog refresh notice');
+    });
+    return `catalog refresh ${run.id}: ${proposed} proposals; operator notice not sent`;
   } finally {
     heartbeat.stop();
   }
