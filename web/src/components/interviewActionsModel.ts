@@ -14,30 +14,40 @@ export interface StateActions {
   readonly retake: boolean;
   readonly assessPartial: boolean;
   readonly reopen: boolean;
+  /** Mint a link and email it (/invite). */
+  readonly sendInvitation: boolean;
+  /** Email the existing link again (/resend): only before the interview starts. */
+  readonly resend: boolean;
 }
 
 export interface InterviewActions extends StateActions {
-  /** Send, resend or copy the invitation. */
+  /** May send invitations at all, which "Save schedule and send" needs too. */
   readonly invite: boolean;
 }
 
-// Only for a server that does not send `actions` yet: the states the state
-// machine lets move to CANCELLED, and the ones /schedule accepts.
+// Only for a server that does not send `actions` yet: the same state sets the
+// routes check.
+const RESENDABLE = ['PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'WAITING', 'DISCLOSURE', 'CONSENTED'];
 const CANCELLABLE = new Set(['PROVISIONED', 'INVITED', 'ACCEPTED', 'RESCHEDULE_REQUIRED', 'TECHNICAL_FAILURE']);
-const SCHEDULABLE = new Set(['PROVISIONED', 'INVITED', 'ACCEPTED', 'READY_CHECK', 'WAITING', 'DISCLOSURE', 'CONSENTED', 'RESCHEDULE_REQUIRED']);
+const SCHEDULABLE = new Set([...RESENDABLE, 'RESCHEDULE_REQUIRED']);
 
 function fallbackActions(state: string): StateActions {
-  return { cancel: CANCELLABLE.has(state), schedule: SCHEDULABLE.has(state), retake: false, assessPartial: false, reopen: false };
+  return {
+    cancel: CANCELLABLE.has(state), schedule: SCHEDULABLE.has(state), retake: false, assessPartial: false, reopen: false,
+    sendInvitation: state === 'PROVISIONED' || state === 'RESCHEDULE_REQUIRED', resend: RESENDABLE.includes(state),
+  };
 }
 
 export function interviewActions(state: string, fromServer: StateActions | undefined, user: CapabilityHolder | null | undefined): InterviewActions {
-  const allowed = fromServer ?? fallbackActions(state);
+  const allowed = { ...fallbackActions(state), ...fromServer };
   return {
     cancel: allowed.cancel && can(user, 'interview:schedule'),
     schedule: allowed.schedule && can(user, 'interview:schedule'),
     retake: allowed.retake && can(user, 'interview:invite'),
     assessPartial: allowed.assessPartial && can(user, 'interview:drive'),
     reopen: allowed.reopen && can(user, 'interview:invite'),
+    sendInvitation: allowed.sendInvitation && can(user, 'interview:invite'),
+    resend: allowed.resend && can(user, 'interview:invite'),
     invite: can(user, 'interview:invite'),
   };
 }

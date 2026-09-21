@@ -464,6 +464,9 @@ function sessionActions(session: { state: string; attemptNumber: number }, asses
     retake: stoppedWithoutFault && !assessed && session.attemptNumber < MAX_INTERVIEW_ATTEMPTS,
     assessPartial: session.state === 'INCOMPLETE',
     reopen: session.state === 'MANUAL_HANDOFF',
+    // /invite mints a link only from these two; /resend only before the start.
+    sendInvitation: session.state === 'PROVISIONED' || session.state === 'RESCHEDULE_REQUIRED',
+    resend: RESENDABLE_STATES.has(session.state),
   };
 }
 

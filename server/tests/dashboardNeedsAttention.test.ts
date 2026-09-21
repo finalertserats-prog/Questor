@@ -76,6 +76,21 @@ describe('dashboard needs attention', () => {
     expect(res.body.needsAttention.items[0].assessmentId).toBe(assessment.id);
   });
 
+  it('dates an accommodation request by when it was made, not when the interview was set up', async () => {
+    const s = await setup();
+    const ada = await s.candidateFor('Ada Review', s.me.id);
+    const ben = await s.candidateFor('Ben Handoff', s.me.id);
+    const review = await s.session(ada.id, 'REVIEW_READY', ago(1));
+    await prisma.assessmentVersion.create({ data: { sessionId: review.id, scorecardId: s.scorecard.id, recommendation: 'CONSIDER', confidence: 0.7, evidenceCoverage: 0.6, resultJson: '{}', createdAt: ago(1) } });
+    const handoff = await s.session(ben.id, 'MANUAL_HANDOFF');
+    const requestedAt = new Date().toISOString();
+    await prisma.interviewSession.update({ where: { id: handoff.id }, data: { createdAt: ago(40), consentJson: JSON.stringify({ accommodationRequest: 'More time please.', accommodationRequestedAt: requestedAt }) } });
+
+    const res = await metrics(s.me.token);
+
+    expect([res.body.needsAttention.items[0].kind, res.body.needsAttention.items[0].at]).toEqual(['accommodation', requestedAt]);
+  });
+
   it('counts each kind', async () => {
     const s = await setup();
     const ben = await s.candidateFor('Ben Handoff', s.me.id);

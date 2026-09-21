@@ -379,16 +379,26 @@ export function InterviewDetail() {
             <div className="muted small" style={{ marginTop: 6 }}>Share this link with the candidate.</div>
             {/* No recruiter preview here: the link is the candidate's own, and
                 opening it would mark it opened for them. */}
-            {acts.invite && (
+            {/* Resend only before the interview starts; an interview waiting for
+                a new date gets a fresh link instead (the server allows no other). */}
+            {(acts.resend || acts.sendInvitation) && (
               <div className="row" style={{ marginTop: 14, gap: 8 }}>
-                <button className="btn secondary" type="button" onClick={resend} disabled={busyAction !== null}>
-                  <Icon name={busyAction === 'resend' ? 'hourglass' : 'send'} size={16} />
-                  {busyAction === 'resend' ? 'Sending…' : 'Resend email'}
-                </button>
+                {acts.resend && (
+                  <button className="btn secondary" type="button" onClick={resend} disabled={busyAction !== null}>
+                    <Icon name={busyAction === 'resend' ? 'hourglass' : 'send'} size={16} />
+                    {busyAction === 'resend' ? 'Sending…' : 'Resend email'}
+                  </button>
+                )}
+                {acts.sendInvitation && !acts.resend && (
+                  <button className="btn secondary" type="button" onClick={invite} disabled={busyAction !== null}>
+                    <Icon name={busyAction === 'invite' ? 'hourglass' : 'send'} size={16} />
+                    {busyAction === 'invite' ? 'Sending…' : 'Send a new invitation'}
+                  </button>
+                )}
               </div>
             )}
           </div>
-        ) : !acts.invite ? (
+        ) : !acts.sendInvitation ? (
           <p className="muted small" style={{ margin: 0 }}>No invitation has been sent yet.</p>
         ) : (
           <div>

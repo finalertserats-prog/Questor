@@ -85,6 +85,19 @@ export interface NeedsAttention {
 }
 
 const ATTENTION_ITEM_LIMIT = 10;
+const HANDOFF_SCAN_LIMIT = 100;
+
+/** When the candidate asked, from the consent record the portal wrote; null when it is not there. */
+function accommodationRequestedAt(consentJson: string): Date | null {
+  try {
+    const parsed: unknown = JSON.parse(consentJson);
+    const at = typeof parsed === 'object' && parsed !== null && 'accommodationRequestedAt' in parsed ? parsed.accommodationRequestedAt : null;
+    const date = typeof at === 'string' ? new Date(at) : null;
+    return date && !Number.isNaN(date.getTime()) ? date : null;
+  } catch {
+    return null;
+  }
+}
 /** Nothing marks a human request as handled, so it stops asking after a month. */
 const HUMAN_REQUEST_WINDOW_DAYS = 30;
 
@@ -99,7 +112,9 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
   const requestWhere: Prisma.CandidateHumanRequestWhereInput = { tenantId, candidate, status: 'REQUESTED', requestedAt: { gte: requestedSince } };
   const [reviews, handoffs, requests, reviewCount, handoffCount, requestCount] = await Promise.all([
     prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
-    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
+    // Wider than the list: the request time lives in consentJson, so a recent
+    // request on an old interview is only found by reading past the newest few.
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: HANDOFF_SCAN_LIMIT, select: { ...sessionSelect, consentJson: true } }),
     prisma.candidateHumanRequest.findMany({
       where: requestWhere, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
       select: { requestedAt: true, session: { select: sessionSelect } },
@@ -116,9 +131,7 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
   });
   const items = [
     ...reviews.map((s) => item('review', s, s.assessments[0]?.createdAt ?? s.completedAt ?? s.createdAt)),
-    // The request time lives only inside consentJson, which this service never
-    // reads; the interview's creation orders it close enough.
-    ...handoffs.map((s) => item('accommodation', s, s.createdAt)),
+    ...handoffs.map((s) => item('accommodation', s, accommodationRequestedAt(s.consentJson) ?? s.createdAt)),
     ...requests.map((r) => item('human_request', r.session, r.requestedAt ?? r.session.createdAt)),
   ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ATTENTION_ITEM_LIMIT);
   return { counts: { review: reviewCount, accommodation: handoffCount, human_request: requestCount }, items };
@@ -145,7 +158,8 @@ function titleCase(key: string): string {
  * recruiter's dashboard can never count a candidate their lists would hide.
  * Sessions, pipelines and rounds carry no scope of their own and inherit it
  * through their candidate. Uses count/groupBy plus date-only selects bounded by
- * the chart window; no transcripts or JSON blobs are read.
+ * the chart window; no transcripts are read, and the only JSON is the consent
+ * record of an interview paused on an accommodation request, for its date.
  */
 export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMetricsOptions): Promise<DashboardMetrics> {
   const now = options.now ?? new Date();

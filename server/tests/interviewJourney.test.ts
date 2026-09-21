@@ -42,13 +42,16 @@ describe('GET /interviews/:id context', () => {
 
 describe('GET /interviews/:id actions', () => {
   it.each([
-    ['ACCEPTED', { cancel: true, schedule: true, retake: false, assessPartial: false, reopen: false }],
-    ['CONSENTED', { cancel: false, schedule: true, retake: false, assessPartial: false, reopen: false }],
-    ['MANUAL_HANDOFF', { cancel: false, schedule: false, retake: false, assessPartial: false, reopen: true }],
-    ['INCOMPLETE', { cancel: false, schedule: false, retake: true, assessPartial: true, reopen: false }],
-    ['TECHNICAL_FAILURE', { cancel: true, schedule: false, retake: true, assessPartial: false, reopen: false }],
-    ['NO_SHOW', { cancel: false, schedule: true, retake: false, assessPartial: false, reopen: false }],
-    ['REVIEW_READY', { cancel: false, schedule: false, retake: false, assessPartial: false, reopen: false }],
+    ['PROVISIONED', { cancel: true, schedule: true, retake: false, assessPartial: false, reopen: false, sendInvitation: true, resend: true }],
+    ['ACCEPTED', { cancel: true, schedule: true, retake: false, assessPartial: false, reopen: false, sendInvitation: false, resend: true }],
+    ['CONSENTED', { cancel: false, schedule: true, retake: false, assessPartial: false, reopen: false, sendInvitation: false, resend: true }],
+    ['RESCHEDULE_REQUIRED', { cancel: true, schedule: true, retake: false, assessPartial: false, reopen: false, sendInvitation: true, resend: false }],
+    ['MANUAL_HANDOFF', { cancel: false, schedule: false, retake: false, assessPartial: false, reopen: true, sendInvitation: false, resend: false }],
+    ['INCOMPLETE', { cancel: false, schedule: false, retake: true, assessPartial: true, reopen: false, sendInvitation: false, resend: false }],
+    ['TECHNICAL_FAILURE', { cancel: true, schedule: false, retake: true, assessPartial: false, reopen: false, sendInvitation: false, resend: false }],
+    ['NO_SHOW', { cancel: false, schedule: true, retake: false, assessPartial: false, reopen: false, sendInvitation: false, resend: false }],
+    ['CANCELLED', { cancel: false, schedule: false, retake: false, assessPartial: false, reopen: false, sendInvitation: false, resend: false }],
+    ['REVIEW_READY', { cancel: false, schedule: false, retake: false, assessPartial: false, reopen: false, sendInvitation: false, resend: false }],
   ])('in %s allows %o', async (state, expected) => {
     const session = await sessionIn(state);
     expect((await detail(session.id)).actions).toEqual(expected);
