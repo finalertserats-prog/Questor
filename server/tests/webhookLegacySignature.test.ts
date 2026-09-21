@@ -256,6 +256,11 @@ describe('switching v1 off from the admin console', () => {
 });
 
 describe('the operations view', () => {
+  // The view spans the deployment, so only the operator reads it.
+  let approver = '';
+  beforeEach(() => { approver = config.signupApproverEmail; config.signupApproverEmail = 'admin@hooks.local'; });
+  afterEach(() => { config.signupApproverEmail = approver; });
+
   it('counts the active webhooks still sending v1', async () => {
     await legacyHook();
     await legacyHook();

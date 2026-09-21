@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { config } from '../src/config.js';
 import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { webhookUrlProblem } from '../src/services/webhookUrl.js';
@@ -135,6 +136,11 @@ describe('sign-ins in the audit trail', () => {
 });
 
 describe('the operations view', () => {
+  // Every figure here spans the whole deployment, so it is the operator's.
+  let approver = '';
+  beforeEach(() => { approver = config.signupApproverEmail; config.signupApproverEmail = 'admin@policy.local'; });
+  afterEach(() => { config.signupApproverEmail = approver; });
+
   it('reports jobs, webhook counts and model failures in one place', async () => {
     const res = await request(app).get('/api/admin/ops').set(auth());
 
@@ -147,6 +153,14 @@ describe('the operations view', () => {
     const token = signToken({ userId: recruiter.id, tenantId, role: 'recruiter', email: recruiter.email });
 
     const res = await request(app).get('/api/admin/ops').set({ Authorization: `Bearer ${token}` });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("is not for a customer organisation's admin, since it counts every organisation", async () => {
+    config.signupApproverEmail = 'operator@questor.test';
+
+    const res = await request(app).get('/api/admin/ops').set(auth());
 
     expect(res.status).toBe(403);
   });
