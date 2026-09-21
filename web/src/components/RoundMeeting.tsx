@@ -121,8 +121,8 @@ export function RoundActions(
       .then((resp) => { onOutcome(resp.meeting, resp.candidateNotice ?? null); setMoving(false); setWhen((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone })); }));
   };
 
-  const cancel = () => run(() => api.post<{ meeting: MeetingOutcome | null }>(`${base(pipelineId, round.id)}/cancel`, {})
-    .then((resp) => { onOutcome(resp.meeting); setConfirmCancel(false); }));
+  const cancel = () => run(() => api.post<RoundResponse>(`${base(pipelineId, round.id)}/cancel`, {})
+    .then((resp) => { onOutcome(resp.meeting, resp.candidateNotice ?? null); setConfirmCancel(false); }));
 
   if (moving) {
     return (

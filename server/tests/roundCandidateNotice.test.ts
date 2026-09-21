@@ -191,3 +191,147 @@ describe('the AI round', () => {
       .toEqual({ at: session.scheduledAt?.toISOString(), zone: 'Europe/Berlin' });
   });
 });
+
+describe('a human round cancelled', () => {
+  const cancel = (pipelineId: string, roundId: string) =>
+    request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/cancel`).set(auth()).send({});
+
+  it('tells the candidate the round is off', async () => {
+    const pipelineId = await pipelineAt('gold');
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    mail.messages.length = 0;
+
+    await cancel(pipelineId, roundId);
+
+    expect(toCandidate().at(-1)?.text ?? '').toMatch(/cancelled/i);
+  });
+
+  it('names the cancelled time in the round zone', async () => {
+    const pipelineId = await pipelineAt('gold');
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    mail.messages.length = 0;
+
+    await cancel(pipelineId, roundId);
+
+    expect(toCandidate().at(-1)?.text ?? '').toMatch(/10:00.*America\/New_York/);
+  });
+
+  it('carries no meeting link', async () => {
+    const pipelineId = await pipelineAt('gold');
+    const roundId = (await bookGold(pipelineId, { meetingUrl: 'https://meet.example.com/abc' })).body.round.id as string;
+    mail.messages.length = 0;
+
+    await cancel(pipelineId, roundId);
+
+    expect(toCandidate().at(-1)?.text ?? '').not.toContain('meet.example.com');
+  });
+
+  it('reports the candidate notice in the response', async () => {
+    const pipelineId = await pipelineAt('gold');
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+
+    const res = await cancel(pipelineId, roundId);
+
+    expect(res.body.candidateNotice).toMatchObject({ sent: true });
+  });
+
+  it('emails nobody when the round was already past', async () => {
+    const pipelineId = await pipelineAt('gold');
+    const roundId = (await bookGold(pipelineId, { date: '2026-01-05' })).body.round.id as string;
+    mail.messages.length = 0;
+
+    await cancel(pipelineId, roundId);
+
+    expect(toCandidate()).toHaveLength(0);
+  });
+});
+
+describe('the AI round and its interview', () => {
+  const setSessionState = (state: string) => prisma.interviewSession.update({ where: { id: demo.sessionId }, data: { state } });
+
+  it('cannot be moved from the round', async () => {
+    const pipelineId = await pipelineAt('silver');
+    const roundId = (await bookSilver(pipelineId)).body.round.id as string;
+
+    const res = await request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/reschedule`).set(auth())
+      .send({ date: futureDate(6), time: '15:00', timeZone: 'Europe/London' });
+
+    expect(res.status).toBe(409);
+  });
+
+  it('is not emailed as a human round when someone tries to move it', async () => {
+    const pipelineId = await pipelineAt('silver');
+    const roundId = (await bookSilver(pipelineId)).body.round.id as string;
+    mail.messages.length = 0;
+
+    await request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/reschedule`).set(auth())
+      .send({ date: futureDate(6), time: '15:00', timeZone: 'Europe/London' });
+
+    expect(toCandidate()).toHaveLength(0);
+  });
+
+  it('follows the interview when a no-show is rebooked', async () => {
+    const pipelineId = await pipelineAt('silver');
+    const roundId = (await bookSilver(pipelineId)).body.round.id as string;
+    await setSessionState('NO_SHOW');
+
+    await request(app).post(`/api/interviews/${demo.sessionId}/schedule`).set(auth())
+      .send({ date: futureDate(8), time: '11:45', timeZone: 'Europe/Berlin' });
+
+    const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: demo.sessionId } });
+    expect({ status: round.status, at: round.scheduledAt.toISOString(), zone: round.scheduledTimeZone })
+      .toEqual({ status: 'SCHEDULED', at: session.scheduledAt?.toISOString(), zone: 'Europe/Berlin' });
+  });
+
+  it('refuses a future round whose interview can no longer be scheduled', async () => {
+    const pipelineId = await pipelineAt('silver');
+    await setSessionState('CANCELLED');
+
+    const res = await bookSilver(pipelineId);
+
+    expect(res.status).toBe(409);
+  });
+
+  it('books no round when the interview can no longer be scheduled', async () => {
+    const pipelineId = await pipelineAt('silver');
+    await setSessionState('CANCELLED');
+
+    await bookSilver(pipelineId);
+
+    expect(await prisma.interviewRound.count({ where: { pipelineId } })).toBe(0);
+  });
+
+  it('emails nobody when the interview can no longer be scheduled', async () => {
+    const pipelineId = await pipelineAt('silver');
+    await setSessionState('CANCELLED');
+    mail.messages.length = 0;
+
+    await bookSilver(pipelineId);
+
+    expect(toCandidate()).toHaveLength(0);
+  });
+
+  it('rebooks a no-show interview at the round time', async () => {
+    const pipelineId = await pipelineAt('silver');
+    await setSessionState('NO_SHOW');
+
+    const round = (await bookSilver(pipelineId)).body.round as { scheduledAt: string };
+
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: demo.sessionId } });
+    // Rebooked to RESCHEDULE_REQUIRED, then invited afresh by the send step.
+    expect({ state: session.state, at: session.scheduledAt?.toISOString() })
+      .toEqual({ state: 'INVITED', at: round.scheduledAt });
+  });
+
+  it('invites the candidate again when a no-show is rebooked', async () => {
+    const pipelineId = await pipelineAt('silver');
+    await setSessionState('NO_SHOW');
+    mail.messages.length = 0;
+
+    await bookSilver(pipelineId);
+
+    const text = toCandidate().at(-1)?.text ?? '';
+    expect({ time: /14:30.*Asia\/Kolkata/.test(text), portal: text.includes('/portal/') }).toEqual({ time: true, portal: true });
+  });
+});

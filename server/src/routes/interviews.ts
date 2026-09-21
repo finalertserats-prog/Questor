@@ -480,6 +480,29 @@ export const SCHEDULABLE_STATES: ReadonlySet<string> = new Set([...RESENDABLE_ST
  */
 const REBOOKABLE_STATES: ReadonlySet<string> = new Set(['NO_SHOW']);
 
+/**
+ * Put a new time on an interview session. A missed one is rebooked on the way
+ * (see REBOOKABLE_STATES). Conditional on the state read, so a session that
+ * moves on between the read and the write is refused rather than overwritten;
+ * `saved` is false then, and for any state that cannot be scheduled at all.
+ * Shared by the interview's own schedule route and the pipeline's AI round, so
+ * both accept, rebook and refuse the same sessions.
+ */
+export async function writeSessionSchedule(
+  db: Prisma.TransactionClient | typeof prisma,
+  session: { id: string; state: string },
+  at: Date,
+  timeZone: string | null,
+): Promise<{ saved: boolean; rebooking: boolean }> {
+  const rebooking = REBOOKABLE_STATES.has(session.state);
+  if (rebooking) assertTransition(session.state, 'RESCHEDULE_REQUIRED');
+  const { count } = await db.interviewSession.updateMany({
+    where: rebooking ? { id: session.id, state: session.state } : { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
+    data: { scheduledAt: at, scheduledTimeZone: timeZone, ...(rebooking ? { state: 'RESCHEDULE_REQUIRED' } : {}) },
+  });
+  return { saved: count === 1, rebooking };
+}
+
 /** The lifecycle actions this interview's state allows, each mirroring its route's own check. */
 function sessionActions(session: { state: string; attemptNumber: number }, assessed: boolean) {
   const stoppedWithoutFault = session.state === 'INCOMPLETE' || session.state === 'TECHNICAL_FAILURE';
@@ -688,13 +711,8 @@ interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), 
   // candidate that nothing will keep. Conditional, so a session that moves on
   // between the read and the write is refused rather than overwritten. The
   // zone is always written, so the older form clears one set before.
-  const rebooking = REBOOKABLE_STATES.has(session.state);
-  if (rebooking) assertTransition(session.state, 'RESCHEDULE_REQUIRED');
-  const { count } = await prisma.interviewSession.updateMany({
-    where: rebooking ? { id: session.id, state: session.state } : { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
-    data: { scheduledAt: at, scheduledTimeZone: timeZone, ...(rebooking ? { state: 'RESCHEDULE_REQUIRED' } : {}) },
-  });
-  if (count !== 1) {
+  const { saved, rebooking } = await writeSessionSchedule(prisma, session, at, timeZone);
+  if (!saved) {
     throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled.`);
   }
   // The pipeline's AI round is this interview: it moves with it, or the

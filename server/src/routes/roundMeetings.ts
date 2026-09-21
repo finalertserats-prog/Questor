@@ -56,8 +56,8 @@ async function respond(req: Request, pipeline: PipelineWithRounds, roundId: stri
 }
 
 /**
- * Tell the candidate what changed about their round: its new time, or the
- * meeting link it did not have when it was booked. Reads the row again so the
+ * Tell the candidate what changed about their round: its new time, the
+ * meeting link it did not have when it was booked, or that it is cancelled. Reads the row again so the
  * email carries what is stored now.
  */
 async function tellCandidate(req: Request, pipeline: PipelineWithRounds, roundId: string, stageLabel: string, kind: RoundNoticeKind): Promise<CandidateNotice> {
@@ -111,7 +111,7 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   z.object({}).strict().parse(req.body ?? {});
-  const { pipeline, round } = await loadRound(req);
+  const { pipeline, round, ctx } = await loadRound(req);
   if (round.conductedBy !== 'HUMAN') throw new HttpError(409, AI_ROUND);
 
   if (!(await markRoundCancelled(round.id, pipeline.id))) throw new HttpError(409, NOT_SCHEDULED);
@@ -125,7 +125,10 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCap
   // Reads the row again so a creation that finished in the meantime is seen.
   const current = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
   const meeting = await cancelMeeting(current);
-  res.json(await respond(req, pipeline, round.id, 'cancel', meeting));
+  // Booking and moving the round reached the candidate, so its cancellation
+  // does too. A round already past sends nothing (notifyCandidateOfHumanRound).
+  const candidateNotice = await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'cancelled');
+  res.json({ ...await respond(req, pipeline, round.id, 'cancel', meeting), candidateNotice });
 }));
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/meeting/retry', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {

@@ -6,7 +6,7 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { assertCanAccessCandidate, assertCanAccessRole, hasCapability } from '../services/access.js';
 import { aiConclusionVisible } from '../services/shadowMode.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice } from '../services/roundCandidateNotice.js';
-import { SCHEDULABLE_STATES, sendInterviewSchedule } from './interviews.js';
+import { sendInterviewSchedule, writeSessionSchedule } from './interviews.js';
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
 import { endObservation } from '../services/roundObserver.js';
@@ -305,8 +305,9 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   // Re-check the pipeline inside the same transaction as the insert. Checking
   // it only on load left a gap in which a concurrent decision or advance could
   // land, producing a round after a decision or for a stage already left.
-  const { round, noticeAdded } = await prisma.$transaction(async (tx) => {
+  const { round, noticeAdded, rebookedFrom } = await prisma.$transaction(async (tx) => {
     let noticeAdded = false;
+    let rebookedFrom: string | null = null;
     const stillHere = await tx.candidatePipeline.updateMany({
       where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: stage.key },
       data: { updatedAt: new Date() },
@@ -339,12 +340,17 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     // The AI round IS the interview session: the portal, the invitation and
     // the interview page read the session's time, so it takes the round's.
     // Only an interview still ahead is moved; a round recorded afterwards
-    // leaves a held interview's record alone.
+    // leaves a held interview's record alone. The move follows the interview's
+    // own schedule route: a no-show is rebooked, and an interview that can no
+    // longer be scheduled refuses the round, rather than leaving a round (and
+    // an email to the candidate) at a time the interview does not hold.
     if (!humanRound && body.sessionId && booked.at.getTime() > Date.now()) {
-      await tx.interviewSession.updateMany({
-        where: { id: body.sessionId, tenantId, state: { in: [...SCHEDULABLE_STATES] } },
-        data: { scheduledAt: booked.at, scheduledTimeZone: booked.timeZone },
-      });
+      const session = await tx.interviewSession.findFirstOrThrow({ where: { id: body.sessionId, tenantId }, select: { id: true, state: true } });
+      const { saved, rebooking } = await writeSessionSchedule(tx, session, booked.at, booked.timeZone);
+      if (!saved) {
+        throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled. Create a new interview for this candidate, then book the round with it.`);
+      }
+      if (rebooking) rebookedFrom = session.state;
     }
 
     const created = await tx.interviewRound.create({
@@ -357,8 +363,18 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         ...meetingFields,
       },
     });
-    return { round: created, noticeAdded };
+    return { round: created, noticeAdded, rebookedFrom };
   });
+
+  // Rebooking changed the interview's state as well as its time; recorded as
+  // the interview's schedule route records it.
+  if (rebookedFrom && body.sessionId) {
+    await logAudit({
+      tenantId, actorType: 'user', actorId: req.auth!.userId,
+      action: 'interview.scheduled', entityType: 'InterviewSession', entityId: body.sessionId,
+      after: { scheduledAt: booked.at.toISOString(), scheduledTimeZone: booked.timeZone, from: rebookedFrom, to: 'RESCHEDULE_REQUIRED', pipelineId: pipeline.id },
+    });
+  }
 
   // Changing what a candidate is told is a legal disclosure change: record who
   // made it and when. Written after the transaction commits, so the audit can

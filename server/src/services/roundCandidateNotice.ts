@@ -23,7 +23,7 @@ export interface CandidateNotice {
   readonly note: string;
 }
 
-export type RoundNoticeKind = 'booked' | 'moved' | 'link';
+export type RoundNoticeKind = 'booked' | 'moved' | 'link' | 'cancelled';
 
 interface HumanRoundEmail {
   readonly kind: RoundNoticeKind;
@@ -37,7 +37,7 @@ interface HumanRoundEmail {
   readonly meetingUrl: string | null;
 }
 
-const OPENING: Readonly<Record<RoundNoticeKind, (label: string, role: string, when: string) => string>> = {
+const OPENING: Readonly<Record<Exclude<RoundNoticeKind, 'cancelled'>,(label: string, role: string, when: string) => string>> = {
   booked: (label, role, when) => `Your ${label} interview for the ${role} role is booked for ${when}.`,
   moved: (label, role, when) => `Your ${label} interview for the ${role} role has moved. It is now booked for ${when}.`,
   link: (label, role, when) => `Here is the meeting link for your ${label} interview for the ${role} role, booked for ${when}.`,
@@ -48,7 +48,8 @@ export function buildHumanRoundEmail(d: HumanRoundEmail): EmailMessage {
   // Configurable labels can hold control characters; strip them before a subject or plain-text body.
   const label = d.stageLabel.replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
   const when = formatScheduledTime(d.scheduledAt, d.timeZone);
-  const opening = `${OPENING[d.kind](label, d.roleTitle, when)} It takes about ${d.durationMinutes} minutes.`;
+  if (d.kind === 'cancelled') return cancelledEmail(d, first, label, when);
+  const opening =`${OPENING[d.kind](label, d.roleTitle, when)} It takes about ${d.durationMinutes} minutes.`;
   const join = d.meetingUrl ? `Join the meeting: ${d.meetingUrl}` : 'We will send you the meeting link before then.';
   const text = [`Hi ${first},`, '', opening, '', join, '', 'Best regards,', `The ${d.companyName} hiring team`].join('\n');
   const joinHtml = d.meetingUrl
@@ -64,6 +65,20 @@ export function buildHumanRoundEmail(d: HumanRoundEmail): EmailMessage {
     ? `Your interview for ${headerSafe(d.roleTitle)} has moved`
     : `Your interview for ${headerSafe(d.roleTitle)} at ${headerSafe(d.companyName)}`;
   return companyEmail({ to: '', subject, text, html }, d.companyName);
+}
+
+/** The round is off: no link (the meeting is gone), just what was cancelled. */
+function cancelledEmail(d: HumanRoundEmail, first: string, label: string, when: string): EmailMessage {
+  const opening = `Your ${label} interview for the ${d.roleTitle} role, booked for ${when}, has been cancelled.`;
+  const next = 'The hiring team will be in touch about next steps.';
+  const text = [`Hi ${first},`, '', opening, '', next, '', 'Best regards,', `The ${d.companyName} hiring team`].join('\n');
+  const html = [
+    `<p style="margin:0 0 14px">Hi ${escapeHtml(first)},</p>`,
+    `<p style="margin:0 0 18px">${escapeHtml(opening)}</p>`,
+    `<p style="margin:0 0 18px">${escapeHtml(next)}</p>`,
+    `<p style="margin:0">Best regards,<br>The ${escapeHtml(d.companyName)} hiring team</p>`,
+  ].join('\n');
+  return companyEmail({ to: '', subject: `Your interview for ${headerSafe(d.roleTitle)} has been cancelled`, text, html }, d.companyName);
 }
 
 /**
