@@ -37,4 +37,10 @@ describe('eraseOutcome', () => {
   it('says this application stays when it is the one held', () => {
     expect(eraseOutcome({ erased: false, erasedCount: 1, skippedCount: 1 })).toEqual({ gone: false, text: 'Erased 1 application. 1 application is under legal hold and was kept, including this one.' });
   });
+
+  it('asks for a retry when some applications could not be erased', () => {
+    expect(eraseOutcome({ erased: false, erasedCount: 1, skippedCount: 0, failedCount: 2 })).toEqual({
+      gone: false, text: 'Erased 1 application. 2 applications could not be erased, so this one was kept. Erase again to finish.',
+    });
+  });
 });

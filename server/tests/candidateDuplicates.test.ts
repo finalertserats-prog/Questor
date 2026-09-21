@@ -198,7 +198,8 @@ describe('DELETE /api/candidates/:id with allApplications', () => {
       expect(entries.map((e) => ({ actorId: e.actorId, entityId: e.entityId, after: JSON.parse(e.afterJson) }))).toEqual([{
         actorId: adminId,
         entityId: dataApp,
-        after: { reasonProvided: true, erasedCount: 2, skippedCount: 1, erasedIds: [dataApp, platformApp].sort(), skippedIds: [analyticsApp] },
+        // The requested application is erased last.
+        after: { reasonProvided: true, erasedCount: 2, skippedCount: 1, failedCount: 0, erasedIds: [platformApp, dataApp], skippedIds: [analyticsApp], failedIds: [] },
       }]);
     });
   });
