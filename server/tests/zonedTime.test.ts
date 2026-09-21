@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatScheduledTime, zonedLocalToUtc } from '../src/services/zonedTime.js';
+import { formatScheduledTime, zonedLocalToUtc, zonedWallClock } from '../src/services/zonedTime.js';
 
 /**
  * A recruiter picks a wall-clock time in the candidate's zone ("14:30 in
@@ -92,5 +92,15 @@ describe('writing a scheduled time down for an email', () => {
 
   it('falls back to UTC, labelled, when there is no zone', () => {
     expect(formatScheduledTime(AT, null)).toBe('2026-10-01T09:00:00+00:00 (UTC)');
+  });
+});
+
+describe('the wall clock a calendar API is given', () => {
+  it('is the zone local time with no offset', () => {
+    expect(zonedWallClock(new Date('2026-10-08T09:00:00.000Z'), 'Asia/Kolkata')).toBe('2026-10-08T14:30:00');
+  });
+
+  it('follows daylight saving in the zone', () => {
+    expect(zonedWallClock(new Date('2026-07-01T14:00:00.000Z'), 'America/New_York')).toBe('2026-07-01T10:00:00');
   });
 });

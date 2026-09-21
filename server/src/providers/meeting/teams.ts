@@ -2,6 +2,7 @@ import { isVendorConfigured, readEnv } from './connectorEnv.js';
 import { callJson, callNoContent } from './vendorApi.js';
 import { httpsUrlOrNull, missingJoinUrl } from './vendorHttp.js';
 import type { MeetingDetails, MeetingVendor } from './types.js';
+import { zonedWallClock } from '../../services/zonedTime.js';
 
 // Microsoft Teams meetings as calendar events with isOnlineMeeting, created in
 // the organiser's calendar with an app-only Graph token.
@@ -12,8 +13,9 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
 const eventsUrl = () => `${GRAPH}/users/${encodeURIComponent(readEnv('MS_GRAPH_ORGANIZER_USER_ID'))}/events`;
 const eventUrl = (id: string) => `${eventsUrl()}/${encodeURIComponent(id)}`;
 
-// Graph takes a local date-time plus a zone name; UTC keeps it unambiguous.
-const graphTime = (date: Date) => ({ dateTime: date.toISOString().slice(0, -1), timeZone: 'UTC' });
+// Graph takes a local date-time plus a zone name (IANA names are accepted):
+// the wall clock in the round's zone, so the event reads in that zone.
+const graphTime = (date: Date, timeZone: string) => ({ dateTime: zonedWallClock(date, timeZone), timeZone });
 const endOf = (details: MeetingDetails) => new Date(details.startsAt.getTime() + details.durationMinutes * 60_000);
 
 const NOT_FOUND_ORGANISER = 'Microsoft Teams could not find the organiser configured for meetings. An admin should check MS_GRAPH_ORGANIZER_USER_ID.';
@@ -39,8 +41,8 @@ export const teamsVendor: MeetingVendor = {
       body: {
         subject: details.title,
         body: { contentType: 'text', content: details.description },
-        start: graphTime(details.startsAt),
-        end: graphTime(endOf(details)),
+        start: graphTime(details.startsAt, details.timeZone),
+        end: graphTime(endOf(details), details.timeZone),
         isOnlineMeeting: true,
         onlineMeetingProvider: 'teamsForBusiness',
         // No attendees: Questor does not hand candidate contact details to the
@@ -75,7 +77,7 @@ export const teamsVendor: MeetingVendor = {
       // Absolute start/end: repeating the PATCH lands the same state.
       idempotent: true,
       hints: { notFound: 'The Teams meeting no longer exists. Add a new meeting link for this round.' },
-      body: { start: graphTime(details.startsAt), end: graphTime(endOf(details)) },
+      body: { start: graphTime(details.startsAt, details.timeZone), end: graphTime(endOf(details), details.timeZone) },
     });
   },
 

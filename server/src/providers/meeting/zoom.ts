@@ -9,7 +9,9 @@ import type { MeetingDetails, MeetingVendor } from './types.js';
 const API = 'https://api.zoom.us/v2';
 const SCHEDULED_MEETING = 2;
 
-// Zoom documents start_time as yyyy-MM-ddTHH:mm:ssZ (no milliseconds).
+// Zoom documents start_time as yyyy-MM-ddTHH:mm:ssZ (no milliseconds). With
+// the Z the instant is fixed; `timezone` only sets the zone Zoom's own
+// invitation is written in.
 const zoomTime = (date: Date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const meetingUrl = (id: string) => `${API}/meetings/${encodeURIComponent(id)}`;
 
@@ -36,7 +38,7 @@ export const zoomVendor: MeetingVendor = {
         type: SCHEDULED_MEETING,
         start_time: zoomTime(details.startsAt),
         duration: details.durationMinutes,
-        timezone: 'UTC',
+        timezone: details.timeZone,
         // The candidate should not be alone in the meeting before the interviewers.
         settings: { join_before_host: false, waiting_room: true },
       },
@@ -59,7 +61,7 @@ export const zoomVendor: MeetingVendor = {
       url: meetingUrl(externalId),
       idempotent: true,
       hints: { notFound: 'The Zoom meeting no longer exists. Add a new meeting link for this round.' },
-      body: { start_time: zoomTime(details.startsAt), duration: details.durationMinutes, timezone: 'UTC' },
+      body: { start_time: zoomTime(details.startsAt), duration: details.durationMinutes, timezone: details.timeZone },
     });
   },
 

@@ -10,7 +10,8 @@ import type { MeetingDetails, MeetingVendor } from './types.js';
 const EVENTS = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
 const eventUrl = (id: string) => `${EVENTS}/${encodeURIComponent(id)}`;
 
-const googleTime = (date: Date) => ({ dateTime: date.toISOString(), timeZone: 'UTC' });
+// The offset in dateTime fixes the instant; timeZone is the zone the event is shown in.
+const googleTime = (date: Date, timeZone: string) => ({ dateTime: date.toISOString(), timeZone });
 const endOf = (details: MeetingDetails) => new Date(details.startsAt.getTime() + details.durationMinutes * 60_000);
 
 const NOT_FOUND_CALENDAR = 'Google could not find the calendar of the user meetings are created as. An admin should check GOOGLE_IMPERSONATED_USER.';
@@ -41,8 +42,8 @@ export const meetVendor: MeetingVendor = {
       body: {
         summary: details.title,
         description: details.description,
-        start: googleTime(details.startsAt),
-        end: googleTime(endOf(details)),
+        start: googleTime(details.startsAt, details.timeZone),
+        end: googleTime(endOf(details), details.timeZone),
         conferenceData: {
           createRequest: { requestId: details.requestId, conferenceSolutionKey: { type: 'hangoutsMeet' } },
         },
@@ -74,7 +75,7 @@ export const meetVendor: MeetingVendor = {
       // Absolute start/end: repeating the PATCH lands the same state.
       idempotent: true,
       hints: { notFound: 'The Google Calendar event no longer exists. Add a new meeting link for this round.' },
-      body: { start: googleTime(details.startsAt), end: googleTime(endOf(details)) },
+      body: { start: googleTime(details.startsAt, details.timeZone), end: googleTime(endOf(details), details.timeZone) },
     });
   },
 
