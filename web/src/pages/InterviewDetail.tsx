@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { useAuth } from '../auth';
+import { accommodationRequestOf, interviewActions, MIN_REASON_LENGTH, type StateActions } from '../components/interviewActionsModel';
 import { recBadge, stateBadge, Banner } from '../components/ui';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
-import { isInFlight } from './CandidatesList';
 import { formatDateTime, formatScheduled } from '../components/dateFormat';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker, isSchedulable } from '../components/TimeZoneDateTimePicker';
 import { scheduleRequest, type ScheduleDraft } from '../components/zonedScheduleModel';
@@ -21,7 +22,8 @@ interface Turn {
   /** Set when the turn is the candidate pressing Leave rather than anything they said. */
   source?: 'leave_button';
 }
-interface Invitation { token: string; status: string; portalUrl: string; sentAt: string | null; openedAt: string | null; }
+// No token: the server never returns one (links are sealed), only the portal link.
+interface Invitation { status: string; portalUrl: string; sentAt: string | null; openedAt: string | null; }
 interface Session {
   id: string; state: string; provider: string; language: string; durationMinutes: number;
   scheduledAt: string | null;
@@ -42,10 +44,19 @@ interface InterviewResp {
   /** Who and what the interview is for. Optional: older servers do not send them. */
   candidate?: { id: string; name: string } | null;
   role?: { id: string; title: string } | null;
+  /** What this interview's state allows. Absent on an older server. */
+  actions?: StateActions;
 }
 
 /** The things this page can do, one at a time. */
-type Action = 'invite' | 'resend' | 'schedule' | 'schedule-send' | 'cancel';
+type Action = 'invite' | 'resend' | 'schedule' | 'schedule-send' | 'cancel' | 'retake' | 'assess-partial' | 'reopen';
+
+/** What the recovery card says, by state. */
+const RECOVERY_HINTS: Record<string, string> = {
+  MANUAL_HANDOFF: 'The candidate asked for an accommodation. Once it is arranged, reopen the interview and they carry on from where they stopped.',
+  INCOMPLETE: 'The interview stopped part-way. Offer a retake on a new link, or assess what was said if it is enough to judge fairly.',
+  TECHNICAL_FAILURE: 'The interview failed for a technical reason. Offer a retake on a new link.',
+};
 
 /** What POST /interviews/:id/schedule says about a send it was asked for. */
 interface ScheduleResp { delivery?: { sent: boolean; note: string } }
@@ -61,6 +72,9 @@ export function InterviewDetail() {
   const orgZone = useOrgTimeZone();
   const [busyAction, setBusyAction] = useState<Action | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [reason, setReason] = useState('');
+  const { user } = useAuth();
+  const navigate = useNavigate();
 
   // Returns its promise: an action that re-enables its button before the fresh
   // data lands invites a second press against the state it just changed.
@@ -87,6 +101,7 @@ export function InterviewDetail() {
     setNotice('');
     setDraft((current) => ({ ...EMPTY_SCHEDULE, timeZone: current.timeZone }));
     setConfirmCancel(false);
+    setReason('');
     setLoading(true);
     void load();
     return () => { latestLoad.current = { id: undefined, seq: latestLoad.current.seq + 1 }; };
@@ -113,6 +128,9 @@ export function InterviewDetail() {
       sentAt: invitation.sentAt, openedAt: invitation.openedAt, assessmentId: assessment?.id ?? null,
     }, formatDateTime)
     : null;
+  const acts = interviewActions(session.state, data.actions, user);
+  const accommodation = accommodationRequestOf(session.consent);
+  const reasonReady = reason.trim().length >= MIN_REASON_LENGTH;
 
   // Which action is running, not merely that one is: a single flag put
   // "Sending…" on the resend button while the person had pressed Schedule.
@@ -152,6 +170,22 @@ export function InterviewDetail() {
     setConfirmCancel(false);
     void doAction('cancel', () => api.post(`/interviews/${id}/cancel`, {}), 'Interview cancelled.');
   };
+  // Each is recorded with its reason. A retake is a new interview, and a
+  // partial assessment is read on the assessment page, so both go there.
+  const retake = () => void doAction('retake', async () => {
+    const resp = await api.post<{ session: { id: string } }>(`/interviews/${id}/retake`, { reason: reason.trim() });
+    setReason('');
+    navigate(`/interviews/${resp.session.id}`);
+  });
+  const assessPartial = () => void doAction('assess-partial', async () => {
+    const resp = await api.post<{ assessmentId: string }>(`/interviews/${id}/assess-partial`, { reason: reason.trim() });
+    setReason('');
+    navigate(`/assessments/${resp.assessmentId}`);
+  });
+  const reopen = () => void doAction('reopen', async () => {
+    await api.post(`/interviews/${id}/reopen`, { reason: reason.trim() });
+    setReason('');
+  }, 'Interview reopened. Let the candidate know their link works again.');
 
   const copyUrl = async () => {
     if (!invitation?.portalUrl) return;
@@ -174,14 +208,22 @@ export function InterviewDetail() {
         subtitle={data.candidate?.name ? 'Interview' : undefined}
         badge={stateBadge(session.state)}
         actions={
-          // Nothing to cancel once the interview has reached a state it will
-          // not leave on its own — the same set the candidates list reads.
-          isInFlight(session.state) ? (
-            <button type="button" className="btn danger" onClick={cancel} disabled={busyAction !== null}>
-              <Icon name="x-circle" size={16} />
-              {busyAction === 'cancel' ? 'Cancelling…' : confirmCancel ? 'Confirm cancel' : 'Cancel interview'}
-            </button>
-          ) : undefined
+          <>
+            {data.candidate && (
+              <Link className="btn secondary" to={`/candidates/${data.candidate.id}`} data-testid="back-to-candidate">
+                <Icon name="arrow-left" size={16} />Back to candidate
+              </Link>
+            )}
+            {/* Only where the state machine lets the interview be cancelled:
+                elsewhere the server refuses, and a started interview is ended
+                by the candidate or the engine, not from here. */}
+            {acts.cancel && (
+              <button type="button" className="btn danger" onClick={cancel} disabled={busyAction !== null}>
+                <Icon name="x-circle" size={16} />
+                {busyAction === 'cancel' ? 'Cancelling…' : confirmCancel ? 'Confirm cancel' : 'Cancel interview'}
+              </button>
+            )}
+          </>
         }
       />
 
@@ -202,6 +244,46 @@ export function InterviewDetail() {
             <Link className="link-action" to={`/assessments/${assessment.id}`}><Icon name="evidence" size={15} />View assessment</Link>
           </span>
         </Banner>
+      )}
+
+      {accommodation && (
+        <div className="card" data-testid="accommodation-request">
+          <h2 className="card-title"><Icon name="handoff" />Accommodation request</h2>
+          <p className="muted small" style={{ margin: '0 0 8px' }}>
+            [ from the candidate{accommodation.requestedAt ? `, ${formatDateTime(accommodation.requestedAt)}` : ''} ]
+          </p>
+          <blockquote style={{ margin: 0, paddingLeft: 12, borderLeft: '2px solid var(--rule-strong)', whiteSpace: 'pre-wrap' }}>{accommodation.text}</blockquote>
+        </div>
+      )}
+
+      {(acts.retake || acts.assessPartial || acts.reopen) && (
+        <div className="card" data-testid="interview-recovery">
+          <h2 className="card-title"><Icon name="refresh" />Next step</h2>
+          {RECOVERY_HINTS[session.state] && <p className="muted small" style={{ marginTop: 0 }}>{RECOVERY_HINTS[session.state]}</p>}
+          <label htmlFor="recovery-reason">Reason (kept in the audit trail)</label>
+          <textarea id="recovery-reason" rows={2} maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} disabled={busyAction !== null} />
+          {!reasonReady && <div className="muted small">At least {MIN_REASON_LENGTH} characters.</div>}
+          <div className="row" style={{ gap: 8, marginTop: 10 }}>
+            {acts.reopen && (
+              <button type="button" className="btn" onClick={reopen} disabled={busyAction !== null || !reasonReady}>
+                <Icon name={busyAction === 'reopen' ? 'hourglass' : 'refresh'} size={16} />
+                {busyAction === 'reopen' ? 'Reopening…' : 'Reopen interview'}
+              </button>
+            )}
+            {acts.retake && (
+              <button type="button" className="btn" onClick={retake} disabled={busyAction !== null || !reasonReady}>
+                <Icon name={busyAction === 'retake' ? 'hourglass' : 'refresh'} size={16} />
+                {busyAction === 'retake' ? 'Setting up…' : 'Offer a retake'}
+              </button>
+            )}
+            {acts.assessPartial && (
+              <button type="button" className="btn secondary" onClick={assessPartial} disabled={busyAction !== null || !reasonReady}>
+                <Icon name={busyAction === 'assess-partial' ? 'hourglass' : 'evidence'} size={16} />
+                {busyAction === 'assess-partial' ? 'Assessing…' : 'Assess the partial transcript'}
+              </button>
+            )}
+          </div>
+        </div>
       )}
 
       <div className="card">
@@ -295,14 +377,19 @@ export function InterviewDetail() {
               </button>
             </div>
             <div className="muted small" style={{ marginTop: 6 }}>Share this link with the candidate.</div>
-            <div className="row" style={{ marginTop: 14, gap: 8 }}>
-              <Link className="btn" to={`/room/${invitation.token}`}><Icon name="play" size={16} />Open interview room (recruiter preview)</Link>
-              <button className="btn secondary" type="button" onClick={resend} disabled={busyAction !== null}>
-                <Icon name={busyAction === 'resend' ? 'hourglass' : 'send'} size={16} />
-                {busyAction === 'resend' ? 'Sending…' : 'Resend email'}
-              </button>
-            </div>
+            {/* No recruiter preview here: the link is the candidate's own, and
+                opening it would mark it opened for them. */}
+            {acts.invite && (
+              <div className="row" style={{ marginTop: 14, gap: 8 }}>
+                <button className="btn secondary" type="button" onClick={resend} disabled={busyAction !== null}>
+                  <Icon name={busyAction === 'resend' ? 'hourglass' : 'send'} size={16} />
+                  {busyAction === 'resend' ? 'Sending…' : 'Resend email'}
+                </button>
+              </div>
+            )}
           </div>
+        ) : !acts.invite ? (
+          <p className="muted small" style={{ margin: 0 }}>No invitation has been sent yet.</p>
         ) : (
           <div>
             <button type="button" className="btn" onClick={invite} disabled={busyAction !== null}>
@@ -315,8 +402,16 @@ export function InterviewDetail() {
           </div>
         )}
 
+        {/* Only while a time can still mean something: before the interview,
+            or to book a missed one again. Elsewhere the server refuses. */}
+        {acts.schedule && (
         <div role="group" aria-labelledby="schedule-title" style={{ marginTop: 16 }}>
           <h3 id="schedule-title" className="card-title"><Icon name="schedule" size={16} />Schedule</h3>
+          {session.state === 'NO_SHOW' && (
+            <p className="muted small" style={{ margin: '0 0 8px' }} data-testid="rebook-note">
+              The candidate missed this interview. A new time books it again; sending emails them a fresh link.
+            </p>
+          )}
           {session.scheduledAt && (
             <p className="muted small" style={{ margin: '0 0 8px' }} data-testid="scheduled-now">
               Now: {formatScheduled(session.scheduledAt, session.scheduledTimeZone, orgZone)}
@@ -324,10 +419,12 @@ export function InterviewDetail() {
           )}
           <TimeZoneDateTimePicker idPrefix="schedule" value={draft} onChange={setDraft} orgZone={orgZone} disabled={busyAction !== null} />
           <div className="row" style={{ gap: 8 }}>
-            <button type="button" className="btn" onClick={() => schedule(true)} disabled={busyAction !== null || !isSchedulable(draft)}>
-              <Icon name={busyAction === 'schedule-send' ? 'hourglass' : 'send'} size={16} />
-              {busyAction === 'schedule-send' ? 'Saving and sending…' : 'Save schedule and send'}
-            </button>
+            {acts.invite && (
+              <button type="button" className="btn" onClick={() => schedule(true)} disabled={busyAction !== null || !isSchedulable(draft)}>
+                <Icon name={busyAction === 'schedule-send' ? 'hourglass' : 'send'} size={16} />
+                {busyAction === 'schedule-send' ? 'Saving and sending…' : 'Save schedule and send'}
+              </button>
+            )}
             <button type="button" className="btn secondary" onClick={() => schedule(false)} disabled={busyAction !== null || !isSchedulable(draft)}>
               <Icon name={busyAction === 'schedule' ? 'hourglass' : 'schedule'} size={16} />
               {busyAction === 'schedule' ? 'Saving…' : 'Save only'}
@@ -337,6 +434,7 @@ export function InterviewDetail() {
             {invitation ? 'Sending emails the candidate again with the new time.' : 'Sending creates the invitation and emails it with this time.'}
           </p>
         </div>
+        )}
       </div>
 
       <div className="card">

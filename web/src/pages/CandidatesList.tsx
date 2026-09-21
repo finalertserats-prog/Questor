@@ -34,7 +34,9 @@ interface CandidateRow {
  * (visible, chased) rather than silently reading as finished.
  */
 const TERMINAL_STATES = new Set([
-  'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED', 'ACCEPTED',
+  // Not ACCEPTED: the candidate opened the link and has not started, which is
+  // exactly the interview someone still chases or cancels.
+  'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED',
   'CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW',
   // Started, then stopped responding. Terminal so it leaves the chase list —
   // it was showing as "in progress" for hours after the tab was closed.
@@ -45,7 +47,7 @@ const TERMINAL_STATES = new Set([
  * States where the candidate has been invited but has not yet begun. Nothing is
  * happening and nothing is stuck — someone simply has not turned up yet.
  */
-const NOT_STARTED_STATES = new Set(['PROVISIONED', 'INVITED']);
+const NOT_STARTED_STATES = new Set(['PROVISIONED', 'INVITED', 'ACCEPTED']);
 
 export function isInFlight(state: string | null | undefined): boolean {
   return !!state && !TERMINAL_STATES.has(state);
