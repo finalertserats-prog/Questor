@@ -190,6 +190,18 @@ async function deleteProfileCascade(
   await count('profiles', () => tx.candidateProfileVersion.deleteMany({ where: { id: { in: profileIds } } }));
 }
 
+/** Whether anything of this candidate's is under legal hold, which blocks erasure. */
+export async function candidateUnderLegalHold(candidateId: string, tenantId: string): Promise<boolean> {
+  const held = await prisma.interviewSession.count({
+    where: { candidateId, tenantId, OR: [{ legalHold: true }, { artifacts: { some: { legalHold: true } } }] },
+  });
+  // Resume uploads hang off the candidate, not a session, so a hold on one was
+  // invisible to the session-based check above and the file was deleted anyway.
+  const heldArtifacts = await prisma.artifact.count({ where: { candidateId, tenantId, legalHold: true } });
+  // An AI-observer transcript of a human round can be held on its own.
+  return held > 0 || heldArtifacts > 0 || await candidateHasHeldObservation(candidateId, tenantId);
+}
+
 export interface ErasureResult {
   candidateId: string;
   deleted: Record<string, number>;
@@ -222,19 +234,7 @@ export async function eraseCandidate(o: {
   // anyway would destroy the evidence the hold exists to preserve, through a
   // supported endpoint, at the request of the person the claim may concern.
   // Release the hold deliberately first if erasure is genuinely correct.
-  const held = await prisma.interviewSession.count({
-    where: {
-      candidateId: o.candidateId,
-      tenantId: o.tenantId,
-      OR: [{ legalHold: true }, { artifacts: { some: { legalHold: true } } }],
-    },
-  });
-  // Resume uploads hang off the candidate, not a session, so a hold on one was
-  // invisible to the session-based check above and the file was deleted anyway.
-  const heldArtifacts = await prisma.artifact.count({ where: { candidateId: o.candidateId, tenantId: o.tenantId, legalHold: true } });
-  // An AI-observer transcript of a human round can be held on its own.
-  const heldObservation = await candidateHasHeldObservation(o.candidateId, o.tenantId);
-  if (held > 0 || heldArtifacts > 0 || heldObservation) {
+  if (await candidateUnderLegalHold(o.candidateId, o.tenantId)) {
     throw new HttpError(
       409,
       'This candidate has interview data under legal hold and cannot be erased. Release the hold first if erasure is appropriate.',

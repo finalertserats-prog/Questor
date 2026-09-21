@@ -79,3 +79,15 @@ describe('interpretResponse keeps the refusal code', () => {
     expect('code' in out).toBe(false);
   });
 });
+
+describe('interpretResponse keeps the application a duplicate refusal names', () => {
+  it('carries the candidateId the server attached', () => {
+    expect(interpretResponse({ ok: false, status: 409, statusText: 'Conflict', text: '{"error":"Already.","code":"candidate_exists","candidateId":"cand-1"}' }))
+      .toEqual({ kind: 'error', status: 409, message: 'Already.', code: 'candidate_exists', candidateId: 'cand-1' });
+  });
+
+  it('leaves the candidateId out when the server sent none', () => {
+    const out = interpretResponse({ ok: false, status: 409, statusText: 'Conflict', text: '{"error":"No ATS.","code":"ATS_NOT_CONNECTED"}' });
+    expect('candidateId' in out).toBe(false);
+  });
+});

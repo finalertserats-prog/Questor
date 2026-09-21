@@ -7,7 +7,7 @@ import { roleDisplayLabels } from './roleLabelModel';
 import {
   COPIED_DETAILS_NOTE,
   applyFailureMessage,
-  existingApplicationFor,
+  existingApplicationId,
   initialRoleId,
   roleEntryLabel,
   rolesOpenToPerson,
@@ -83,7 +83,7 @@ export function SetUpForAnotherRole(props: {
       props.onApplied?.();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 'candidate_exists') {
-        setOutcome({ kind: 'exists', candidateId: await findExisting(person.email, roleId) });
+        setOutcome({ kind: 'exists', candidateId: existingApplicationId(err) });
       } else {
         setError(applyFailureMessage(err));
       }
@@ -150,11 +150,4 @@ function existingPerson(people: readonly CandidatePerson[], fallback: { readonly
   const wanted = fallback.email.trim().toLowerCase();
   return people.find((p) => p.email.trim().toLowerCase() === wanted)
     ?? { candidateId: fallback.candidateId, fullName: fallback.fullName, email: fallback.email, phone: '', hasResume: false, roles: [] };
-}
-
-/** The application the person already has on this role, for a link; null when it cannot be found. */
-async function findExisting(email: string, roleId: string): Promise<string | null> {
-  const qs = new URLSearchParams({ q: email });
-  const found = await api.get<{ people: CandidatePerson[] }>(`/candidates/search?${qs.toString()}`).catch(() => null);
-  return found ? existingApplicationFor(found.people ?? [], email, roleId) : null;
 }

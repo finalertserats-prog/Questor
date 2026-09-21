@@ -164,6 +164,27 @@ const APPLY_ATTEMPTS = 2;
 const APPLY_TIMEOUT_MS = 20_000;
 
 /**
+ * The application this address already has on this role, if any. Every way a
+ * row is created for a role asks this inside its creating transaction: one
+ * person, one application per role, without a database constraint (older
+ * data may still hold duplicates, and erasure must be able to reach them).
+ */
+export async function findApplicationOnRole(
+  tx: Prisma.TransactionClient,
+  o: { readonly tenantId: string; readonly roleId: string; readonly emailNormalized: string },
+): Promise<{ readonly id: string } | null> {
+  return tx.candidate.findFirst({ where: { tenantId: o.tenantId, roleId: o.roleId, emailNormalized: o.emailNormalized }, select: { id: true } });
+}
+
+/**
+ * Run `body` as one Serializable transaction, retried once on a conflict: two
+ * identical creates at once cannot both pass the duplicate check inside it.
+ */
+export function inApplicationTransaction<T>(body: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
+  return retryOnConflict(() => prisma.$transaction(body, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: APPLY_TIMEOUT_MS }));
+}
+
+/**
  * Put the person behind `sourceId` forward for `roleId` as a new application.
  *
  * The duplicate check, the row, its owner and its pipeline commit together
@@ -180,8 +201,8 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
   const resume = await latestResume(source.id);
   const scoring = resume ? await resumeScoringFor(roleId) : null;
 
-  const attempt = () => prisma.$transaction(async (tx) => {
-    const existing = await tx.candidate.findFirst({ where: { tenantId: auth.tenantId, roleId, emailNormalized }, select: { id: true } });
+  const outcome = await inApplicationTransaction(async (tx) => {
+    const existing = await findApplicationOnRole(tx, { tenantId: auth.tenantId, roleId, emailNormalized });
     if (existing) return { kind: 'exists' as const, candidateId: existing.id };
     const candidate = await tx.candidate.create({
       data: { tenantId: auth.tenantId, roleId, fullName: source.fullName, email: source.email, emailNormalized, phone: source.phone },
@@ -193,9 +214,7 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
     const events: PipelineEvent[] = stored ? ['candidate.onboarded', 'candidate.profiled'] : ['candidate.onboarded'];
     const started = await startPipeline(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, events });
     return { kind: 'created' as const, candidate, stored, started };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: APPLY_TIMEOUT_MS });
-
-  const outcome = await retryOnConflict(attempt);
+  });
   if (outcome.kind === 'exists') return outcome;
   await recordApplied(auth, source.id, outcome);
   return { kind: 'created', candidate: outcome.candidate, profileCopied: outcome.stored !== null, fit: outcome.stored?.fit ?? null };

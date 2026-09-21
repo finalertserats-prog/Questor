@@ -84,6 +84,11 @@ describe('importNotice', () => {
       .toMatch(/resume you added was not uploaded/i);
   });
 
+  it('says the person is already on the role when the match was their address', () => {
+    expect(importNotice({ candidate: { id: 'c1', fullName: 'Asha Rao' }, alreadyImported: true, matchedBy: 'email' }))
+      .toBe('Asha Rao is already a candidate for this role, so nothing new was created.');
+  });
+
   it('does not mention a resume nobody gave', () => {
     expect(importNotice({ candidate: { id: 'c1', fullName: 'Asha Rao' }, alreadyImported: true })).not.toMatch(/resume/i);
   });

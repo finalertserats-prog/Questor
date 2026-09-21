@@ -71,6 +71,16 @@ export function existingApplicationFor(people: readonly CandidatePerson[], email
   return match?.roles.find((r) => r.roleId === roleId)?.candidateId ?? null;
 }
 
+/** The application a candidate_exists refusal points at; null for any other failure. */
+export function existingApplicationId(err: unknown): string | null {
+  if (!(err instanceof ApiError) || err.code !== 'candidate_exists') return null;
+  return err.candidateId ?? null;
+}
+
+export function alreadyOnRoleNotice(fullName: string): string {
+  return `${fullName.trim() || 'This person'} is already a candidate for this role.`;
+}
+
 export function applyFailureMessage(err: unknown): string {
   if (err instanceof ApiError && err.code === 'candidate_exists') return 'This person is already a candidate for that role.';
   if (err instanceof Error && err.message) return err.message;

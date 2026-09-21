@@ -57,10 +57,13 @@ export class ApiError extends Error {
   status: number;
   /** Set when the server named the refusal (e.g. ATS_NOT_CONNECTED). */
   code?: string;
-  constructor(status: number, message: string, code?: string) {
+  /** Set on candidate_exists: the application already there. */
+  candidateId?: string;
+  constructor(status: number, message: string, code?: string, candidateId?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.candidateId = candidateId;
   }
 }
 
@@ -113,7 +116,7 @@ async function req<T>(method: string, path: string, body?: unknown, isForm = fal
   }
   const text = await res.text();
   const outcome = interpretResponse({ ok: res.ok, status: res.status, statusText: res.statusText, text });
-  if (outcome.kind === 'error') throw new ApiError(outcome.status, outcome.message, outcome.code);
+  if (outcome.kind === 'error') throw new ApiError(outcome.status, outcome.message, outcome.code, outcome.candidateId);
   return outcome.data as T;
 }
 
@@ -127,7 +130,7 @@ export const api = {
   post: <T>(p: string, body?: unknown) => req<T>('POST', p, body),
   put: <T>(p: string, body?: unknown) => req<T>('PUT', p, body),
   patch: <T>(p: string, body?: unknown) => req<T>('PATCH', p, body),
-  del: <T>(p: string) => req<T>('DELETE', p),
+  del: <T>(p: string, body?: unknown) => req<T>('DELETE', p, body),
   postForm: <T>(p: string, form: FormData) => req<T>('POST', p, form, true),
   // Public portal helpers reuse the same fetch; they carry no session cookie
   // and the server exempts /api/portal/* from CSRF.

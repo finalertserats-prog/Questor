@@ -22,10 +22,11 @@ const importSchema = z.object({ externalCandidateId: externalId, roleId: z.strin
 
 candidateAtsRouter.post('/import-ats', requireCapability('candidate:create'), atsLookupLimit, asyncHandler(async (req, res) => {
   const body = importSchema.parse(req.body);
-  const { candidate, created } = await importCandidate({ auth: req.auth!, ...body, requestId: req.requestId });
+  const { candidate, created, matchedBy } = await importCandidate({ auth: req.auth!, ...body, requestId: req.requestId });
   res.status(created ? 201 : 200).json({
     candidate: { id: candidate.id, fullName: candidate.fullName, email: candidate.email, roleId: candidate.roleId },
     alreadyImported: !created,
+    ...(matchedBy ? { matchedBy } : {}),
   });
 }));
 

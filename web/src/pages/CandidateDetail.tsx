@@ -22,6 +22,7 @@ import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import { InterviewerSelector } from '../components/InterviewerSelector';
 import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
 import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
+import { EraseCandidateCard } from '../components/EraseCandidateCard';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -40,6 +41,8 @@ interface CandidateResp {
   // A candidate can exist before anyone has put them against a role.
   candidate: { id: string; fullName: string; email: string; phone: string; roleId: string | null };
   profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
+  /** Other applications for the same address; sent only to someone who may erase. */
+  otherApplications?: number;
   // What the candidate asked for at the end of their interview. Structurally
   // the journey's JourneyCandidateFeedback; spelled out here so this response
   // type stays a description of the endpoint rather than of the board.
@@ -145,6 +148,8 @@ export function CandidateDetail() {
   const tabParam = searchParams.get('tab');
   const { user } = useAuth();
   const [reuseOpen, setReuseOpen] = useState(false);
+  // Set once this application has been erased: the page says so instead.
+  const [erasedNotice, setErasedNotice] = useState<string | null>(null);
   const [data, setData] = useState<CandidateResp | null>(null);
   // Scheduled times are shown on the clock they were booked on (see formatScheduled).
   const orgZone = useOrgTimeZone();
@@ -218,6 +223,7 @@ export function CandidateDetail() {
       setAssessmentBlockedReason(null);
       setDetailErrors({});
       setActiveTab('profile');
+      setErasedNotice(null);
       setLoading(true);
     }
 
@@ -352,6 +358,16 @@ export function CandidateDetail() {
     });
   }, [data, role, sessions, pipeline, assessment, assessmentBlockedReason, missingEvidence]);
 
+  if (erasedNotice) {
+    return (
+      <EmptyState
+        icon="user-x"
+        title="Candidate erased"
+        message={erasedNotice}
+        action={<Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>}
+      />
+    );
+  }
   if (loading) return <PageSkeleton label="Loading candidate…" cards={3} />;
   if (error) return <Banner kind="error">{error}</Banner>;
   if (!data) {
@@ -634,6 +650,16 @@ export function CandidateDetail() {
         )}
       </div>
       </section>
+
+      {/* Erasure is an admin action on the server (candidate:erase). */}
+      {user?.role === 'admin' && (
+        <EraseCandidateCard
+          candidateId={candidate.id}
+          fullName={candidate.fullName}
+          otherApplications={data.otherApplications}
+          onErased={setErasedNotice}
+        />
+      )}
     </div>
   );
 }

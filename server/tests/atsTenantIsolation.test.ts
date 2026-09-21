@@ -21,7 +21,7 @@ const JD = 'Senior Data Engineer. Requirements: 5+ years with SQL and Python, Sp
 
 const HOST_A: FakeAtsHost = {
   requisitions: { 'REQ-1': { title: 'Data Engineer', description: JD } },
-  candidates: { 'C-1': { fullName: 'Asha Rao', email: 'asha@example.com', phone: '' }, 'C-2': { fullName: 'Ben Ode', email: 'ben@example.com' }, 'C-NOMAIL': { fullName: 'No Mail' } },
+  candidates: { 'C-1': { fullName: 'Asha Rao', email: 'asha@example.com', phone: '' }, 'C-2': { fullName: 'Ben Ode', email: 'ben@example.com' }, 'C-NOMAIL': { fullName: 'No Mail' }, 'C-PRIYA': { fullName: 'Priya S', email: 'Priya.Sharma@Example.com', phone: '' } },
 };
 const HOST_B: FakeAtsHost = {
   requisitions: {},
@@ -309,7 +309,42 @@ describe('importing a candidate from the ATS', () => {
     await connect(fx.adminA, 'ats-a.example.com', KEY_A);
     const first = await importCandidate(fx.adminA, 'C-2', fx.roleA);
     const again = await importCandidate(fx.adminA, 'C-2', fx.roleA);
-    expect({ status: again.status, same: again.body.candidate.id === first.body.candidate.id }).toEqual({ status: 200, same: true });
+    expect({ status: again.status, same: again.body.candidate.id === first.body.candidate.id, matchedBy: again.body.matchedBy }).toEqual({ status: 200, same: true, matchedBy: 'ats_record' });
+  });
+
+  it('answers with the application already on the role when the address is already there', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const res = await importCandidate(fx.adminA, 'C-PRIYA', fx.roleA);
+    expect({ status: res.status, id: res.body.candidate.id, alreadyImported: res.body.alreadyImported, matchedBy: res.body.matchedBy })
+      .toEqual({ status: 200, id: fx.candidateA, alreadyImported: true, matchedBy: 'email' });
+  });
+
+  it('writes no second application for an address already on the role', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    await importCandidate(fx.adminA, 'C-PRIYA', fx.roleA);
+    expect(await prisma.candidate.count({ where: { roleId: fx.roleA, emailNormalized: 'priya.sharma@example.com' } })).toBe(1);
+  });
+
+  it('links the ATS record to the application already there', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    await importCandidate(fx.adminA, 'C-PRIYA', fx.roleA);
+    const link = await prisma.candidateAtsLink.findFirstOrThrow({ where: { candidateId: fx.candidateA } });
+    expect({ id: link.externalCandidateId, source: link.source }).toEqual({ id: 'C-PRIYA', source: 'import' });
+  });
+
+  it('answers a second import of that record with the same application', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    await importCandidate(fx.adminA, 'C-PRIYA', fx.roleA);
+    const again = await importCandidate(fx.adminA, 'C-PRIYA', fx.roleA);
+    expect({ status: again.status, id: again.body.candidate.id }).toEqual({ status: 200, id: fx.candidateA });
+  });
+
+  it('keeps an existing link when the application is already linked to another record', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    await setLink(fx.adminA, fx.candidateA, 'C-1');
+    const res = await importCandidate(fx.adminA, 'C-PRIYA', fx.roleA);
+    const link = await prisma.candidateAtsLink.findFirstOrThrow({ where: { candidateId: fx.candidateA } });
+    expect({ status: res.status, id: res.body.candidate.id, linked: link.externalCandidateId }).toEqual({ status: 200, id: fx.candidateA, linked: 'C-1' });
   });
 
   it('refuses a record with no usable email', async () => {

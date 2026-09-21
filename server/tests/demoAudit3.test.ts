@@ -68,7 +68,7 @@ describe('#2 demo visitors can add candidates', () => {
     const { auth, tenantId } = await signedIn();
     const role = await prisma.role.findFirstOrThrow({ where: { tenantId } });
 
-    const res = await request(app).post('/api/candidates').set('Authorization', auth).send({ fullName: 'Second Person', email: VISITOR.email, roleId: role.id });
+    const res = await request(app).post('/api/candidates').set('Authorization', auth).send({ fullName: 'Second Person', email: 'second.person@example.com', roleId: role.id });
 
     expect(res.status).toBe(201);
   });
