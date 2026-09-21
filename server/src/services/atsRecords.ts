@@ -77,23 +77,41 @@ export function shapeLink(link: CandidateAtsLink) {
 
 const linkedElsewhere = () => new HttpError(409, 'That ATS candidate is already linked to another candidate in Questor.');
 
+/** The key a link carries for its application's role: one record, one application per role. */
+const roleKeyOf = (roleId: string | null): string => roleId ?? '';
+
+/**
+ * An ATS record is one person. Their applications on other roles may share
+ * it; an application of anyone else may not.
+ */
+async function assertRecordIsThisPerson(o: { tenantId: string; connectionId: string; externalCandidateId: string; candidate: { id: string; email: string; emailNormalized: string } }) {
+  const others = await prisma.candidateAtsLink.findMany({
+    where: { tenantId: o.tenantId, connectionId: o.connectionId, externalCandidateId: o.externalCandidateId, candidateId: { not: o.candidate.id } },
+    select: { candidate: { select: { email: true, emailNormalized: true } } },
+  });
+  const person = o.candidate.emailNormalized || normalizeEmail(o.candidate.email);
+  if (others.some((l) => (l.candidate.emailNormalized || normalizeEmail(l.candidate.email)) !== person)) throw linkedElsewhere();
+}
+
 /**
  * An admin links a candidate to an ATS record by hand. The id must exist in the
  * organisation's own ATS: a link to a record that is not there would make the
  * next export fail, or worse, land on whoever gets that id later.
  */
 export async function setCandidateLink(o: { auth: AuthClaims; candidateId: string; externalCandidateId: string; requestId?: string }) {
-  await assertCanAccessCandidate(o.auth, o.candidateId);
+  const candidate = await assertCanAccessCandidate(o.auth, o.candidateId);
   const { connection, client } = await requireTenantAts(o.auth.tenantId);
   await client.fetchCandidate(o.externalCandidateId).catch((err: unknown) => atsFailure(err, 'candidate'));
+  await assertRecordIsThisPerson({ tenantId: o.auth.tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, candidate });
 
   const key = { tenantId: o.auth.tenantId, candidateId: o.candidateId, connectionId: connection.id };
+  const linkData = { externalCandidateId: o.externalCandidateId, roleKey: roleKeyOf(candidate.roleId), source: 'manual', createdById: o.auth.userId };
   let link: CandidateAtsLink;
   try {
     link = await prisma.candidateAtsLink.upsert({
       where: { tenantId_candidateId_connectionId: key },
-      create: { ...key, externalCandidateId: o.externalCandidateId, source: 'manual', createdById: o.auth.userId },
-      update: { externalCandidateId: o.externalCandidateId, source: 'manual', createdById: o.auth.userId },
+      create: { ...key, ...linkData },
+      update: linkData,
     });
   } catch (err) {
     if (isUniqueViolation(err)) throw linkedElsewhere();
@@ -127,10 +145,12 @@ const importedContactSchema = z.object({
 
 /**
  * Create a candidate from the organisation's ATS, linked to the record it came
- * from. A repeat import of the same ATS candidate returns the one already made,
- * and so does an import of someone whose address already has an application
- * on the role: that application is linked to the record instead (unless it is
- * already linked to another one), so one person stays one application per role.
+ * from. A repeat import of the same ATS candidate for the same role returns
+ * the application already made, and so does an import of someone whose
+ * address already has an application on the role: that application is linked
+ * to the record instead (unless it is already linked to another one), so one
+ * person stays one application per role. The same record imported for another
+ * role becomes that role's own application, linked to the same record.
  */
 export async function importCandidate(o: { auth: AuthClaims; externalCandidateId: string; roleId: string; requestId?: string }) {
   await assertCanAccessRole(o.auth, o.roleId);
@@ -138,7 +158,7 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
   const { connection, client } = await requireTenantAts(o.auth.tenantId);
   const tenantId = o.auth.tenantId;
 
-  const existing = await findLinkByExternalId(tenantId, connection.id, o.externalCandidateId);
+  const existing = await findLinkOnRole(tenantId, connection.id, o.externalCandidateId, o.roleId);
   if (existing) return { candidate: await existingCandidate(o.auth, existing.candidateId), created: false, matchedBy: 'ats_record' as const };
 
   const record = await client.fetchCandidate(o.externalCandidateId).catch((err: unknown) => atsFailure(err, 'candidate'));
@@ -148,7 +168,7 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
   }
 
   const emailNormalized = normalizeEmail(contact.data.email);
-  const linkData = { tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, source: 'import', createdById: o.auth.userId };
+  const linkData = { tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, roleKey: o.roleId, source: 'import', createdById: o.auth.userId };
   try {
     const outcome = await inApplicationTransaction(async (tx) => {
       const already = await findApplicationOnRole(tx, { tenantId, roleId: o.roleId, emailNormalized });
@@ -184,15 +204,15 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
     // A concurrent import of the same record won; answer with its candidate.
-    const raced = await findLinkByExternalId(tenantId, connection.id, o.externalCandidateId);
+    const raced = await findLinkOnRole(tenantId, connection.id, o.externalCandidateId, o.roleId);
     if (!raced) throw err;
     return { candidate: await existingCandidate(o.auth, raced.candidateId), created: false, matchedBy: 'ats_record' as const };
   }
 }
 
-function findLinkByExternalId(tenantId: string, connectionId: string, externalCandidateId: string) {
+function findLinkOnRole(tenantId: string, connectionId: string, externalCandidateId: string, roleId: string) {
   return prisma.candidateAtsLink.findUnique({
-    where: { tenantId_connectionId_externalCandidateId: { tenantId, connectionId, externalCandidateId } },
+    where: { tenantId_connectionId_externalCandidateId_roleKey: { tenantId, connectionId, externalCandidateId, roleKey: roleId } },
   });
 }
 
