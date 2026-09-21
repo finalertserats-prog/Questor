@@ -17,7 +17,7 @@ import { useOrgTimeZone } from './useOrgTimeZone';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
 import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
-  type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
+  type CandidateNotice, type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
 } from './roundMeetingModel';
 
 interface Round {
@@ -144,6 +144,7 @@ export function PipelinePanel(
   const [meetingLink, setMeetingLink] = useState('');
   const [durationMinutes, setDurationMinutes] = useState<number>(60);
   const [meetingNotice, setMeetingNotice] = useState<MeetingOutcome | null>(null);
+  const [candidateNotice, setCandidateNotice] = useState<CandidateNotice | null>(null);
   const [meetingProvider, setMeetingProvider] = useState<MeetingProviderInfo | null>(null);
   // Set while a candidacy-ending outcome waits to be confirmed.
   const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
@@ -274,7 +275,7 @@ export function PipelinePanel(
       setError(linkProblem);
       return;
     }
-    void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null }>(`/pipelines/${pipeline.id}/rounds`, {
+    void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null; candidateNotice?: CandidateNotice }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
       ...scheduleRequest(roundDraft),
       ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
@@ -284,11 +285,17 @@ export function PipelinePanel(
     }).then((resp) => {
       setSchedulingNotice(resp.notification ?? null);
       setMeetingNotice(resp.meeting ?? null);
+      setCandidateNotice(resp.candidateNotice ?? null);
       setRoundDraft((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone }));
       setInterviewers('');
       setSessionId('');
       setMeetingLink('');
     }));
+  };
+
+  const reportRound = (outcome: MeetingOutcome | null, candidate?: CandidateNotice | null) => {
+    setMeetingNotice(outcome);
+    setCandidateNotice(candidate ?? null);
   };
 
   const completeRound = (e: React.FormEvent) => {
@@ -374,6 +381,12 @@ export function PipelinePanel(
             <a href={safeMeetingUrl(meetingNotice.url) ?? undefined} target="_blank" rel="noopener noreferrer">Join link</a>
           )}
           {!meetingNotice.ok && meetingNotice.status === 'NEEDS_LINK' && ' Use "Try again" or "Add link manually" in the rounds table below.'}
+        </Banner>
+      )}
+
+      {candidateNotice && (
+        <Banner kind={candidateNotice.sent ? 'ok' : 'info'}>
+          <span data-testid="round-candidate-notice">{candidateNotice.note}</span>
         </Banner>
       )}
 
@@ -550,14 +563,14 @@ export function PipelinePanel(
                   <td>
                     <RoundMeeting
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
-                      onOutcome={setMeetingNotice} onError={setError}
+                      onOutcome={reportRound} onError={setError}
                       vendorReady={meetingProvider !== null && meetingProvider.provider !== 'manual' && meetingProvider.configured}
                     />
                   </td>
                   <td>
                     <RoundActions
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
-                      onOutcome={setMeetingNotice} onError={setError}
+                      onOutcome={reportRound} onError={setError}
                       canReschedule={pipeline.status === 'ACTIVE'} orgZone={orgZone}
                     />
                   </td>

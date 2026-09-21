@@ -4,6 +4,8 @@ import type { InterviewRound } from '@prisma/client';
 import { prisma, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { logAudit } from '../services/audit.js';
+import { hasCapability } from '../services/access.js';
+import { notifyCandidateOfHumanRound, type CandidateNotice, type RoundNoticeKind } from '../services/roundCandidateNotice.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
 import {
@@ -53,6 +55,19 @@ async function respond(req: Request, pipeline: PipelineWithRounds, roundId: stri
   return { round: presentRound(round), meeting };
 }
 
+/**
+ * Tell the candidate what changed about their round: its new time, or the
+ * meeting link it did not have when it was booked. Reads the row again so the
+ * email carries what is stored now.
+ */
+async function tellCandidate(req: Request, pipeline: PipelineWithRounds, roundId: string, stageLabel: string, kind: RoundNoticeKind): Promise<CandidateNotice> {
+  if (!hasCapability(req.auth!, 'interview:invite')) {
+    return { sent: false, note: 'Your account cannot email candidates, so the candidate was not emailed.' };
+  }
+  const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+  return notifyCandidateOfHumanRound({ round, candidateId: pipeline.candidateId, roleId: pipeline.roleId, stageLabel, kind });
+}
+
 const NOT_SCHEDULED = 'This round has already been completed or cancelled.';
 // The AI interview's time and availability live on its interview session;
 // moving or cancelling only the round would leave the session usable at the old time.
@@ -90,7 +105,8 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
 
   const updated = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
   const meeting = await rescheduleMeeting(updated, ctx);
-  res.json(await respond(req, pipeline, round.id, 'reschedule', meeting));
+  const candidateNotice = await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'moved');
+  res.json({ ...await respond(req, pipeline, round.id, 'reschedule', meeting), candidateNotice });
 }));
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
@@ -117,12 +133,15 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/meeting/retry', authenticate, req
   if (round.conductedBy !== 'HUMAN') throw new HttpError(409, 'The AI interview runs in the Questor room; it has no external meeting.');
   const result = await retryMeeting(round, ctx, req.auth!.tenantId);
   if (result.kind === 'conflict') throw new HttpError(409, result.message);
-  res.json(await respond(req, pipeline, round.id, 'retry', result.outcome));
+  // A link that exists only now (the first creation failed) has not reached the candidate yet.
+  const newLink = result.outcome?.ok && result.outcome.url && result.outcome.url !== round.meetingUrl && round.status === 'SCHEDULED';
+  const candidateNotice = newLink ? await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'link') : undefined;
+  res.json({ ...await respond(req, pipeline, round.id, 'retry', result.outcome), ...(candidateNotice ? { candidateNotice } : {}) });
 }));
 
 roundMeetingsRouter.put('/:id/rounds/:roundId/meeting-link', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const { url } = z.object({ url: meetingUrlSchema }).strict().parse(req.body);
-  const { pipeline, round } = await loadRound(req);
+  const { pipeline, round, ctx } = await loadRound(req);
   if (round.conductedBy !== 'HUMAN') throw new HttpError(409, 'The AI interview runs in the Questor room; it takes no meeting link.');
   if (round.status !== 'SCHEDULED') throw new HttpError(409, NOT_SCHEDULED);
   if (round.meetingExternalId) {
@@ -130,5 +149,6 @@ roundMeetingsRouter.put('/:id/rounds/:roundId/meeting-link', authenticate, requi
   }
   if (!(await setManualLink(round, url))) throw new HttpError(409, BUSY);
   const meeting: MeetingOutcome = { ok: true, provider: 'manual', status: MEETING_STATUS.MANUAL, url, message: 'Meeting link saved.' };
-  res.json(await respond(req, pipeline, round.id, 'manual_link', meeting));
+  const candidateNotice = url !== round.meetingUrl ? await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'link') : undefined;
+  res.json({ ...await respond(req, pipeline, round.id, 'manual_link', meeting), ...(candidateNotice ? { candidateNotice } : {}) });
 }));

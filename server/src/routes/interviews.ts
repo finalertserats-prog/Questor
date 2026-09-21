@@ -435,7 +435,7 @@ const RESENDABLE_STATES: ReadonlySet<string> = new Set([
 ]);
 
 /** Everything that has not happened yet, plus an interview awaiting a new date. */
-const SCHEDULABLE_STATES: ReadonlySet<string> = new Set([...RESENDABLE_STATES, 'RESCHEDULE_REQUIRED']);
+export const SCHEDULABLE_STATES: ReadonlySet<string> = new Set([...RESENDABLE_STATES, 'RESCHEDULE_REQUIRED']);
 
 interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   await assertDemoCreationCap(req.auth!.tenantId, 'interviews');
@@ -635,12 +635,30 @@ interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), 
   if (count !== 1) {
     throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled.`);
   }
+  // The pipeline's AI round is this interview: it moves with it, or the
+  // candidate journey and the interview page disagree about when it is.
+  await prisma.interviewRound.updateMany({
+    where: { sessionId: session.id, tenantId: session.tenantId, conductedBy: 'AI', status: 'SCHEDULED' },
+    data: { scheduledAt: at, scheduledTimeZone: timeZone },
+  });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at.toISOString(), scheduledTimeZone: timeZone } });
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'interview.scheduled' });
   const scheduled = { ...session, scheduledAt: at, scheduledTimeZone: timeZone };
   const delivery = body.send ? await sendSchedule(req, scheduled) : undefined;
   res.json({ ok: true, scheduledAt: at.toISOString(), scheduledTimeZone: timeZone, ...(delivery ? { delivery } : {}) });
 }));
+
+/**
+ * Send the candidate their interview link with the time now on the session,
+ * for a pipeline's AI round. Same rules as "save and send" on the interview:
+ * the send needs interview:invite, and a failure is reported, not thrown.
+ */
+export async function sendInterviewSchedule(req: Request, sessionId: string): Promise<{ sent: boolean; note: string }> {
+  if (!hasCapability(req.auth!, 'interview:invite')) {
+    return { sent: false, note: 'Your account cannot send invitations, so the candidate was not emailed.' };
+  }
+  return sendSchedule(req, await getSession(req, sessionId));
+}
 
 /**
  * Invite a candidate not yet invited, otherwise resend. The schedule is already
