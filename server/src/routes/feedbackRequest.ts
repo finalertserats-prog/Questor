@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../middleware/index.js';
 import { recordHumanRequest, resolveHumanRequest } from '../services/candidateFeedback.js';
 import { emitEvent } from '../services/webhooks.js';
+import { notifyHiringTeam } from '../services/hiringTeamNotice.js';
 import { logger } from '../logger.js';
 
 /**
@@ -50,6 +51,7 @@ feedbackRequestRouter.post('/:token/confirm', asyncHandler(async (req, res) => {
       { err, sessionId: claimed.sessionId },
       'candidate.human_request webhook failed to emit; the request is recorded and visible to the hiring team in the app, but no webhook was delivered and a later click will not retry it',
     ));
+    await notifyHiringTeam({ tenantId: claimed.tenantId, candidateId: claimed.candidateId, sessionId: claimed.sessionId, event: 'human_request' });
   }
   // Same body whether this was the first click or the fifth. The candidate gets
   // a consistent answer, and the response reveals nothing about prior activity.

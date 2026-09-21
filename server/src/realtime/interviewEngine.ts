@@ -13,6 +13,7 @@ import { logAudit } from '../services/audit.js';
 import { replanFromLatestScorecard } from '../services/interviewReplan.js';
 import { lockSession, type TransactionClient } from '../services/sessionLock.js';
 import { enqueueAutoFeedback } from '../services/autoFeedback.js';
+import { notifyHiringTeam } from '../services/hiringTeamNotice.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { HttpError } from '../middleware/index.js';
 import { logger } from '../logger.js';
@@ -963,6 +964,7 @@ export async function finalizeInterview(
     // The assessed AI interview is the Silver evidence; the candidate is at Gold.
     await notePipelineEvent({ tenantId: session.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.assessed', trigger: 'assessment.ready' });
     await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
+    await notifyHiringTeam({ tenantId: session.tenantId, candidateId: session.candidateId, sessionId, assessmentId: assessment.id, event: 'assessment_ready' });
     return { assessmentId: assessment.id };
   } catch (err) {
     await releaseStalledFinalisation(sessionId, err);
