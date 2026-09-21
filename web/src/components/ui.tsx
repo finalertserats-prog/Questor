@@ -33,6 +33,18 @@ export function recBadge(rec?: string | null) {
   );
 }
 
+/**
+ * The AI's call in a list cell. When the organisation requires an independent
+ * review first, the server leaves the recommendation out for a reviewer who
+ * has not judged yet; a dash would read as "no assessment", so say it.
+ */
+export function aiCallCell(s: { recommendation?: string | null; blindReviewPending?: boolean }) {
+  if (s.blindReviewPending) {
+    return <span className="muted small" title="The AI's call shows once you record your own verdict.">Your review first</span>;
+  }
+  return recBadge(s.recommendation);
+}
+
 /** Interview state chip. Tone groupings live in statusModel.ts. */
 export function stateBadge(state: string) {
   return <StatusBadge kind="interview" value={state} />;

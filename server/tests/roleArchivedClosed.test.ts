@@ -48,6 +48,36 @@ describe('an archived role', () => {
     expect(res.status).toBe(409);
   });
 
+  it('refuses a bulk invitation for an interview already set up on it', async () => {
+    const { role, scorecard } = await archivedRole('approved');
+    const candidate = await prisma.candidate.create({ data: { tenantId, roleId: role.id, fullName: 'Bulk', email: 'bulk@closed.test' } });
+    await prisma.interviewSession.create({ data: { tenantId, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'PROVISIONED', provider: 'hosted' } });
+
+    const res = await request(app).post('/api/interviews/bulk-invite').set('Authorization', admin).send([{ candidateId: candidate.id }]);
+
+    expect(res.body.results[0]).toMatchObject({ success: false, error: expect.stringContaining('archived') });
+  });
+
+  it('mints no invitation link through bulk invite', async () => {
+    const { role, scorecard } = await archivedRole('approved');
+    const candidate = await prisma.candidate.create({ data: { tenantId, roleId: role.id, fullName: 'Bulk', email: 'bulk@closed.test' } });
+    const session = await prisma.interviewSession.create({ data: { tenantId, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'PROVISIONED', provider: 'hosted' } });
+
+    await request(app).post('/api/interviews/bulk-invite').set('Authorization', admin).send([{ candidateId: candidate.id }]);
+
+    expect(await prisma.invitation.count({ where: { sessionId: session.id } })).toBe(0);
+  });
+
+  it('refuses to resend an invitation', async () => {
+    const { role, scorecard } = await archivedRole('approved');
+    const candidate = await prisma.candidate.create({ data: { tenantId, roleId: role.id, fullName: 'Resend', email: 'resend@closed.test' } });
+    const session = await prisma.interviewSession.create({ data: { tenantId, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'INVITED', provider: 'hosted' } });
+
+    const res = await request(app).post(`/api/interviews/${session.id}/resend`).set('Authorization', admin);
+
+    expect({ status: res.status, code: res.body.code }).toEqual({ status: 409, code: 'role_archived' });
+  });
+
   it('refuses scorecard edits', async () => {
     const { role } = await archivedRole('draft');
 

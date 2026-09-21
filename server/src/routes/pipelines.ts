@@ -3,7 +3,8 @@ import { z } from 'zod';
 import type { CandidatePipeline, InterviewRound } from '@prisma/client';
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { assertCanAccessCandidate, assertCanAccessRole } from '../services/access.js';
+import { assertCanAccessCandidate, assertCanAccessRole, hasCapability } from '../services/access.js';
+import { aiConclusionVisible } from '../services/shadowMode.js';
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
 import { endObservation } from '../services/roundObserver.js';
@@ -482,8 +483,13 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
     : {};
   const aiSessionIds = pipeline.rounds.filter((r) => r.conductedBy === 'AI' && r.sessionId).map((r) => r.sessionId as string);
   const assessments = aiSessionIds.length > 0
-    ? await prisma.assessmentVersion.findMany({ where: { sessionId: { in: aiSessionIds } }, orderBy: { version: 'desc' }, select: { sessionId: true, recommendation: true } })
+    ? await prisma.assessmentVersion.findMany({ where: { sessionId: { in: aiSessionIds } }, orderBy: { version: 'desc' }, select: { id: true, sessionId: true, recommendation: true } })
     : [];
+  // The AI's call is named only to someone the blind-review policy lets see it.
+  const visible = await aiConclusionVisible({
+    assessmentIds: assessments.map((a) => a.id),
+    userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'), tenantId: req.auth!.tenantId,
+  });
 
   const summarise = (stage: PipelineStage): StageSummary => {
     const rounds = pipeline.rounds.filter((r) => r.stageKey === stage.key);
@@ -496,6 +502,9 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
           : { ...stage, hasEvidence: false, detail: 'No AI profile review yet.' };
       case 'ai_interview': {
         const assessed = assessments.find((a) => rounds.some((r) => r.sessionId === a.sessionId));
+        if (assessed && !visible.has(assessed.id)) {
+          return { ...stage, hasEvidence: true, detail: 'AI interview assessed. Record your own verdict to see its recommendation.' };
+        }
         return assessed
           ? { ...stage, hasEvidence: true, detail: `AI interview assessed: ${assessed.recommendation}.` }
           : { ...stage, hasEvidence: false, detail: 'No assessed AI interview yet.' };

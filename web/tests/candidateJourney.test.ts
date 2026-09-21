@@ -464,6 +464,30 @@ describe('an assessment held behind blind review', () => {
   it('still points at the assessment, since recording a verdict is the way past the gate', () => {
     expect(journey.decision.assessment.href).toBe('/assessments/assess-2');
   });
+
+  it('does not show the AI recommendation beside the gate', () => {
+    expect(journey.decision.recommendation).toBeNull();
+  });
+
+  it('marks the recommendation as waiting on the reviewer', () => {
+    expect(journey.decision.blindReviewPending).toBe(true);
+  });
+});
+
+describe('an interview list row that left the AI call out for blind review', () => {
+  const journey = buildJourney(input({
+    pipeline: pipeline({ currentStageKey: 'silver' }),
+    sessions: [{ id: 'sess-5', state: 'REVIEW_READY', scheduledAt: null, createdAt: '2026-09-30T09:00:00.000Z' }],
+    sessionMeta: { 'sess-5': { blindReviewPending: true, assessmentId: 'assess-5', invited: true } },
+  }));
+
+  it('marks the recommendation as waiting on the reviewer', () => {
+    expect(journey.decision.blindReviewPending).toBe(true);
+  });
+
+  it('has no recommendation to show', () => {
+    expect(journey.decision.recommendation).toBeNull();
+  });
 });
 
 describe('a candidate with more than one interview session', () => {

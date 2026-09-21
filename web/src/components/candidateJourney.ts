@@ -69,7 +69,9 @@ export interface JourneySession {
 
 /** The per-session extras that only GET /interviews carries. */
 export interface JourneySessionMeta {
-  readonly recommendation: string | null;
+  /** Left out, with blindReviewPending set, while the reviewer's independent review comes first. */
+  readonly recommendation?: string | null;
+  readonly blindReviewPending?: boolean;
   readonly assessmentId: string | null;
   readonly invited: boolean;
   /** The AI interviewer's name for this session; absent on an older server. */
@@ -348,6 +350,8 @@ export interface DecisionColumn extends ColumnBase {
   readonly key: 'decision';
   readonly assessment: JourneyAssessmentView;
   readonly recommendation: string | null;
+  /** The blind-review policy is holding the AI's call back from this reviewer. */
+  readonly blindReviewPending: boolean;
   readonly humanNotes: readonly JourneyHumanNote[];
   readonly humanNotesNote: string;
   readonly decision: JourneyDecisionRecord;
@@ -749,6 +753,9 @@ function buildAssessmentView(input: JourneyInput, assessmentId: string | null): 
 function buildDecision(input: JourneyInput, state: ColumnState, selected: SelectedInterview): DecisionColumn {
   const { pipeline } = input;
   const meta = selected.meta;
+  // Either signal means the organisation wants this reviewer's own verdict
+  // first: the assessment refused them, or the interview list left the call out.
+  const blindReviewPending = Boolean(input.assessmentBlockedReason) || (!input.assessment && meta?.blindReviewPending === true);
 
   const humanNotes: JourneyHumanNote[] = (pipeline?.rounds ?? [])
     .filter((r) => r.conductedBy === 'HUMAN' && r.status === 'COMPLETED')
@@ -771,7 +778,8 @@ function buildDecision(input: JourneyInput, state: ColumnState, selected: Select
     icon: 'evidence',
     state,
     assessment: buildAssessmentView(input, input.assessment?.id ?? meta?.assessmentId ?? null),
-    recommendation: input.assessment?.recommendation ?? meta?.recommendation ?? null,
+    recommendation: blindReviewPending ? null : input.assessment?.recommendation ?? meta?.recommendation ?? null,
+    blindReviewPending,
     humanNotes,
     humanNotesNote: 'Written by the interviewers after each human round. Questor does not transcribe those rounds.',
     decision: {

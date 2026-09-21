@@ -30,6 +30,7 @@ import { invitationLink, invitationSecretColumns, mintInvitationToken } from '..
 import { SUPPORTED_LANGUAGES } from '../i18n/locales.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
+import { aiConclusionVisible, assertUnblindedReadAllowed, BLIND_REVIEW_REQUIRED } from '../services/shadowMode.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { replanPending } from '../services/interviewReplan.js';
 import { formatScheduledTime } from '../services/zonedTime.js';
@@ -214,12 +215,24 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
     where: { tenantId: req.auth!.tenantId, candidate: scope }, orderBy: { createdAt: 'desc' },
     include: { candidate: true, role: true, assessments: { orderBy: { version: 'desc' }, take: 1 }, invitation: true },
   });
-  res.json({ sessions: sessions.map((s) => ({
-    id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt, scheduledTimeZone: s.scheduledTimeZone,
-    candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
-    recommendation: s.assessments[0]?.recommendation ?? null, assessmentId: s.assessments[0]?.id ?? null,
-    invited: !!s.invitation, createdAt: s.createdAt,
-  })) });
+  // The blind-review policy applies here as on the assessment page: a reviewer
+  // it still holds back gets the assessment id, to reach the blind review, but
+  // not the AI's call.
+  const visible = await aiConclusionVisible({
+    assessmentIds: sessions.flatMap((s) => s.assessments.map((a) => a.id)),
+    userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'), tenantId: req.auth!.tenantId,
+  });
+  res.json({ sessions: sessions.map((s) => {
+    const latest = s.assessments[0];
+    const conclusion = !latest ? { recommendation: null }
+      : visible.has(latest.id) ? { recommendation: latest.recommendation } : { blindReviewPending: true };
+    return {
+      id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt, scheduledTimeZone: s.scheduledTimeZone,
+      candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
+      ...conclusion, assessmentId: latest?.id ?? null,
+      invited: !!s.invitation, createdAt: s.createdAt,
+    };
+  }) });
 }));
 
 const pipelineSummaryQuerySchema = z.object({
@@ -338,6 +351,10 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     prisma.integrityEvent.findMany({ where: { sessionId: session.id }, orderBy: { createdAt: 'asc' }, select: { type: true, createdAt: true } }),
     replanPending(session),
   ]);
+  // While the candidate may still be on the call, the turns are live
+  // observation and get the same consent gate as /observe and /transcript.
+  const transcriptWithheld = LIVE_INTERVIEW_STATES.has(session.state) && !(await mayObserveLive(session));
+  const conclusionShown = assessment ? await aiConclusionReadable(req, assessment.id) : false;
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
     session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, scheduledTimeZone: session.scheduledTimeZone, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
@@ -345,12 +362,15 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     // The plan above is what was built at setup; a newer approved scorecard
     // means the interview will be re-planned from it when it starts.
     replanPending: planPending,
-    turns: turns.map((t) => ({
+    turns: transcriptWithheld ? [] : turns.map((t) => ({
       id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs, competencyId: t.competencyId,
       // A reviewer must be able to tell the Leave button from anything said.
       ...(leftByButton(t) ? { source: LEAVE_SOURCE } : {}),
     })),
-    assessment: assessment ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJsonStrict(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' }) } : null,
+    ...(transcriptWithheld ? { transcriptWithheld: true } : {}),
+    assessment: !assessment ? null
+      : conclusionShown ? { id: assessment.id, recommendation: assessment.recommendation, result: parseJsonStrict(assessment.resultJson, { model: 'AssessmentVersion', id: assessment.id, field: 'resultJson' }) }
+        : { id: assessment.id, blindReviewPending: true },
     // Integrity events are human-review context only. They are deliberately not
     // passed into assessment generation or score fields.
     integrityEvents: { count: integrityEvents.length, events: integrityEvents },
@@ -367,7 +387,6 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
 // Send invitation (FR-012)
 interviewsRouter.post('/:id/invite', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  await assertRoleOpen(session.roleId);
   const invitation = await inviteSession(req, session);
   res.json({ invitation });
 }));
@@ -553,6 +572,8 @@ async function resendInvitation(req: Request, session: ResendableSession) {
   if (!RESENDABLE_STATES.has(session.state)) {
     throw new HttpError(409, `This interview is ${session.state}, so there is no invitation to resend. Only an interview the candidate has not started yet can be resent.`);
   }
+  // A resent invitation still asks the candidate in; a closed role asks nobody.
+  await assertRoleOpen(session.roleId);
   const invitation = await prisma.invitation.findUnique({ where: { sessionId: session.id } });
   if (!invitation) throw new HttpError(404, 'This interview has no invitation yet — send one first.');
   if (invitation.status === 'consumed') throw new HttpError(409, 'This interview is already complete.');
@@ -647,7 +668,6 @@ interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), 
 async function sendSchedule(req: Request, session: InvitableSession & ResendableSession) {
   try {
     if (session.state === 'PROVISIONED' || session.state === 'RESCHEDULE_REQUIRED') {
-      await assertRoleOpen(session.roleId);
       const invitation = await inviteSession(req, session);
       return { sent: invitation.delivered, note: invitation.deliveryNote };
     }
@@ -830,6 +850,8 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
 type InvitableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; personaJson: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null };
 
 async function inviteSession(req: Request, session: InvitableSession) {
+  // Here rather than in each route, so single, bulk and schedule-and-send all refuse a closed role.
+  await assertRoleOpen(session.roleId);
   const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
   const role = await prisma.role.findUnique({ where: { id: session.roleId } });
   if (!candidate || !role) throw new HttpError(404, 'Candidate or role not found');
@@ -872,7 +894,7 @@ async function inviteSession(req: Request, session: InvitableSession) {
   if (!email.delivers) {
     await email.send({ ...invite, to: candidate.email }); // logs it
     deliveryNote = `No email was sent: EMAIL_PROVIDER is "${email.name}", which does not deliver. Copy the link and send it yourself.`;
-    logger.warn({ sessionId: session.id, to: candidate.email }, 'Invitation created but NOT emailed — no delivering email provider configured');
+    logger.warn({ sessionId: session.id }, 'Invitation created but NOT emailed — no delivering email provider configured');
   } else {
     try {
       await email.send({ ...invite, to: candidate.email });
@@ -899,6 +921,23 @@ async function inviteSession(req: Request, session: InvitableSession) {
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'invitation.sent' });
   await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
   return { token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote };
+}
+
+/**
+ * May this caller be shown the AI's recommendation and scores for this
+ * assessment? The assessment page's own gate, including its record of a read
+ * made without a blind verdict: this page shows the same conclusion.
+ */
+async function aiConclusionReadable(req: Request, assessmentId: string): Promise<boolean> {
+  try {
+    await assertUnblindedReadAllowed({
+      assessmentId, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'), tenantId: req.auth!.tenantId,
+    });
+    return true;
+  } catch (err) {
+    if (err instanceof HttpError && err.code === BLIND_REVIEW_REQUIRED) return false;
+    throw err;
+  }
 }
 
 async function getSession(req: Request, id: string) {

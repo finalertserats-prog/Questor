@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
-import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
+import { aiCallCell, stateBadge, Banner, Meter, Stat } from '../components/ui';
 import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
 import { CandidateAtsLink } from '../components/CandidateAtsLink';
@@ -61,7 +61,9 @@ interface CandidateResp {
  * click away instead of two.
  */
 interface SessionSummary {
-  id: string; recommendation: string | null; assessmentId: string | null; invited: boolean;
+  id: string; assessmentId: string | null; invited: boolean;
+  /** Left out, with blindReviewPending set, while your independent review comes first. */
+  recommendation?: string | null; blindReviewPending?: boolean;
   /** The AI interviewer's name for that session; absent on an older server. */
   personaName?: string | null;
 }
@@ -618,7 +620,7 @@ export function CandidateDetail() {
                         {isUnderway(iv.state) && <span className="inflight-note">in progress</span>}
                       </span>
                     </td>
-                    <td>{recBadge(s?.recommendation)}</td>
+                    <td>{aiCallCell(s ?? {})}</td>
                     <td>{iv.scheduledAt ? formatScheduled(iv.scheduledAt, iv.scheduledTimeZone, orgZone) : <span className="muted">—</span>}</td>
                     <td>{formatDateTime(iv.createdAt)}</td>
                     <td>

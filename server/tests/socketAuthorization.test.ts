@@ -134,3 +134,35 @@ describe('a staff socket driving a session', () => {
     expect(session).toBeNull();
   });
 });
+
+// The HTTP middleware reads the user again on every request so that removing
+// or demoting someone takes effect at once. The socket trusted the role in the
+// token, so the same person kept observing and driving until it expired.
+describe('a staff socket whose account changed after sign-in', () => {
+  it('refuses an admin who has since been demoted', async () => {
+    const token = await makeUser(tenantId, 'demoted@socket.local', 'admin');
+    await prisma.user.update({ where: { email: 'demoted@socket.local' }, data: { role: 'auditor' } });
+
+    const session = await authorizeSession(staff(token), quietSessionId, 'observe');
+
+    expect(session).toBeNull();
+  });
+
+  it('refuses a user who has since been removed', async () => {
+    const token = await makeUser(tenantId, 'removed@socket.local', 'admin');
+    await prisma.user.delete({ where: { email: 'removed@socket.local' } });
+
+    const session = await authorizeSession(staff(token), quietSessionId, 'drive');
+
+    expect(session).toBeNull();
+  });
+
+  it('uses the role the account holds now, not the one in the token', async () => {
+    const token = await makeUser(tenantId, 'promoted@socket.local', 'auditor');
+    await prisma.user.update({ where: { email: 'promoted@socket.local' }, data: { role: 'admin' } });
+
+    const session = await authorizeSession(staff(token), quietSessionId, 'drive');
+
+    expect(session?.id).toBe(quietSessionId);
+  });
+});

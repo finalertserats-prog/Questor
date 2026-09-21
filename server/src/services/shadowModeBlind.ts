@@ -300,13 +300,41 @@ export async function assertBlindVerdictRecorded(assessmentId: string, reviewerI
  * removed without removing the audit trail that records it.
  */
 export async function hasUnblindedAccess(assessmentId: string, reviewerId: string): Promise<boolean> {
-  const [verdict, bypass] = await Promise.all([
-    findBlindReview(assessmentId, reviewerId),
-    prisma.auditEvent.count({
-      where: { entityId: assessmentId, actorId: reviewerId, action: BLIND_BYPASS_ACTION },
+  return (await unblindedAssessmentIds([assessmentId], reviewerId)).has(assessmentId);
+}
+
+/** hasUnblindedAccess for many assessments in two queries, for list views. */
+async function unblindedAssessmentIds(assessmentIds: readonly string[], reviewerId: string): Promise<ReadonlySet<string>> {
+  if (assessmentIds.length === 0) return new Set();
+  const [verdicts, bypasses] = await Promise.all([
+    prisma.humanReview.findMany({
+      where: { assessmentId: { in: [...assessmentIds] }, reviewerId, status: BLIND_REVIEW_STATUS },
+      select: { assessmentId: true },
+    }),
+    prisma.auditEvent.findMany({
+      where: { entityId: { in: [...assessmentIds] }, actorId: reviewerId, action: BLIND_BYPASS_ACTION },
+      select: { entityId: true },
     }),
   ]);
-  return Boolean(verdict) || bypass > 0;
+  return new Set([...verdicts.map((v) => v.assessmentId), ...bypasses.map((b) => b.entityId)]);
+}
+
+/**
+ * The assessments, among `assessmentIds`, whose AI recommendation and scores
+ * this caller may be shown now. The same rule assertUnblindedReadAllowed
+ * enforces, answered for a whole list at once so the interview list, the
+ * interview page and the pipeline summary cannot hand a reviewer what the
+ * assessment page withholds. Records nothing: the unblinded read is recorded
+ * where the AI output is actually opened.
+ */
+export async function aiConclusionVisible(o: {
+  assessmentIds: readonly string[];
+  userId: string;
+  canReview: boolean;
+  tenantId: string;
+}): Promise<ReadonlySet<string>> {
+  if (!o.canReview || !await blindReviewRequiredForTenant(o.tenantId)) return new Set(o.assessmentIds);
+  return unblindedAssessmentIds(o.assessmentIds, o.userId);
 }
 
 /**

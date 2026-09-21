@@ -70,7 +70,17 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
 
 // Operations view: is the background machinery alive, and is anything failing
 // quietly? Everything here used to be answerable only by reading logs.
-adminRouter.get('/ops', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+//
+// The operator's alone. Every figure spans the whole deployment (model calls,
+// webhook deliveries and job failures for every organisation, with raw error
+// text), and `admin:manage` alone showed all of it to the admin of any
+// customer. /api/admin/health is the per-organisation view.
+const requireOpsOperator = operatorOnly({
+  forbidden: 'Only the deployment operator can see the operations view.',
+  unconfigured: 'The operations view is not available on this deployment.',
+});
+
+adminRouter.get('/ops', requireCapability('admin:manage'), requireOpsOperator, asyncHandler(async (req, res) => {
   const dayAgo = new Date(Date.now() - 24 * 60 * 60_000);
   const [jobs, webhooks, legacySignature, modelCalls, modelFailures] = await Promise.all([
     latestJobRuns(),

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { recBadge, stateBadge, Banner } from '../components/ui';
+import { aiCallCell, stateBadge, Banner } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
@@ -13,7 +13,9 @@ import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabel
 interface Session {
   id: string; state: string; provider: string; scheduledAt: string | null;
   candidate: { id: string; name: string }; role: (RoleLabelSource & { id: string }) | null;
-  recommendation: string | null; assessmentId: string | null; invited: boolean; createdAt: string;
+  /** Left out, with blindReviewPending set, while your independent review comes first. */
+  recommendation?: string | null; blindReviewPending?: boolean;
+  assessmentId: string | null; invited: boolean; createdAt: string;
 }
 
 /** Group keys this page will narrow to, and what to call the result. */
@@ -116,7 +118,7 @@ export function InterviewsList() {
                     <td>{s.role ? roleLabelById.get(s.role.id) ?? s.role.title : null}</td>
                     <td>{stateBadge(s.state)}</td>
                     <td className="muted">{humanise(s.provider)}</td>
-                    <td>{recBadge(s.recommendation)}</td>
+                    <td>{aiCallCell(s)}</td>
                     <td>
                       {s.assessmentId
                         ? <Link to={`/assessments/${s.assessmentId}`}><Icon name="evidence" size={15} />View assessment</Link>
