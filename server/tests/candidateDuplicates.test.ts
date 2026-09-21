@@ -209,6 +209,15 @@ describe('DELETE /api/candidates/:id with allApplications', () => {
       .toEqual({ status: 200, erased: false, erasedCount: 0, skippedCount: 1 });
   });
 
+  it('also erases a row written before the normalised address existed', async () => {
+    const current = (await addCandidate(recruiterToken, { fullName: 'Old Row', email: 'oldrow@example.com', roleId: dataRoleId })).body.candidate.id;
+    const legacy = await prisma.candidate.create({ data: { tenantId, roleId: platformRoleId, fullName: 'Old Row', email: ' OldRow@Example.com' } });
+
+    const res = await erase(adminToken, current, { reason: 'Asked to be forgotten.', allApplications: true });
+
+    expect({ erasedCount: res.body.erasedCount, left: await prisma.candidate.count({ where: { id: legacy.id } }) }).toEqual({ erasedCount: 2, left: 0 });
+  });
+
   it('without allApplications erases only the one application', async () => {
     const one = (await addCandidate(recruiterToken, { fullName: 'Ravi K', email: 'ravi@example.com', roleId: dataRoleId })).body.candidate.id;
     const two = (await addCandidate(recruiterToken, { fullName: 'Ravi K', email: 'ravi@example.com', roleId: platformRoleId })).body.candidate.id;

@@ -7,7 +7,7 @@ import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { eraseCandidate } from '../services/dataRights.js';
-import { eraseAllApplications } from '../services/personErasure.js';
+import { applicationIdsForAddress, eraseAllApplications } from '../services/personErasure.js';
 import { capabilitiesOf } from '../domain/capabilities.js';
 import type { AuthClaims } from '../services/auth.js';
 import {
@@ -398,9 +398,8 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
  */
 async function otherApplicationCount(auth: AuthClaims, candidate: { id: string; email: string; emailNormalized: string }): Promise<number | null> {
   if (!capabilitiesOf(auth.role).includes('candidate:erase')) return null;
-  const key = candidate.emailNormalized || normalizeEmail(candidate.email);
-  if (!key) return 0;
-  return prisma.candidate.count({ where: { AND: [await candidateScope(auth), { emailNormalized: key, id: { not: candidate.id } }] } });
+  const ids = await applicationIdsForAddress(await candidateScope(auth), candidate);
+  return ids.filter((id) => id !== candidate.id).length;
 }
 
 // Right to erasure: GDPR Art. 17, India DPDP s.8, Illinois AIVIA s.20 (which

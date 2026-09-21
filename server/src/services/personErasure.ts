@@ -31,15 +31,29 @@ export interface PersonErasureResult {
   readonly erasedAt: string;
 }
 
+/**
+ * Ids of every application for this address among the rows `scope` allows.
+ *
+ * A row written before emailNormalized existed may still hold the default ''.
+ * The migration backfilled those, but a row missed here is personal data an
+ * erasure promised to remove, so blank rows are also compared in code.
+ */
+export async function applicationIdsForAddress(scope: Record<string, unknown>, address: { email: string; emailNormalized: string }): Promise<string[]> {
+  const key = address.emailNormalized || normalizeEmail(address.email);
+  if (!key) return [];
+  const rows = await prisma.candidate.findMany({
+    where: { AND: [scope, { OR: [{ emailNormalized: key }, { emailNormalized: '' }] }] },
+    select: { id: true, email: true, emailNormalized: true },
+  });
+  return rows.filter((r) => (r.emailNormalized || normalizeEmail(r.email)) === key).map((r) => r.id);
+}
+
 /** Every application in the tenant for the address behind `candidateId`, that one included. */
 async function applicationsOfPerson(tenantId: string, candidateId: string): Promise<string[]> {
   const row = await prisma.candidate.findFirst({ where: { id: candidateId, tenantId }, select: { email: true, emailNormalized: true } });
   if (!row) throw new HttpError(404, 'Candidate not found');
-  // A row written before emailNormalized existed may still hold the default.
-  const key = row.emailNormalized || normalizeEmail(row.email);
-  if (!key) return [candidateId];
-  const rows = await prisma.candidate.findMany({ where: { tenantId, emailNormalized: key }, select: { id: true } });
-  return [...new Set([candidateId, ...rows.map((r) => r.id)])].sort();
+  const ids = await applicationIdsForAddress({ tenantId }, row);
+  return [...new Set([candidateId, ...ids])].sort();
 }
 
 const isHoldRefusal = (err: unknown): boolean => err instanceof HttpError && err.status === 409;
