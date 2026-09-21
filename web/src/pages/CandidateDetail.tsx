@@ -17,7 +17,8 @@ import { formatPercent, formatScoreOutOf100, roundScore } from '../components/sc
 import {
   MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
 } from '../components/interviewSetupModel';
-import { formatDateTime } from '../components/dateFormat';
+import { formatDateTime, formatScheduled } from '../components/dateFormat';
+import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import { InterviewerSelector } from '../components/InterviewerSelector';
 import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
 
@@ -33,7 +34,7 @@ interface Fit {
   overall: number; confidence: number; components: FitComponent[];
   missing: string[]; probes: string[]; excludedSignals: string[];
 }
-interface Interview { id: string; state: string; scheduledAt: string | null; createdAt: string; }
+interface Interview { id: string; state: string; scheduledAt: string | null; scheduledTimeZone?: string | null; createdAt: string; }
 interface CandidateResp {
   // A candidate can exist before anyone has put them against a role.
   candidate: { id: string; fullName: string; email: string; phone: string; roleId: string | null };
@@ -136,6 +137,8 @@ export function CandidateDetail() {
   const nav = useNavigate();
   const { user } = useAuth();
   const [data, setData] = useState<CandidateResp | null>(null);
+  // Scheduled times are shown on the clock they were booked on (see formatScheduled).
+  const orgZone = useOrgTimeZone();
   const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysisResp | null>(null);
   const [profileAnalysisError, setProfileAnalysisError] = useState('');
   const [activeTab, setActiveTab] = useState<CandidateDetailTabKey>('profile');
@@ -572,7 +575,7 @@ export function CandidateDetail() {
                       </span>
                     </td>
                     <td>{recBadge(s?.recommendation)}</td>
-                    <td>{iv.scheduledAt ? formatDateTime(iv.scheduledAt) : <span className="muted">—</span>}</td>
+                    <td>{iv.scheduledAt ? formatScheduled(iv.scheduledAt, iv.scheduledTimeZone, orgZone) : <span className="muted">—</span>}</td>
                     <td>{formatDateTime(iv.createdAt)}</td>
                     <td>
                       {/* Both routes are always offered. The assessment is what the

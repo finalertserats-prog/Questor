@@ -12,6 +12,7 @@ import {
 } from '../services/roundMeeting.js';
 import { labelOf, loadPipeline, presentRound, type PipelineWithRounds } from './pipelines.js';
 import { durationSchema, meetingUrlSchema } from './roundMeetingSchemas.js';
+import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 
 /**
  * Moving, cancelling and linking an interview round's meeting. Mounted under
@@ -59,12 +60,16 @@ const AI_ROUND = 'The AI interview is managed from the interview itself, not fro
 const BUSY = 'The meeting for this round is being created. Try again in a moment.';
 
 const rescheduleSchema = z.object({
-  scheduledAt: z.string().datetime({ offset: true }),
+  ...scheduleTimeFields,
   durationMinutes: durationSchema.optional(),
 }).strict();
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const body = rescheduleSchema.parse(req.body);
+  // Moving a round is always forward: unlike booking one, there is no "record
+  // a round that already happened" case for a move.
+  const booked = resolveScheduleTime(body);
+  assertInFuture(booked.at);
   const { pipeline, round, ctx } = await loadRound(req);
   if (round.conductedBy !== 'HUMAN') throw new HttpError(409, AI_ROUND);
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, 'A decision has already been recorded for this pipeline.');
@@ -72,15 +77,15 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
 
   const moved = await prisma.interviewRound.updateMany({
     where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED', meetingStatus: round.meetingStatus },
-    data: { scheduledAt: new Date(body.scheduledAt), ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}) },
+    data: { scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}) },
   });
   if (moved.count !== 1) throw new HttpError(409, NOT_SCHEDULED);
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.round_rescheduled', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    before: { roundId: round.id, scheduledAt: round.scheduledAt.toISOString(), durationMinutes: round.durationMinutes },
-    after: { roundId: round.id, scheduledAt: body.scheduledAt, durationMinutes: body.durationMinutes ?? round.durationMinutes },
+    before: { roundId: round.id, scheduledAt: round.scheduledAt.toISOString(), scheduledTimeZone: round.scheduledTimeZone, durationMinutes: round.durationMinutes },
+    after: { roundId: round.id, scheduledAt: booked.at.toISOString(), scheduledTimeZone: booked.timeZone, durationMinutes: body.durationMinutes ?? round.durationMinutes },
   });
 
   const updated = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });

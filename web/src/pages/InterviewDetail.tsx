@@ -7,7 +7,10 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { isInFlight } from './CandidatesList';
-import { formatDateTime } from '../components/dateFormat';
+import { formatDateTime, formatScheduled } from '../components/dateFormat';
+import { EMPTY_SCHEDULE, TimeZoneDateTimePicker, isSchedulable } from '../components/TimeZoneDateTimePicker';
+import { scheduleRequest, type ScheduleDraft } from '../components/zonedScheduleModel';
+import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 import { invitationPanel } from '../components/invitationPanelModel';
@@ -22,6 +25,8 @@ interface Invitation { token: string; status: string; portalUrl: string; sentAt:
 interface Session {
   id: string; state: string; provider: string; language: string; durationMinutes: number;
   scheduledAt: string | null;
+  /** The zone the time was booked in; null or absent when booked without one. */
+  scheduledTimeZone?: string | null;
   /** Absent on an older server. */
   startedAt?: string | null; completedAt?: string | null;
   persona: { name?: string | null; tone?: string; interviewerId?: string }; consent: unknown;
@@ -40,7 +45,10 @@ interface InterviewResp {
 }
 
 /** The things this page can do, one at a time. */
-type Action = 'invite' | 'resend' | 'schedule' | 'cancel';
+type Action = 'invite' | 'resend' | 'schedule' | 'schedule-send' | 'cancel';
+
+/** What POST /interviews/:id/schedule says about a send it was asked for. */
+interface ScheduleResp { delivery?: { sent: boolean; note: string } }
 
 export function InterviewDetail() {
   const { id } = useParams();
@@ -49,7 +57,8 @@ export function InterviewDetail() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
-  const [scheduleAt, setScheduleAt] = useState('');
+  const [draft, setDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
+  const orgZone = useOrgTimeZone();
   const [busyAction, setBusyAction] = useState<Action | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
@@ -76,7 +85,7 @@ export function InterviewDetail() {
     setData(null);
     setError('');
     setNotice('');
-    setScheduleAt('');
+    setDraft((current) => ({ ...EMPTY_SCHEDULE, timeZone: current.timeZone }));
     setConfirmCancel(false);
     setLoading(true);
     void load();
@@ -125,9 +134,16 @@ export function InterviewDetail() {
 
   const invite = () => doAction('invite', () => api.post(`/interviews/${id}/invite`, {}), 'Invitation created.');
   const resend = () => doAction('resend', () => api.post(`/interviews/${id}/resend`, {}), 'Invitation email sent again.');
-  const schedule = () => {
-    if (!scheduleAt) return;
-    void doAction('schedule', () => api.post(`/interviews/${id}/schedule`, { scheduledAt: new Date(scheduleAt).toISOString() }), 'Interview scheduled.');
+  // The date, time and zone go to the server as picked; it converts, so the
+  // time never passes through this browser's clock.
+  const schedule = (send: boolean) => {
+    if (!isSchedulable(draft)) return;
+    void doAction(send ? 'schedule-send' : 'schedule', async () => {
+      const resp = await api.post<ScheduleResp>(`/interviews/${id}/schedule`, { ...scheduleRequest(draft), send });
+      setDraft((current) => ({ ...EMPTY_SCHEDULE, timeZone: current.timeZone }));
+      if (resp.delivery && !resp.delivery.sent) setError(resp.delivery.note);
+      else setNotice(resp.delivery ? `Schedule saved. ${resp.delivery.note}` : 'Schedule saved. Nothing was sent.');
+    });
   };
   const cancel = () => {
     // Cancelling ends the interview for the candidate, and nothing here undoes
@@ -198,7 +214,7 @@ export function InterviewDetail() {
         </div>
         {session.scheduledAt && (
           <div className="muted small" style={{ marginTop: 10 }}>
-            Scheduled for {formatDateTime(session.scheduledAt)}
+            Scheduled for {formatScheduled(session.scheduledAt, session.scheduledTimeZone, orgZone)}
           </div>
         )}
       </div>
@@ -299,15 +315,27 @@ export function InterviewDetail() {
           </div>
         )}
 
-        <div style={{ marginTop: 16 }}>
-          <label htmlFor="schedule-at">Schedule</label>
-          <div className="row">
-            <input id="schedule-at" type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} style={{ flex: 1 }} />
-            <button type="button" className="btn secondary" onClick={schedule} disabled={busyAction !== null || !scheduleAt}>
+        <div role="group" aria-labelledby="schedule-title" style={{ marginTop: 16 }}>
+          <h3 id="schedule-title" className="card-title"><Icon name="schedule" size={16} />Schedule</h3>
+          {session.scheduledAt && (
+            <p className="muted small" style={{ margin: '0 0 8px' }} data-testid="scheduled-now">
+              Now: {formatScheduled(session.scheduledAt, session.scheduledTimeZone, orgZone)}
+            </p>
+          )}
+          <TimeZoneDateTimePicker idPrefix="schedule" value={draft} onChange={setDraft} orgZone={orgZone} disabled={busyAction !== null} />
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn" onClick={() => schedule(true)} disabled={busyAction !== null || !isSchedulable(draft)}>
+              <Icon name={busyAction === 'schedule-send' ? 'hourglass' : 'send'} size={16} />
+              {busyAction === 'schedule-send' ? 'Saving and sending…' : 'Save schedule and send'}
+            </button>
+            <button type="button" className="btn secondary" onClick={() => schedule(false)} disabled={busyAction !== null || !isSchedulable(draft)}>
               <Icon name={busyAction === 'schedule' ? 'hourglass' : 'schedule'} size={16} />
-              {busyAction === 'schedule' ? 'Saving…' : 'Save'}
+              {busyAction === 'schedule' ? 'Saving…' : 'Save only'}
             </button>
           </div>
+          <p className="muted small" style={{ marginTop: 6 }}>
+            {invitation ? 'Sending emails the candidate again with the new time.' : 'Sending creates the invitation and emails it with this time.'}
+          </p>
         </div>
       </div>
 

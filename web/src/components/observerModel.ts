@@ -40,7 +40,7 @@ export interface ObservationView {
 }
 
 export interface ObserverRoundView {
-  round: { id: string; candidateId: string; stageKey: string; status: string; aiObserver: boolean; scheduledAt: string };
+  round: { id: string; candidateId: string; stageKey: string; status: string; aiObserver: boolean; scheduledAt: string; scheduledTimeZone?: string | null };
   notice: string;
   capture: { mode: 'server' | 'browser'; provider: string };
   observation: ObservationView | null;

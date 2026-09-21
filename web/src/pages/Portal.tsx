@@ -25,6 +25,8 @@ interface PortalInfo {
   speech: { stt: SttCapability; tts: { provider: string } };
   /** The interviewer's name; absent on an older server. */
   persona?: { name: string | null } | null;
+  /** When the interview is booked for, already written in the zone it was booked in; absent on an older server. */
+  schedule?: { at: string; timeZone: string | null; text: string } | null;
 }
 
 /**
@@ -222,6 +224,7 @@ export function Portal() {
         <BrandLogo variant="lockup" size={26} className="candidate-logo" />
         <h1 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h1>
         <p className="muted small">Hello {info.candidateName}. This is an AI-conducted voice interview, about {info.durationMinutes} minutes.</p>
+        {info.schedule && <p className="small" data-testid="portal-schedule"><b>Booked for:</b> {info.schedule.text}</p>}
         {err && <Banner kind="error">{err}</Banner>}
 
         {step === 'review' && (

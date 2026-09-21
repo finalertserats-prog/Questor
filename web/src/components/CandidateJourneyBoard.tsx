@@ -4,6 +4,8 @@ import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { Badge, recBadge, Meter } from './ui';
 import { formatScoreOutOf100 } from './scoreFormat';
+import { formatDateTime, formatScheduled } from './dateFormat';
+import { useOrgTimeZone } from './useOrgTimeZone';
 import type {
   CandidateJourney, ColumnState, JourneyColumn, JourneyRoundCard,
 } from './candidateJourney';
@@ -38,7 +40,7 @@ const STAGE_STATE_TEXT: Readonly<Record<string, string>> = {
 };
 
 function when(iso: string | null | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : '—';
+  return iso ? formatDateTime(iso) : '—';
 }
 
 function Column({ column, children }: { column: JourneyColumn; children: ReactNode }) {
@@ -70,7 +72,7 @@ function Block({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function RoundCard({ round }: { round: JourneyRoundCard }) {
+function RoundCard({ round, orgZone }: { round: JourneyRoundCard; orgZone: string | null | undefined }) {
   return (
     <div className="journey-card">
       <div className="journey-card-title">
@@ -81,7 +83,7 @@ function RoundCard({ round }: { round: JourneyRoundCard }) {
         {round.interviewers.length > 0 ? round.interviewers.join(', ') : round.interviewerNote}
       </span>
       <span className="journey-card-meta journey-when">
-        {round.completedAt ? `Completed ${when(round.completedAt)}` : when(round.scheduledAt)}
+        {round.completedAt ? `Completed ${when(round.completedAt)}` : formatScheduled(round.scheduledAt, round.scheduledTimeZone, orgZone)}
       </span>
     </div>
   );
@@ -89,6 +91,7 @@ function RoundCard({ round }: { round: JourneyRoundCard }) {
 
 export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }) {
   const { onboard, aiInterview, schedule, decision } = journey;
+  const orgZone = useOrgTimeZone();
 
   return (
     <section className="journey" aria-labelledby="journey-title">
@@ -196,7 +199,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
               {aiInterview.completedAt
                 ? `Completed ${when(aiInterview.completedAt)}`
                 : aiInterview.scheduledAt
-                  ? `Scheduled for ${when(aiInterview.scheduledAt)}`
+                  ? `Scheduled for ${formatScheduled(aiInterview.scheduledAt, aiInterview.scheduledTimeZone, orgZone)}`
                   : 'Not scheduled yet.'}
             </p>
           </Block>
@@ -239,7 +242,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
                     </h5>
                     {stage.rounds.length === 0
                       ? <p className="journey-note">{stage.note}</p>
-                      : stage.rounds.map((round) => <RoundCard key={round.id} round={round} />)}
+                      : stage.rounds.map((round) => <RoundCard key={round.id} round={round} orgZone={orgZone} />)}
                   </div>
                 ))}
                 <p className="journey-note" style={{ marginTop: 10 }}>{schedule.note}</p>
@@ -249,7 +252,7 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
 
           {schedule.orphanRounds.length > 0 && (
             <Block title="Rounds from an earlier stage plan">
-              {schedule.orphanRounds.map((round) => <RoundCard key={round.id} round={round} />)}
+              {schedule.orphanRounds.map((round) => <RoundCard key={round.id} round={round} orgZone={orgZone} />)}
             </Block>
           )}
         </Column>

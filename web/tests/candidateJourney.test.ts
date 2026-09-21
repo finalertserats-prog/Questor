@@ -365,6 +365,37 @@ describe('a candidate part-way through the AI interview', () => {
   });
 });
 
+describe('the zone a scheduled time was booked in', () => {
+  it('travels with the AI interview time', () => {
+    const journey = buildJourney(input({
+      pipeline: pipeline({ currentStageKey: 'silver', rounds: [] }),
+      sessions: [{ id: 'sess-z', state: 'INVITED', scheduledAt: '2026-10-01T09:00:00.000Z', scheduledTimeZone: 'Asia/Kolkata', createdAt: '2026-09-30T09:00:00.000Z' }],
+    }));
+
+    expect(journey.aiInterview.scheduledTimeZone).toBe('Asia/Kolkata');
+  });
+
+  it('travels with a human round', () => {
+    const journey = buildJourney(input({
+      pipeline: pipeline({
+        currentStageKey: 'gold',
+        rounds: [round({ id: 'r-z', stageKey: 'gold', status: 'SCHEDULED', scheduledAt: '2026-10-15T09:00:00.000Z', scheduledTimeZone: 'Europe/London' })],
+      }),
+    }));
+
+    expect(journey.schedule.stages.flatMap((s) => s.rounds.map((r) => r.scheduledTimeZone))).toEqual(['Europe/London']);
+  });
+
+  it('is null for a time booked without one', () => {
+    const journey = buildJourney(input({
+      pipeline: pipeline({ currentStageKey: 'silver', rounds: [] }),
+      sessions: [{ id: 'sess-n', state: 'INVITED', scheduledAt: '2026-10-01T09:00:00.000Z', createdAt: '2026-09-30T09:00:00.000Z' }],
+    }));
+
+    expect(journey.aiInterview.scheduledTimeZone).toBeNull();
+  });
+});
+
 describe('an AI interview that was created but never sent', () => {
   const journey = buildJourney(input({
     pipeline: pipeline({ currentStageKey: 'silver' }),

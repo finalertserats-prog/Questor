@@ -384,6 +384,10 @@ model InterviewSession {
   // retainUntil says — litigation/regulatory holds override storage limitation.
   legalHold         Boolean  @default(false)
   scheduledAt       DateTime?
+  // The IANA zone the time was booked in ("Asia/Kolkata"), so the candidate
+  // and the email read it on that clock. Null for a time set before zones were
+  // chosen, or through the older offset-only API.
+  scheduledTimeZone String?
   startedAt         DateTime?
   completedAt       DateTime?
   // Separate from completedAt on purpose. An interview that stopped part-way
@@ -1000,6 +1004,9 @@ model InterviewRound {
   sessionId        String?
   interviewersJson String   @default("[]")
   scheduledAt      DateTime
+  // The IANA zone the round was booked in; null when set through the older
+  // offset-only API. Emails fall back to the tenant's zone, then UTC.
+  scheduledTimeZone String?
   status           String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED
   notes            String   @default("")
   // When the round was completed with notes; the notes' retention runs from here.

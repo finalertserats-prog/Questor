@@ -12,7 +12,9 @@ import { getEmail } from '../providers/email/index.js';
 import { brandedEmail, headerSafe } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { formatRoundTime } from '../services/roundTime.js';
+import { formatScheduledTime } from '../services/zonedTime.js';
+import { tenantTimeZone } from '../services/tenantTimeZone.js';
+import { resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
@@ -43,6 +45,8 @@ export function presentRound(round: InterviewRound) {
     sessionId: round.sessionId,
     interviewers: parseJsonOptional<string[]>(round.interviewersJson, [], { model: 'InterviewRound', id: round.id, field: 'interviewersJson' }),
     scheduledAt: round.scheduledAt,
+    // The zone it was booked in; null for the older offset-only form.
+    scheduledTimeZone: round.scheduledTimeZone,
     status: round.status,
     // What the interviewers wrote IS the evidence for a human stage — nothing
     // else records those rounds, because Questor does not host them. Withholding
@@ -194,14 +198,14 @@ const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.char
  * was actually delivered — the console provider delivers nothing, and saying
  * "sent" regardless is how links silently go unseen.
  */
-async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; timeZone: string | undefined; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
+async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; timeZone: string | null; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
   const email = getEmail();
   if (!email.delivers) {
     return { delivered: false, link: o.link, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Use the link here.` };
   }
-  // In the tenant's zone when it has set one: a bare GMT time is converted in
-  // the reader's head, and wrongly whenever they forget to.
-  const when = formatRoundTime(o.scheduledAt, o.timeZone);
+  // In the zone the round was booked in, else the tenant's: a bare GMT time is
+  // converted in the reader's head, and wrongly whenever they forget to.
+  const when = formatScheduledTime(o.scheduledAt, o.timeZone);
   // Stage labels are configurable, so strip control characters before they
   // reach a subject line or plain-text body, where a line break could forge
   // headers or text. HTML escaping below does not cover these.
@@ -235,9 +239,10 @@ async function firstMeeting(round: InterviewRound, stageLabel: string, candidate
 
 const roundSchema = z.object({
   stageKey: z.string().min(1),
-  // Offset-aware, like interview scheduling. Deliberately NOT limited to the
-  // future: a round that already happened is recorded here too, notes and all.
-  scheduledAt: z.string().datetime({ offset: true }),
+  // A date, time and zone, or the older offset-aware instant (see
+  // scheduleTime.ts). Deliberately NOT limited to the future: a round that
+  // already happened is recorded here too, notes and all.
+  ...scheduleTimeFields,
   sessionId: z.string().min(1).optional(),
   interviewers: z.array(z.string().trim().min(1).max(120)).max(10).optional(),
   durationMinutes: durationSchema.optional(),
@@ -247,6 +252,7 @@ const roundSchema = z.object({
 
 pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const body = roundSchema.parse(req.body);
+  const booked = resolveScheduleTime(body);
   const tenantId = req.auth!.tenantId;
   const pipeline = await loadPipeline(req, req.params.id);
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, DECIDED);
@@ -307,7 +313,7 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         tenantId, pipelineId: pipeline.id, stageKey: stage.key,
         conductedBy: roles.conductedBy, aiObserver: roles.aiObserver, hrMayObserve: roles.hrMayObserve,
         sessionId: body.sessionId ?? null, interviewersJson: JSON.stringify(body.interviewers ?? []),
-        scheduledAt: new Date(body.scheduledAt), createdById: req.auth!.userId,
+        scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, createdById: req.auth!.userId,
         ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}),
         ...meetingFields,
       },
@@ -329,7 +335,7 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   await logAudit({
     tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.round_scheduled', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    after: { roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy, scheduledAt: body.scheduledAt },
+    after: { roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy, scheduledAt: booked.at.toISOString(), scheduledTimeZone: booked.timeZone },
   });
 
   // The booking is saved above; the meeting is set up now, outside the
@@ -349,11 +355,9 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   const link = aiRound
     ? `${config.webOrigin}/interviews/${round.sessionId}/observe`
     : `${config.webOrigin}/candidates/${pipeline.candidateId}`;
-  const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { policyJson: true } });
-  const { timeZone } = parseJsonOptional<{ timeZone?: unknown }>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: tenantId, field: 'policyJson' });
   const notification = await notifyScheduler({
     to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt,
-    timeZone: typeof timeZone === 'string' ? timeZone : undefined,
+    timeZone: round.scheduledTimeZone ?? await tenantTimeZone(tenantId),
     link, aiRound, meetingUrl: meeting?.url ?? null,
   });
 
