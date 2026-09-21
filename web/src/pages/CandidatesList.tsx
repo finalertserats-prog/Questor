@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../auth';
+import { can } from '../components/capabilityModel';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { stateBadge, Banner } from '../components/ui';
@@ -87,6 +89,8 @@ export function interviewCell(iv: LatestInterview | null) {
 }
 
 export function CandidatesList() {
+  // Adding a candidate needs candidate:create, which managers and reviewers lack.
+  const mayAdd = can(useAuth().user, 'candidate:create');
   const [candidates, setCandidates] = useState<CandidateRow[]>([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -143,7 +147,7 @@ export function CandidatesList() {
       <PageHeader
         icon="candidates"
         title="Candidates"
-        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+        actions={mayAdd ? <Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
       />
 
       {error && <Banner kind="error">{error}</Banner>}
@@ -199,7 +203,7 @@ export function CandidatesList() {
             illustration="/brand/empty-candidates.webp"
             title="No candidates yet"
             message="Add a candidate and their resume to see their fit and set up a first-round interview."
-            action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+            action={mayAdd ? <Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
           />
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -249,9 +253,11 @@ export function CandidatesList() {
                       {c.latestInterview
                         ? <Link to={`/interviews/${c.latestInterview.id}`}><Icon name="interviews" size={15} />Interview</Link>
                         : <Link to={`/candidates/${c.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
-                      <button type="button" className="link-button link-action" onClick={() => setReuseFor(c)} aria-label={`Set up ${c.fullName} for another role`}>
-                        <Icon name="role" size={15} />Another role
-                      </button>
+                      {mayAdd && (
+                        <button type="button" className="link-button link-action" onClick={() => setReuseFor(c)} aria-label={`Set up ${c.fullName} for another role`}>
+                          <Icon name="role" size={15} />Another role
+                        </button>
+                      )}
                     </span>
                   </td>
                 </tr>

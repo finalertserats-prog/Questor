@@ -21,6 +21,7 @@ import {
 import { humanise, recommendationStatus } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
 import { useAuth } from '../auth';
+import { can, onlyWhoCan } from '../components/capabilityModel';
 import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
 import { ReviewFactsStrip, TranscriptReader, TranscriptReadNote } from '../components/review/TranscriptReader';
 import { useReadProgress, useReviewTranscript, type TranscriptSource } from '../components/review/useTranscriptReader';
@@ -190,6 +191,9 @@ export function AssessmentView() {
   const [reviewWait, setReviewWait] = useState('');
 
   const { user } = useAuth();
+  // Reviewing, and the candidate feedback that follows it, need
+  // assessment:review, which a recruiter does not hold.
+  const mayReview = can(user, 'assessment:review');
   const [exportStatus, setExportStatus] = useState('');
   const [exporting, setExporting] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -559,11 +563,13 @@ export function AssessmentView() {
             {/* Offered here because this page shows the recommendation on sight —
                 once a reviewer has read it they cannot un-read it, so the blind
                 route has to be reachable before they form a view, not after. */}
-            <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>
-            <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
-              <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
-              {exporting ? 'Exporting…' : 'Export to ATS'}
-            </button>
+            {mayReview && <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>}
+            {can(user, 'assessment:export') && (
+              <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
+                <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
+                {exporting ? 'Exporting…' : 'Export to ATS'}
+              </button>
+            )}
             <button type="button" className="btn ghost" onClick={toggleReport} disabled={reportLoading}>
               <Icon name={showReport ? 'eye-off' : 'eye'} size={16} />
               {reportLoading ? 'Loading…' : showReport ? 'Hide full report' : 'View full report'}
@@ -601,7 +607,9 @@ export function AssessmentView() {
           }))}
           changedIds={changedIds}
         >
-          {reviewForm}
+          {mayReview ? reviewForm : (
+            <p className="muted small" data-testid="review-not-allowed">{onlyWhoCan('assessment:review', 'record a review')}</p>
+          )}
         </HumanReviewPanel>
       ))}
 
@@ -698,7 +706,7 @@ export function AssessmentView() {
 
       {/* After the review on purpose: feedback can only be drafted once a
           person has completed one. Keyed so a different assessment starts clean. */}
-      {id && <CandidateFeedbackPanel key={id} assessmentId={id} />}
+      {id && mayReview && <CandidateFeedbackPanel key={id} assessmentId={id} />}
     </div>
   );
 }
