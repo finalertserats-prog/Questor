@@ -102,6 +102,18 @@ describe('scheduling an interview in a chosen zone', () => {
     expect(res.status).toBe(400);
   });
 
+  it('refuses a round booked in year 99 rather than storing 1999', async () => {
+    const pipelineId = (await request(app).post('/api/pipelines').set(auth()).send({ candidateId: demo.candidateId })).body.pipeline.id as string;
+    for (const key of ['bronze', 'silver', 'gold']) {
+      await request(app).post(`/api/pipelines/${pipelineId}/advance`).set(auth()).send({ toStageKey: key });
+    }
+
+    const res = await request(app).post(`/api/pipelines/${pipelineId}/rounds`).set(auth())
+      .send({ stageKey: 'gold', date: '0099-01-01', time: '09:00', timeZone: 'UTC' });
+
+    expect(res.status).toBe(400);
+  });
+
   it('refuses a date without a time', async () => {
     const res = await request(app).post(`/api/interviews/${demo.sessionId}/schedule`).set(auth())
       .send({ date: futureDate(), timeZone: 'Asia/Kolkata' });

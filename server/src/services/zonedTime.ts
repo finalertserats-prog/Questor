@@ -55,8 +55,9 @@ export function zonedLocalToUtc(local: string, timeZone: string): ZonedResult {
   const [year, month, day, hour, minute] = match.slice(1).map(Number);
   const asUtc = Date.UTC(year, month - 1, day, hour, minute);
   const roundTrip = new Date(asUtc);
-  // Date.UTC rolls 30 February over into March; a date that moved did not exist.
-  if (roundTrip.getUTCMonth() !== month - 1 || roundTrip.getUTCDate() !== day || hour > 23 || minute > 59) {
+  // Date.UTC rolls 30 February over into March, and reads years 0-99 as
+  // 1900-1999; a date that moved did not exist as typed.
+  if (roundTrip.getUTCFullYear() !== year || roundTrip.getUTCMonth() !== month - 1 || roundTrip.getUTCDate() !== day || hour > 23 || minute > 59) {
     return { ok: false, reason: 'invalid' };
   }
 

@@ -55,7 +55,8 @@ export function zonedLocalToUtc(local: string, timeZone: string): ZonedResult {
   const [year, month, day, hour, minute] = match.slice(1).map(Number);
   const asUtc = Date.UTC(year, month - 1, day, hour, minute);
   const check = new Date(asUtc);
-  if (check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || hour > 23 || minute > 59) return { ok: false, reason: 'invalid' };
+  // Years 0-99 are read as 1900-1999 by Date.UTC: refused rather than moved.
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day || hour > 23 || minute > 59) return { ok: false, reason: 'invalid' };
 
   const offsets = new Set([asUtc - DAY_MS, asUtc, asUtc + DAY_MS].map((probe) => wallClockAsUtc(probe, timeZone) - probe));
   const matches = [...offsets]

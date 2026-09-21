@@ -58,6 +58,10 @@ describe('turning a wall-clock time in a zone into an instant', () => {
     expect(utc('2026-02-30T09:00', 'Asia/Kolkata')).toBe('invalid');
   });
 
+  it('refuses a two-digit year rather than reading it as the 1900s', () => {
+    expect(utc('0099-01-01T09:00', 'UTC')).toBe('invalid');
+  });
+
   it('refuses a malformed time', () => {
     expect(utc('2026-02-10T9:00', 'Asia/Kolkata')).toBe('invalid');
   });

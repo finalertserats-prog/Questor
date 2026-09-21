@@ -21,6 +21,10 @@ describe('converting a wall-clock time in a zone', () => {
     expect(zonedLocalToUtc('2026-03-08T02:30', 'America/New_York')).toEqual({ ok: false, reason: 'gap' });
   });
 
+  it('refuses a two-digit year rather than reading it as the 1900s', () => {
+    expect(zonedLocalToUtc('0099-01-01T09:00', 'UTC')).toEqual({ ok: false, reason: 'invalid' });
+  });
+
   it('takes the earlier of an autumn time that happens twice', () => {
     const result = zonedLocalToUtc('2026-10-25T01:30', 'Europe/London');
     expect(result.ok && result.at.toISOString()).toBe('2026-10-25T00:30:00.000Z');
