@@ -5,6 +5,7 @@ import { techStackPromptLine, type TechStackItem } from '../domain/techStack.js'
 import { stackCompetencies } from './techStackCompetencies.js';
 import { bandForRoleSeniority } from './bandCalibration.js';
 import type { BandId } from './experienceBands.js';
+import { PROTECTED_TOPICS } from './policyEngine.js';
 
 // Skill taxonomy: keyword -> canonical skill + category. Covers the knowledge-
 // worker role families the MVP targets (BRD 4.2).
@@ -163,7 +164,7 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
       passThreshold: 65,
     },
     policyRules: {
-      prohibitedTopics: ['age', 'religion', 'caste', 'marital status', 'nationality', 'health', 'political views'],
+      prohibitedTopics: [...PROTECTED_TOPICS],
       requiredDisclosures: ['AI interviewer', 'recording/transcription (if enabled)', 'human review of results'],
       accommodationsEnabled: true,
       jurisdiction: 'IN',

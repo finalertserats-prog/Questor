@@ -16,6 +16,8 @@ import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft }
 import { useOrgTimeZoneStatus } from './useOrgTimeZone';
 import { orgTimeZoneLoadNotice } from './orgTimeZone';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
+import { useAuth } from '../auth';
+import { can, onlyWhoCan } from './capabilityModel';
 import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
   type CandidateNotice, type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
@@ -157,6 +159,12 @@ export function PipelinePanel(
   // person who recorded it should be told so rather than left to spot the
   // stage track changing.
   const [decisionNotice, setDecisionNotice] = useState('');
+  // Each action needs the capability its route checks; without it the panel
+  // says who can, rather than offering a form that ends in "permission denied".
+  const { user } = useAuth();
+  const mayMove = can(user, 'interview:create');
+  const maySchedule = can(user, 'interview:schedule');
+  const mayDecide = can(user, 'assessment:review');
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -186,12 +194,13 @@ export function PipelinePanel(
   // Which provider will create links for human rounds. Only read by people who
   // can schedule; without it the form simply asks for a link.
   useEffect(() => {
+    if (!maySchedule) return undefined;
     let cancelled = false;
     api.get<{ meetingProvider: MeetingProviderInfo }>('/pipelines/meeting-provider')
       .then((resp) => { if (!cancelled) setMeetingProvider(resp.meetingProvider); })
       .catch(() => { if (!cancelled) setMeetingProvider(null); });
     return () => { cancelled = true; };
-  }, []);
+  }, [maySchedule]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -238,12 +247,12 @@ export function PipelinePanel(
           icon="flag"
           title="No pipeline yet"
           message="Track this candidate from onboarding through the Bronze profile review, the Silver AI interview and any human rounds, with a decision recorded by a person."
-          action={
+          action={mayMove ? (
             <button className="btn" disabled={busy} onClick={() => run(() => api.post('/pipelines', { candidateId }))}>
               <Icon name={busy ? 'hourglass' : 'play'} size={16} />
               {busy ? 'Starting…' : 'Start pipeline'}
             </button>
-          }
+          ) : <span className="muted small">{onlyWhoCan('interview:create', 'start a pipeline')}</span>}
         />
       </section>
     );
@@ -427,7 +436,9 @@ export function PipelinePanel(
         <div className="pipeline-actions grid cols-3">
           <div className="pipeline-action">
             <h3 className="card-title"><Icon name="arrow-right" size={16} />Next stage</h3>
-            {next ? (
+            {!mayMove ? (
+              <p className="muted small">{onlyWhoCan('interview:create', 'move a candidate on')}</p>
+            ) : next ? (
               <>
                 <button type="button" className="btn secondary" disabled={busy} onClick={advance}>
                   <Icon name="arrow-right" size={16} />
@@ -443,7 +454,7 @@ export function PipelinePanel(
             ) : (
               <p className="muted small">This is the final stage. Record a decision when ready.</p>
             )}
-            {final && (
+            {final && mayDecide && (
               <div style={{ marginTop: 10 }}>
                 <button type="button" className="btn secondary" disabled={busy} onClick={finalize} data-testid="pipeline-finalize">
                   <Icon name="check-circle" size={16} />
@@ -461,7 +472,9 @@ export function PipelinePanel(
 
           <form className="pipeline-action" onSubmit={scheduleRound}>
             <h3 className="card-title"><Icon name="schedule" size={16} />Schedule {current ? `${current.label} round` : 'round'}</h3>
-            {isInterviewStage ? (
+            {!maySchedule ? (
+              <p className="muted small">{onlyWhoCan('interview:schedule', 'schedule rounds')}</p>
+            ) : isInterviewStage ? (
               <>
                 {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
                 <TimeZoneDateTimePicker idPrefix="round-when" value={roundDraft} onChange={setRoundDraft} orgZone={orgZone} disabled={busy} />
@@ -497,6 +510,9 @@ export function PipelinePanel(
 
           <form className="pipeline-action" onSubmit={recordDecision}>
             <h3 className="card-title"><Icon name="decision" size={16} />Record decision</h3>
+            {!mayDecide ? (
+              <p className="muted small" data-testid="decision-not-allowed">{onlyWhoCan('assessment:review', 'record a decision or finalise a candidate')}</p>
+            ) : (<>
             <label htmlFor="decision">Outcome</label>
             <select
               id="decision"
@@ -524,6 +540,7 @@ export function PipelinePanel(
                 </div>
               </Banner>
             )}
+            </>)}
           </form>
         </div>
       )}
@@ -570,11 +587,13 @@ export function PipelinePanel(
                     />
                   </td>
                   <td>
-                    <RoundActions
-                      pipelineId={pipeline.id} round={round} busy={busy} run={run}
-                      onOutcome={reportRound} onError={setError}
-                      canReschedule={pipeline.status === 'ACTIVE'} orgZone={orgZone}
-                    />
+                    {maySchedule && (
+                      <RoundActions
+                        pipelineId={pipeline.id} round={round} busy={busy} run={run}
+                        onOutcome={reportRound} onError={setError}
+                        canReschedule={pipeline.status === 'ACTIVE'} orgZone={orgZone}
+                      />
+                    )}
                   </td>
                 </tr>
               ))}
@@ -584,7 +603,7 @@ export function PipelinePanel(
         </>
       )}
 
-      {openHumanRounds.length > 0 && (
+      {openHumanRounds.length > 0 && maySchedule && (
         <form className="pipeline-action pipeline-complete" onSubmit={completeRound}>
           <h3 className="card-title"><Icon name="human-review" size={16} />Complete a human round</h3>
           <p className="muted small">What the interviewers recorded becomes the evidence for this stage.</p>

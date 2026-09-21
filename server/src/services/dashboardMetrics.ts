@@ -55,6 +55,7 @@ export interface DashboardMetrics {
     candidate: { id: string; name: string };
     role: { id: string; title: string; level: string; regionCode: string | null; experienceBand: string | null; createdAt: string };
   }>;
+  readonly needsAttention: NeedsAttention;
   /** Added by the dashboard route from the role metrics service. */
   readonly roles?: {
     readonly kpis: {
@@ -66,6 +67,76 @@ export interface DashboardMetrics {
     readonly topByInterviewed: ReadonlyArray<RoleTopItem>;
     readonly minSample: number;
   };
+}
+
+export type AttentionKind = 'review' | 'accommodation' | 'human_request';
+
+/**
+ * The things waiting on a person: an assessment to review, an interview paused
+ * on an accommodation request, a candidate who asked to talk to someone. Each
+ * of these used to be visible only on that candidate's own page.
+ */
+export interface NeedsAttention {
+  readonly counts: Readonly<Record<AttentionKind, number>>;
+  /** Newest first, at most ATTENTION_ITEM_LIMIT. */
+  readonly items: ReadonlyArray<{
+    kind: AttentionKind; at: string; sessionId: string; assessmentId: string | null;
+    candidate: { id: string; name: string };
+    role: { id: string; title: string };
+  }>;
+}
+
+const ATTENTION_ITEM_LIMIT = 10;
+const HANDOFF_SCAN_LIMIT = 100;
+
+/** When the candidate asked, from the consent record the portal wrote; null when it is not there. */
+function accommodationRequestedAt(consentJson: string): Date | null {
+  try {
+    const parsed: unknown = JSON.parse(consentJson);
+    const at = typeof parsed === 'object' && parsed !== null && 'accommodationRequestedAt' in parsed ? parsed.accommodationRequestedAt : null;
+    const date = typeof at === 'string' ? new Date(at) : null;
+    return date && !Number.isNaN(date.getTime()) ? date : null;
+  } catch {
+    return null;
+  }
+}
+/** Nothing marks a human request as handled, so it stops asking after a month. */
+const HUMAN_REQUEST_WINDOW_DAYS = 30;
+
+async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWhereInput, now: Date): Promise<NeedsAttention> {
+  const requestedSince = new Date(now.getTime() - HUMAN_REQUEST_WINDOW_DAYS * DAY_MS);
+  const sessionSelect = {
+    id: true, state: true, createdAt: true, completedAt: true,
+    candidate: { select: { id: true, fullName: true } },
+    role: { select: { id: true, title: true } },
+    assessments: { orderBy: { version: 'desc' as const }, take: 1, select: { id: true, createdAt: true } },
+  };
+  const requestWhere: Prisma.CandidateHumanRequestWhereInput = { tenantId, candidate, status: 'REQUESTED', requestedAt: { gte: requestedSince } };
+  const [reviews, handoffs, requests, reviewCount, handoffCount, requestCount] = await Promise.all([
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
+    // Wider than the list: the request time lives in consentJson, so a recent
+    // request on an old interview is only found by reading past the newest few.
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: HANDOFF_SCAN_LIMIT, select: { ...sessionSelect, consentJson: true } }),
+    prisma.candidateHumanRequest.findMany({
+      where: requestWhere, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
+      select: { requestedAt: true, session: { select: sessionSelect } },
+    }),
+    prisma.interviewSession.count({ where: { tenantId, candidate, state: 'REVIEW_READY' } }),
+    prisma.interviewSession.count({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' } }),
+    prisma.candidateHumanRequest.count({ where: requestWhere }),
+  ]);
+  type Row = (typeof reviews)[number];
+  const item = (kind: AttentionKind, s: Row, at: Date) => ({
+    kind, at: at.toISOString(), sessionId: s.id, assessmentId: s.assessments[0]?.id ?? null,
+    candidate: { id: s.candidate.id, name: s.candidate.fullName },
+    role: { id: s.role.id, title: s.role.title },
+  });
+  const items = [
+    ...reviews.map((s) => item('review', s, s.assessments[0]?.createdAt ?? s.completedAt ?? s.createdAt)),
+    ...handoffs.map((s) => item('accommodation', s, accommodationRequestedAt(s.consentJson) ?? s.createdAt)),
+    ...requests.map((r) => item('human_request', r.session, r.requestedAt ?? r.session.createdAt)),
+  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ATTENTION_ITEM_LIMIT);
+  return { counts: { review: reviewCount, accommodation: handoffCount, human_request: requestCount }, items };
 }
 
 /** Index of the rolling 7-day bucket a time falls in, newest = weeks - 1; -1 when outside. */
@@ -89,7 +160,8 @@ function titleCase(key: string): string {
  * recruiter's dashboard can never count a candidate their lists would hide.
  * Sessions, pipelines and rounds carry no scope of their own and inherit it
  * through their candidate. Uses count/groupBy plus date-only selects bounded by
- * the chart window; no transcripts or JSON blobs are read.
+ * the chart window; no transcripts are read, and the only JSON is the consent
+ * record of an interview paused on an accommodation request, for its date.
  */
 export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMetricsOptions): Promise<DashboardMetrics> {
   const now = options.now ?? new Date();
@@ -116,7 +188,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
     scheduledSessions, scheduledRounds,
     completedSessions, completedRounds,
     stateRows, stageRows, decisionRows,
-    turnaroundRows, sessionSeries, roundSeries, recentRows,
+    turnaroundRows, sessionSeries, roundSeries, recentRows, needsAttention,
   ] = await Promise.all([
     prisma.role.count({ where: { AND: [rScope as Prisma.RoleWhereInput, { status: { not: 'archived' } }] } }),
     prisma.candidate.count({ where: candidate }),
@@ -168,6 +240,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
         role: { select: { id: true, title: true, level: true, regionCode: true, experienceBand: true, createdAt: true } },
       },
     }),
+    getNeedsAttention(tenantId, candidate, now),
   ]);
 
   const decisions: Record<Decision, number> = { APPROVED: 0, REJECTED: 0, WITHDRAWN: 0 };
@@ -214,6 +287,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
 
   return {
     generatedAt: now.toISOString(),
+    needsAttention,
     truncated: turnaroundRows.length >= seriesRowLimit || sessionSeries.length >= seriesRowLimit || roundSeries.length >= seriesRowLimit,
     kpis: {
       openRoles,

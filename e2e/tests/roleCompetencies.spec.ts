@@ -66,7 +66,7 @@ test('an interview created before a competency change is flagged for re-planning
   await addCandidateThroughUi(page, title, `E2E Candidate ${id}`, `e2e-${id}@example.test`);
   await page.getByRole('tab', { name: 'Candidate journey' }).click();
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
-  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: 'Interview plan', exact: true })).toBeVisible({ timeout: 20_000 });
   const interviewUrl = page.url();
   await expect(page.getByTestId('replan-pending')).toHaveCount(0);
 

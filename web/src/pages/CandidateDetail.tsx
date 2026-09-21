@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
-import { aiCallCell, stateBadge, Banner, Meter, Stat } from '../components/ui';
+import { stateBadge, Banner, Meter, Stat } from '../components/ui';
+import { VerdictCell } from '../components/VerdictCell';
+import { can, onlyWhoCan } from '../components/capabilityModel';
 import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
 import { CandidateAtsLink } from '../components/CandidateAtsLink';
@@ -64,6 +66,8 @@ interface SessionSummary {
   id: string; assessmentId: string | null; invited: boolean;
   /** Left out, with blindReviewPending set, while your independent review comes first. */
   recommendation?: string | null; blindReviewPending?: boolean;
+  /** The reviewer's verdict once there is one; absent on an older server or while blind review is pending. */
+  humanRecommendation?: string | null;
   /** The AI interviewer's name for that session; absent on an older server. */
   personaName?: string | null;
 }
@@ -439,9 +443,11 @@ export function CandidateDetail() {
             {candidate.roleId && (
               <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
             )}
-            <button type="button" className="btn secondary" onClick={() => setReuseOpen(true)} disabled={reuseOpen}>
-              <Icon name="add-candidate" size={16} />Set up for another role
-            </button>
+            {can(user, 'candidate:create') && (
+              <button type="button" className="btn secondary" onClick={() => setReuseOpen(true)} disabled={reuseOpen}>
+                <Icon name="add-candidate" size={16} />Set up for another role
+              </button>
+            )}
           </>
         }
       />
@@ -577,10 +583,14 @@ export function CandidateDetail() {
         </div>
         {setupProblem &&<p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
         <div className="row" style={{ marginTop: 16 }}>
-          <button className="btn" type="submit" disabled={creating || setupProblem !== null}>
-            <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />
-            {creating ? 'Creating…' : 'Approve & create interview'}
-          </button>
+          {can(user, 'interview:create') ? (
+            <button className="btn" type="submit" disabled={creating || setupProblem !== null}>
+              <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />
+              {creating ? 'Creating…' : 'Approve & create interview'}
+            </button>
+          ) : (
+            <span className="muted small">{onlyWhoCan('interview:create', 'set up an interview')}</span>
+          )}
         </div>
         </form>
       </div>
@@ -620,7 +630,7 @@ export function CandidateDetail() {
                         {isUnderway(iv.state) && <span className="inflight-note">in progress</span>}
                       </span>
                     </td>
-                    <td>{aiCallCell(s ?? {})}</td>
+                    <td><VerdictCell row={s} /></td>
                     <td>{iv.scheduledAt ? formatScheduled(iv.scheduledAt, iv.scheduledTimeZone, orgZone) : <span className="muted">—</span>}</td>
                     <td>{formatDateTime(iv.createdAt)}</td>
                     <td>

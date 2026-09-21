@@ -22,6 +22,7 @@ import {
 } from '../realtime/interviewEngine.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
+import { notifyHiringTeam } from '../services/hiringTeamNotice.js';
 import { disclosureWithProctoringPolicy, proctoringEnabledForSession } from '../services/proctoringPolicy.js';
 import { hasObserverNotice } from '../services/observerPolicy.js';
 import { personaNameOf } from '../domain/persona.js';
@@ -410,6 +411,11 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
       action: 'accommodation.requested', entityType: 'InterviewSession', entityId: inv.sessionId,
       after: { request: accommodation },
     });
+    // The candidate is promised a follow-up, so a person has to hear about it.
+    // Neither carries the request itself: it can describe a health condition.
+    await emitEvent(inv.session.tenantId, 'interview.accommodation_requested', { sessionId: inv.sessionId, candidateId: inv.session.candidateId })
+      .catch((err: unknown) => logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId: inv.sessionId }, 'accommodation webhook failed to emit'));
+    await notifyHiringTeam({ tenantId: inv.session.tenantId, candidateId: inv.session.candidateId, sessionId: inv.sessionId, event: 'accommodation_request' });
     return res.json({
       ok: true, handoff: true,
       message: 'Thanks — your request has been sent to our team and someone will contact you to arrange an alternative. You do not need to do anything else.',

@@ -53,6 +53,7 @@ import { ObserverConsent } from './pages/ObserverConsent';
 import { FeedbackConsent } from './pages/FeedbackConsent';
 import { CatalogReview } from './pages/CatalogReview';
 import { LibraryAdmin } from './pages/LibraryAdmin';
+import { can } from './components/capabilityModel';
 
 // Below this width the sidebar is an overlay drawer; above it, it is docked
 // beside the page. Kept in step with the breakpoint in styles/sidebar.css.
@@ -145,7 +146,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   // open by default; the collapse control narrows it to an icon rail. On a
   // phone it is still a drawer, closed until asked for. Collapsible was never
   // meant to mean collapsed.
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
   const isNarrow = useIsNarrowViewport();
   const [navOpen, setNavOpen] = useState(false);
   const [mode, setMode] = useState<SidebarMode>(() => readSidebarMode());
@@ -317,13 +318,15 @@ function Layout({ children }: { children: React.ReactNode }) {
             {/* Candidates sits above "Add Candidate" because finding an existing
                 one is the far more frequent errand — and for a long time it was
                 the impossible one: creation had a nav entry, retrieval had none. */}
-            <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>
-            <NavLink to="/roles" end data-tip={tip('Roles')} data-tour="nav-roles"><Icon name="role" /><span className="nav-label">Roles</span></NavLink>
-            <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>
+            {/* Each entry only for someone its page's API lets in (an auditor
+                holds audit:read alone); the tour skips an anchor that is absent. */}
+            {can(user, 'candidate:read') && <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>}
+            {can(user, 'role:read') && <NavLink to="/roles" end data-tip={tip('Roles')} data-tour="nav-roles"><Icon name="role" /><span className="nav-label">Roles</span></NavLink>}
+            {can(user, 'candidate:read') && <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>}
 
-            <div className="nav-group">Set up</div>
-            <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="resume-upload" /><span className="nav-label">Add candidate</span></NavLink>
-            <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="job-description" /><span className="nav-label">New role</span></NavLink>
+            {(can(user, 'candidate:create') || can(user, 'role:create')) && <div className="nav-group">Set up</div>}
+            {can(user, 'candidate:create') && <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="resume-upload" /><span className="nav-label">Add candidate</span></NavLink>}
+            {can(user, 'role:create') && <NavLink to="/roles/new" data-tip={tip('New role')} data-tour="nav-new-role"><Icon name="job-description" /><span className="nav-label">New role</span></NavLink>}
           </nav>
           <ProfileMenu />
         </div>

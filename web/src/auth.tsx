@@ -11,6 +11,8 @@ export interface User {
   tourCompletedAt: string | null;
   /** The platform owner (server PLATFORM_OPERATOR_EMAILS), who alone reviews the shared catalog. */
   platformOperator?: boolean;
+  /** What this user may do (server capabilities.ts); read through capabilityModel.can. */
+  capabilities?: string[];
 }
 /** The organisation the signed-in user belongs to. */
 export interface Tenant {

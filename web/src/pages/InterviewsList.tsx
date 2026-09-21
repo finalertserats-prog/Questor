@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../auth';
+import { can } from '../components/capabilityModel';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { aiCallCell, stateBadge, Banner } from '../components/ui';
+import { stateBadge, Banner } from '../components/ui';
+import { VerdictCell } from '../components/VerdictCell';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
@@ -18,6 +21,8 @@ interface Session {
   /** Left out, with blindReviewPending set, while your independent review comes first. */
   recommendation?: string | null; blindReviewPending?: boolean;
   assessmentId: string | null; invited: boolean; createdAt: string;
+  /** The reviewer's verdict once there is one; absent on an older server or while blind review is pending. */
+  humanRecommendation?: string | null;
 }
 
 /** Group keys this page will narrow to, and what to call the result. */
@@ -30,6 +35,8 @@ const FILTER_LABELS: Readonly<Record<string, string>> = {
 };
 
 export function InterviewsList() {
+  // Adding a candidate needs candidate:create, which managers and reviewers lack.
+  const mayAdd = can(useAuth().user, 'candidate:create');
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const orgZone = useOrgTimeZone();
@@ -70,7 +77,7 @@ export function InterviewsList() {
       <PageHeader
         icon="interviews"
         title={groupLabel ? `Interviews — ${groupLabel}` : 'Interviews'}
-        actions={<Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+        actions={mayAdd ? <Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
       />
 
       {error && <Banner kind="error">{error}</Banner>}
@@ -102,7 +109,7 @@ export function InterviewsList() {
               illustrationHeight={331}
               title="No interviews yet"
               message="Interviews are set up from a candidate’s page. Add a candidate to create the first one."
-              action={<Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>}
+              action={mayAdd ? <Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
             />
           )
         ) : (
@@ -122,7 +129,7 @@ export function InterviewsList() {
                     <td>{stateBadge(s.state)}</td>
                     <td className="small" data-testid={`interview-scheduled-${s.id}`}>{formatScheduled(s.scheduledAt, s.scheduledTimeZone, orgZone)}</td>
                     <td className="muted">{humanise(s.provider)}</td>
-                    <td>{aiCallCell(s)}</td>
+                    <td><VerdictCell row={s} /></td>
                     <td>
                       {s.assessmentId
                         ? <Link to={`/assessments/${s.assessmentId}`}><Icon name="evidence" size={15} />View assessment</Link>

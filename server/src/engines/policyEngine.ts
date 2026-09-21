@@ -11,14 +11,31 @@ export interface PolicyResult {
   category?: string;
 }
 
-// Protected / prohibited topics — must never be asked or inferred.
+/**
+ * Characteristics an interviewer must never ask about or infer. The common core
+ * of US, UK, EU and Indian employment law rather than one country's list: the
+ * live prompt and a new role's default prohibited topics both use it, and the
+ * patterns below are its deterministic backstop.
+ */
+export const PROTECTED_TOPICS = [
+  'age', 'race', 'ethnicity', 'colour', 'sex', 'gender', 'gender identity', 'sexual orientation',
+  'pregnancy', 'marital status', 'family status', 'disability', 'health', 'religion', 'national origin',
+  'nationality', 'caste', 'political views',
+] as const;
+
+// Protected / prohibited topics — must never be asked or inferred. Each pattern
+// is aimed at the candidate ("your race", "what gender are you"), so ordinary
+// work words — a race condition, a colour palette, a gender field — pass.
 const PROHIBITED_PATTERNS: Array<{ re: RegExp; category: string }> = [
-  { re: /\b(how old are you|your age|date of birth|when were you born)\b/i, category: 'age' },
-  { re: /\b(are you married|marital status|spouse|children|pregnan|family plan)\b/i, category: 'family_status' },
-  { re: /\b(what (religion|caste)|your religion|which caste|community do you belong)\b/i, category: 'religion_caste' },
-  { re: /\b(nationality|where are you from originally|native place|mother tongue)\b/i, category: 'origin' },
-  { re: /\b(disability|medical condition|mental health|are you healthy|any illness)\b/i, category: 'health' },
-  { re: /\b(sexual orientation|are you (gay|straight)|gender identity)\b/i, category: 'orientation' },
+  { re: /\b(how old are you|your age|date of birth|year of birth|(when|what year|which year) were you born)\b/i, category: 'age' },
+  { re: /\b(what race|your race|race are you|ethnicity|ethnic (background|origin|group)|skin (colou?r|tone))\b/i, category: 'race_colour' },
+  { re: /\b(are you (a )?(man|woman|male|female)|your (gender|sex)|what (gender|sex) are you|transgender|gender identity|identify as (a )?(man|woman|male|female|trans))\b/i, category: 'sex_gender' },
+  { re: /\b(pregnan\w*|(planning|plan) (to have|on having) (kids|children|a baby|a family)|start a family|maternity plans)\b/i, category: 'pregnancy' },
+  { re: /\b(are you married|marital status|spouse|children|do you have (any )?kids|family plan\w*)\b/i, category: 'family_status' },
+  { re: /\b(what (religion|caste)|your religion|which caste|your caste|community do you belong|religious beliefs|do you (go to|attend) (church|mosque|temple|synagogue|gurdwara))\b/i, category: 'religion_caste' },
+  { re: /\b(nationality|national origin|where are you from( originally)?|where were you born|(what|which) country are you from|native place|mother tongue)\b/i, category: 'origin' },
+  { re: /\b(disabilit(y|ies)|medical condition|mental health|are you healthy|any illness)\b/i, category: 'health' },
+  { re: /\b(sexual orientation|are you (gay|straight|lesbian|bisexual)|do you have a (boyfriend|girlfriend))\b/i, category: 'orientation' },
   { re: /\b(political (party|view)|who did you vote)\b/i, category: 'political' },
   { re: /\b(your (photo|appearance)|how do you look|accent)\b/i, category: 'appearance_accent' },
 ];

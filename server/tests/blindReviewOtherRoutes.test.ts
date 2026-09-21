@@ -70,6 +70,15 @@ describe('a reviewer who has not judged blind, in an organisation that requires 
     expect(row?.recommendation).toBeUndefined();
   });
 
+  it('gets no colleague verdict on the interview list either', async () => {
+    const ids = await assessedInterview();
+    await requireBlind(ids.tenantId);
+    const colleague = await prisma.user.create({ data: { tenantId: ids.tenantId, email: 'colleague@blind.test', name: 'Colleague', passwordHash: 'x', role: 'reviewer' } });
+    await prisma.humanReview.create({ data: { assessmentId: ids.assessmentId, reviewerId: colleague.id, status: 'COMPLETED', disposition: 'PROCEED', completedAt: new Date() } });
+    const row = await listRow(ids.auth, ids.sessionId);
+    expect(row?.humanRecommendation).toBeUndefined();
+  });
+
   it('is told on the interview list that their review comes first', async () => {
     const ids = await assessedInterview();
     await requireBlind(ids.tenantId);

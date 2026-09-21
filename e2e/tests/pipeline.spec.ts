@@ -30,7 +30,7 @@ test('creating an interview moves the candidate to Silver', async ({ page }) => 
   const { candidateUrl } = await createRoleAndCandidate(page, id);
   await openJourney(page);
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
-  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: 'Interview plan', exact: true })).toBeVisible({ timeout: 20_000 });
 
   await page.goto(candidateUrl);
   const track = await openJourney(page);

@@ -4,7 +4,7 @@ import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
-import { canApproveRoles } from '../components/profileMenuModel';
+import { can, onlyWhoCan } from '../components/capabilityModel';
 import { regionLabel } from '../components/roleLabelModel';
 import { approvePayload, archiveAction, isCurrentResponse, isRoleOpen, type LoadTicket } from '../components/roleDetailModel';
 import { Icon } from '../components/Icon';
@@ -141,7 +141,7 @@ export function RoleDetail() {
   const role = data.role;
   const scorecard = data.scorecards[0];
   const approved = scorecard?.status === 'approved';
-  const mayApprove = user ? canApproveRoles(user.role) : false;
+  const mayApprove = can(user, 'role:approve_scorecard');
   const archive = archiveAction(role.status);
 
   const weightsError = weightsProblem(profile.competencies ?? []);
@@ -253,15 +253,21 @@ export function RoleDetail() {
                 server holds — the one nobody was looking at — while the page
                 showed the edited values. Save first, then approve what you can
                 see. */}
-            <button
-              className="btn"
-              onClick={approve}
-              disabled={approved || dirty || approving || !isRoleOpen(role.status)}
-              title={dirty ? 'Save your changes first — approving would approve the saved version, not these edits.' : undefined}
-            >
-              <Icon name={approving ? 'hourglass' : 'check-circle'} size={16} />
-              {approved ? 'Approved' : approving ? 'Approving…' : 'Approve scorecard'}
-            </button>
+            {mayApprove ? (
+              <button
+                className="btn"
+                onClick={approve}
+                disabled={approved || dirty || approving || !isRoleOpen(role.status)}
+                title={dirty ? 'Save your changes first — approving would approve the saved version, not these edits.' : undefined}
+              >
+                <Icon name={approving ? 'hourglass' : 'check-circle'} size={16} />
+                {approved ? 'Approved' : approving ? 'Approving…' : 'Approve scorecard'}
+              </button>
+            ) : !approved && (
+              // A recruiter drafts; someone else signs off. Said here rather
+              // than as a button that can only answer "permission denied".
+              <span className="muted small" data-testid="awaiting-approval">[ awaiting approval ] {onlyWhoCan('role:approve_scorecard', 'approve the scorecard')}</span>
+            )}
             {mayApprove && !archiveUnavailable && (
               <button type="button" className="btn ghost" onClick={() => void changeStatus()} disabled={archiving}>
                 <Icon name={archiving ? 'hourglass' : role.status === 'archived' ? 'refresh' : 'lock'} size={16} />
@@ -281,7 +287,7 @@ export function RoleDetail() {
       {approved && isRoleOpen(role.status) && (
         <Banner kind="ok">
           Scorecard approved — ready to interview candidates.{' '}
-          <Link className="link-action" to="/candidates/new"><Icon name="add-candidate" size={15} />Add a candidate</Link>
+          {can(user, 'candidate:create') && <Link className="link-action" to="/candidates/new"><Icon name="add-candidate" size={15} />Add a candidate</Link>}
         </Banner>
       )}
 
