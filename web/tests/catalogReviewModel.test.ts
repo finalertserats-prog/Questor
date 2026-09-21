@@ -222,7 +222,7 @@ describe('runs', () => {
   });
 
   it('says when a finished run could not email the operators', () => {
-    expect(runStatusLine(run({ error: 'notice_not_sent' }))).toMatch(/ · The email about these proposals could not be sent\.$/);
+    expect(runStatusLine(run({ error: 'notice_not_sent' }))).toMatch(/ · No one was emailed about these proposals\.$/);
   });
 
   it('keeps Run now disabled while the latest run is still marked running', () => {

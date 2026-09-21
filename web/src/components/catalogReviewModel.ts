@@ -262,7 +262,7 @@ export function runStatusLine(run: CatalogRunView): string {
 
 const RUN_ERRORS: Record<string, string> = {
   abandoned: 'Stopped and not resumed within 7 days; a fresh run started instead.',
-  notice_not_sent: 'The email about these proposals could not be sent.',
+  notice_not_sent: 'No one was emailed about these proposals.',
 };
 
 /**

@@ -1,4 +1,4 @@
-import type { CandidateAtsLink } from '@prisma/client';
+import type { CandidateAtsLink, Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { normalizeEmail } from './userEmail.js';
@@ -82,15 +82,19 @@ const roleKeyOf = (roleId: string | null): string => roleId ?? '';
 
 /**
  * An ATS record is one person. Their applications on other roles may share
- * it; an application of anyone else may not.
+ * it; an application of anyone else may not. Called inside the transaction
+ * that writes the link (Serializable), so two links racing to different
+ * people cannot both pass.
  */
-async function assertRecordIsThisPerson(o: { tenantId: string; connectionId: string; externalCandidateId: string; candidate: { id: string; email: string; emailNormalized: string } }) {
-  const others = await prisma.candidateAtsLink.findMany({
-    where: { tenantId: o.tenantId, connectionId: o.connectionId, externalCandidateId: o.externalCandidateId, candidateId: { not: o.candidate.id } },
+async function assertRecordIsThisPerson(
+  tx: Prisma.TransactionClient,
+  o: { tenantId: string; connectionId: string; externalCandidateId: string; emailNormalized: string },
+) {
+  const links = await tx.candidateAtsLink.findMany({
+    where: { tenantId: o.tenantId, connectionId: o.connectionId, externalCandidateId: o.externalCandidateId },
     select: { candidate: { select: { email: true, emailNormalized: true } } },
   });
-  const person = o.candidate.emailNormalized || normalizeEmail(o.candidate.email);
-  if (others.some((l) => (l.candidate.emailNormalized || normalizeEmail(l.candidate.email)) !== person)) throw linkedElsewhere();
+  if (links.some((l) => (l.candidate.emailNormalized || normalizeEmail(l.candidate.email)) !== o.emailNormalized)) throw linkedElsewhere();
 }
 
 /**
@@ -102,16 +106,19 @@ export async function setCandidateLink(o: { auth: AuthClaims; candidateId: strin
   const candidate = await assertCanAccessCandidate(o.auth, o.candidateId);
   const { connection, client } = await requireTenantAts(o.auth.tenantId);
   await client.fetchCandidate(o.externalCandidateId).catch((err: unknown) => atsFailure(err, 'candidate'));
-  await assertRecordIsThisPerson({ tenantId: o.auth.tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, candidate });
 
   const key = { tenantId: o.auth.tenantId, candidateId: o.candidateId, connectionId: connection.id };
   const linkData = { externalCandidateId: o.externalCandidateId, roleKey: roleKeyOf(candidate.roleId), source: 'manual', createdById: o.auth.userId };
+  const emailNormalized = candidate.emailNormalized || normalizeEmail(candidate.email);
   let link: CandidateAtsLink;
   try {
-    link = await prisma.candidateAtsLink.upsert({
-      where: { tenantId_candidateId_connectionId: key },
-      create: { ...key, ...linkData },
-      update: linkData,
+    link = await inApplicationTransaction(async (tx) => {
+      await assertRecordIsThisPerson(tx, { tenantId: o.auth.tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, emailNormalized });
+      return tx.candidateAtsLink.upsert({
+        where: { tenantId_candidateId_connectionId: key },
+        create: { ...key, ...linkData },
+        update: linkData,
+      });
     });
   } catch (err) {
     if (isUniqueViolation(err)) throw linkedElsewhere();
@@ -171,14 +178,21 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
   const linkData = { tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, roleKey: o.roleId, source: 'import', createdById: o.auth.userId };
   try {
     const outcome = await inApplicationTransaction(async (tx) => {
+      const samePerson = () => assertRecordIsThisPerson(tx, { tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, emailNormalized });
       const already = await findApplicationOnRole(tx, { tenantId, roleId: o.roleId, emailNormalized });
       if (already) {
         // An application linked to a different record keeps that link: which
         // record it is was decided by an admin or an earlier import.
         const linked = await tx.candidateAtsLink.findUnique({ where: { tenantId_candidateId_connectionId: { tenantId, candidateId: already.id, connectionId: connection.id } } });
-        if (!linked) await tx.candidateAtsLink.create({ data: { ...linkData, candidateId: already.id } });
+        if (!linked) {
+          await samePerson();
+          await tx.candidateAtsLink.create({ data: { ...linkData, candidateId: already.id } });
+        }
         return { kind: 'exists' as const, candidateId: already.id, linked: !linked };
       }
+      // The record already stands for someone else on another role: an
+      // application for a second person must not share it.
+      await samePerson();
       const made = await tx.candidate.create({ data: { tenantId, roleId: o.roleId, ...contact.data, emailNormalized } });
       await assignCandidate(made.id, o.auth.userId, 'owner', tx);
       await tx.candidateAtsLink.create({ data: { ...linkData, candidateId: made.id } });

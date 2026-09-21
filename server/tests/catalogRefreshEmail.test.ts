@@ -98,6 +98,14 @@ describe('the operator summary email', () => {
 });
 
 describe('when the operator summary cannot be sent', () => {
+  it('records on the run that nobody was told when no address is set', async () => {
+    config.platformOperatorEmails = [];
+    config.signupApproverEmail = '';
+    const result = await runCatalogRefresh({ trigger: 'schedule', deps: testDeps({}).deps });
+    const run = await prisma.catalogRefreshRun.findUniqueOrThrow({ where: { id: result.runId } });
+    expect({ status: run.status, error: run.error }).toEqual({ status: 'completed', error: 'notice_not_sent' });
+  });
+
   it('keeps the run completed', async () => {
     mail.fail = true;
     const result = await runCatalogRefresh({ trigger: 'schedule', deps: testDeps({}).deps });

@@ -70,7 +70,8 @@ function render(to: string, summary: RefreshSummary) {
 
 /**
  * Tell the operators a run left proposals to review. False when a send
- * failed, so the run can say nobody was told; never throws, because a notice
+ * failed or there was nobody to send to, so the run can say nobody was told;
+ * never throws, because a notice
  * that could not go out must not turn a finished run into a failed one.
  */
 export async function notifyOperators(runId: string): Promise<boolean> {
@@ -80,7 +81,7 @@ export async function notifyOperators(runId: string): Promise<boolean> {
     const recipients = catalogReviewRecipients();
     if (recipients.length === 0) {
       logger.warn({ runId, pending: summary.total }, 'Catalog refresh queued proposals but no PLATFORM_OPERATOR_EMAILS or SIGNUP_APPROVER_EMAIL is set to tell');
-      return true;
+      return false;
     }
     let delivered = true;
     for (const to of recipients) {
