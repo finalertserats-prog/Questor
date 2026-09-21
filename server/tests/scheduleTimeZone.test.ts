@@ -206,6 +206,19 @@ describe('a resend after the time moved', () => {
 
     expect(mail.messages.at(-1)?.text ?? '').not.toContain('booked for');
   });
+
+  // The portal cannot book a time, so the email must not offer one.
+  it('does not promise the candidate can pick a time', async () => {
+    await request(app).post(`/api/interviews/${demo.sessionId}/resend`).set(auth()).send({});
+
+    expect(mail.messages.at(-1)?.text ?? '').not.toMatch(/pick a time/i);
+  });
+
+  it('tells an unbooked candidate they can start whenever suits them', async () => {
+    await request(app).post(`/api/interviews/${demo.sessionId}/resend`).set(auth()).send({});
+
+    expect(mail.messages.at(-1)?.text ?? '').toContain('You can start whenever suits you');
+  });
 });
 
 describe('the candidate portal', () => {

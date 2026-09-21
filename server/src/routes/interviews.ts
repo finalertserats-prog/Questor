@@ -74,7 +74,10 @@ function buildInvite(d: InviteDetails) {
     'Speak or type your answers, whichever you prefer.',
     'If you need any adjustments, you can ask for them when you open the link.',
   ];
-  const whenToStart = booked ? 'Please open the link at that time.' : 'You can start straight away or pick a time from the same link.';
+  // The portal has no way to book a time, so an unbooked invite offers none.
+  const whenToStart = booked
+    ? 'Please open the link at that time.'
+    : `You can start whenever suits you${d.expiresAt ? ' before then' : ''}.`;
   const until = d.expiresAt ? `The link is open until ${inviteDate(d.expiresAt, d.timeZone)}. ${whenToStart}` : whenToStart;
   const text = [
     `Hi ${first},`,
