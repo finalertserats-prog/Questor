@@ -49,12 +49,23 @@ const LOCATION_SPECIFIC = [
   /\bsponsor(?:s|ed|ing|ship)?\b/i,
   /\bright to work\b/i,
   /[$£€₹¥]/,
-  /\b(?:USD|GBP|EUR|INR|AUD|CAD|NZD|SGD|AED|JPY|CNY|BRL|MXN)\b/,
+  /\b(?:USD|GBP|EUR|INR|AUD|CAD|NZD|SGD|AED|JPY|CNY|BRL|MXN)\b/i,
+  /\b(?:dollars?|euros?|rupees?|pounds sterling|sterling|dirhams?|yen|reais|pesos?)\b/i,
   /\b(?:GDPR|HIPAA|EEOC?|IR35|at-will)\b/i,
   /\b(?:United States|USA|United Kingdom|UK|England|Ireland|India|Canada|Mexico|Brazil|Germany|France|Spain|Netherlands|Poland|UAE|Saudi Arabia|Egypt|Singapore|Japan|China|Australia|New Zealand)\b/,
   /\b(?:London|Dublin|New York|San Francisco|Seattle|Toronto|Berlin|Paris|Amsterdam|Dubai|Bangalore|Bengaluru|Mumbai|Delhi|Hyderabad|Sydney|Melbourne|Tokyo)\b/,
   /\b(?:North America|Latin America|Europe|Middle East|Asia-Pacific|APAC|EMEA)\b/,
 ] as const;
+
+const GLOBAL_LINT_SUGGESTION = 'A Global role is open in every region; leave out place-specific details, or choose a region.';
+
+/**
+ * Place-specific claims as lint hits, so a Global draft that repeats them from
+ * the team's own description asks the team to reword rather than hiding it.
+ */
+export function globalLint(text: string): Array<{ term: string; suggestion: string }> {
+  return locationSpecificClaims(text).map((term) => ({ term, suggestion: GLOBAL_LINT_SUGGESTION }));
+}
 
 export function isGlobalRegion(regionCode: string | undefined): boolean {
   return regionCode === GLOBAL_REGION_CODE;

@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma, parseJsonStrict } from '../db.js';
 import { HttpError } from '../middleware/index.js';
 import { BANDS, type BandId } from '../engines/experienceBands.js';
-import { draftJdFromDescriptionHeuristic, draftJdFromDescriptionWithLlm, draftJdHeuristic, draftJdWithLlm, isGlobalRegion, lintJd, locationSpecificClaims, PROMPT_VERSION } from '../engines/jdDraft.js';
+import { draftJdFromDescriptionHeuristic, draftJdFromDescriptionWithLlm, draftJdHeuristic, draftJdWithLlm, globalLint, isGlobalRegion, lintJd, locationSpecificClaims, PROMPT_VERSION } from '../engines/jdDraft.js';
 import type { AuthClaims } from './auth.js';
 import { consume } from '../middleware/rateLimit.js';
 
@@ -160,17 +160,16 @@ export function shapeDraft(row: DraftRow) {
 
 /**
  * The model's draft unless the built-in one is fairer. For a Global role the
- * model's draft must also make no place-specific claim; the built-in writer
- * never does.
+ * model's draft must also make no place-specific claim, and any such claim
+ * left in the chosen text (repeated from the team's own description) is shown
+ * as a lint hit so the team can reword it.
  */
 function chooseDraft(llm: Awaited<ReturnType<typeof draftJdWithLlm>>, heuristicText: string, global: boolean) {
-  const heuristicLint = lintJd(heuristicText);
-  if (llm && global && locationSpecificClaims(llm.text).length > 0) {
-    return { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: heuristicLint };
-  }
-  if (!llm) return { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: heuristicLint };
-  const llmLint = lintJd(llm.text);
-  if (llmLint.length > heuristicLint.length) return { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: heuristicLint };
+  const lintFor = (text: string) => (global ? [...lintJd(text), ...globalLint(text)] : lintJd(text));
+  const heuristic = { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: lintFor(heuristicText) };
+  if (!llm || (global && locationSpecificClaims(llm.text).length > 0)) return heuristic;
+  const llmLint = lintFor(llm.text);
+  if (llmLint.length > heuristic.lint.length) return heuristic;
   return { text: llm.text, generator: 'llm' as const, model: llm.model, promptVersion: PROMPT_VERSION, lint: llmLint };
 }
 

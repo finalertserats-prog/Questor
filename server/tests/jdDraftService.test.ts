@@ -253,4 +253,30 @@ describe('Global drafts stay location-agnostic', () => {
 
     expect({ status: res.status, generator: res.body.generator, namesIndia: String(res.body.text).includes('India') }).toEqual({ status: 200, generator: 'heuristic', namesIndia: false });
   });
+
+  it('flags place-specific details the team wrote into a Global description, so they can reword them', async () => {
+    const { auth } = await globalFixture();
+
+    const res = await request(app).post('/api/jd-drafts/describe').set('Authorization', auth).send({
+      title: 'Payments Engineer',
+      description: 'You will run our card payments platform. We sponsor visas for engineers relocating to London. Success is fewer failed payments.',
+      experienceBand: 'senior',
+      regionCode: 'GLOBAL',
+    });
+
+    expect(res.body.lint.map((l: { term: string }) => l.term)).toEqual(['visas', 'sponsor', 'London']);
+  });
+
+  it('adds no Global warning to a specific region', async () => {
+    const { auth } = await globalFixture();
+
+    const res = await request(app).post('/api/jd-drafts/describe').set('Authorization', auth).send({
+      title: 'Payments Engineer',
+      description: 'You will run our card payments platform. We sponsor visas for engineers relocating to London. Success is fewer failed payments.',
+      experienceBand: 'senior',
+      regionCode: 'IN',
+    });
+
+    expect(res.body.lint).toEqual([]);
+  });
 });

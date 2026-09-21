@@ -96,6 +96,10 @@ describe('locationSpecificClaims', () => {
     expect(locationSpecificClaims('Salary in USD. We sponsor visas for India.').length).toBeGreaterThanOrEqual(3);
   });
 
+  it('finds currency codes and names whatever their case', () => {
+    expect(locationSpecificClaims('Paid in usd, or in rupees.')).toEqual(['usd', 'rupees']);
+  });
+
   it('finds nothing in a location-agnostic advert', () => {
     expect(locationSpecificClaims(draftJdHeuristic(global))).toEqual([]);
   });
