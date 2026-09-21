@@ -361,6 +361,38 @@ describe('cancelling', () => {
     await createMeeting({ ...(await storedRound(roundId)), meetingStatus: 'CREATING' }, { stageLabel: 'Gold', candidateId: f.candidateId });
     expect({ deleted: callsTo(fetchMock, 'DELETE').length, stored: (await storedRound(roundId)).meetingExternalId }).toEqual({ deleted: 1, stored: null });
   });
+
+  describe('when that late meeting cannot be removed', () => {
+    async function lateMeetingNotRemoved() {
+      const f = await atGoldStage();
+      const roundId = (await schedule(f)).body.round.id as string;
+      await prisma.interviewRound.update({ where: { id: roundId }, data: { meetingStatus: 'CREATING', meetingProvider: 'zoom' } });
+      await request(app).post(roundPath(f, roundId, 'cancel')).set('Authorization', f.auth).send({});
+      configureZoom();
+      zoomVendor({ remove: () => json(500, {}) });
+      const { createMeeting } = await import('../src/services/roundMeeting.js');
+      const result = await createMeeting({ ...(await storedRound(roundId)), meetingStatus: 'CREATING' }, { stageLabel: 'Gold', candidateId: f.candidateId });
+      return { f, roundId, result };
+    }
+
+    it('does not claim the meeting was removed', async () => {
+      const { result } = await lateMeetingNotRemoved();
+      expect(result.message).toMatch(/could not be removed/);
+    });
+
+    it('keeps the meeting on the round so "Try again" can remove it', async () => {
+      const { roundId } = await lateMeetingNotRemoved();
+      const round = await storedRound(roundId);
+      expect({ status: round.meetingStatus, externalId: round.meetingExternalId }).toEqual({ status: 'CANCEL_FAILED', externalId: '987654321' });
+    });
+
+    it('removes it on "Try again"', async () => {
+      const { f, roundId } = await lateMeetingNotRemoved();
+      const fetchMock = zoomVendor();
+      await request(app).post(roundPath(f, roundId, 'meeting/retry')).set('Authorization', f.auth).send({});
+      expect({ deleted: callsTo(fetchMock, 'DELETE').length, status: (await storedRound(roundId)).meetingStatus }).toEqual({ deleted: 1, status: 'CANCELLED' });
+    });
+  });
 });
 
 describe('recovering from a creation that never finished', () => {
