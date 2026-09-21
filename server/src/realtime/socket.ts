@@ -3,7 +3,7 @@ import { Server, type Socket, type DefaultEventsMap } from 'socket.io';
 import { CorruptRecordError, prisma } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
-import { verifyToken } from '../services/auth.js';
+import { verifyToken, type AuthClaims } from '../services/auth.js';
 import { assertCanAccessSession, capabilitiesOf } from '../services/access.js';
 import { consume } from '../middleware/rateLimit.js';
 import { findInvitationByToken } from '../services/invitations.js';
@@ -118,12 +118,26 @@ async function loadInvitation(token: string) {
   return inv;
 }
 
+/**
+ * The staff token's claims with the role the account holds NOW, as the HTTP
+ * middleware's authenticate() does. The token proves who signed in; the
+ * database says what they may do. Trusting the token's role let a demoted or
+ * removed user keep observing and driving interviews until it expired.
+ */
+async function currentStaffClaims(token: string): Promise<AuthClaims | null> {
+  const claims = verifyToken(token);
+  if (!claims) return null;
+  const user = await prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true } });
+  if (!user || user.tenantId !== claims.tenantId) return null;
+  return { ...claims, userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
+}
+
 async function resolveHandshakeAuth(raw: Record<string, unknown>): Promise<SocketAuth | null> {
   // Handshake auth payload only — never the query string, which leaks live
   // credentials into access logs and proxy logs (see middleware/authenticate).
   const bearer = typeof raw.token === 'string' ? raw.token : undefined;
   if (bearer) {
-    const claims = verifyToken(bearer);
+    const claims = await currentStaffClaims(bearer);
     if (claims) return { kind: 'user', tenantId: claims.tenantId, token: bearer };
   }
 
@@ -166,7 +180,7 @@ export async function authorizeSession(
     return { id: inv.sessionId, state: inv.session.state };
   }
 
-  const claims = verifyToken(auth.token);
+  const claims = await currentStaffClaims(auth.token);
   if (!claims) return null;
   if (!requestedSessionId) return null;
   // Checked on every event, so End demo and the 45-minute limit cut a live socket too.
