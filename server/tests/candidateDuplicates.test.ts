@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { wipe, DEMO_JD } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
+import { eraseAllApplications } from '../src/services/personErasure.js';
 
 /**
  * One person, one application per role; and erasing a person means every
@@ -225,5 +226,17 @@ describe('DELETE /api/candidates/:id with allApplications', () => {
     await erase(adminToken, one, { reason: 'Asked to be forgotten.' });
 
     expect(await prisma.candidate.count({ where: { id: two } })).toBe(1);
+  });
+});
+
+describe('eraseAllApplications within a caller scope', () => {
+  it('leaves applications outside the scope it is given', async () => {
+    const email = 'scoped@example.com';
+    const inScope = (await addCandidate(recruiterToken, { fullName: 'Scoped Person', email, roleId: dataRoleId })).body.candidate.id as string;
+    const outOfScope = (await addCandidate(recruiterToken, { fullName: 'Scoped Person', email, roleId: platformRoleId })).body.candidate.id as string;
+
+    await eraseAllApplications({ tenantId, candidateId: inScope, actorId: adminId, reason: 'Asked to be forgotten.', scope: { roleId: dataRoleId } });
+
+    expect(await prisma.candidate.findUnique({ where: { id: outOfScope } })).not.toBeNull();
   });
 });

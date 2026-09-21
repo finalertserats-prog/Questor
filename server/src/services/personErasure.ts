@@ -48,11 +48,11 @@ export async function applicationIdsForAddress(scope: Record<string, unknown>, a
   return rows.filter((r) => (r.emailNormalized || normalizeEmail(r.email)) === key).map((r) => r.id);
 }
 
-/** Every application in the tenant for the address behind `candidateId`, that one included. */
-async function applicationsOfPerson(tenantId: string, candidateId: string): Promise<string[]> {
+/** Every application the caller may see for the address behind `candidateId`, that one included. */
+async function applicationsOfPerson(tenantId: string, candidateId: string, scope: Record<string, unknown>): Promise<string[]> {
   const row = await prisma.candidate.findFirst({ where: { id: candidateId, tenantId }, select: { email: true, emailNormalized: true } });
   if (!row) throw new HttpError(404, 'Candidate not found');
-  const ids = await applicationIdsForAddress({ tenantId }, row);
+  const ids = await applicationIdsForAddress({ AND: [{ tenantId }, scope] }, row);
   return [...new Set([candidateId, ...ids])].sort();
 }
 
@@ -75,13 +75,16 @@ export async function eraseAllApplications(o: {
   candidateId: string;
   actorId: string;
   reason: string;
+  // The caller's candidate scope. Only admins can erase today and they see the
+  // whole tenant, but a scoped role granted erasure must not reach past it.
+  scope?: Record<string, unknown>;
 }): Promise<PersonErasureResult> {
-  const ids = await applicationsOfPerson(o.tenantId, o.candidateId);
+  const ids = await applicationsOfPerson(o.tenantId, o.candidateId, o.scope ?? {});
   // One at a time: each erasure is its own transaction and vendor clean-up,
   // exactly as a single erasure runs.
   let outcomes: readonly { readonly id: string; readonly outcome: 'erased' | 'held' }[] = [];
   for (const id of ids) {
-    outcomes = [...outcomes, { id, outcome: await eraseOrSkip({ ...o, candidateId: id }) }];
+    outcomes = [...outcomes, { id, outcome: await eraseOrSkip({ tenantId: o.tenantId, actorId: o.actorId, reason: o.reason, candidateId: id }) }];
   }
   const erasedIds = outcomes.filter((r) => r.outcome === 'erased').map((r) => r.id);
   const skippedIds = outcomes.filter((r) => r.outcome === 'held').map((r) => r.id);
