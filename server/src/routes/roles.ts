@@ -145,7 +145,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   // The JD carries the stack HR confirmed, in the one section the stack owns.
   if (body.techStack.length) sourceText = syncJdTechStack(sourceText, body.techStack).text;
 
-  const extractOpts = { techStack: body.techStack, band: body.experienceBand };
+  const extractOpts = { techStack: body.techStack, band: body.experienceBand, regionCode: body.regionCode };
   const extraction = body.useLlm ? await extractRole(sourceText, titleHint, extractOpts) : extractRoleHeuristic(sourceText, titleHint, extractOpts);
   const ats = lookup?.kind === 'new' ? lookup.ats : null;
   const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(body.domainId, extraction.title) : undefined);

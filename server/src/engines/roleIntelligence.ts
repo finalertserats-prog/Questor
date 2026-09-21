@@ -89,6 +89,17 @@ export interface ExtractOptions {
   readonly techStack?: readonly TechStackItem[];
   /** The role's experience band, which sets how deep those competencies are graded. */
   readonly band?: BandId;
+  /** The role's catalog region; its jurisdiction follows it. */
+  readonly regionCode?: string | null;
+}
+
+/**
+ * The jurisdiction a role is under is its region's code. GLOBAL is its own
+ * value, meaning no single jurisdiction; a role without a region is blank
+ * rather than defaulting to one country's rules.
+ */
+export function jurisdictionForRegion(regionCode: string | null | undefined): string {
+  return regionCode?.trim().toUpperCase() ?? '';
 }
 
 export interface RoleExtraction {
@@ -167,7 +178,7 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
       prohibitedTopics: [...PROTECTED_TOPICS],
       requiredDisclosures: ['AI interviewer', 'recording/transcription (if enabled)', 'human review of results'],
       accommodationsEnabled: true,
-      jurisdiction: 'IN',
+      jurisdiction: jurisdictionForRegion(opts.regionCode),
     },
     redFlags: ['Unable to give any specific example', 'Contradicts resume claims without explanation'],
     seniority: level,
