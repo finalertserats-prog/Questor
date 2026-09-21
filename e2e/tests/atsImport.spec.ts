@@ -12,7 +12,7 @@ test('offers an ATS import and explains that no ATS is connected yet', async ({ 
   await page.goto('/candidates/new');
   await dismissTour(page);
   const form = page.locator('form.card');
-  const roleSelect = form.getByRole('combobox');
+  const roleSelect = form.getByLabel('Role', { exact: true });
   const roleValue = await roleSelect.locator('option').filter({ hasText: title }).first().getAttribute('value');
   if (!roleValue) throw new Error('Created role was not available for candidate import.');
   await roleSelect.selectOption(roleValue);

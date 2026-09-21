@@ -62,7 +62,8 @@ export async function addCandidateThroughUi(page: Page, title: string, name: str
   await dismissTour(page);
   await expect(page.getByRole('heading', { name: 'Add candidate', exact: true })).toBeVisible();
   const form = page.locator('form.card');
-  const roleSelect = form.getByRole('combobox');
+  // By label: the Full name field is a combobox too (it searches people already in Questor).
+  const roleSelect = form.getByLabel('Role', { exact: true });
   const roleValue = await roleSelect.locator('option').filter({ hasText: title }).first().getAttribute('value');
   if (!roleValue) throw new Error('Created role was not available for candidate creation.');
   await roleSelect.selectOption(roleValue);
