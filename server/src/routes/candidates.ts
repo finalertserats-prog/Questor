@@ -5,7 +5,6 @@ import multer from 'multer';
 import { z } from 'zod';
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { scorecardForFit } from '../services/scorecards.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { eraseCandidate } from '../services/dataRights.js';
 import {
@@ -15,7 +14,7 @@ import {
   candidateScope,
   roleScope,
 } from '../services/access.js';
-import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
+import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
@@ -25,6 +24,9 @@ import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
+import { normalizeEmail } from '../services/userEmail.js';
+import { resumeScoringFor, storeResumeProfile } from '../services/resumeProfile.js';
+import { applyCandidateToRole, CANDIDATE_SEARCH_MIN_CHARS, searchCandidatePeople } from '../services/candidateReuse.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -96,6 +98,17 @@ candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   })) });
 }));
 
+// People already in Questor, for the type-ahead on Add candidate and for
+// "Set up for another role". Declared before /:id, which would otherwise read
+// "search" as a candidate id. Scoped like the list: only rows the caller may
+// see are searched, and only those rows' roles are named.
+const searchQuerySchema = z.object({ q: z.string().trim().min(CANDIDATE_SEARCH_MIN_CHARS).max(254) });
+
+candidatesRouter.get('/search', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const { q } = searchQuerySchema.parse(req.query);
+  res.json({ people: await searchCandidatePeople(req.auth!, q) });
+}));
+
 const createSchema = z.object({
   fullName: z.string().trim().min(1).max(200),
   email: z.string().trim().email().max(254),
@@ -113,7 +126,7 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
   await assertCanAccessRole(req.auth!, body.roleId);
   await assertRoleOpen(body.roleId);
   const candidate = await prisma.candidate.create({
-    data: { tenantId: req.auth!.tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, phone: body.phone ?? '' },
+    data: { tenantId: req.auth!.tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, emailNormalized: normalizeEmail(body.email), phone: body.phone ?? '' },
   });
   // Role assignment alone would already cover this candidate, but the explicit
   // grant survives the creator later being unassigned from the role.
@@ -122,6 +135,24 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
   // Onboarding starts the candidate's journey at Participation on its own.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.onboarded', trigger: 'candidate.created' });
   res.status(201).json({ candidate: shape(candidate) });
+}));
+
+// Put an existing person forward for another role: a new application with
+// their details and latest resume copied, re-scored for that role. A second
+// application for the same address on the same role is refused with the one
+// already there, which the caller can always see (it sits on a role they can
+// access).
+const applyBodySchema = z.object({ roleId: z.string().min(1).max(64) });
+
+candidatesRouter.post('/:id/apply', requireCapability('candidate:create'), asyncHandler(async (req, res) => {
+  const { id } = z.object({ id: z.string().min(1).max(64) }).parse(req.params);
+  const { roleId } = applyBodySchema.parse(req.body ?? {});
+  const result = await applyCandidateToRole(req.auth!, id, roleId);
+  if (result.kind === 'exists') {
+    res.status(409).json({ error: 'This person is already a candidate for that role.', code: 'candidate_exists', candidateId: result.candidateId });
+    return;
+  }
+  res.status(201).json({ candidate: shape(result.candidate), profileCopied: result.profileCopied, fit: result.fit });
 }));
 
 // Upload + parse resume, compute fit score, build evidence graph (FR-006..010)
@@ -151,34 +182,16 @@ candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resu
   }
   if (!rawText.trim()) throw new HttpError(400, 'No resume text found');
 
-  const profile = normalizeProfile(rawText);
-
-  const scorecard = await scorecardForFit(candidate.roleId);
-  const role = scorecard ? parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' }) : emptyProfile();
-  const roleRow = candidate.roleId ? await prisma.role.findUnique({ where: { id: candidate.roleId }, select: { id: true, techStackJson: true } }) : null;
-  const { fit, perCompetency } = computeFitScore(profile, rawText, role, roleRow ? roleTechStack(roleRow) : []);
-
-  const version = (await prisma.candidateProfileVersion.count({ where: { candidateId: candidate.id } })) + 1;
-  const profileVersion = await prisma.candidateProfileVersion.create({
-    data: { candidateId: candidate.id, version, rawText, profileJson: JSON.stringify(profile), fitScoreJson: JSON.stringify(fit) },
+  const { profile, fit, profileVersionId } = await storeResumeProfile(prisma, {
+    tenantId: req.auth!.tenantId, candidateId: candidate.id, rawText, filename,
+    contentType: req.file?.mimetype ?? 'text/plain', scoring: await resumeScoringFor(candidate.roleId),
   });
-
-  // Evidence graph nodes/edges
-  for (const pc of perCompetency) {
-    const compNode = await prisma.evidenceNode.create({ data: { profileId: profileVersion.id, kind: 'competency', label: pc.name, dataJson: JSON.stringify({ competencyId: pc.competencyId, strength: pc.strength }) } });
-    for (const ev of pc.evidence) {
-      const evNode = await prisma.evidenceNode.create({ data: { profileId: profileVersion.id, kind: 'evidence', label: ev.slice(0, 60), dataJson: JSON.stringify({ text: ev }) } });
-      await prisma.evidenceEdge.create({ data: { fromId: evNode.id, toId: compNode.id, relation: pc.strength === 'missing' ? 'requires-validation' : 'supports', weight: 1 } });
-    }
-  }
-
-  await prisma.artifact.create({ data: { tenantId: req.auth!.tenantId, candidateId: candidate.id, kind: 'resume', filename, contentType: req.file?.mimetype ?? 'text/plain', storageKey: rawText, sizeBytes: rawText.length, retentionDays: 180 } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.parsed', entityType: 'Candidate', entityId: candidate.id });
   await emitEvent(req.auth!.tenantId, 'candidate.parsed', { candidateId: candidate.id, fit: fit.overall });
   // An analysed profile is what the Bronze review works from: Participation is over.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.profiled', trigger: 'candidate.parsed' });
 
-  res.status(201).json({ profile, fit, profileVersionId: profileVersion.id, filename });
+  res.status(201).json({ profile, fit, profileVersionId, filename });
 }));
 
 
@@ -378,7 +391,3 @@ candidatesRouter.delete('/:id', requireCapability('candidate:erase'), asyncHandl
 // is now the only lookup path.
 
 function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email, phone: c.phone, roleId: c.roleId, createdAt: c.createdAt }; }
-function emptyProfile(): RoleSuccessProfile {
-  return { roleContext: '', outcomes: [], responsibilities: [], competencies: [], scoringRules: { mustPassCompetencyIds: [], notEnoughEvidencePolicy: 'exclude', passThreshold: 65 }, policyRules: { prohibitedTopics: [], requiredDisclosures: [], accommodationsEnabled: true, jurisdiction: 'IN' }, redFlags: [], seniority: '' };
-}
-

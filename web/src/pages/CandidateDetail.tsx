@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { recBadge, stateBadge, Banner, Meter, Stat } from '../components/ui';
 import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
@@ -20,6 +20,7 @@ import {
 import { formatDateTime } from '../components/dateFormat';
 import { InterviewerSelector } from '../components/InterviewerSelector';
 import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
+import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -96,6 +97,11 @@ export const candidateDetailTabs: ReadonlyArray<{ key: CandidateDetailTabKey; la
   { key: 'journey', label: 'Candidate journey' },
 ];
 
+/** The tab a link opens on: `?tab=journey` (where interviews are set up), else the profile. */
+export function candidateDetailTabFromParam(value: string | null): CandidateDetailTabKey {
+  return candidateDetailTabs.find((t) => t.key === value)?.key ?? 'profile';
+}
+
 export function candidateDetailTabId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-tab`; }
 export function candidateDetailPanelId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-panel`; }
 
@@ -134,7 +140,10 @@ const DETAIL_LABELS: Readonly<Record<string, string>> = {
 export function CandidateDetail() {
   const { id } = useParams();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
   const { user } = useAuth();
+  const [reuseOpen, setReuseOpen] = useState(false);
   const [data, setData] = useState<CandidateResp | null>(null);
   const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysisResp | null>(null);
   const [profileAnalysisError, setProfileAnalysisError] = useState('');
@@ -271,6 +280,13 @@ export function CandidateDetail() {
     return () => { cancelled = true; };
   }, [id, version, noteDetail, clearDetail]);
 
+  // Runs after the load above, which resets the tab for a new candidate: a
+  // link from "Set up interview now" lands on the journey tab instead.
+  useEffect(() => {
+    setActiveTab(candidateDetailTabFromParam(tabParam));
+    setReuseOpen(false);
+  }, [id, tabParam]);
+
   // The assessment the decision column reads: the newest interview that produced
   // one. Its id only becomes known once /interviews has landed, so it is fetched
   // separately rather than folded into the load above.
@@ -402,9 +418,21 @@ export function CandidateDetail() {
             {candidate.roleId && (
               <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
             )}
+            <button type="button" className="btn secondary" onClick={() => setReuseOpen(true)} disabled={reuseOpen}>
+              <Icon name="add-candidate" size={16} />Set up for another role
+            </button>
           </>
         }
       />
+
+      {reuseOpen && (
+        <SetUpForAnotherRole
+          candidateId={candidate.id}
+          fullName={candidate.fullName}
+          email={candidate.email}
+          onClose={() => setReuseOpen(false)}
+        />
+      )}
 
       <div className="candidate-detail-tabs" role="tablist" aria-label="Candidate detail sections">
         {candidateDetailTabs.map((tab) => (

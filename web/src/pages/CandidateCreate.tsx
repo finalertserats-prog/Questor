@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
@@ -9,7 +9,17 @@ import { PageSkeleton } from '../components/Skeleton';
 import { EMPTY_RESUME, ResumeFields, uploadResume, type ResumeValue } from '../components/ResumeFields';
 import { atsErrorMessage } from '../components/atsModel';
 import { roleDisplayLabels } from '../components/roleLabelModel';
-import { isRoleOpen } from '../components/roleDetailModel';
+import { CandidatePersonCombobox } from '../components/CandidatePersonCombobox';
+import {
+  COPIED_DETAILS_NOTE,
+  applyFailureMessage,
+  initialRoleId,
+  roleEntryLabel,
+  rolesAcceptingCandidates,
+  rolesOpenToPerson,
+  reuseBlocker,
+  type CandidatePerson,
+} from '../components/candidateReuseModel';
 import {
   addCandidateBlocker,
   hasResume,
@@ -30,6 +40,8 @@ interface Role {
 
 export function CandidateCreate() {
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedRoleId = searchParams.get('roleId');
   const { user } = useAuth();
   const fieldId = useId();
   const [roles, setRoles] = useState<Role[]>([]);
@@ -48,31 +60,62 @@ export function CandidateCreate() {
   // Set once the candidate record exists, so a failed resume upload can be
   // retried against the same person rather than making a duplicate.
   const [created, setCreated] = useState<{ id: string; name: string } | null>(null);
+  // A person picked from the name type-ahead: set up for the role as a new
+  // application with their details copied, instead of typed in again.
+  const [existing, setExisting] = useState<CandidatePerson | null>(null);
 
   useEffect(() => {
     api.get<{ roles: Role[] }>('/roles')
       .then((d) => {
         // Archived roles are closed to new candidates; the server refuses them too.
-        const approved = (d.roles ?? []).filter((r) => r.latestScorecard?.status === 'approved' && isRoleOpen(r.status));
+        const approved = rolesAcceptingCandidates(d.roles ?? []);
         setRoles(approved);
-        if (approved[0]) setRoleId(approved[0].id);
+        setRoleId(initialRoleId(approved, requestedRoleId));
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [requestedRoleId]);
 
   if (loading) return <PageSkeleton label="Loading roles…" cards={1} />;
 
   const form: AddCandidateForm = {
     source, roleId, fullName, email, externalCandidateId, hasFile: !!resume.file, resumeText: resume.text,
   };
-  const blocker = addCandidateBlocker(form);
+  const roleChoices = existing ? rolesOpenToPerson(roles, existing) : roles;
+  const blocker = existing ? reuseBlocker(existing, roleId) : addCandidateBlocker(form);
   const withResume = hasResume(form);
 
   const switchSource = (next: CandidateSource) => {
     setSource(next);
+    setExisting(null);
     setError('');
     setNotice(null);
+  };
+
+  const pickExisting = (person: CandidatePerson) => {
+    setExisting(person);
+    setError('');
+    setNotice(null);
+    // The role stays as chosen when the person can still join it.
+    setRoleId(initialRoleId(rolesOpenToPerson(roles, person), roleId));
+  };
+
+  const clearExisting = () => {
+    setExisting(null);
+    setFullName('');
+    setRoleId(initialRoleId(roles, roleId));
+  };
+
+  const applyExisting = async (person: CandidatePerson) => {
+    setError('');
+    setSubmitting(true);
+    try {
+      const { candidate } = await api.post<{ candidate: { id: string } }>(`/candidates/${person.candidateId}/apply`, { roleId });
+      nav(`/candidates/${candidate.id}`);
+    } catch (err: unknown) {
+      setError(applyFailureMessage(err));
+      setSubmitting(false);
+    }
   };
 
   // An ATS import answers with the person, new or already here. Only a new one
@@ -95,6 +138,7 @@ export function CandidateCreate() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (existing) { await applyExisting(existing); return; }
     setError('');
     setNotice(null);
     setSubmitting(true);
@@ -124,7 +168,9 @@ export function CandidateCreate() {
     }
   };
 
-  const buttonLabel = source === 'ats'
+  const buttonLabel = existing
+    ? (submitting ? 'Setting up…' : 'Set up for this role')
+    : source === 'ats'
     ? (submitting ? 'Importing…' : withResume ? 'Import candidate & analyse resume' : 'Import candidate')
     : (submitting ? 'Uploading & analysing…' : 'Add candidate & analyse resume');
 
@@ -169,12 +215,15 @@ export function CandidateCreate() {
         </fieldset>
 
         <label htmlFor={`${fieldId}-role`}>Role</label>
-        <select id={`${fieldId}-role`} value={roleId} onChange={(e) => setRoleId(e.target.value)} disabled={roles.length === 0 || !!created} required>
+        <select id={`${fieldId}-role`} value={roleId} onChange={(e) => setRoleId(e.target.value)} disabled={roleChoices.length === 0 || !!created} required>
           {/* The level is part of the base label here, as it always was; two
               roles that still collide are told apart by region, band or date. */}
-          {roleDisplayLabels(roles.map((r) => ({ ...r, title: r.level ? `${r.title} (${r.level})` : r.title })))
-            .map((label, index) => <option key={roles[index].id} value={roles[index].id}>{label}</option>)}
+          {roleDisplayLabels(roleChoices.map((r) => ({ ...r, title: r.level ? `${r.title} (${r.level})` : r.title })))
+            .map((label, index) => <option key={roleChoices[index].id} value={roleChoices[index].id}>{label}</option>)}
         </select>
+        {existing && roleChoices.length === 0 && (
+          <p className="muted small">{existing.fullName} is already in every open role with an approved scorecard.</p>
+        )}
 
         {source === 'ats' ? (
           <>
@@ -194,12 +243,21 @@ export function CandidateCreate() {
               exports. Importing the same person again opens the record already here.
             </div>
           </>
+        ) : existing ? (
+          <ExistingPersonPanel person={existing} onClear={clearExisting} />
         ) : (
           <>
             <div className="grid cols-2">
               <div>
                 <label htmlFor={`${fieldId}-name`}>Full name</label>
-                <input id={`${fieldId}-name`} value={fullName} onChange={(e) => setFullName(e.target.value)} disabled={!!created} required />
+                <CandidatePersonCombobox
+                  inputId={`${fieldId}-name`}
+                  value={fullName}
+                  onChange={setFullName}
+                  onPick={pickExisting}
+                  disabled={!!created}
+                />
+                <div className="muted small">Already in Questor? Pick them from the list to reuse their details.</div>
               </div>
               <div>
                 <label htmlFor={`${fieldId}-email`}>Email</label>
@@ -212,11 +270,13 @@ export function CandidateCreate() {
           </>
         )}
 
-        <ResumeFields
-          value={resume}
-          onChange={setResume}
-          optionalNote={source === 'ats' ? 'optional, you can add it later from the candidate page' : undefined}
-        />
+        {!existing && (
+          <ResumeFields
+            value={resume}
+            onChange={setResume}
+            optionalNote={source === 'ats' ? 'optional, you can add it later from the candidate page' : undefined}
+          />
+        )}
 
         <div className="row" style={{ marginTop: 16 }}>
           <button
@@ -225,11 +285,36 @@ export function CandidateCreate() {
             disabled={submitting || roles.length === 0 || blocker !== null}
             title={blocker ?? undefined}
           >
-            <Icon name={submitting ? 'hourglass' : source === 'ats' ? 'link' : 'sparkle'} size={16} />
+            <Icon name={submitting ? 'hourglass' : existing ? 'add-candidate' : source === 'ats' ? 'link' : 'sparkle'} size={16} />
             {buttonLabel}
           </button>
         </div>
       </form>
     </div>
+  );
+}
+
+/**
+ * The person picked from the type-ahead, read-only: their details come from
+ * the earlier application, so there is nothing here to retype.
+ */
+function ExistingPersonPanel({ person, onClear }: { person: CandidatePerson; onClear: () => void }) {
+  return (
+    <section className="existing-person" aria-label="Existing candidate">
+      <div className="row spread">
+        <div>
+          <div><b>{person.fullName}</b> <span className="muted">[existing candidate]</span></div>
+          <div className="muted small">{person.email}{person.phone ? ` · ${person.phone}` : ''}</div>
+        </div>
+        <button type="button" className="btn secondary sm" onClick={onClear}><Icon name="close" size={14} />Someone else</button>
+      </div>
+      <p className="small">Already in: {person.roles.map(roleEntryLabel).join(', ') || 'no role'}</p>
+      <p className="muted small">
+        {person.hasResume
+          ? 'Their latest resume is carried over and scored for the role you choose. '
+          : 'No resume on file yet; add one from the new application. '}
+        {COPIED_DETAILS_NOTE}
+      </p>
+    </section>
   );
 }

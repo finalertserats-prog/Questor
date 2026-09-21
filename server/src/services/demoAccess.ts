@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { DemoGrant, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
+import { normalizeEmail } from './userEmail.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
@@ -84,7 +85,7 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
     const role = await tx.role.create({ data: { tenantId: tenant.id, catalogRoleId: await demoCatalogRole(tx as PrismaClient), title: extraction.title, level: extraction.level, location: extraction.location, employmentType: extraction.employmentType, sourceType: 'paste', sourceText: DEMO_JD, status: 'approved', createdById: user.id } });
     const scorecard = await tx.roleScorecardVersion.create({ data: { roleId: role.id, version: 1, status: 'approved', profileJson: JSON.stringify(extraction.profile), approvedById: user.id, approvedAt: now } });
     const resume = DEMO_RESUME.replace('priya.sharma@example.com', input.email);
-    const candidate = await tx.candidate.create({ data: { tenantId: tenant.id, roleId: role.id, fullName: input.name, email: input.email, phone: '' } });
+    const candidate = await tx.candidate.create({ data: { tenantId: tenant.id, roleId: role.id, fullName: input.name, email: input.email, emailNormalized: normalizeEmail(input.email), phone: '' } });
     const profile = normalizeProfile(resume);
     const { fit } = computeFitScore(profile, resume, extraction.profile);
     await tx.candidateProfileVersion.create({ data: { candidateId: candidate.id, version: 1, rawText: resume, profileJson: JSON.stringify(profile), fitScoreJson: JSON.stringify(fit) } });

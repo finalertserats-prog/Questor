@@ -8,6 +8,8 @@ import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatScoreOutOf100, hasScore } from '../components/scoreFormat';
 import { roleDisplayLabels } from '../components/roleLabelModel';
+import { alsoInRolesLabel, otherRoleCounts } from '../components/candidateReuseModel';
+import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
@@ -87,6 +89,8 @@ export function CandidatesList() {
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // The row whose "Set up for another role" panel is open.
+  const [reuseFor, setReuseFor] = useState<CandidateRow | null>(null);
 
   // `cancelled` so a response that arrives after someone has navigated away
   // does not set state on a page that is gone.
@@ -118,6 +122,9 @@ export function CandidatesList() {
     const labels = roleDisplayLabels(withRole);
     return new Map(withRole.map((role, index) => [role.id, labels[index]]));
   }, [candidates]);
+
+  // From the viewer's own scoped list, so a role they cannot see is never counted.
+  const otherRolesById = useMemo(() => otherRoleCounts(candidates), [candidates]);
 
   if (loading) return <PageSkeleton label="Loading candidates…" />;
 
@@ -153,6 +160,16 @@ export function CandidatesList() {
             : `${underway} candidates started an interview and have not finished it.`}
           {' '}Worth opening — they may have stopped part-way, or hit a problem.
         </Banner>
+      )}
+
+      {reuseFor && (
+        <SetUpForAnotherRole
+          key={reuseFor.id}
+          candidateId={reuseFor.id}
+          fullName={reuseFor.fullName}
+          email={reuseFor.email}
+          onClose={() => setReuseFor(null)}
+        />
       )}
 
       <div className="card">
@@ -209,6 +226,9 @@ export function CandidatesList() {
                     {c.roleId && c.roleTitle
                       ? <Link to={`/roles/${c.roleId}`}>{roleLabelById.get(c.roleId) ?? c.roleTitle}</Link>
                       : <span className="muted">—</span>}
+                    {(otherRolesById.get(c.id) ?? 0) > 0 && (
+                      <div className="muted small">{alsoInRolesLabel(otherRolesById.get(c.id) ?? 0)}</div>
+                    )}
                   </td>
                   {/* A fit row stored before `overall` existed still has a fit
                       object, so "c.fit ?" is not the question — "is there a
@@ -220,9 +240,14 @@ export function CandidatesList() {
                     {/* The interview shortcut matters more than it looks: until this
                         page existed, a candidate whose interview had not produced an
                         assessment had no route to it from anywhere in the app. */}
-                    {c.latestInterview
-                      ? <Link to={`/interviews/${c.latestInterview.id}`}><Icon name="interviews" size={15} />Interview</Link>
-                      : <Link to={`/candidates/${c.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
+                    <span className="row" style={{ gap: 10 }}>
+                      {c.latestInterview
+                        ? <Link to={`/interviews/${c.latestInterview.id}`}><Icon name="interviews" size={15} />Interview</Link>
+                        : <Link to={`/candidates/${c.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
+                      <button type="button" className="link-button link-action" onClick={() => setReuseFor(c)} aria-label={`Set up ${c.fullName} for another role`}>
+                        <Icon name="role" size={15} />Another role
+                      </button>
+                    </span>
                   </td>
                 </tr>
               ))}
