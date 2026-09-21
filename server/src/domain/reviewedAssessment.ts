@@ -41,6 +41,11 @@ function isDisposition(value: string): value is Recommendation {
   return (DISPOSITIONS as readonly string[]).includes(value);
 }
 
+/** A completed review's disposition as a verdict, or null when there is no usable one. */
+export function humanVerdict(disposition: string | null | undefined): Recommendation | null {
+  return disposition && isDisposition(disposition) ? disposition : null;
+}
+
 function asLevel(value: unknown): Proficiency | null {
   if (typeof value !== 'number' || !Number.isInteger(value)) return null;
   return value >= 1 && value <= 5 ? (value as Proficiency) : null;

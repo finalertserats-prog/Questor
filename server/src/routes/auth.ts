@@ -7,6 +7,7 @@ import { isPlatformOperator, isReservedOperatorEmail } from '../middleware/platf
 import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
 import { logAudit } from '../services/audit.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
+import { capabilitiesOf } from '../domain/capabilities.js';
 
 export const authRouter = Router();
 
@@ -50,7 +51,12 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
 
 /** The fields of a user the signed-in user themselves may see. */
 function publicUser(user: { id: string; name: string; email: string; role: string; tourCompletedAt: Date | null }) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, tourCompletedAt: user.tourCompletedAt?.toISOString() ?? null };
+  return {
+    id: user.id, name: user.name, email: user.email, role: user.role, tourCompletedAt: user.tourCompletedAt?.toISOString() ?? null,
+    // The same list requireCapability checks, so the web app can hide what
+    // would only end in "permission denied" instead of mirroring the map.
+    capabilities: [...capabilitiesOf(user.role)],
+  };
 }
 
 // `role` is deliberately NOT accepted from the request body. It previously was,

@@ -9,7 +9,8 @@ import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { resolveCandidateBand } from '../engines/bandCalibration.js';
 import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
-import { assertTransition } from '../domain/stateMachine.js';
+import { assertTransition, canTransition } from '../domain/stateMachine.js';
+import { humanVerdict } from '../domain/reviewedAssessment.js';
 import { getEmail } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
 import { brandedEmail, companyEmail, emailButton, headerSafe, escapeHtml } from '../providers/email/branding.js';
@@ -212,12 +213,17 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
   const scope = (await candidateScope(req.auth!)) as Prisma.CandidateWhereInput;
   const sessions = await prisma.interviewSession.findMany({
     where: { tenantId: req.auth!.tenantId, candidate: scope }, orderBy: { createdAt: 'desc' },
-    include: { candidate: true, role: true, assessments: { orderBy: { version: 'desc' }, take: 1 }, invitation: true },
+    include: {
+      candidate: true, role: true, invitation: true,
+      assessments: { orderBy: { version: 'desc' }, take: 1, include: { reviews: { where: { status: 'COMPLETED', supersededAt: null }, orderBy: { completedAt: 'desc' }, take: 1, select: { disposition: true } } } },
+    },
   });
   res.json({ sessions: sessions.map((s) => ({
     id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt, scheduledTimeZone: s.scheduledTimeZone,
     candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
     recommendation: s.assessments[0]?.recommendation ?? null, assessmentId: s.assessments[0]?.id ?? null,
+    // The reviewer's verdict once a person has given one; `recommendation` stays the AI's.
+    humanRecommendation: humanVerdict(s.assessments[0]?.reviews[0]?.disposition),
     invited: !!s.invitation, createdAt: s.createdAt,
   })) });
 }));
@@ -330,16 +336,24 @@ interviewsRouter.get('/time-zone', asyncHandler(async (req, res) => {
 // lifting another's portal link.
 interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
-  const [plan, turns, assessment, invitation, integrityEvents, planPending] = await Promise.all([
+  const [plan, turns, assessment, invitation, integrityEvents, planPending, candidate, role] = await Promise.all([
     prisma.interviewPlanVersion.findUnique({ where: { sessionId: session.id } }),
     prisma.turn.findMany({ where: { sessionId: session.id }, orderBy: { index: 'asc' } }),
     prisma.assessmentVersion.findFirst({ where: { sessionId: session.id }, orderBy: { version: 'desc' } }),
     prisma.invitation.findUnique({ where: { sessionId: session.id } }),
     prisma.integrityEvent.findMany({ where: { sessionId: session.id }, orderBy: { createdAt: 'asc' }, select: { type: true, createdAt: true } }),
     replanPending(session),
+    prisma.candidate.findUniqueOrThrow({ where: { id: session.candidateId }, select: { id: true, fullName: true } }),
+    prisma.role.findUniqueOrThrow({ where: { id: session.roleId }, select: { id: true, title: true } }),
   ]);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
+    // Who and what the interview is for, so the page can say so and link back.
+    candidate: { id: candidate.id, name: candidate.fullName },
+    role: { id: role.id, title: role.title },
+    // What this state allows, from the same rules the action routes enforce,
+    // so the page never offers a button that can only answer 409.
+    actions: sessionActions(session, assessment !== null),
     session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, scheduledTimeZone: session.scheduledTimeZone, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
     plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
     // The plan above is what was built at setup; a newer approved scorecard
@@ -433,6 +447,25 @@ const RESENDABLE_STATES: ReadonlySet<string> = new Set([
 
 /** Everything that has not happened yet, plus an interview awaiting a new date. */
 const SCHEDULABLE_STATES: ReadonlySet<string> = new Set([...RESENDABLE_STATES, 'RESCHEDULE_REQUIRED']);
+
+/**
+ * A missed interview can be booked again: scheduling it moves it to
+ * RESCHEDULE_REQUIRED (a transition the state machine allows), from where the
+ * send step re-invites the candidate on a fresh link.
+ */
+const REBOOKABLE_STATES: ReadonlySet<string> = new Set(['NO_SHOW']);
+
+/** The lifecycle actions this interview's state allows, each mirroring its route's own check. */
+function sessionActions(session: { state: string; attemptNumber: number }, assessed: boolean) {
+  const stoppedWithoutFault = session.state === 'INCOMPLETE' || session.state === 'TECHNICAL_FAILURE';
+  return {
+    cancel: canTransition(session.state, 'CANCELLED'),
+    schedule: SCHEDULABLE_STATES.has(session.state) || REBOOKABLE_STATES.has(session.state),
+    retake: stoppedWithoutFault && !assessed && session.attemptNumber < MAX_INTERVIEW_ATTEMPTS,
+    assessPartial: session.state === 'INCOMPLETE',
+    reopen: session.state === 'MANUAL_HANDOFF',
+  };
+}
 
 interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   await assertDemoCreationCap(req.auth!.tenantId, 'interviews');
@@ -625,16 +658,18 @@ interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), 
   // candidate that nothing will keep. Conditional, so a session that moves on
   // between the read and the write is refused rather than overwritten. The
   // zone is always written, so the older form clears one set before.
+  const rebooking = REBOOKABLE_STATES.has(session.state);
+  if (rebooking) assertTransition(session.state, 'RESCHEDULE_REQUIRED');
   const { count } = await prisma.interviewSession.updateMany({
-    where: { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
-    data: { scheduledAt: at, scheduledTimeZone: timeZone },
+    where: rebooking ? { id: session.id, state: session.state } : { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
+    data: { scheduledAt: at, scheduledTimeZone: timeZone, ...(rebooking ? { state: 'RESCHEDULE_REQUIRED' } : {}) },
   });
   if (count !== 1) {
     throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled.`);
   }
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at.toISOString(), scheduledTimeZone: timeZone } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at.toISOString(), scheduledTimeZone: timeZone, ...(rebooking ? { from: session.state, to: 'RESCHEDULE_REQUIRED' } : {}) } });
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'interview.scheduled' });
-  const scheduled = { ...session, scheduledAt: at, scheduledTimeZone: timeZone };
+  const scheduled = { ...session, scheduledAt: at, scheduledTimeZone: timeZone, ...(rebooking ? { state: 'RESCHEDULE_REQUIRED' } : {}) };
   const delivery = body.send ? await sendSchedule(req, scheduled) : undefined;
   res.json({ ok: true, scheduledAt: at.toISOString(), scheduledTimeZone: timeZone, ...(delivery ? { delivery } : {}) });
 }));
