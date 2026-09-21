@@ -11,6 +11,7 @@ import { chartTone, formatHours, groupSessionStates, trimSparseWeeks, truncation
 import { canReadAudit } from '../components/profileMenuModel';
 import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
 import type { TopRole } from '../components/rolesListModel';
+import { attentionRow, attentionSummary, type NeedsAttention } from '../components/needsAttentionModel';
 
 interface Metrics {
   generatedAt: string;
@@ -33,6 +34,8 @@ interface Metrics {
     id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
     candidate: { id: string; name: string }; role: RoleLabelSource & { id: string };
   }[];
+  /** What is waiting on a person. Absent on an older server. */
+  needsAttention?: NeedsAttention;
   roles?: {
     kpis: { activeRoles: number; rolesWithoutCandidates: number; rolesWithReviewBacklog: number };
     topByApplied: TopRole[];
@@ -147,6 +150,38 @@ export function Dashboard() {
 
       {metrics && k && (
         <>
+          {/* First on the page: each of these is waiting on a person, and the
+              owner is also emailed. Absent on an older server. */}
+          {metrics.needsAttention && metrics.needsAttention.items.length > 0 && (
+            <section className="card" aria-labelledby="dash-attention" data-testid="needs-attention">
+              <div className="spread row" style={{ marginBottom: 8 }}>
+                <h2 id="dash-attention" style={{ margin: 0 }}>Needs a person</h2>
+                <span className="muted small">{attentionSummary(metrics.needsAttention.counts)}</span>
+              </div>
+              <div className="dash-table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Candidate</th><th>Role</th><th>Waiting for</th><th>Since</th><th><span className="visually-hidden">Actions</span></th></tr>
+                  </thead>
+                  <tbody>
+                    {metrics.needsAttention.items.map((item) => {
+                      const row = attentionRow(item);
+                      return (
+                        <tr key={`${item.kind}-${item.sessionId}`}>
+                          <td><Link to={`/candidates/${item.candidate.id}`}>{item.candidate.name}</Link></td>
+                          <td className="muted">{item.role.title}</td>
+                          <td>{row.what}</td>
+                          <td className="small">{new Date(item.at).toLocaleDateString()}</td>
+                          <td><Link to={row.to}>{row.linkText}</Link></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
           <section aria-labelledby="dash-kpis" data-tour="kpis">
             <h2 id="dash-kpis" className="dash-heading">Key metrics</h2>
             <ul className="kpi-grid">
