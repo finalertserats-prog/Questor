@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../api/client';
 import { Banner } from '../ui';
 import { Skeleton } from '../Skeleton';
+import { formatDateTime } from '../dateFormat';
 import { humanSlug, stratumLabel, verdictProblems, type EntryView, type HistoryRow } from './libraryAdminModel';
 
 interface Detail {
@@ -62,7 +63,7 @@ export function EntryDetail({ entryId, onClose }: { entryId: string; onClose: ()
           <ol className="library-history small" data-testid="library-entry-history">
             {detail.history.map((h) => (
               <li key={h.id}>
-                <span className="muted">{new Date(h.at).toLocaleString()}</span> · {h.actor} · {h.action}
+                <span className="muted">{formatDateTime(h.at)}</span> · {h.actor} · {h.action}
                 {h.fromStatus !== h.toStatus ? ` (${h.fromStatus || 'new'} → ${h.toStatus})` : ''}{h.reason ? ` — ${h.reason}` : ''}
               </li>
             ))}
