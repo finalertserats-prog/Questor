@@ -169,11 +169,37 @@ export async function createMeeting(round: InterviewRound, ctx: RoundContext): P
   if (!stored) {
     // The round was cancelled (or changed) while the vendor was booking. A
     // meeting nobody can see from Questor must not be left behind.
-    await vendor.cancel(created.externalId).catch((err: unknown) => failureMessage(err, provider));
-    return outcome({ ok: false, provider, status: null, url: null, message: 'The round changed while the meeting was being created, so the meeting was removed.' });
+    return removeOrphanedMeeting(round, vendor, created);
   }
   logger.info({ roundId: round.id, provider }, 'Round meeting created');
   return outcome({ ok: true, provider, status: MEETING_STATUS.LINKED, url: created.joinUrl, message: `${PROVIDER_LABEL[provider]} meeting created.` });
+}
+
+/**
+ * A meeting booked for a round that changed meanwhile. When the vendor will
+ * not remove it, the recruiter is told so, and a round that is no longer
+ * scheduled keeps its id as CANCEL_FAILED so "Try again" can remove it. A
+ * round another attempt has claimed is left alone: its own meeting wins, and
+ * the log names the one to delete by hand.
+ */
+async function removeOrphanedMeeting(round: InterviewRound, vendor: MeetingVendor, created: { externalId: string; joinUrl: string }): Promise<MeetingOutcome> {
+  const provider = vendor.id;
+  let failure: string | null = null;
+  try {
+    await vendor.cancel(created.externalId);
+  } catch (err) {
+    failure = failureMessage(err, provider);
+  }
+  if (failure === null) {
+    return outcome({ ok: false, provider, status: null, url: null, message: 'The round changed while the meeting was being created, so the meeting was removed.' });
+  }
+  logger.error({ roundId: round.id, provider, externalId: created.externalId }, 'A meeting booked for a changed round could not be removed');
+  const message = `The round changed while the ${PROVIDER_LABEL[provider]} meeting was being created, and that meeting could not be removed. Try again, or delete it in ${PROVIDER_LABEL[provider]}. ${failure}`;
+  const kept = await setMeeting(
+    { id: round.id, meetingExternalId: null, status: { not: 'SCHEDULED' } },
+    { meetingStatus: MEETING_STATUS.CANCEL_FAILED, meetingExternalId: created.externalId, meetingUrl: created.joinUrl, meetingError: message },
+  );
+  return outcome({ ok: false, provider, status: kept ? MEETING_STATUS.CANCEL_FAILED : null, url: null, message });
 }
 
 async function syncTime(round: InterviewRound, vendor: MeetingVendor, ctx: RoundContext): Promise<MeetingOutcome> {

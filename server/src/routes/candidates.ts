@@ -421,7 +421,7 @@ candidatesRouter.delete('/:id', requireCapability('candidate:erase'), asyncHandl
   await assertCanAccessCandidate(req.auth!, req.params.id);
   if (allApplications) {
     const person = await eraseAllApplications({ tenantId: req.auth!.tenantId, candidateId: req.params.id, actorId: req.auth!.userId, reason, scope: await candidateScope(req.auth!) });
-    res.json({ ...person, erasedCount: person.erasedIds.length, skippedCount: person.skipped.length });
+    res.json({ ...person, erasedCount: person.erasedIds.length, skippedCount: person.skipped.length, failedCount: person.failed.length });
     return;
   }
   const result = await eraseCandidate({

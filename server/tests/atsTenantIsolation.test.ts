@@ -369,6 +369,112 @@ describe('importing a candidate from the ATS', () => {
   });
 });
 
+describe('one person, an application per role, a link per application', () => {
+  const importCandidate = (token: string, externalCandidateId: string, roleId: string) =>
+    request(app).post('/api/candidates/import-ats').set(as(token)).send({ externalCandidateId, roleId });
+  const secondRole = () => prisma.role.create({ data: { tenantId: fx.tenantA, title: 'Platform Engineer', status: 'approved' } });
+
+  it('imports a record already imported for another role as a new application on this role', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    const first = await importCandidate(fx.adminA, 'C-2', fx.roleA);
+
+    const res = await importCandidate(fx.adminA, 'C-2', role2.id);
+
+    expect({ status: res.status, roleId: res.body.candidate.roleId, other: res.body.candidate.id !== first.body.candidate.id }).toEqual({ status: 201, roleId: role2.id, other: true });
+  });
+
+  it('links that new application to the record', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    await importCandidate(fx.adminA, 'C-2', fx.roleA);
+
+    const res = await importCandidate(fx.adminA, 'C-2', role2.id);
+
+    expect((await prisma.candidateAtsLink.findFirstOrThrow({ where: { candidateId: res.body.candidate.id } })).externalCandidateId).toBe('C-2');
+  });
+
+  it('answers a repeat import on the second role with that role\'s application', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    await importCandidate(fx.adminA, 'C-2', fx.roleA);
+    const second = await importCandidate(fx.adminA, 'C-2', role2.id);
+
+    const again = await importCandidate(fx.adminA, 'C-2', role2.id);
+
+    expect({ id: again.body.candidate.id, matchedBy: again.body.matchedBy }).toEqual({ id: second.body.candidate.id, matchedBy: 'ats_record' });
+  });
+
+  it("links the same person's application on another role by hand", async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    await importCandidate(fx.adminA, 'C-2', fx.roleA);
+    const onRole2 = await prisma.candidate.create({ data: { tenantId: fx.tenantA, roleId: role2.id, fullName: 'Ben Ode', email: 'ben@example.com', emailNormalized: 'ben@example.com' } });
+
+    const res = await setLink(fx.adminA, onRole2.id, 'C-2');
+
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses to link a record to someone else's application on another role", async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    await importCandidate(fx.adminA, 'C-2', fx.roleA);
+    const stranger = await prisma.candidate.create({ data: { tenantId: fx.tenantA, roleId: role2.id, fullName: 'Someone Else', email: 'else@example.com', emailNormalized: 'else@example.com' } });
+
+    const res = await setLink(fx.adminA, stranger.id, 'C-2');
+
+    expect(res.status).toBe(409);
+  });
+
+  it('links a record to only one person when two links to different people race', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    const ben = await prisma.candidate.create({ data: { tenantId: fx.tenantA, roleId: fx.roleA, fullName: 'Ben Ode', email: 'ben@example.com', emailNormalized: 'ben@example.com' } });
+    const stranger = await prisma.candidate.create({ data: { tenantId: fx.tenantA, roleId: role2.id, fullName: 'Someone Else', email: 'else@example.com', emailNormalized: 'else@example.com' } });
+
+    const statuses = (await Promise.all([setLink(fx.adminA, ben.id, 'C-2'), setLink(fx.adminA, stranger.id, 'C-2')])).map((r) => r.status).sort();
+
+    expect(statuses).toEqual([200, 409]);
+  });
+
+  it('refuses to import a record for a second role when it already stands for someone else', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    const stranger = await prisma.candidate.create({ data: { tenantId: fx.tenantA, roleId: fx.roleA, fullName: 'Someone Else', email: 'else@example.com', emailNormalized: 'else@example.com' } });
+    await setLink(fx.adminA, stranger.id, 'C-2');
+
+    const res = await importCandidate(fx.adminA, 'C-2', role2.id);
+
+    expect({ status: res.status, made: await prisma.candidate.count({ where: { roleId: role2.id } }) }).toEqual({ status: 409, made: 0 });
+  });
+
+  it('carries the link when a person is put forward for another role', async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    const first = await importCandidate(fx.adminA, 'C-2', fx.roleA);
+
+    const applied = await request(app).post(`/api/candidates/${first.body.candidate.id}/apply`).set(as(fx.adminA)).send({ roleId: role2.id });
+
+    const link = await prisma.candidateAtsLink.findFirst({ where: { candidateId: applied.body.candidate.id } });
+    expect(link?.externalCandidateId).toBe('C-2');
+  });
+
+  it("exports the second role's assessment to the record", async () => {
+    await connect(fx.adminA, 'ats-a.example.com', KEY_A);
+    const role2 = await secondRole();
+    await importCandidate(fx.adminA, 'C-2', fx.roleA);
+    const second = await importCandidate(fx.adminA, 'C-2', role2.id);
+    const scorecard = await prisma.roleScorecardVersion.create({ data: { roleId: role2.id, version: 1, status: 'approved', profileJson: '{}' } });
+    const session = await prisma.interviewSession.create({ data: { tenantId: fx.tenantA, candidateId: second.body.candidate.id, roleId: role2.id, scorecardId: scorecard.id } });
+    const assessment = await scoredAssessment(session.id, scorecard.id);
+
+    const out = await exportAssessment(fx.adminA, assessment);
+
+    expect(out.status).toBe(200);
+  });
+});
+
 describe('erasure', () => {
   it("removes the candidate's ATS link", async () => {
     await connect(fx.adminA, 'ats-a.example.com', KEY_A);

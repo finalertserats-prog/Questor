@@ -72,6 +72,11 @@ export async function finishRun(runId: string, now: Date): Promise<void> {
   await prisma.catalogRefreshRun.update({ where: { id: runId }, data: { status: 'completed', finishedAt: now, error: '' } });
 }
 
+/** A completed run whose summary email to the operators did not go out. */
+export async function markNoticeNotSent(runId: string): Promise<void> {
+  await prisma.catalogRefreshRun.updateMany({ where: { id: runId, status: 'completed' }, data: { error: 'notice_not_sent' } });
+}
+
 /**
  * The row keeps a short code; the details go to the server log, since the
  * review page is no place for stack messages or database errors.

@@ -213,11 +213,34 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
       : null;
     const events: PipelineEvent[] = stored ? ['candidate.onboarded', 'candidate.profiled'] : ['candidate.onboarded'];
     const started = await startPipeline(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, events });
-    return { kind: 'created' as const, candidate, stored, started };
+    const atsLinks = await copyAtsLinks(tx, { tenantId: auth.tenantId, fromCandidateId: source.id, toCandidateId: candidate.id, roleId, actorId: auth.userId });
+    return { kind: 'created' as const, candidate, stored, started, atsLinks };
   });
   if (outcome.kind === 'exists') return outcome;
   await recordApplied(auth, source.id, outcome);
   return { kind: 'created', candidate: outcome.candidate, profileCopied: outcome.stored !== null, fit: outcome.stored?.fit ?? null };
+}
+
+/**
+ * The same person is the same ATS record, so a new application takes the
+ * source's links (one per role), unless that record already has an
+ * application on the role. Without it, the new role's assessment could never
+ * be exported.
+ */
+async function copyAtsLinks(
+  tx: Prisma.TransactionClient,
+  o: { readonly tenantId: string; readonly fromCandidateId: string; readonly toCandidateId: string; readonly roleId: string; readonly actorId: string },
+): Promise<readonly string[]> {
+  const links = await tx.candidateAtsLink.findMany({ where: { tenantId: o.tenantId, candidateId: o.fromCandidateId } });
+  let copied: readonly string[] = [];
+  for (const link of links) {
+    const onRole = { tenantId: o.tenantId, connectionId: link.connectionId, externalCandidateId: link.externalCandidateId, roleKey: o.roleId };
+    const taken = await tx.candidateAtsLink.findUnique({ where: { tenantId_connectionId_externalCandidateId_roleKey: onRole }, select: { id: true } });
+    if (taken) continue;
+    await tx.candidateAtsLink.create({ data: { ...onRole, candidateId: o.toCandidateId, source: link.source, createdById: o.actorId } });
+    copied = [...copied, link.connectionId];
+  }
+  return copied;
 }
 
 async function retryOnConflict<T>(run: () => Promise<T>): Promise<T> {
@@ -235,10 +258,17 @@ async function retryOnConflict<T>(run: () => Promise<T>): Promise<T> {
 async function recordApplied(
   auth: AuthClaims,
   sourceId: string,
-  o: { readonly candidate: Candidate; readonly stored: { readonly fit: { readonly overall: number } } | null; readonly started: Awaited<ReturnType<typeof startPipeline>> },
+  o: {
+    readonly candidate: Candidate; readonly stored: { readonly fit: { readonly overall: number } } | null;
+    readonly started: Awaited<ReturnType<typeof startPipeline>>; readonly atsLinks: readonly string[];
+  },
 ): Promise<void> {
   const user = { tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user' as const, entityType: 'Candidate', entityId: o.candidate.id };
   await logAudit({ ...user, action: 'candidate.created', after: { copiedFromCandidateId: sourceId, roleId: o.candidate.roleId } });
+  // As for a link set by hand or on import, the external id is left out.
+  for (const connectionId of o.atsLinks) {
+    await logAudit({ ...user, action: 'candidate.ats_link.set', after: { connectionId, source: 'reuse' } });
+  }
   const { pipeline, stages, moves } = o.started;
   await logAudit({
     tenantId: auth.tenantId, actorType: 'system', action: 'pipeline.created', entityType: 'CandidatePipeline', entityId: pipeline.id,

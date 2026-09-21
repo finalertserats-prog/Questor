@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { getLlm, type LlmProvider } from '../providers/llm/index.js';
 import { LlmApiError } from '../providers/llm/types.js';
-import { INSTANCE_ID, runExclusive, type JobOutcome, type LeaseHandle } from '../services/jobs.js';
+import { alertOperator, INSTANCE_ID, runExclusive, type JobOutcome, type LeaseHandle } from '../services/jobs.js';
 import { budgetStatus, msUntilNextUtcDay, recordTokens, releaseCalls, reserveCalls, type BudgetRefusal } from './budget.js';
 import { CriticUnavailableError, criticConfigFromEnv, deterministicCritic, llmCritic, modelFamily, resolveCriticProvider, type CriticModel } from './critic.js';
 import { checkDuplicate, dedupeWithinBatch, LexicalShingleBackend, type SimilarityBackend } from './dedupe.js';
@@ -34,6 +34,8 @@ const TOKENS_PER_BATCH_ESTIMATE = 20_000;
 const IDLE_SLEEP_MS = 5 * 60_000;
 const CREDITS_RETRY_MS = 60 * 60_000;
 const ERROR_BACKOFF_MS = 60_000;
+/** Failed iterations in a row before the operator hears; one bad batch is noise. */
+const ALERT_AFTER_FAILURES = 3;
 const TARGETS_REFRESH_MS = 24 * 60 * 60_000;
 /** Existing questions compared for duplicates: the pool plus its family, capped so a batch stays cheap. */
 const DEDUPE_CANDIDATES = 400;
@@ -57,6 +59,8 @@ export interface WorkerDeps {
   /** Stop after this many loop iterations (tests, the smoke script). */
   readonly maxIterations?: number;
   readonly recomputeTargets: (now: Date) => Promise<number>;
+  /** Tells the operator the worker keeps failing (throttled to once an hour by default). */
+  readonly alert: (message: string) => Promise<void>;
 }
 
 /** Provider calls a batch has made so far, so an unused reservation can be given back after a failure. */
@@ -94,6 +98,7 @@ export function defaultWorkerDeps(overrides: Partial<WorkerDeps> = {}): WorkerDe
     leaseTtlMs,
     heartbeatMs: Math.max(1000, Math.floor(leaseTtlMs / 3)),
     recomputeTargets: recomputePoolTargets,
+    alert: (message) => alertOperator(LIBRARY_WORKER_LEASE.name, message),
     ...overrides,
   };
 }
@@ -235,7 +240,8 @@ export interface WorkerControl {
 
 export type LoopExit = 'stopped' | 'lease_lost' | 'iterations';
 
-type Pause = { readonly state: WorkerState; readonly reason: string; readonly ms: number };
+/** `failed`: the pause follows an error, not a cap, a quota or an empty queue. */
+type Pause = { readonly state: WorkerState; readonly reason: string; readonly ms: number; readonly failed?: boolean };
 
 function pauseFor(err: unknown, now: Date): Pause | null {
   if (err instanceof LlmApiError && err.insufficientQuota) return { state: 'waiting_for_credits', reason: `${err.provider} 429 insufficient_quota`, ms: CREDITS_RETRY_MS };
@@ -307,7 +313,7 @@ async function iteration(deps: WorkerDeps, holder: string): Promise<Pause | null
     const message = outcome.err instanceof Error ? outcome.err.message : String(outcome.err);
     logger.error({ pool: reserved[i].roleSlug, err: message.slice(0, 300) }, 'Library batch failed');
     await setWorkerState('running', { holder, lastError: message });
-    pause = pause ?? pauseFor(outcome.err, now) ?? { state: 'paused', reason: `batch failed: ${message.slice(0, 120)}`, ms: ERROR_BACKOFF_MS };
+    pause = pause ?? pauseFor(outcome.err, now) ?? { state: 'paused', reason: `batch failed: ${message.slice(0, 120)}`, ms: ERROR_BACKOFF_MS, failed: true };
   }
   return pause;
 }
@@ -316,6 +322,7 @@ export async function runWorkerLoop(deps: WorkerDeps, lease: LeaseHandle, contro
   let iterations = 0;
   let targetsAt = 0;
   let lost = false;
+  let failuresInARow = 0;
   const heartbeat = setInterval(() => {
     lease.renew(deps.leaseTtlMs).then((held) => { if (!held) lost = true; }).catch(() => { lost = true; });
   }, deps.heartbeatMs);
@@ -330,7 +337,14 @@ export async function runWorkerLoop(deps: WorkerDeps, lease: LeaseHandle, contro
         targetsAt = now;
         await deps.recomputeTargets(deps.now()).catch((err: unknown) => logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Library pool targets not recomputed'));
       }
-      const pause = await iteration(deps, lease.holder).catch((err: unknown): Pause => ({ state: 'paused', reason: `worker error: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`, ms: ERROR_BACKOFF_MS }));
+      const pause = await iteration(deps, lease.holder).catch((err: unknown): Pause => ({ state: 'paused', reason: `worker error: ${err instanceof Error ? err.message.slice(0, 120) : String(err)}`, ms: ERROR_BACKOFF_MS, failed: true }));
+      // The loop never throws to runExclusive, so its own alert would never
+      // fire: a worker failing every batch would show only in the logs.
+      failuresInARow = pause?.failed ? failuresInARow + 1 : 0;
+      if (failuresInARow >= ALERT_AFTER_FAILURES) {
+        await deps.alert(`${failuresInARow} library batches failed in a row. Last: ${pause?.reason ?? ''}`)
+          .catch((err: unknown) => logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not alert about library worker failures'));
+      }
       if (pause) {
         await setWorkerState(pause.state, { reason: pause.reason, holder: lease.holder });
         logger.info({ state: pause.state, reason: pause.reason, sleepMs: pause.ms }, 'Library worker pausing');

@@ -45,7 +45,8 @@ const { wipe } = await import('../src/seed/demoData.js');
 const { signToken } = await import('../src/services/auth.js');
 const { _resetLlm } = await import('../src/providers/llm/index.js');
 const { _resetRateLimits } = await import('../src/middleware/rateLimit.js');
-const { finishDraft, generatePendingDrafts, getOrQueueDraft } = await import('../src/services/jdDrafts.js');
+const { finishDraft, generatePendingDrafts, getOrQueueDraft, runJdDraftJob } = await import('../src/services/jdDrafts.js');
+const { logger } = await import('../src/logger.js');
 
 const app = createApp();
 const LONG_AGO = new Date(Date.now() - 60 * 60_000);
@@ -117,6 +118,44 @@ describe('shared draft generation', () => {
 
     const after = await prisma.catalogJdDraft.findUniqueOrThrow({ where: { id: row.id } });
     expect({ status: after.status, attempts: after.attempts }).toEqual({ status: 'failed', attempts: 3 });
+  });
+
+  it('counts a claim left behind by a stopped process as an attempt, so a draft that keeps crashing it stops being retried', async () => {
+    const { role } = await fixture();
+    const row = await getOrQueueDraft(key(role.id));
+    await prisma.catalogJdDraft.update({ where: { id: row.id }, data: { status: 'generating', attempts: 2, updatedAt: LONG_AGO } });
+
+    await generatePendingDrafts({ limit: 5 });
+
+    const after = await prisma.catalogJdDraft.findUniqueOrThrow({ where: { id: row.id } });
+    expect({ status: after.status, attempts: after.attempts }).toEqual({ status: 'failed', attempts: 3 });
+  });
+
+  it('logs each failed generation with the draft id', async () => {
+    const { role } = await fixture();
+    const row = await getOrQueueDraft(key(role.id));
+    await prisma.catalogJdDraft.update({ where: { id: row.id }, data: { experienceBand: 'not-a-band' } });
+    const errors = vi.spyOn(logger, 'error').mockImplementation(() => logger);
+
+    await generatePendingDrafts({ limit: 5 });
+
+    expect(errors.mock.calls.some(([fields]) => typeof fields === 'object' && fields !== null && (fields as { draftId?: string }).draftId === row.id)).toBe(true);
+    errors.mockRestore();
+  });
+
+  it('fails the job run when every draft in the batch failed, so the operator is alerted', async () => {
+    const { role } = await fixture();
+    const row = await getOrQueueDraft(key(role.id));
+    await prisma.catalogJdDraft.update({ where: { id: row.id }, data: { experienceBand: 'not-a-band' } });
+
+    await expect(runJdDraftJob()).rejects.toThrow(/1 failed/);
+  });
+
+  it('records a plain note for a job run that generated drafts', async () => {
+    const { role } = await fixture();
+    await getOrQueueDraft(key(role.id));
+
+    await expect(runJdDraftJob()).resolves.toBe('generated 1 JD drafts, 0 failed');
   });
 
   it('gives a failed draft a fresh set of attempts after the cool-down, so it is generated again', async () => {

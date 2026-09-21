@@ -221,6 +221,10 @@ describe('runs', () => {
     expect(runErrorText('abandoned')).toBe('Stopped and not resumed within 7 days; a fresh run started instead.');
   });
 
+  it('says when a finished run could not email the operators', () => {
+    expect(runStatusLine(run({ error: 'notice_not_sent' }))).toMatch(/ · No one was emailed about these proposals\.$/);
+  });
+
   it('keeps Run now disabled while the latest run is still marked running', () => {
     expect(runNowDisabled([run({ status: 'running', finishedAt: null })], false)).toBe(true);
   });

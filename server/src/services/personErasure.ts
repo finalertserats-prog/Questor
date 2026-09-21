@@ -28,6 +28,11 @@ export interface PersonErasureResult {
   readonly erased: boolean;
   readonly erasedIds: readonly string[];
   readonly skipped: readonly SkippedApplication[];
+  /**
+   * Applications an error stopped. The requested one is then left in place
+   * (and not listed here) so the same request can be retried to finish.
+   */
+  readonly failed: readonly { readonly candidateId: string }[];
   readonly erasedAt: string;
 }
 
@@ -58,15 +63,25 @@ async function applicationsOfPerson(tenantId: string, candidateId: string, scope
 
 const isHoldRefusal = (err: unknown): boolean => err instanceof HttpError && err.status === 409;
 
-/** Erase one application, or report it as held. A hold placed after the check still wins. */
-async function eraseOrSkip(o: { tenantId: string; candidateId: string; actorId: string; reason: string }): Promise<'erased' | 'held'> {
-  if (await candidateUnderLegalHold(o.candidateId, o.tenantId)) return 'held';
+type Outcome = 'erased' | 'held' | 'failed';
+
+/**
+ * Erase one application, or report it as held or failed. A hold placed after
+ * the check still wins. A row that vanished meanwhile (another erasure got
+ * there first) counts as erased; any other error is reported, not thrown, so
+ * one bad row cannot stop the rest or the audit entry.
+ */
+async function eraseOrSkip(o: { tenantId: string; candidateId: string; actorId: string; reason: string }): Promise<Outcome> {
   try {
+    if (await candidateUnderLegalHold(o.candidateId, o.tenantId)) return 'held';
     await eraseCandidate(o);
     return 'erased';
   } catch (err) {
     if (isHoldRefusal(err)) return 'held';
-    throw err;
+    const stillThere = await prisma.candidate.count({ where: { id: o.candidateId, tenantId: o.tenantId } }).catch(() => 1);
+    if (stillThere === 0) return 'erased';
+    logger.error({ candidateId: o.candidateId, err: err instanceof Error ? err.message : String(err) }, 'Could not erase one of a person\'s applications');
+    return 'failed';
   }
 }
 
@@ -80,14 +95,22 @@ export async function eraseAllApplications(o: {
   scope?: Record<string, unknown>;
 }): Promise<PersonErasureResult> {
   const ids = await applicationsOfPerson(o.tenantId, o.candidateId, o.scope ?? {});
+  const erase = (candidateId: string) => eraseOrSkip({ tenantId: o.tenantId, actorId: o.actorId, reason: o.reason, candidateId });
   // One at a time: each erasure is its own transaction and vendor clean-up,
   // exactly as a single erasure runs.
-  let outcomes: readonly { readonly id: string; readonly outcome: 'erased' | 'held' }[] = [];
-  for (const id of ids) {
-    outcomes = [...outcomes, { id, outcome: await eraseOrSkip({ tenantId: o.tenantId, actorId: o.actorId, reason: o.reason, candidateId: id }) }];
+  let outcomes: readonly { readonly id: string; readonly outcome: Outcome }[] = [];
+  for (const id of ids.filter((id) => id !== o.candidateId)) {
+    outcomes = [...outcomes, { id, outcome: await erase(id) }];
+  }
+  // The requested record goes last, and only once every other application is
+  // gone or held: it is what a retry starts from, so a part-way failure (or a
+  // crash) always leaves a way back to the applications still to erase.
+  if (outcomes.every((r) => r.outcome !== 'failed')) {
+    outcomes = [...outcomes, { id: o.candidateId, outcome: await erase(o.candidateId) }];
   }
   const erasedIds = outcomes.filter((r) => r.outcome === 'erased').map((r) => r.id);
   const skippedIds = outcomes.filter((r) => r.outcome === 'held').map((r) => r.id);
+  const failedIds = outcomes.filter((r) => r.outcome === 'failed').map((r) => r.id);
 
   // Ids and counts only: like candidate.erased, the free-text reason is not kept.
   await logAudit({
@@ -97,15 +120,19 @@ export async function eraseAllApplications(o: {
     action: 'candidate.erased_all_applications',
     entityType: 'Candidate',
     entityId: o.candidateId,
-    after: { reasonProvided: o.reason.trim().length > 0, erasedCount: erasedIds.length, skippedCount: skippedIds.length, erasedIds, skippedIds },
+    after: {
+      reasonProvided: o.reason.trim().length > 0, erasedCount: erasedIds.length, skippedCount: skippedIds.length, failedCount: failedIds.length,
+      erasedIds, skippedIds, failedIds,
+    },
   });
-  logger.info({ candidateId: o.candidateId, erased: erasedIds.length, skipped: skippedIds.length }, 'Person erased across applications');
+  logger.info({ candidateId: o.candidateId, erased: erasedIds.length, skipped: skippedIds.length, failed: failedIds.length }, 'Person erased across applications');
 
   return {
     candidateId: o.candidateId,
     erased: erasedIds.includes(o.candidateId),
     erasedIds,
     skipped: skippedIds.map((candidateId) => ({ candidateId, reason: 'legal_hold' as const })),
+    failed: failedIds.map((candidateId) => ({ candidateId })),
     erasedAt: new Date().toISOString(),
   };
 }

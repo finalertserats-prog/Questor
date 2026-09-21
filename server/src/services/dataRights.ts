@@ -709,6 +709,18 @@ export async function runRetentionSweep(now = new Date()): Promise<PurgeResult> 
   return result;
 }
 
+/**
+ * The job note for one sweep. Throws when any row survived, so the run is
+ * recorded as failed and the operator is alerted: a sweep that could not purge
+ * must not read "Last succeeded" while the data stays past its window.
+ */
+export function retentionSweepRunNote(result: PurgeResult): string {
+  const deleted = JSON.stringify(result.deleted ?? {});
+  if (result.failed === 0) return deleted;
+  const ids = result.failures.slice(0, 10).join(', ');
+  throw new Error(`${result.failed} rows could not be purged (${ids}${result.failures.length > 10 ? ', ...' : ''}); deleted ${deleted}`);
+}
+
 /** Exported so the system health view judges the job by the same interval. */
 export const RETENTION_SWEEP_EVERY_MS = 24 * 60 * 60_000;
 
@@ -733,9 +745,6 @@ export function startRetentionSweep(intervalMs = RETENTION_SWEEP_EVERY_MS): () =
     name: 'retention-sweep',
     intervalMs,
     ttlMs: 60 * 60_000,
-    fn: async () => {
-      const result = await runRetentionSweep();
-      return JSON.stringify(result.deleted ?? {});
-    },
+    fn: async () => retentionSweepRunNote(await runRetentionSweep()),
   });
 }

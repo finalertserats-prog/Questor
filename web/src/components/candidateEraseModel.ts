@@ -9,6 +9,8 @@ export interface EraseResponse {
   /** Present when every application was asked for. */
   readonly erasedCount?: number;
   readonly skippedCount?: number;
+  /** Applications an error stopped; this one is then kept so the request can be repeated. */
+  readonly failedCount?: number;
 }
 
 export interface EraseOutcome {
@@ -31,6 +33,11 @@ export function eraseOutcome(res: EraseResponse): EraseOutcome {
   if (res.erasedCount === undefined) return { gone: res.erased, text: res.erased ? 'Candidate erased.' : 'Candidate not erased.' };
   const skipped = res.skippedCount ?? 0;
   const erased = `Erased ${applications(res.erasedCount)}.`;
+  const failed = res.failedCount ?? 0;
+  if (failed > 0) {
+    const held = skipped > 0 ? ` ${applications(skipped)} under legal hold ${skipped === 1 ? 'was' : 'were'} kept.` : '';
+    return { gone: res.erased, text: `${erased}${held} ${applications(failed)} could not be erased, so this one was kept. Erase again to finish.` };
+  }
   if (skipped === 0) return { gone: res.erased, text: erased };
   const held = `${applications(skipped)} ${skipped === 1 ? 'is' : 'are'} under legal hold and ${skipped === 1 ? 'was' : 'were'} kept`;
   return { gone: res.erased, text: `${erased} ${held}${res.erased ? '.' : ', including this one.'}` };

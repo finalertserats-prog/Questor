@@ -1101,12 +1101,16 @@ model CandidateAtsLink {
   connectionId        String
   connection          AtsConnection @relation(fields: [connectionId], references: [id])
   externalCandidateId String
+  // The linked application's role ("" for a candidate with no role). One ATS
+  // record is one person, and a person has one application per role, so the
+  // record links to at most one application on each role.
+  roleKey             String    @default("")
   source              String    @default("manual") // manual | import
   createdById         String?
   createdAt           DateTime  @default(now())
 
   @@unique([tenantId, candidateId, connectionId])
-  @@unique([tenantId, connectionId, externalCandidateId])
+  @@unique([tenantId, connectionId, externalCandidateId, roleKey], map: "CandidateAtsLink_external_role_key")
   @@index([candidateId])
 }
 
