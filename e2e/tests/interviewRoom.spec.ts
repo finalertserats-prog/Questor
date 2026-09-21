@@ -7,7 +7,7 @@ async function openTypedRoom(browser: Browser, page: Page) {
   await createRoleAndCandidate(page, id);
   await page.getByRole('tab', { name: 'Candidate journey' }).click();
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
-  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: 'Interview plan', exact: true })).toBeVisible({ timeout: 20_000 });
 
   const invitationCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Invitation', exact: true }) });
   const sendInvitation = invitationCard.getByRole('button', { name: 'Send invitation' });

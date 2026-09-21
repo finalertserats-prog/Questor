@@ -10,7 +10,7 @@ test('portal consent without voice capture starts typed mode and never asks for 
   await expect(page.getByRole('radio', { name: 'Random — Recommended' })).toBeChecked();
   await page.getByRole('radio', { name: 'Maya', exact: true }).check();
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
-  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: 'Interview plan', exact: true })).toBeVisible({ timeout: 20_000 });
 
   const invitationCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Invitation', exact: true }) });
   const sendInvitation = invitationCard.getByRole('button', { name: 'Send invitation' });
@@ -125,7 +125,7 @@ test('typing "stop, I need to go" ends the interview and shows the ended screen'
 
   await page.getByRole('tab', { name: 'Candidate journey' }).click();
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
-  await expect(page.getByRole('heading', { name: 'Interview', exact: true })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('heading', { name: 'Interview plan', exact: true })).toBeVisible({ timeout: 20_000 });
 
   const invitationCard = page.locator('.card').filter({ has: page.getByRole('heading', { name: 'Invitation', exact: true }) });
   const sendInvitation = invitationCard.getByRole('button', { name: 'Send invitation' });
