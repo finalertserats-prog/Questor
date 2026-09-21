@@ -64,7 +64,7 @@ async function tellCandidate(req: Request, pipeline: PipelineWithRounds, roundId
   if (!hasCapability(req.auth!, 'interview:invite')) {
     return { sent: false, note: 'Your account cannot email candidates, so the candidate was not emailed.' };
   }
-  const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+  const round = await prisma.interviewRound.findFirstOrThrow({ where: { id: roundId, pipelineId: pipeline.id, tenantId: req.auth!.tenantId } });
   return notifyCandidateOfHumanRound({ round, candidateId: pipeline.candidateId, roleId: pipeline.roleId, stageLabel, kind });
 }
 
