@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
 import { canApproveRoles } from '../components/profileMenuModel';
+import { regionLabel } from '../components/roleLabelModel';
 import { approvePayload, archiveAction, isCurrentResponse, isRoleOpen, type LoadTicket } from '../components/roleDetailModel';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
@@ -294,7 +295,7 @@ export function RoleDetail() {
         <div className="muted small" style={{ marginTop: 6 }}>
           {role.catalogRole ? `Domain: ${role.catalogRole.domain.name}` : 'Not linked to catalog'}
           {role.experienceBand ? ` · Experience: ${role.experienceBand}` : ''}
-          {role.regionCode ? ` · Region: ${role.regionCode}` : ''}
+          {role.regionCode ? ` · Region: ${regionLabel(role.regionCode)}` : ''}
           {role.techStack.length ? ` · Tech: ${stackNames(role.techStack).join(', ')}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>

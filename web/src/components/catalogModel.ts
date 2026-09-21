@@ -1,3 +1,5 @@
+import { GLOBAL_REGION_CODE } from './roleLabelModel';
+
 export interface CatalogResultState { readonly exact: boolean }
 
 export function shouldOfferNewRole(query: string, results: CatalogResultState): boolean {
@@ -21,6 +23,13 @@ export function parseTechStackInput(existing: readonly string[], raw: string): r
     if (next.length >= 15) break;
   }
   return next;
+}
+
+/** What choosing a region means, shown under the Region field; only Global needs saying. */
+export function regionHint(regionCode: string): string {
+  return regionCode === GLOBAL_REGION_CODE
+    ? 'Open in every region. The job description names no country, currency or visa rules, and the role shows under every region in the roles list.'
+    : '';
 }
 
 export interface RoleCreateReadiness {

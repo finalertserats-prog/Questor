@@ -8,7 +8,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
-import { catalogLinkFields, missingRoleFields, shouldOfferCatalogAdd } from '../components/catalogModel';
+import { catalogLinkFields, missingRoleFields, regionHint, shouldOfferCatalogAdd } from '../components/catalogModel';
 import { appendTechStack, jdOriginForSubmit, nextDraftState, previewLines, shouldPollDraft, type DraftPanelState, type LintHit } from '../components/jdDraftModel';
 import { TechStackEditor } from '../components/TechStackEditor';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
@@ -276,6 +276,7 @@ export function RoleCreate() {
               <option value="">Choose a region</option>
               {regions.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
             </select>
+            {regionHint(regionCode) && <span className="muted small">{regionHint(regionCode)}</span>}
           </div>
         </div>
 

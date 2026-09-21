@@ -26,10 +26,16 @@ type FieldReader = (item: RoleLabelSource) => string;
 // In the order a reader reaches for them: level first, the creation date last.
 const DISTINGUISHING_FIELDS: readonly FieldReader[] = [
   (item) => (item.level ?? '').trim(),
-  (item) => (item.regionCode ?? '').trim(),
+  (item) => shortRegion(item.regionCode),
   (item) => (item.experienceBand ?? '').trim(),
   (item) => (item.createdAt ? formatDate(item.createdAt) : ''),
 ];
+
+/** A region code as a dropdown suffix: the code itself, except Global, which is spelled out. */
+function shortRegion(code: string | null | undefined): string {
+  const trimmed = (code ?? '').trim();
+  return trimmed === GLOBAL_REGION_CODE ? REGION_NAMES[GLOBAL_REGION_CODE] : trimmed;
+}
 
 function titleKey(title: string): string {
   return title.trim().toLowerCase();
@@ -92,11 +98,19 @@ const BAND_NAMES: Readonly<Record<string, string>> = {
   senior: 'Senior', principal: 'Principal', executive: 'Executive',
 };
 
-/** The catalog's eight regions by name: a bare "NA" reads as "not applicable". */
+/** The catalog region for a role open in every region. */
+export const GLOBAL_REGION_CODE = 'GLOBAL';
+
+/** The catalog's regions by name: a bare "NA" reads as "not applicable". */
 const REGION_NAMES: Readonly<Record<string, string>> = {
-  NA: 'North America', LATAM: 'Latin America', UKI: 'UK & Ireland', EU: 'Europe',
+  GLOBAL: 'Global', NA: 'North America', LATAM: 'Latin America', UKI: 'UK & Ireland', EU: 'Europe',
   MENA: 'Middle East & North Africa', IN: 'India', APAC: 'Asia-Pacific', ANZ: 'Australia & New Zealand',
 };
+
+/** A region code by name ("Global", "India"); an unknown code is shown as is. */
+export function regionLabel(code: string): string {
+  return REGION_NAMES[code] ?? code;
+}
 
 /**
  * The line under a role's title in the roles list. A role linked to the
@@ -111,7 +125,7 @@ export function roleDetailLine(role: {
   readonly experienceBand?: string | null;
 }): string {
   const band = role.experienceBand ? (BAND_NAMES[role.experienceBand] ?? role.experienceBand) : null;
-  const region = role.regionCode ? (REGION_NAMES[role.regionCode] ?? role.regionCode) : null;
+  const region = role.regionCode ? regionLabel(role.regionCode) : null;
   const parts = role.domain
     ? [band ?? role.level, role.domain, region]
     : [role.level, 'Not linked to catalog'];

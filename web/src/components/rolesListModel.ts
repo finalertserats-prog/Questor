@@ -1,4 +1,5 @@
 import { formatHours } from './dashboardModel';
+import { GLOBAL_REGION_CODE, regionLabel } from './roleLabelModel';
 
 export type RoleStatusFilter = 'all' | 'draft' | 'approved' | 'archived';
 export type RoleSortKey = 'title' | 'applied' | 'interviewed' | 'awaitingReview' | 'advanceRate' | 'medianInviteToCompleteHours' | 'lastActivityAt';
@@ -92,11 +93,37 @@ export function filterRoles(
     if (options.metric && !METRIC_MATCHES[options.metric](role)) return false;
     if (options.domain && role.domain !== options.domain) return false;
     if (options.experienceBand && role.experienceBand !== options.experienceBand) return false;
-    if (options.regionCode && role.regionCode !== options.regionCode) return false;
+    if (options.regionCode && !regionMatches(role.regionCode, options.regionCode)) return false;
     if (options.matchingIds && !options.matchingIds.has(role.id)) return false;
     if (!q) return true;
     return role.title.toLowerCase().includes(q) || role.level.toLowerCase().includes(q);
   });
+}
+
+/**
+ * A Global role is open in every region, so it shows under whichever region
+ * is chosen; choosing Global itself shows only Global roles.
+ */
+function regionMatches(roleRegion: string | null, chosen: string): boolean {
+  return roleRegion === chosen || roleRegion === GLOBAL_REGION_CODE;
+}
+
+export interface RegionOption { readonly value: string; readonly label: string }
+
+/**
+ * The region filter's options: the catalog's regions plus any code only the
+ * roles carry (a retired region), Global first and the rest by name.
+ */
+export function regionFilterOptions(
+  catalog: readonly { readonly code: string; readonly name: string }[],
+  roleCodes: readonly string[],
+): readonly RegionOption[] {
+  const names = new Map(catalog.map((r) => [r.code, r.name]));
+  const options = [...new Set([...catalog.map((r) => r.code), ...roleCodes])]
+    .map((code) => ({ value: code, label: names.get(code) ?? regionLabel(code) }));
+  const global = options.filter((o) => o.value === GLOBAL_REGION_CODE);
+  const rest = options.filter((o) => o.value !== GLOBAL_REGION_CODE).sort((a, b) => a.label.localeCompare(b.label));
+  return [...global, ...rest];
 }
 
 function sortableValue(role: RoleFunnel, key: RoleSortKey): string | number | null {
