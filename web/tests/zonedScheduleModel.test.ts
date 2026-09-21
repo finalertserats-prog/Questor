@@ -56,8 +56,8 @@ describe('the zone list', () => {
     expect(isValidTimeZone('Kolkata')).toBe(false);
   });
 
-  it('starts on the current name when the browser reports an old one', () => {
-    expect(initialTimeZone(null, 'Asia/Calcutta')).toBe('Asia/Kolkata');
+  it('starts on the current name when the organisation stored an old one', () => {
+    expect(initialTimeZone('Asia/Calcutta')).toBe('Asia/Kolkata');
   });
 
   it('labels a zone with its current offset', () => {
@@ -67,15 +67,16 @@ describe('the zone list', () => {
 
 describe('the zone the picker starts on', () => {
   it('is the organisation zone when set', () => {
-    expect(initialTimeZone('Asia/Kolkata', 'Europe/London')).toBe('Asia/Kolkata');
+    expect(initialTimeZone('Europe/London')).toBe('Europe/London');
   });
 
-  it('is the browser zone when the organisation has none', () => {
-    expect(initialTimeZone(null, 'Europe/London')).toBe('Europe/London');
+  // Not the browser's: the organisation works in IST until it chooses.
+  it('is IST when the organisation has none', () => {
+    expect(initialTimeZone(null)).toBe('Asia/Kolkata');
   });
 
-  it('is UTC when neither is usable', () => {
-    expect(initialTimeZone('Mars/Base', undefined)).toBe('UTC');
+  it('is IST when the organisation zone is unusable', () => {
+    expect(initialTimeZone('Mars/Base')).toBe('Asia/Kolkata');
   });
 });
 

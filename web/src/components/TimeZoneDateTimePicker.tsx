@@ -22,7 +22,7 @@ interface Props {
  * a datetime-local field silently used the recruiter's own clock.
  *
  * The zone field is a type-ahead over every zone the browser knows, starting
- * on the organisation's zone (else this browser's).
+ * on the organisation's zone (IST when it has none).
  */
 export function TimeZoneDateTimePicker({ idPrefix, value, onChange, orgZone, disabled = false, compact = false }: Props) {
   const zones = useMemo(() => {
@@ -37,8 +37,8 @@ export function TimeZoneDateTimePicker({ idPrefix, value, onChange, orgZone, dis
   useEffect(() => {
     if (suggested.current || orgZone === undefined) return;
     suggested.current = true;
-    if (!value.timeZone) onChange({ ...value, timeZone: initialTimeZone(orgZone, viewerZone) });
-  }, [orgZone, value, onChange, viewerZone]);
+    if (!value.timeZone) onChange({ ...value, timeZone: initialTimeZone(orgZone) });
+  }, [orgZone, value, onChange]);
 
   const preview = schedulePreview(value, new Date(), viewerZone);
   const labelClass = compact ? 'visually-hidden' : undefined;
