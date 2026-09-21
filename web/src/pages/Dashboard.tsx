@@ -7,7 +7,8 @@ import { Icon, type IconName } from '../components/Icon';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
 import { EmptyState } from '../components/EmptyState';
-import { chartTone, formatHours, groupSessionStates, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
+import { chartTone, formatHours, groupSessionStates, recentInterviewDate, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
+import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import { canReadAudit } from '../components/profileMenuModel';
 import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
 import type { TopRole } from '../components/rolesListModel';
@@ -30,7 +31,7 @@ interface Metrics {
   /** Set by the server when the series came from a capped row set, not from everything. */
   truncated?: boolean;
   recentInterviews: {
-    id: string; state: string; createdAt: string; scheduledAt: string | null; completedAt: string | null;
+    id: string; state: string; createdAt: string; scheduledAt: string | null; scheduledTimeZone: string | null; completedAt: string | null;
     candidate: { id: string; name: string }; role: RoleLabelSource & { id: string };
   }[];
   roles?: {
@@ -64,13 +65,6 @@ function Kpi({ icon, label, value, hint, to, spark }: KpiProps) {
   return <li className="kpi">{to ? <Link to={to} className={cls}>{body}</Link> : <div className={cls}>{body}</div>}</li>;
 }
 
-/** The date that matters most for where an interview is in its life. */
-function interviewDate(row: Metrics['recentInterviews'][number]): { label: string; at: string } {
-  if (row.completedAt) return { label: 'Completed', at: row.completedAt };
-  if (row.scheduledAt) return { label: 'Scheduled', at: row.scheduledAt };
-  return { label: 'Created', at: row.createdAt };
-}
-
 /** Ranked roles as bars, with same-titled roles told apart by their labels. */
 function toRoleBars(roles: readonly TopRole[], tone: string): BarItem[] {
   const labels = roleDisplayLabels(roles);
@@ -82,6 +76,7 @@ export function Dashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<{ status: number; message: string } | null>(null);
+  const orgZone = useOrgTimeZone();
 
   // `cancelled` so a slow metrics response cannot set state on a page the
   // person has already left.
@@ -282,14 +277,14 @@ export function Dashboard() {
                   </thead>
                   <tbody>
                     {metrics.recentInterviews.map((row, index) => {
-                      const date = interviewDate(row);
+                      const date = recentInterviewDate(row, orgZone);
                       return (
                         <tr key={row.id}>
                           <td><Link to={`/candidates/${row.candidate.id}`}>{row.candidate.name}</Link></td>
                           <td className="muted">{recentRoleLabels[index]}</td>
                           <td>{stateBadge(row.state)}</td>
                           <td className="small">
-                            <span className="muted">{date.label}</span> {new Date(date.at).toLocaleDateString()}
+                            <span className="muted">{date.label}</span> {date.text}
                           </td>
                           <td><Link to={`/interviews/${row.id}`}>Open</Link></td>
                         </tr>

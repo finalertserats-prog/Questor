@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { barRadius, chartTone, countAxis, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks, truncationNote, TRUNCATION_NOTE } from '../src/components/dashboardModel';
+import { barRadius, recentInterviewDate, chartTone, countAxis, formatHours, groupSessionStates, niceCeiling, scaleLength, statesInGroup, trimSparseWeeks, truncationNote, TRUNCATION_NOTE } from '../src/components/dashboardModel';
 
 describe('truncationNote', () => {
   it('says the charts were drawn from a capped set when the server capped one', () => {
@@ -196,5 +196,27 @@ describe('statesInGroup', () => {
 
   it('returns nothing for a group that does not exist', () => {
     expect(statesInGroup('not-a-group')).toEqual([]);
+  });
+});
+
+// A recruiter in London reading an interview booked for 00:30 in Kolkata used
+// to see the previous day, on an unnamed clock.
+describe('recentInterviewDate', () => {
+  const row = { createdAt: '2026-09-01T08:00:00.000Z', scheduledAt: '2026-09-21T19:00:00.000Z', scheduledTimeZone: 'Asia/Kolkata', completedAt: null };
+
+  it('states a scheduled interview on the clock it was booked on', () => {
+    expect(recentInterviewDate(row, 'Europe/Berlin', 'Europe/London').text).toMatch(/^22 Sep\w* 2026, 00:30 .*\(Asia\/Kolkata\)/);
+  });
+
+  it("falls back to the organisation's zone for a booking without one", () => {
+    expect(recentInterviewDate({ ...row, scheduledTimeZone: null }, 'America/New_York', 'America/New_York').text).toContain('(America/New_York)');
+  });
+
+  it('labels it Scheduled', () => {
+    expect(recentInterviewDate(row, null, 'Asia/Kolkata').label).toBe('Scheduled');
+  });
+
+  it('prefers the completion date once the interview is done', () => {
+    expect(recentInterviewDate({ ...row, completedAt: '2026-09-22T10:00:00.000Z' }, null, 'Asia/Kolkata').label).toBe('Completed');
   });
 });

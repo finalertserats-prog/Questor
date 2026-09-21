@@ -9,9 +9,11 @@ import { PageSkeleton } from '../components/Skeleton';
 import { statesInGroup } from '../components/dashboardModel';
 import { humanise } from '../components/statusModel';
 import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
+import { formatScheduled } from '../components/dateFormat';
+import { useOrgTimeZone } from '../components/useOrgTimeZone';
 
 interface Session {
-  id: string; state: string; provider: string; scheduledAt: string | null;
+  id: string; state: string; provider: string; scheduledAt: string | null; scheduledTimeZone: string | null;
   candidate: { id: string; name: string }; role: (RoleLabelSource & { id: string }) | null;
   recommendation: string | null; assessmentId: string | null; invited: boolean; createdAt: string;
 }
@@ -28,6 +30,7 @@ const FILTER_LABELS: Readonly<Record<string, string>> = {
 export function InterviewsList() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
+  const orgZone = useOrgTimeZone();
   const [error, setError] = useState('');
   const [params] = useSearchParams();
 
@@ -105,7 +108,7 @@ export function InterviewsList() {
             <table>
               <thead>
                 <tr>
-                  <th>Candidate</th><th>Role</th><th>State</th><th>Provider</th>
+                  <th>Candidate</th><th>Role</th><th>State</th><th>Scheduled</th><th>Provider</th>
                   <th>Recommendation</th><th>Action</th>
                 </tr>
               </thead>
@@ -115,6 +118,7 @@ export function InterviewsList() {
                     <td>{s.candidate?.name}</td>
                     <td>{s.role ? roleLabelById.get(s.role.id) ?? s.role.title : null}</td>
                     <td>{stateBadge(s.state)}</td>
+                    <td className="small" data-testid={`interview-scheduled-${s.id}`}>{formatScheduled(s.scheduledAt, s.scheduledTimeZone, orgZone)}</td>
                     <td className="muted">{humanise(s.provider)}</td>
                     <td>{recBadge(s.recommendation)}</td>
                     <td>
