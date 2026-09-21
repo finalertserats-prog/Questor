@@ -8,6 +8,7 @@ import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { HorizontalBarChart, WeeklyColumnChart, type BarItem, type WeekPoint } from '../components/DashboardCharts';
 import { EmptyState } from '../components/EmptyState';
 import { chartTone, formatHours, groupSessionStates, recentInterviewDate, trimSparseWeeks, truncationNote } from '../components/dashboardModel';
+import { formatDateTime } from '../components/dateFormat';
 import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import { canReadAudit } from '../components/profileMenuModel';
 import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
@@ -166,7 +167,7 @@ export function Dashboard() {
                           <td><Link to={`/candidates/${item.candidate.id}`}>{item.candidate.name}</Link></td>
                           <td className="muted">{item.role.title}</td>
                           <td>{row.what}</td>
-                          <td className="small">{new Date(item.at).toLocaleDateString()}</td>
+                          <td className="small">{formatDateTime(item.at)}</td>
                           <td><Link to={row.to}>{row.linkText}</Link></td>
                         </tr>
                       );
