@@ -100,6 +100,10 @@ describe('locationSpecificClaims', () => {
     expect(locationSpecificClaims('Paid in usd, or in rupees.')).toEqual(['usd', 'rupees']);
   });
 
+  it('finds countries, cities and regions whatever their case', () => {
+    expect(locationSpecificClaims('Based in london, hiring across india and emea.')).toEqual(['india', 'london', 'emea']);
+  });
+
   it('finds nothing in a location-agnostic advert', () => {
     expect(locationSpecificClaims(draftJdHeuristic(global))).toEqual([]);
   });
