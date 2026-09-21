@@ -210,3 +210,47 @@ describe('generation stays bounded (Codex release review)', () => {
     expect({ limited: statuses.includes(429), rereadOk: again.status !== 429 }).toEqual({ limited: true, rereadOk: true });
   });
 });
+
+describe('Global drafts stay location-agnostic', () => {
+  const GLOBAL_JD = LLM_JD.replace('India.', 'Open to candidates in multiple regions; remote-friendly.');
+  const globalKey = (catalogRoleId: string) => ({ catalogRoleId, experienceBand: 'senior', regionCode: 'GLOBAL' });
+
+  async function globalFixture() {
+    const made = await fixture();
+    await prisma.catalogRegion.create({ data: { code: 'GLOBAL', name: 'Global (all regions)', sortOrder: 0 } });
+    return made;
+  }
+
+  it('falls back to the built-in writer when the model ties a Global role to one country', async () => {
+    const { role } = await globalFixture();
+    await getOrQueueDraft(globalKey(role.id));
+
+    await generatePendingDrafts({ limit: 5 });
+
+    const row = await prisma.catalogJdDraft.findFirstOrThrow({ where: { regionCode: 'GLOBAL' } });
+    expect({ generator: row.generator, namesIndia: row.text.includes('India') }).toEqual({ generator: 'heuristic', namesIndia: false });
+  });
+
+  it('keeps the model draft for a Global role when it names no place', async () => {
+    const { role } = await globalFixture();
+    generate.mockResolvedValueOnce({ text: JSON.stringify({ title: 'Platform Engineer', text: GLOBAL_JD }), model: 'fake-model', inputTokens: 1, outputTokens: 1, latencyMs: 1 });
+    await getOrQueueDraft(globalKey(role.id));
+
+    await generatePendingDrafts({ limit: 5 });
+
+    expect((await prisma.catalogJdDraft.findFirstOrThrow({ where: { regionCode: 'GLOBAL' } })).generator).toBe('llm');
+  });
+
+  it('describes a Global role without the country the model named', async () => {
+    const { auth } = await globalFixture();
+
+    const res = await request(app).post('/api/jd-drafts/describe').set('Authorization', auth).send({
+      title: 'Payments Engineer',
+      description: 'You will run our card payments platform. You will work with risk and finance. Success is fewer failed payments.',
+      experienceBand: 'senior',
+      regionCode: 'GLOBAL',
+    });
+
+    expect({ status: res.status, generator: res.body.generator, namesIndia: String(res.body.text).includes('India') }).toEqual({ status: 200, generator: 'heuristic', namesIndia: false });
+  });
+});

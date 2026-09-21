@@ -66,13 +66,13 @@ beforeEach(async () => {
 describe('catalog seed', () => {
   it('is idempotent, preserves local edits and has the expected fixture counts', async () => {
     await ensureCatalogSeeded();
-    expect(await counts()).toEqual({ domains: 35, roles: 492, regions: 8, families: 9, aliases: 2 });
+    expect(await counts()).toEqual({ domains: 35, roles: 492, regions: 9, families: 9, aliases: 2 });
 
     const role = await prisma.catalogRole.findFirstOrThrow({ where: { status: 'active' }, orderBy: { title: 'asc' } });
     await prisma.catalogRole.update({ where: { id: role.id }, data: { title: 'Locally Edited Title', status: 'retired' } });
 
     await ensureCatalogSeeded();
-    expect(await counts()).toEqual({ domains: 35, roles: 492, regions: 8, families: 9, aliases: 2 });
+    expect(await counts()).toEqual({ domains: 35, roles: 492, regions: 9, families: 9, aliases: 2 });
     expect(await prisma.catalogRole.findUniqueOrThrow({ where: { id: role.id } })).toMatchObject({ title: 'Locally Edited Title', status: 'retired' });
   });
 });

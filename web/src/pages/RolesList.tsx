@@ -23,6 +23,7 @@ import {
   isSearchPending,
   MAX_ROLE_SEARCH_LENGTH,
   mergeOptionNames,
+  regionFilterOptions,
   METRIC_FILTER_LABELS,
   metricFilterFromParam,
   roleMetricsPath,
@@ -149,11 +150,10 @@ export function RolesList() {
     const extra = roles.flatMap((r) => (r.experienceBand && !names.has(r.experienceBand) ? [r.experienceBand] : []));
     return [...catalog.bands.map((b) => ({ value: b.id, label: b.display })), ...[...new Set(extra)].map((id) => ({ value: id, label: id }))];
   }, [catalog.bands, roles]);
-  const regionOptions = useMemo(() => {
-    const names = new Map(catalog.regions.map((r) => [r.code, r.name]));
-    const codes = mergeOptionNames(catalog.regions.map((r) => r.code), roles.flatMap((r) => (r.regionCode ? [r.regionCode] : [])));
-    return codes.map((code) => ({ value: code, label: names.get(code) ?? code })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [catalog.regions, roles]);
+  const regionOptions = useMemo(
+    () => regionFilterOptions(catalog.regions, roles.flatMap((r) => (r.regionCode ? [r.regionCode] : []))),
+    [catalog.regions, roles],
+  );
   const labelById = useMemo(() => {
     const labels = roleDisplayLabels(roles);
     return new Map(roles.map((role, index) => [role.id, labels[index]]));

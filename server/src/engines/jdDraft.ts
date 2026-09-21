@@ -14,6 +14,8 @@ export interface JdDraftInput {
   readonly marketSignal: string;
   readonly band: BandId;
   readonly regionName: string;
+  /** The catalog region code; GLOBAL makes the draft location-agnostic. */
+  readonly regionCode?: string;
 }
 
 export interface DraftResult {
@@ -22,6 +24,60 @@ export interface DraftResult {
   readonly generator: 'llm' | 'heuristic';
   readonly model: string;
   readonly promptVersion: string;
+}
+
+/** The catalog region for a role open in every region. */
+export const GLOBAL_REGION_CODE = 'GLOBAL';
+
+/** The Location line of a Global role's advert. */
+const GLOBAL_LOCATION_LINE = 'Open to candidates in multiple regions; remote-friendly.';
+
+/** The location the model is given for a Global role, instead of the catalog name. */
+const GLOBAL_LOCATION = 'Multiple regions (remote-friendly)';
+
+const GLOBAL_RULE =
+  ' This role is global: do not name any country, city, currency, visa or work-permit rule, or law of any one jurisdiction. ' +
+  'Under Location say only that the role is open to candidates in multiple regions and is remote-friendly.';
+
+// WHY: a Global advert is shown to candidates everywhere, so a claim that only
+// holds in one place (pay in one currency, visa sponsorship, a named country
+// or city, one jurisdiction's law) would mislead most of them. The prompt
+// forbids these; this catches the common slips so the built-in text is used.
+const LOCATION_SPECIFIC = [
+  /\bvisas?\b/i,
+  /\bwork[- ]permits?\b/i,
+  /\bsponsor(?:s|ed|ing|ship)?\b/i,
+  /\bright to work\b/i,
+  /[$£€₹¥]/,
+  /\b(?:USD|GBP|EUR|INR|AUD|CAD|NZD|SGD|AED|JPY|CNY|BRL|MXN)\b/,
+  /\b(?:GDPR|HIPAA|EEOC?|IR35|at-will)\b/i,
+  /\b(?:United States|USA|United Kingdom|UK|England|Ireland|India|Canada|Mexico|Brazil|Germany|France|Spain|Netherlands|Poland|UAE|Saudi Arabia|Egypt|Singapore|Japan|China|Australia|New Zealand)\b/,
+  /\b(?:London|Dublin|New York|San Francisco|Seattle|Toronto|Berlin|Paris|Amsterdam|Dubai|Bangalore|Bengaluru|Mumbai|Delhi|Hyderabad|Sydney|Melbourne|Tokyo)\b/,
+  /\b(?:North America|Latin America|Europe|Middle East|Asia-Pacific|APAC|EMEA)\b/,
+] as const;
+
+export function isGlobalRegion(regionCode: string | undefined): boolean {
+  return regionCode === GLOBAL_REGION_CODE;
+}
+
+/** The place-specific claims in `text` that a Global advert must not make. */
+export function locationSpecificClaims(text: string): string[] {
+  return LOCATION_SPECIFIC.flatMap((re) => {
+    const hit = text.match(re);
+    return hit ? [hit[0]] : [];
+  });
+}
+
+function locationLine(regionName: string, regionCode: string | undefined): string {
+  return isGlobalRegion(regionCode) ? GLOBAL_LOCATION_LINE : `${regionName}.`;
+}
+
+function promptLocation(regionName: string, regionCode: string | undefined): string {
+  return isGlobalRegion(regionCode) ? GLOBAL_LOCATION : regionName;
+}
+
+function globalRule(regionCode: string | undefined): string {
+  return isGlobalRegion(regionCode) ? GLOBAL_RULE : '';
 }
 
 const llmDraftSchema = z.object({ title: z.string().trim().min(2).max(160), text: z.string().trim().min(400).max(6000) }).strict();
@@ -65,7 +121,7 @@ export function draftJdHeuristic(input: JdDraftInput): string {
       : '- Experience mentoring others or improving how a team works.',
     '',
     'Location',
-    `${input.regionName}.`,
+    locationLine(input.regionName, input.regionCode),
     '',
     CLOSING_LINE,
   ].join('\n');
@@ -156,7 +212,8 @@ export async function draftJdWithLlm(input: JdDraftInput): Promise<DraftResult |
       'Write for the candidate, in plain words, and pitch the work at the given level. ' +
       'Do not name any company, salary, benefits or perks. Do not use catalog words like "band", "family" or "market signal". ' +
       'Express experience as evidenced scope, with years only as a guide ("typically N+ years or equivalent evidence"); at entry level ask for no minimum years. ' +
-      'Never use age, gender, nationality, "native speaker", "digital native", "young", "recent graduate", or physical requirements.',
+      'Never use age, gender, nationality, "native speaker", "digital native", "young", "recent graduate", or physical requirements.' +
+      globalRule(input.regionCode),
     user: JSON.stringify({
       title: input.title,
       field: input.domainName,
@@ -164,7 +221,7 @@ export async function draftJdWithLlm(input: JdDraftInput): Promise<DraftResult |
       level: band.label,
       levelFocus: band.abstraction,
       typicalYears: band.yearsPrior.min,
-      location: input.regionName,
+      location: promptLocation(input.regionName, input.regionCode),
       promptVersion: PROMPT_VERSION,
     }),
     temperature: 0.2,
@@ -184,6 +241,7 @@ export async function draftJdFromDescriptionWithLlm(input: {
   readonly description: string;
   readonly band: BandId;
   readonly regionName: string;
+  readonly regionCode?: string;
   readonly domainName?: string;
 }): Promise<DraftResult | null> {
   const band = bandById(input.band);
@@ -194,8 +252,9 @@ export async function draftJdFromDescriptionWithLlm(input: {
       'Sections: title line, About the role, What you will do, What you bring, Nice to have, Location, and a closing line welcoming applicants from every background and offering reasonable adjustments. ' +
       'Write for the candidate. Use only facts from the description; do not invent a company name, salary, benefits or perks. ' +
       'Express experience as evidenced scope, with years only as a guide ("typically N+ years or equivalent evidence"). ' +
-      'Never use age, gender, nationality, "native speaker", "digital native", "young", "recent graduate", or physical requirements unless the description says they are essential.',
-    user: JSON.stringify({ title: input.title ?? '', description: input.description, level: band.label, typicalYears: band.yearsPrior.min, location: input.regionName, field: input.domainName ?? '', promptVersion: PROMPT_VERSION }),
+      'Never use age, gender, nationality, "native speaker", "digital native", "young", "recent graduate", or physical requirements unless the description says they are essential.' +
+      globalRule(input.regionCode),
+    user: JSON.stringify({ title: input.title ?? '', description: input.description, level: band.label, typicalYears: band.yearsPrior.min, location: promptLocation(input.regionName, input.regionCode), field: input.domainName ?? '', promptVersion: PROMPT_VERSION }),
     temperature: 0.2,
     maxTokens: 1800,
     validate: (value) => llmDraftSchema.parse(value),
@@ -209,6 +268,7 @@ export function draftJdFromDescriptionHeuristic(input: {
   readonly description: string;
   readonly band: BandId;
   readonly regionName: string;
+  readonly regionCode?: string;
   readonly domainName?: string;
 }): string {
   const title = input.title?.trim() || 'Role';
@@ -235,7 +295,7 @@ export function draftJdFromDescriptionHeuristic(input: {
       : '- Transferable experience from similar work.',
     '',
     'Location',
-    `${input.regionName}.`,
+    locationLine(input.regionName, input.regionCode),
     '',
     CLOSING_LINE,
   ].join('\n');

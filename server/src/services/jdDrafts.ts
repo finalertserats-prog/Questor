@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma, parseJsonStrict } from '../db.js';
 import { HttpError } from '../middleware/index.js';
 import { BANDS, type BandId } from '../engines/experienceBands.js';
-import { draftJdFromDescriptionHeuristic, draftJdFromDescriptionWithLlm, draftJdHeuristic, draftJdWithLlm, lintJd, PROMPT_VERSION } from '../engines/jdDraft.js';
+import { draftJdFromDescriptionHeuristic, draftJdFromDescriptionWithLlm, draftJdHeuristic, draftJdWithLlm, isGlobalRegion, lintJd, locationSpecificClaims, PROMPT_VERSION } from '../engines/jdDraft.js';
 import type { AuthClaims } from './auth.js';
 import { consume } from '../middleware/rateLimit.js';
 
@@ -99,10 +99,11 @@ async function generateOne(id: string, claimAt: Date): Promise<boolean> {
     marketSignal: row.catalogRole.marketSignal,
     band,
     regionName: row.region.name,
+    regionCode: row.region.code,
   };
   const llm = await draftJdWithLlm(input);
   const heuristicText = draftJdHeuristic(input);
-  const chosen = chooseDraft(llm, heuristicText);
+  const chosen = chooseDraft(llm, heuristicText, isGlobalRegion(row.region.code));
   return finishDraft(id, claimAt, {
     status: 'ready',
     text: chosen.text,
@@ -140,15 +141,16 @@ export async function draftFromDescription(input: {
   const verdict = await consume('jd-draft-describe', input.auth.userId, 15 * 60_000, max);
   if (!verdict.allowed) throw new HttpError(429, 'Too many requests. Please wait a moment and try again.');
   const band = assertBand(input.band);
-  const region = await prisma.catalogRegion.findFirst({ where: { code: input.regionCode, status: 'active' }, select: { name: true } });
+  const region = await prisma.catalogRegion.findFirst({ where: { code: input.regionCode, status: 'active' }, select: { name: true, code: true } });
   if (!region) throw new HttpError(400, 'Unknown or inactive catalog region.');
   const domain = input.domainId ? await prisma.catalogDomain.findFirst({ where: { id: input.domainId, status: 'active' }, select: { name: true } }) : null;
   if (input.domainId && !domain) throw new HttpError(400, 'Unknown or inactive catalog domain.');
-  const heuristicText = draftJdFromDescriptionHeuristic({ title: input.title, description: input.description, band, regionName: region.name, domainName: domain?.name });
+  const described = { title: input.title, description: input.description, band, regionName: region.name, regionCode: region.code, domainName: domain?.name };
+  const heuristicText = draftJdFromDescriptionHeuristic(described);
   // The model writes from the description when one is configured (never in a
   // demo); the built-in writer is the fallback, and the fairer text wins.
-  const llm = await draftJdFromDescriptionWithLlm({ title: input.title, description: input.description, band, regionName: region.name, domainName: domain?.name });
-  const chosen = chooseDraft(llm, heuristicText);
+  const llm = await draftJdFromDescriptionWithLlm(described);
+  const chosen = chooseDraft(llm, heuristicText, isGlobalRegion(region.code));
   return { text: chosen.text, lint: chosen.lint, generator: chosen.generator };
 }
 
@@ -156,8 +158,16 @@ export function shapeDraft(row: DraftRow) {
   return { status: row.status, text: row.text, lint: parseJsonStrict<Array<{ term: string; suggestion: string }>>(row.lintJson, { model: 'CatalogJdDraft', id: row.id, field: 'lintJson' }), generator: row.generator, id: row.id };
 }
 
-function chooseDraft(llm: Awaited<ReturnType<typeof draftJdWithLlm>>, heuristicText: string) {
+/**
+ * The model's draft unless the built-in one is fairer. For a Global role the
+ * model's draft must also make no place-specific claim; the built-in writer
+ * never does.
+ */
+function chooseDraft(llm: Awaited<ReturnType<typeof draftJdWithLlm>>, heuristicText: string, global: boolean) {
   const heuristicLint = lintJd(heuristicText);
+  if (llm && global && locationSpecificClaims(llm.text).length > 0) {
+    return { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: heuristicLint };
+  }
   if (!llm) return { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: heuristicLint };
   const llmLint = lintJd(llm.text);
   if (llmLint.length > heuristicLint.length) return { text: heuristicText, generator: 'heuristic' as const, model: '', promptVersion: PROMPT_VERSION, lint: heuristicLint };

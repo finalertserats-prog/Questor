@@ -3,6 +3,11 @@ import { logger } from '../logger.js';
 import { ROLE_CATALOG } from '../seed/catalog/roleCatalog.js';
 import { normalizeTitle, slugifyCatalogName } from '../domain/catalogText.js';
 
+// Global comes first (sortOrder 0): a role open in every region. The
+// 20260921100100_global_region Postgres migration inserts the same row for
+// databases seeded before it existed.
+const GLOBAL_REGION = { code: 'GLOBAL', name: 'Global (all regions)', sortOrder: 0 } as const;
+
 const REGIONS = [
   { code: 'NA', name: 'North America' },
   { code: 'LATAM', name: 'Latin America' },
@@ -57,7 +62,7 @@ export async function ensureCatalogSeeded(): Promise<void> {
   const domainSlugs = new Set(domainRows.map((d) => d.slug));
 
   await insertEach(
-    REGIONS.map((r, i) => ({ ...r, sortOrder: i + 1 })).filter((r) => !regionCodes.has(r.code)),
+    [GLOBAL_REGION, ...REGIONS.map((r, i) => ({ ...r, sortOrder: i + 1 }))].filter((r) => !regionCodes.has(r.code)),
     (data) => prisma.catalogRegion.create({ data }),
   );
   await insertEach(
