@@ -13,6 +13,7 @@ import {
 } from '../components/assessmentModel';
 import { FeedbackEmailPanel } from '../components/FeedbackEmailPanel';
 import { AssessmentTabList, DifferencesPanel, HumanReviewPanel, type DifferencesView } from '../components/AssessmentTabs';
+import { TechStackCoverage, type TechStackCoverageItem } from '../components/TechStackCoverage';
 import {
   assessmentPanelId, assessmentTabFromParam, assessmentTabId, assessmentTabPath, landingTab, levelText,
   nextAssessmentTab, type AssessmentTabKey,
@@ -37,6 +38,8 @@ interface AssessmentResult {
   summary: string; competencies: Competency[];
   strengths: string[]; concerns: string[]; contradictions: string[];
   openQuestions: string[]; limitations: string[];
+  /** Which required technologies the interview evidenced. Absent before the tech-stack release. */
+  techStackCoverage?: TechStackCoverageItem[];
 }
 interface Review { id: string; status: string; disposition: string; reason: string; overrides: unknown[]; completedAt: string | null; }
 interface ReviewedView {
@@ -638,6 +641,7 @@ export function AssessmentView() {
         </div>
       )}
 
+      <TechStackCoverage coverage={result.techStackCoverage} />
       <div className="card">
         <h2 className="card-title"><Icon name="scorecard" />Competency scorecard</h2>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency scorecard">
