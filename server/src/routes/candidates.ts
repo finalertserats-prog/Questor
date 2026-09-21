@@ -7,6 +7,9 @@ import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { eraseCandidate } from '../services/dataRights.js';
+import { eraseAllApplications } from '../services/personErasure.js';
+import { capabilitiesOf } from '../domain/capabilities.js';
+import type { AuthClaims } from '../services/auth.js';
 import {
   assertCanAccessCandidate,
   assertCanAccessRole,
@@ -26,7 +29,13 @@ import { assertRoleOpen } from '../services/roleOpen.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { normalizeEmail } from '../services/userEmail.js';
 import { resumeScoringFor, storeResumeProfile } from '../services/resumeProfile.js';
-import { applyCandidateToRole, CANDIDATE_SEARCH_MIN_CHARS, searchCandidatePeople } from '../services/candidateReuse.js';
+import {
+  applyCandidateToRole,
+  CANDIDATE_SEARCH_MIN_CHARS,
+  findApplicationOnRole,
+  inApplicationTransaction,
+  searchCandidatePeople,
+} from '../services/candidateReuse.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -125,12 +134,27 @@ candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(a
   // pipeline the caller cannot see but the role's owners can.
   await assertCanAccessRole(req.auth!, body.roleId);
   await assertRoleOpen(body.roleId);
-  const candidate = await prisma.candidate.create({
-    data: { tenantId: req.auth!.tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, emailNormalized: normalizeEmail(body.email), phone: body.phone ?? '' },
+  const tenantId = req.auth!.tenantId;
+  const emailNormalized = normalizeEmail(body.email);
+  // One application per person per role, as /:id/apply refuses too. The check
+  // and the row (with its owner) commit together, so two identical adds at
+  // once cannot both pass it.
+  const outcome = await inApplicationTransaction(async (tx) => {
+    const existing = await findApplicationOnRole(tx, { tenantId, roleId: body.roleId, emailNormalized });
+    if (existing) return { kind: 'exists' as const, candidateId: existing.id };
+    const made = await tx.candidate.create({
+      data: { tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, emailNormalized, phone: body.phone ?? '' },
+    });
+    // Role assignment alone would already cover this candidate, but the explicit
+    // grant survives the creator later being unassigned from the role.
+    await assignCandidate(made.id, req.auth!.userId, 'owner', tx);
+    return { kind: 'created' as const, candidate: made };
   });
-  // Role assignment alone would already cover this candidate, but the explicit
-  // grant survives the creator later being unassigned from the role.
-  await assignCandidate(candidate.id, req.auth!.userId, 'owner');
+  if (outcome.kind === 'exists') {
+    res.status(409).json({ error: 'This person is already a candidate for that role.', code: 'candidate_exists', candidateId: outcome.candidateId });
+    return;
+  }
+  const { candidate } = outcome;
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.created', entityType: 'Candidate', entityId: candidate.id });
   // Onboarding starts the candidate's journey at Participation on its own.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.onboarded', trigger: 'candidate.created' });
@@ -355,6 +379,7 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   // go looking for: did they ask for feedback, is a draft waiting, and have they
   // asked to speak to someone. Scoped by the assertCanAccessCandidate above.
   const candidateFeedback = await candidateFeedbackState(interviews.map((i) => i.id));
+  const otherApplications = await otherApplicationCount(req.auth!, candidate);
   res.json({
     candidate: shape(candidate),
     profile: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' }) : null,
@@ -362,8 +387,21 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     rawText: profileVersion?.rawText ?? '',
     interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, scheduledTimeZone: i.scheduledTimeZone, createdAt: i.createdAt })),
     candidateFeedback,
+    ...(otherApplications === null ? {} : { otherApplications }),
   });
 }));
+
+/**
+ * How many other applications the same address has, for the erase control —
+ * so only for a caller who may erase, and counted within their scope, which
+ * for an admin is the whole organisation. Null for anyone else.
+ */
+async function otherApplicationCount(auth: AuthClaims, candidate: { id: string; email: string; emailNormalized: string }): Promise<number | null> {
+  if (!capabilitiesOf(auth.role).includes('candidate:erase')) return null;
+  const key = candidate.emailNormalized || normalizeEmail(candidate.email);
+  if (!key) return 0;
+  return prisma.candidate.count({ where: { AND: [await candidateScope(auth), { emailNormalized: key, id: { not: candidate.id } }] } });
+}
 
 // Right to erasure: GDPR Art. 17, India DPDP s.8, Illinois AIVIA s.20 (which
 // requires deletion within 30 days of request, including copies). Irreversible;
@@ -373,9 +411,20 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
 // `requireRole('admin')` also silently admitted anyone the role map later grants
 // an admin-ish role, and it stated the grant in a second place that could drift
 // from capabilities.ts. Only admin holds this capability today.
+//
+// `allApplications` erases every application in the organisation for the same
+// address — the person, not only this role's record — each through the same
+// path; any under legal hold is skipped and reported rather than refused.
+const eraseBodySchema = z.object({ reason: z.string().min(1).max(500), allApplications: z.boolean().optional() });
+
 candidatesRouter.delete('/:id', requireCapability('candidate:erase'), asyncHandler(async (req, res) => {
-  const { reason } = z.object({ reason: z.string().min(1).max(500) }).parse(req.body ?? {});
+  const { reason, allApplications } = eraseBodySchema.parse(req.body ?? {});
   await assertCanAccessCandidate(req.auth!, req.params.id);
+  if (allApplications) {
+    const person = await eraseAllApplications({ tenantId: req.auth!.tenantId, candidateId: req.params.id, actorId: req.auth!.userId, reason });
+    res.json({ ...person, erasedCount: person.erasedIds.length, skippedCount: person.skipped.length });
+    return;
+  }
   const result = await eraseCandidate({
     tenantId: req.auth!.tenantId,
     candidateId: req.params.id,

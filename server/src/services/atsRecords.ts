@@ -10,6 +10,7 @@ import { atsFailure, requireTenantAts, type TenantAts } from './atsConnections.j
 import { logAudit } from './audit.js';
 import { assertRoleOpen } from './roleOpen.js';
 import { notePipelineEvent } from './pipelineAutonomy.js';
+import { findApplicationOnRole, inApplicationTransaction } from './candidateReuse.js';
 
 /**
  * What came from an organisation's ATS, and which ATS record a Questor
@@ -126,7 +127,10 @@ const importedContactSchema = z.object({
 
 /**
  * Create a candidate from the organisation's ATS, linked to the record it came
- * from. A repeat import of the same ATS candidate returns the one already made.
+ * from. A repeat import of the same ATS candidate returns the one already made,
+ * and so does an import of someone whose address already has an application
+ * on the role: that application is linked to the record instead (unless it is
+ * already linked to another one), so one person stays one application per role.
  */
 export async function importCandidate(o: { auth: AuthClaims; externalCandidateId: string; roleId: string; requestId?: string }) {
   await assertCanAccessRole(o.auth, o.roleId);
@@ -135,7 +139,7 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
   const tenantId = o.auth.tenantId;
 
   const existing = await findLinkByExternalId(tenantId, connection.id, o.externalCandidateId);
-  if (existing) return { candidate: await existingCandidate(o.auth, existing.candidateId), created: false };
+  if (existing) return { candidate: await existingCandidate(o.auth, existing.candidateId), created: false, matchedBy: 'ats_record' as const };
 
   const record = await client.fetchCandidate(o.externalCandidateId).catch((err: unknown) => atsFailure(err, 'candidate'));
   const contact = importedContactSchema.safeParse(record);
@@ -143,27 +147,46 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
     throw new HttpError(422, 'That ATS candidate has no usable name or email address, so they cannot be imported. Add them by hand instead.');
   }
 
+  const emailNormalized = normalizeEmail(contact.data.email);
+  const linkData = { tenantId, connectionId: connection.id, externalCandidateId: o.externalCandidateId, source: 'import', createdById: o.auth.userId };
   try {
-    const candidate = await prisma.$transaction(async (tx) => {
-      const made = await tx.candidate.create({ data: { tenantId, roleId: o.roleId, ...contact.data, emailNormalized: normalizeEmail(contact.data.email) } });
+    const outcome = await inApplicationTransaction(async (tx) => {
+      const already = await findApplicationOnRole(tx, { tenantId, roleId: o.roleId, emailNormalized });
+      if (already) {
+        // An application linked to a different record keeps that link: which
+        // record it is was decided by an admin or an earlier import.
+        const linked = await tx.candidateAtsLink.findUnique({ where: { tenantId_candidateId_connectionId: { tenantId, candidateId: already.id, connectionId: connection.id } } });
+        if (!linked) await tx.candidateAtsLink.create({ data: { ...linkData, candidateId: already.id } });
+        return { kind: 'exists' as const, candidateId: already.id, linked: !linked };
+      }
+      const made = await tx.candidate.create({ data: { tenantId, roleId: o.roleId, ...contact.data, emailNormalized } });
       await assignCandidate(made.id, o.auth.userId, 'owner', tx);
-      await tx.candidateAtsLink.create({
-        data: { tenantId, candidateId: made.id, connectionId: connection.id, externalCandidateId: o.externalCandidateId, source: 'import', createdById: o.auth.userId },
-      });
-      return made;
+      await tx.candidateAtsLink.create({ data: { ...linkData, candidateId: made.id } });
+      return { kind: 'created' as const, candidate: made };
     });
+    if (outcome.kind === 'exists') {
+      // The external id is left out, as for a link set by hand.
+      if (outcome.linked) {
+        await logAudit({
+          tenantId, actorId: o.auth.userId, actorType: 'user', action: 'candidate.ats_link.set',
+          entityType: 'Candidate', entityId: outcome.candidateId, after: { connectionId: connection.id, source: 'import' }, requestId: o.requestId,
+        });
+      }
+      return { candidate: await existingCandidate(o.auth, outcome.candidateId), created: false, matchedBy: 'email' as const };
+    }
+    const { candidate } = outcome;
     await logAudit({
       tenantId, actorId: o.auth.userId, actorType: 'user', action: 'candidate.created',
       entityType: 'Candidate', entityId: candidate.id, after: { source: 'ats' }, requestId: o.requestId,
     });
     await notePipelineEvent({ tenantId, candidateId: candidate.id, roleId: o.roleId, event: 'candidate.onboarded', trigger: 'candidate.created' });
-    return { candidate, created: true };
+    return { candidate, created: true, matchedBy: null };
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
     // A concurrent import of the same record won; answer with its candidate.
     const raced = await findLinkByExternalId(tenantId, connection.id, o.externalCandidateId);
     if (!raced) throw err;
-    return { candidate: await existingCandidate(o.auth, raced.candidateId), created: false };
+    return { candidate: await existingCandidate(o.auth, raced.candidateId), created: false, matchedBy: 'ats_record' as const };
   }
 }
 
