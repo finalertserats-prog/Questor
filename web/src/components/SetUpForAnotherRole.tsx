@@ -36,6 +36,8 @@ export function SetUpForAnotherRole(props: {
   readonly fullName: string;
   readonly email: string;
   readonly onClose: () => void;
+  /** Called once the new application exists, e.g. to re-read a list. */
+  readonly onApplied?: () => void;
 }) {
   const fieldId = useId();
   const [roles, setRoles] = useState<Role[]>([]);
@@ -78,6 +80,7 @@ export function SetUpForAnotherRole(props: {
     try {
       const { candidate } = await api.post<{ candidate: { id: string } }>(`/candidates/${person.candidateId}/apply`, { roleId });
       setOutcome({ kind: 'created', candidateId: candidate.id, roleLabel: labels[roles.findIndex((r) => r.id === roleId)] ?? 'the role' });
+      props.onApplied?.();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 'candidate_exists') {
         setOutcome({ kind: 'exists', candidateId: await findExisting(person.email, roleId) });

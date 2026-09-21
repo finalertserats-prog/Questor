@@ -91,6 +91,8 @@ export function CandidatesList() {
   const [error, setError] = useState('');
   // The row whose "Set up for another role" panel is open.
   const [reuseFor, setReuseFor] = useState<CandidateRow | null>(null);
+  // Bumped when someone is set up for another role, so the new row appears.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // `cancelled` so a response that arrives after someone has navigated away
   // does not set state on a page that is gone.
@@ -101,7 +103,7 @@ export function CandidatesList() {
       .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load candidates.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [reloadKey]);
 
   // Client-side because the endpoint returns the caller's whole scoped pipeline
   // in one call; a round trip per keystroke would be slower than filtering what
@@ -169,6 +171,7 @@ export function CandidatesList() {
           fullName={reuseFor.fullName}
           email={reuseFor.email}
           onClose={() => setReuseFor(null)}
+          onApplied={() => setReloadKey((k) => k + 1)}
         />
       )}
 

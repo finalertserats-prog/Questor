@@ -159,6 +159,9 @@ const isSerializationFailure = (err: unknown): boolean =>
 // One retry: the transaction that lost a serialisation conflict usually lost
 // it to the same apply, and on the retry its duplicate check sees that row.
 const APPLY_ATTEMPTS = 2;
+// Above Prisma's 5 s default: the copied resume's evidence graph is written
+// row by row inside the transaction.
+const APPLY_TIMEOUT_MS = 20_000;
 
 /**
  * Put the person behind `sourceId` forward for `roleId` as a new application.
@@ -190,7 +193,7 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
     const events: PipelineEvent[] = stored ? ['candidate.onboarded', 'candidate.profiled'] : ['candidate.onboarded'];
     const started = await startPipeline(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, events });
     return { kind: 'created' as const, candidate, stored, started };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: APPLY_TIMEOUT_MS });
 
   const outcome = await retryOnConflict(attempt);
   if (outcome.kind === 'exists') return outcome;
