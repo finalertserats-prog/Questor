@@ -17,6 +17,7 @@ import {
 } from '../services/access.js';
 import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType, normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
+import { roleTechStack } from '../services/roleTechStack.js';
 import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap } from '../services/demoAccess.js';
@@ -154,7 +155,8 @@ candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resu
 
   const scorecard = await scorecardForFit(candidate.roleId);
   const role = scorecard ? parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' }) : emptyProfile();
-  const { fit, perCompetency } = computeFitScore(profile, rawText, role);
+  const roleRow = candidate.roleId ? await prisma.role.findUnique({ where: { id: candidate.roleId }, select: { id: true, techStackJson: true } }) : null;
+  const { fit, perCompetency } = computeFitScore(profile, rawText, role, roleRow ? roleTechStack(roleRow) : []);
 
   const version = (await prisma.candidateProfileVersion.count({ where: { candidateId: candidate.id } })) + 1;
   const profileVersion = await prisma.candidateProfileVersion.create({
@@ -288,14 +290,14 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
   const currentRoleWithScorecard = scopedRoles.find((r) => r.id === candidate.roleId) ?? null;
   const currentScorecard = currentRoleWithScorecard?.scorecards[0] ?? null;
   const currentFit = currentScorecard
-    ? publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(currentScorecard.profileJson, { model: 'RoleScorecardVersion', id: currentScorecard.id, field: 'profileJson' })).fit)
+    ? publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(currentScorecard.profileJson, { model: 'RoleScorecardVersion', id: currentScorecard.id, field: 'profileJson' }), currentRoleWithScorecard ? roleTechStack(currentRoleWithScorecard) : []).fit)
     : currentStoredFit;
   const currentOverall: number | null = typeof currentFit?.overall === 'number' ? currentFit.overall : null;
 
   const alternatives = scopedRoles
     .filter((r) => r.id !== candidate.roleId && r.scorecards[0])
     .map((r) => {
-      const fit = publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' })).fit)!;
+      const fit = publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' }), roleTechStack(r)).fit)!;
       return {
         roleId: r.id,
         title: r.title,

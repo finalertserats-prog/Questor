@@ -187,6 +187,20 @@ export interface AssessmentResult {
   openQuestions: string[];
   limitations: string[];
   summary: string;
+  /**
+   * Which of the role's required technologies the interview produced
+   * evidence for. Absent on assessments written before roles had a stack.
+   */
+  techStackCoverage?: TechStackCoverageItem[];
+}
+
+export interface TechStackCoverageItem {
+  name: string;
+  /** familiar | working | strong | expert — the depth the role asked for. */
+  level: string;
+  evidenced: boolean;
+  /** The graded competencies whose evidence named the technology. */
+  competencies: string[];
 }
 
 // ---- Live interview director signals ----

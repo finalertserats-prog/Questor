@@ -24,6 +24,8 @@ import { hasScore } from '../components/scoreFormat';
 import { weightsProblem } from '../components/scorecardModel';
 import { CompetencyEditor } from '../components/scorecard/CompetencyEditor';
 import type { EditableCompetency } from '../components/scorecard/competencyEditModel';
+import { TechStackPanel } from '../components/TechStackPanel';
+import { stackNames, type TechStackItem } from '../components/techStackModel';
 
 type Competency = EditableCompetency;
 interface Profile {
@@ -34,7 +36,7 @@ interface Profile {
 }
 interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; warnings?: string[] }
 interface RoleResp {
-  role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; techStack: readonly string[] };
+  role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; techStack: readonly TechStackItem[] };
   scorecards: Scorecard[];
   /** Competency ids an interview has used; removing one of these retires it. */
   competencyHistory?: string[];
@@ -293,7 +295,7 @@ export function RoleDetail() {
           {role.catalogRole ? `Domain: ${role.catalogRole.domain.name}` : 'Not linked to catalog'}
           {role.experienceBand ? ` · Experience: ${role.experienceBand}` : ''}
           {role.regionCode ? ` · Region: ${role.regionCode}` : ''}
-          {role.techStack.length ? ` · Tech: ${role.techStack.join(', ')}` : ''}
+          {role.techStack.length ? ` · Tech: ${stackNames(role.techStack).join(', ')}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>
       </div>
@@ -308,6 +310,13 @@ export function RoleDetail() {
           <ul>{(profile.responsibilities ?? []).map((r, i) => <li key={i}>{r}</li>)}</ul>
         </div>
       </div>
+
+      <TechStackPanel
+        roleId={role.id}
+        initial={role.techStack}
+        locked={!isRoleOpen(role.status)}
+        onStored={(message) => { setNotice(message); setActionError(''); load(false); }}
+      />
 
       <CompetencyEditor
         roleId={role.id}

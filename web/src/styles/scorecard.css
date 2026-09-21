@@ -97,3 +97,93 @@
   content: '[ ! ] ';
   color: var(--ink-3);
 }
+
+/* Tech stack: the editor rows, the JD confirmation and the proposals. */
+.stack-editor {
+  margin-top: 8px;
+}
+.stack-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.stack-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: var(--hair) solid var(--rule);
+}
+.stack-item select {
+  width: auto;
+  min-width: 110px;
+}
+.stack-name {
+  min-width: 140px;
+  font-weight: 600;
+}
+.stack-confirm {
+  margin: 10px 0 12px;
+  padding: 10px 14px;
+  border-left: var(--rail) solid var(--accent);
+}
+.stack-confirm p {
+  margin: 0 0 8px;
+}
+.stack-diff {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: var(--hair) solid var(--rule);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.stack-diff-removed {
+  text-decoration: line-through;
+  color: var(--ink-3);
+}
+.stack-diff-added {
+  font-weight: 600;
+}
+.stack-diff-kept {
+  color: var(--ink-2);
+}
+.stack-proposals {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: var(--hair) solid var(--rule);
+}
+.stack-proposal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.stack-proposal {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0 8px 12px;
+  border-left: var(--rail) solid var(--accent);
+  margin-bottom: 8px;
+}
+.stack-coverage-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.stack-coverage-item {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+}
+.stack-coverage-gap {
+  border-left: var(--rail) solid var(--warn, var(--ink-3));
+  padding-left: 8px;
+}
+@media (max-width: 720px) {
+  .stack-proposal {
+    flex-direction: column;
+  }
+}

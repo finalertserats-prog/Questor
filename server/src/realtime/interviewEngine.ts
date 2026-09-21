@@ -6,6 +6,7 @@ import { directorDecide } from '../engines/interviewDirector.js';
 import { nextUtterance, type Persona } from '../engines/conversationRuntime.js';
 import { detectInjection } from '../engines/policyEngine.js';
 import { evaluate } from '../engines/evaluator.js';
+import { roleTechStack } from '../services/roleTechStack.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { emitEvent } from '../services/webhooks.js';
 import { logAudit } from '../services/audit.js';
@@ -247,7 +248,7 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   // that spoken turn is the server-side proof live observation depends on.
   const utter = await nextUtterance({
     plan, signal, turns, role: profile, persona, sessionId,
-    candidateName: session.candidate.fullName, roleTitle: session.role.title,
+    candidateName: session.candidate.fullName, roleTitle: session.role.title, techStack: roleTechStack(session.role),
     observerNotice: hasObserverNotice(consent.disclosureText ?? '') ? OBSERVER_NOTICE : undefined,
     candidateLeft: leftByButton(session.turns[session.turns.length - 1]),
   });
@@ -912,6 +913,7 @@ export async function finalizeInterview(
     const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
     const result = await evaluate({
       role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
+      techStack: roleTechStack(session.role),
       // The plan knows which competencies it had no room for. Passing that on is
       // what lets the assessment say "not asked" instead of "no evidence".
       notAssessed: plan.notAssessed,

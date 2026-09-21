@@ -16,6 +16,7 @@ import { assertRoleOpen } from '../services/roleOpen.js';
 import { competencyIdsWithHistory } from '../services/competencyHistory.js';
 import { latestScorecard, profileOf, writeScorecardProfile, type ScorecardRow } from '../services/scorecardVersions.js';
 import type { AuthClaims } from '../services/auth.js';
+import { roleBand, roleTechStack } from '../services/roleTechStack.js';
 
 /**
  * /api/roles/:id/scorecard/competencies — one competency at a time.
@@ -116,7 +117,11 @@ roleCompetenciesRouter.post('/draft', requireCapability('role:edit_scorecard'), 
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   const { name: competencyName } = draftSchema.parse(req.body ?? {});
   const latest = await latestScorecard(role.id);
-  const { draft, source } = await draftCompetency({ name: competencyName, roleTitle: role.title, jobDescription: role.sourceText, profile: profileOf(latest) });
+  const profile = profileOf(latest);
+  const { draft, source } = await draftCompetency({
+    name: competencyName, roleTitle: role.title, jobDescription: role.sourceText, profile,
+    techStack: roleTechStack(role), band: roleBand(role, profile.seniority),
+  });
   res.json({ draft, source });
 }));
 

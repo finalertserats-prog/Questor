@@ -185,9 +185,11 @@ describe('POST /api/roles with catalog fields', () => {
       catalogRoleId: catalogRole.id, experienceBand: 'senior', regionCode: 'IN', techStack: ['TypeScript', 'Postgres'],
     });
     expect(created.status).toBe(201);
-    expect(created.body.role).toMatchObject({ catalogRole: { id: catalogRole.id }, experienceBand: 'senior', regionCode: 'IN', techStack: ['TypeScript', 'Postgres'] });
+    // Bare names still arrive from older pages; they are stored as full items.
+    const stack = [{ name: 'TypeScript', category: 'language', level: 'working', required: true }, { name: 'Postgres', category: 'data', level: 'working', required: true }];
+    expect(created.body.role).toMatchObject({ catalogRole: { id: catalogRole.id }, experienceBand: 'senior', regionCode: 'IN', techStack: stack });
     const row = await prisma.role.findFirstOrThrow({ where: { tenantId: tenant.id } });
-    expect(row).toMatchObject({ catalogRoleId: catalogRole.id, experienceBand: 'senior', regionCode: 'IN', techStackJson: JSON.stringify(['TypeScript', 'Postgres']) });
+    expect(row).toMatchObject({ catalogRoleId: catalogRole.id, experienceBand: 'senior', regionCode: 'IN', techStackJson: JSON.stringify(stack) });
 
     expect((await request(app).post('/api/roles').set('Authorization', `Bearer ${user.token}`).send({ sourceText: 'JD text', useLlm: false, catalogRoleId: inactive.id, experienceBand: 'senior', regionCode: 'IN' })).status).toBe(400);
     expect((await request(app).post('/api/roles').set('Authorization', `Bearer ${user.token}`).send({ sourceText: 'JD text', useLlm: false, catalogRoleId: catalogRole.id, experienceBand: 'senior', regionCode: 'NOPE' })).status).toBe(400);

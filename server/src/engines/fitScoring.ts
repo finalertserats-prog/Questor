@@ -1,4 +1,6 @@
 import type { Competency, FitScore, FitScoreComponent, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
+import type { TechStackItem } from '../domain/techStack.js';
+import { stackGapsForFit } from './techStackInterview.js';
 
 // Pre-interview fit scoring (BRD 7.2). Prioritizes demonstrated relevance and
 // recency; deliberately ignores protected/irrelevant signals. Never a hidden
@@ -38,7 +40,7 @@ export interface FitResult {
   perCompetency: Array<{ competencyId: string; name: string; evidence: string[]; strength: 'explicit' | 'inferred' | 'missing' }>;
 }
 
-export function computeFitScore(profile: NormalizedProfile, rawText: string, role: RoleSuccessProfile): FitResult {
+export function computeFitScore(profile: NormalizedProfile, rawText: string, role: RoleSuccessProfile, techStack: readonly TechStackItem[] = []): FitResult {
   const text = rawText || JSON.stringify(profile);
   // A retired competency is no longer part of what the role asks for.
   const competencies = role.competencies.filter((c) => c.retired !== true);
@@ -98,6 +100,9 @@ export function computeFitScore(profile: NormalizedProfile, rawText: string, rol
     { key: 'quality', label: 'Evidence quality and specificity', weight: 0.10, score: qualityScore, evidence: [], rule: 'Quantified or contextual evidence; missing detail becomes an interview probe.' },
   ];
 
+  // A required technology the resume never names is a gap to probe, listed
+  // after the competency gaps; it moves no component score.
+  const stackGaps = stackGapsForFit(techStack, text);
   const overall = Math.round(components.reduce((a, c) => a + c.score * c.weight, 0));
   // Confidence reflects how much evidence we actually found.
   const explicitCount = perCompetency.filter((p) => p.strength === 'explicit').length;
@@ -108,8 +113,8 @@ export function computeFitScore(profile: NormalizedProfile, rawText: string, rol
       overall,
       confidence: Math.round(confidence * 100) / 100,
       components,
-      missing: Array.from(new Set(missing)).slice(0, 8),
-      probes: Array.from(new Set(probes)).slice(0, 8),
+      missing: [...Array.from(new Set(missing)).slice(0, 8), ...stackGaps.missing.slice(0, 4)],
+      probes: [...Array.from(new Set(probes)).slice(0, 8), ...stackGaps.probes.slice(0, 4)],
       excludedSignals: EXCLUDED_SIGNALS,
     },
     perCompetency,

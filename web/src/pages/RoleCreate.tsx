@@ -8,8 +8,11 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
-import { catalogLinkFields, missingRoleFields, parseTechStackInput, shouldOfferCatalogAdd } from '../components/catalogModel';
+import { catalogLinkFields, missingRoleFields, shouldOfferCatalogAdd } from '../components/catalogModel';
 import { appendTechStack, jdOriginForSubmit, nextDraftState, previewLines, shouldPollDraft, type DraftPanelState, type LintHit } from '../components/jdDraftModel';
+import { TechStackEditor } from '../components/TechStackEditor';
+import { stackNames, type TechStackItem } from '../components/techStackModel';
+import { useTechStackTools } from '../components/useTechStackTools';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
@@ -44,8 +47,8 @@ export function RoleCreate() {
   // A typed title only reaches the catalog every organisation shares if the
   // person says so. Checked by default: most typed titles are real job titles.
   const [addToCatalog, setAddToCatalog] = useState(true);
-  const [techStack, setTechStack] = useState<readonly string[]>([]);
-  const [techDraft, setTechDraft] = useState('');
+  const [techStack, setTechStack] = useState<readonly TechStackItem[]>([]);
+  const techTools = useTechStackTools();
   const [notice, setNotice] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -168,9 +171,19 @@ export function RoleCreate() {
     return true;
   };
 
+  const detectFromJd = async () => {
+    try {
+      const merged = await techTools.detect(sourceText, techStack);
+      if (merged) setTechStack(merged);
+      setNotice(merged ? '' : 'No technologies from the catalog were found in the job description; add them by hand.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not read technologies from the job description.');
+    }
+  };
+
   const useSuggestedDraft = () => {
     if (draftState.kind !== 'ready') return;
-    if (!replaceJd(appendTechStack(draftState.text, techStack))) return;
+    if (!replaceJd(appendTechStack(draftState.text, stackNames(techStack)))) return;
     setUsedDraftId(draftState.id);
     setUsedDraftText(draftState.text);
     setDescribedUsed(false);
@@ -181,7 +194,7 @@ export function RoleCreate() {
     setError('');
     try {
       const resp = await api.post<{ text: string; lint: LintHit[]; generator: string }>('/jd-drafts/describe', { title: title.trim() || undefined, description, experienceBand, regionCode, domainId: domainId || undefined });
-      if (replaceJd(appendTechStack(resp.text, techStack))) {
+      if (replaceJd(appendTechStack(resp.text, stackNames(techStack)))) {
         setUsedDraftId('');
         setUsedDraftText('');
         setDescribedUsed(true);
@@ -272,7 +285,7 @@ export function RoleCreate() {
           domainId={domainId}
           domainName={selectedDomain?.name ?? 'this domain'}
           value={title}
-          techStack={techStack}
+          techStack={stackNames(techStack)}
           disabled={!domainId}
           onTitleChange={(value) => { setTitle(value); setCatalogRoleId(''); setTitleError(''); }}
           onSelect={(role: CatalogRoleOption) => { setCatalogRoleId(role.id); setTitle(role.title); setTitleError(''); }}
@@ -283,11 +296,15 @@ export function RoleCreate() {
         <div className="muted small">Choose a catalog title, or type your own. Left blank, the title is taken from the {source === 'ats' ? 'requisition' : 'job description'}.</div>
 
         <label htmlFor={`${fieldId}-tech`}>Tech stack (optional)</label>
-        <div className="row" style={{ gap: 8 }}>
-          <input id={`${fieldId}-tech`} value={techDraft} onChange={(e) => setTechDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); } }} placeholder="Type and press Enter" />
-          <button type="button" className="btn secondary" onClick={() => { setTechStack(parseTechStackInput(techStack, techDraft)); setTechDraft(''); }}>Add</button>
+        <TechStackEditor idPrefix={fieldId} value={techStack} onChange={setTechStack} catalog={techTools.catalog} />
+        <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 6 }}>
+          {source === 'paste' && (
+            <button type="button" className="btn secondary sm" onClick={() => void detectFromJd()} disabled={techTools.detecting || !sourceText.trim()} data-testid="tech-stack-detect">
+              <Icon name={techTools.detecting ? 'hourglass' : 'sparkle'} size={14} />{techTools.detecting ? 'Reading…' : 'Suggest from the job description'}
+            </button>
+          )}
+          <span className="muted small">Each required technology becomes a technical competency, graded to its level and the experience band.</span>
         </div>
-        <div>{techStack.map((t) => <button key={t} type="button" className="chip" aria-label={`Remove ${t}`} onClick={() => setTechStack(techStack.filter((x) => x !== t))}>{t} <span aria-hidden="true">×</span></button>)}</div>
 
         {offerCatalogAdd && (
           <label className="check-row" style={{ marginTop: 8 }}>

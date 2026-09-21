@@ -6,6 +6,7 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
 import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
+import { roleTechStack } from '../services/roleTechStack.js';
 import { resolveCandidateBand } from '../engines/bandCalibration.js';
 import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { assertTransition } from '../domain/stateMachine.js';
@@ -142,9 +143,10 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
     roleSeniority: profile.seniority ?? '',
   });
 
+  const roleRow = await prisma.role.findUniqueOrThrow({ where: { id: candidate.roleId }, select: { id: true, techStackJson: true } });
   const plan = buildInterviewPlan({
     role: profile, fit, durationMinutes: body.durationMinutes, language: body.language, modules: body.modules,
-    band: banding.band.id,
+    band: banding.band.id, techStack: roleTechStack(roleRow),
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
   });
 
@@ -454,9 +456,10 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const parsed = latestProfile ? parseJsonStrict<NormalizedProfile>(latestProfile.profileJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'profileJson' }) : ({} as NormalizedProfile);
   const banding = resolveCandidateBand({ profile: parsed, resumeText: latestProfile?.rawText ?? '', roleSeniority: profile.seniority ?? '' });
 
+  const roleRow = await prisma.role.findUniqueOrThrow({ where: { id: original.roleId }, select: { id: true, techStackJson: true } });
   const plan = buildInterviewPlan({
     role: profile, fit, durationMinutes: original.durationMinutes, language: original.language, modules: originalModules,
-    band: banding.band.id,
+    band: banding.band.id, techStack: roleTechStack(roleRow),
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
   });
 

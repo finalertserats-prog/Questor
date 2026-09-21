@@ -446,6 +446,8 @@ export interface RoleFacts {
   title: string;
   responsibilities: readonly string[];
   focus: readonly string[];
+  /** The technologies the role works with, when the role lists them. */
+  techStack?: readonly string[];
   durationMinutes: number;
 }
 

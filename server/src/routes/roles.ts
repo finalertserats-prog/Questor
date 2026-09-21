@@ -22,11 +22,19 @@ import { roleCompetenciesRouter } from './roleCompetencies.js';
 import { scorecardWarnings } from '../domain/scorecardEdits.js';
 import { competencyIdsWithHistory } from '../services/competencyHistory.js';
 import { latestScorecard, writeScorecardProfile } from '../services/scorecardVersions.js';
+import { roleTechStackRouter, techStackToolsRouter } from './roleTechStack.js';
+import { techStackInputSchema, techStackNames } from '../domain/techStack.js';
+import { syncJdTechStack } from '../domain/jdTechStackSection.js';
+import { roleTechStack } from '../services/roleTechStack.js';
+import type { BandId } from '../engines/experienceBands.js';
 
 export const rolesRouter = Router();
 rolesRouter.use(authenticate);
 // One competency at a time: add, edit, remove, draft with AI, reuse from the library.
 rolesRouter.use('/:id/scorecard/competencies', roleCompetenciesRouter);
+// The technologies a role is hired around, and the helpers the editor uses.
+rolesRouter.use('/tech-stack', techStackToolsRouter);
+rolesRouter.use('/:id/tech-stack', roleTechStackRouter);
 
 // List roles
 //
@@ -42,7 +50,7 @@ rolesRouter.get('/', requireCapability('role:read'), asyncHandler(async (req, re
   res.json({ roles: roles.map((r) => ({
     id: r.id, title: r.title, level: r.level, status: r.status,
     latestScorecard: r.scorecards[0] ? { id: r.scorecards[0].id, version: r.scorecards[0].version, status: r.scorecards[0].status } : null,
-    candidates: r._count.candidates, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }),
+    candidates: r._count.candidates, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: roleTechStack(r),
   })) });
 }));
 
@@ -80,9 +88,10 @@ const createSchema = z.object({
   // The person chose "add this title to the shared catalog". Honoured only for a
   // title they typed: an inferred or requisition title is never published.
   addToCatalog: z.boolean().optional(),
-  experienceBand: z.enum(BANDS.map((b) => b.id) as [string, ...string[]]).optional(),
+  experienceBand: z.enum(BANDS.map((b) => b.id) as [BandId, ...BandId[]]).optional(),
   regionCode: z.string().optional(),
-  techStack: z.array(z.string().trim().min(1).max(40)).max(15).default([]),
+  // Full items, or the bare names older pages still send.
+  techStack: techStackInputSchema.default([]),
   jdDraftId: z.string().cuid().optional(),
   jdOrigin: z.enum(['draft', 'described', 'pasted', 'ats', '']).default(''),
 });
@@ -133,8 +142,11 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
     titleHint = titleHint || lookup.requisition.title;
   }
   if (!sourceText.trim()) throw new HttpError(400, 'sourceText (or ATS requisition) is required');
+  // The JD carries the stack HR confirmed, in the one section the stack owns.
+  if (body.techStack.length) sourceText = syncJdTechStack(sourceText, body.techStack).text;
 
-  const extraction = body.useLlm ? await extractRole(sourceText, titleHint) : extractRoleHeuristic(sourceText, titleHint);
+  const extractOpts = { techStack: body.techStack, band: body.experienceBand };
+  const extraction = body.useLlm ? await extractRole(sourceText, titleHint, extractOpts) : extractRoleHeuristic(sourceText, titleHint, extractOpts);
   const ats = lookup?.kind === 'new' ? lookup.ats : null;
   const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(body.domainId, extraction.title) : undefined);
   // Published only by a person's explicit choice, for the title they typed, and
@@ -182,7 +194,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   }
   const { role, scorecard } = created;
   if (publishTo) {
-    const publishedId = await publishCatalogRole(auth, publishTo, extraction.title, body.techStack);
+    const publishedId = await publishCatalogRole(auth, publishTo, extraction.title, techStackNames(body.techStack));
     if (publishedId) await prisma.role.update({ where: { id: role.id }, data: { catalogRoleId: publishedId } });
   }
   const fullCreatedRole = await prisma.role.findUniqueOrThrow({ where: { id: role.id }, include: roleShapeInclude });
@@ -364,7 +376,7 @@ function shapeCatalogRole(role: ShapedRole['catalogRole']) {
 }
 
 function shapeRole(r: ShapedRole) {
-  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: parseJsonStrict<string[]>(r.techStackJson, { model: 'Role', id: r.id, field: 'techStackJson' }), jdDraftId: r.jdDraftId, jdOrigin: r.jdOrigin }; 
+  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: roleTechStack(r), jdDraftId: r.jdDraftId, jdOrigin: r.jdOrigin }; 
 }
 function shapeScorecard(s: { readonly id: string; readonly version: number; readonly status: string; readonly profileJson: string; readonly approvedAt: Date | null }) {
   const profile = parseJsonStrict<RoleSuccessProfile>(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' });

@@ -3,6 +3,8 @@ import { isWorkSampleEligible } from './workSample.js';
 import { bandForRoleSeniority, bandGuidanceFor } from './bandCalibration.js';
 import type { BandId } from './experienceBands.js';
 import { isScored } from '../domain/profileSchema.js';
+import type { TechStackItem } from '../domain/techStack.js';
+import { stackIntentFor } from './techStackInterview.js';
 
 // Interview plan builder (BRD FR-016, Appendix 25.1). Produces comparable
 // competency coverage while reserving process, warmup, resume-validation and
@@ -21,6 +23,8 @@ export function buildInterviewPlan(opts: {
    */
   band?: BandId;
   bandRationale?: string;
+  /** The role's technologies: a technical block about a required one is phrased around it. */
+  techStack?: readonly TechStackItem[];
 }): InterviewPlan {
   const durationMinutes = opts.durationMinutes ?? 45;
   const language = opts.language ?? 'en';
@@ -73,7 +77,7 @@ export function buildInterviewPlan(opts: {
     blocks.push({
       competencyId: c.id,
       competencyName: c.name,
-      intent: intentFor(c),
+      intent: stackIntentFor(c, opts.techStack) ?? intentFor(c),
       targetMinutes: minutes,
       followupHints: [
         'Situation: what was the context and constraints?',
