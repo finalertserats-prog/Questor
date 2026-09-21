@@ -10,7 +10,10 @@ import { finalStage, nextStage, pipelineOutcome, stageCaption, stageStates, type
 import { decisionStatus, interviewStatus } from './statusModel';
 import { sessionOptionLabels } from './roleLabelModel';
 import { interviewerName } from './candidateJourney';
-import { formatDateTime } from './dateFormat';
+import { formatScheduled } from './dateFormat';
+import { EMPTY_SCHEDULE, TimeZoneDateTimePicker } from './TimeZoneDateTimePicker';
+import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft } from './zonedScheduleModel';
+import { useOrgTimeZone } from './useOrgTimeZone';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
 import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
@@ -26,6 +29,8 @@ interface Round {
   sessionId: string | null;
   interviewers: string[];
   scheduledAt: string;
+  /** The zone it was booked in; null or absent when booked without one. */
+  scheduledTimeZone?: string | null;
   status: string;
   /** Absent on an older server; null for AI rounds. */
   meeting?: RoundMeetingView | null;
@@ -127,7 +132,8 @@ export function PipelinePanel(
   // viewed candidate can never replace this candidate's pipeline.
   const latestLoad = useRef(0);
 
-  const [scheduledAt, setScheduledAt] = useState('');
+  const [roundDraft, setRoundDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
+  const orgZone = useOrgTimeZone();
   const [interviewers, setInterviewers] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [decision, setDecision] = useState<Decision>('APPROVED');
@@ -251,11 +257,13 @@ export function PipelinePanel(
 
   const scheduleRound = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!current || !scheduledAt) return;
+    if (!current) return;
     // A round in the past is almost always a mistyped date, and it reaches the
-    // candidate as an invitation to a time that has already gone.
-    if (new Date(scheduledAt).getTime() < Date.now()) {
-      setError('That time has already passed. Pick a date and time in the future.');
+    // candidate as an invitation to a time that has already gone. A skipped
+    // (spring-forward) time or an unknown zone is refused here too.
+    const preview = schedulePreview(roundDraft, new Date(), browserTimeZone());
+    if (preview.kind !== 'ok') {
+      setError(preview.kind === 'problem' ? preview.text : 'Pick the time zone, then the date and time.');
       return;
     }
     const names = interviewers.split(',').map((n) => n.trim()).filter(Boolean);
@@ -268,7 +276,7 @@ export function PipelinePanel(
     }
     void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
-      scheduledAt: new Date(scheduledAt).toISOString(),
+      ...scheduleRequest(roundDraft),
       ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
       ...(human && names.length > 0 ? { interviewers: names } : {}),
       ...(human ? { durationMinutes } : {}),
@@ -276,7 +284,7 @@ export function PipelinePanel(
     }).then((resp) => {
       setSchedulingNotice(resp.notification ?? null);
       setMeetingNotice(resp.meeting ?? null);
-      setScheduledAt('');
+      setRoundDraft((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone }));
       setInterviewers('');
       setSessionId('');
       setMeetingLink('');
@@ -441,8 +449,7 @@ export function PipelinePanel(
             <h3 className="card-title"><Icon name="schedule" size={16} />Schedule {current ? `${current.label} round` : 'round'}</h3>
             {isInterviewStage ? (
               <>
-                <label htmlFor="round-when">Date and time</label>
-                <input id="round-when" type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} required />
+                <TimeZoneDateTimePicker idPrefix="round-when" value={roundDraft} onChange={setRoundDraft} orgZone={orgZone} disabled={busy} />
                 {current?.kind === 'ai_interview' ? (
                   <>
                     <label htmlFor="round-session">AI interview</label>
@@ -526,7 +533,7 @@ export function PipelinePanel(
                       : round.interviewers.join(', ') || 'Human interviewer'}
                   </td>
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
-                  <td>{formatDateTime(round.scheduledAt)}</td>
+                  <td>{formatScheduled(round.scheduledAt, round.scheduledTimeZone, orgZone)}</td>
                   <td>
                     <span className="row" style={{ gap: 8 }}>
                       <StatusBadge kind="round" value={round.status} />
@@ -551,7 +558,7 @@ export function PipelinePanel(
                     <RoundActions
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
                       onOutcome={setMeetingNotice} onError={setError}
-                      canReschedule={pipeline.status === 'ACTIVE'}
+                      canReschedule={pipeline.status === 'ACTIVE'} orgZone={orgZone}
                     />
                   </td>
                 </tr>
@@ -571,7 +578,7 @@ export function PipelinePanel(
               <label htmlFor="complete-round">Round</label>
               <select id="complete-round" value={roundToComplete || openHumanRounds[0].id} onChange={(e) => setRoundToComplete(e.target.value)}>
                 {openHumanRounds.map((round) => (
-                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {formatDateTime(round.scheduledAt)}</option>
+                  <option key={round.id} value={round.id}>{labelFor(round.stageKey)} · {formatScheduled(round.scheduledAt, round.scheduledTimeZone, orgZone)}</option>
                 ))}
               </select>
             </>

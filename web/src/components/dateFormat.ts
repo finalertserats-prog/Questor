@@ -33,3 +33,41 @@ export function formatDate(value: unknown): string {
   const at = parse(value);
   return at ? at.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : NO_SCORE;
 }
+
+function knownZone(timeZone: string | null | undefined): string | null {
+  if (!timeZone) return null;
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone });
+    return timeZone;
+  } catch {
+    return null;
+  }
+}
+
+function clockIn(at: Date, timeZone: string): string {
+  return at.toLocaleTimeString('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+}
+
+/**
+ * A scheduled time, on the clock it was booked on.
+ *
+ * The zone is the booking's own, else the organisation's, else UTC — and it is
+ * always named. Never the viewer's clock silently: the viewer's own time is
+ * added in brackets when it differs, so nobody converts in their head.
+ */
+export function formatScheduled(
+  value: unknown,
+  storedZone: string | null | undefined,
+  orgZone: string | null | undefined,
+  viewerZone: string | undefined = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): string {
+  const at = parse(value);
+  if (!at) return NO_SCORE;
+  const zone = knownZone(storedZone) ?? knownZone(orgZone);
+  const dayPart = at.toLocaleDateString('en-GB', { timeZone: zone ?? 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
+  if (!zone) return `${dayPart}, ${clockIn(at, 'UTC')} UTC`;
+  const offset = at.toLocaleString('en-GB', { timeZone: zone, timeZoneName: 'shortOffset' }).split(' ').pop() ?? '';
+  const main = `${dayPart}, ${clockIn(at, zone)} ${offset} (${zone})`;
+  const viewer = knownZone(viewerZone);
+  return viewer && clockIn(at, viewer) !== clockIn(at, zone) ? `${main} (${clockIn(at, viewer)} your time)` : main;
+}

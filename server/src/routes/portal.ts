@@ -32,6 +32,8 @@ import { hasConsentIntro } from '../domain/interviewerModel.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
 import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
 import { serverSpeechAllowed } from '../services/demoPolicy.js';
+import { formatScheduledTime } from '../services/zonedTime.js';
+import { tenantTimeZone } from '../services/tenantTimeZone.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
 export const portalRouter = Router();
@@ -258,6 +260,7 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
   // asking someone whether they would like feedback we are not able to send
   // would be a promise we do not keep, and it is the kind a candidate remembers.
   const [optInOffered, existingOptIn] = await Promise.all([feedbackOptInOffered(s), getOptIn(s.id)]);
+  const schedule = await portalSchedule(s);
 
   res.json({
     candidateName: s.candidate.fullName,
@@ -286,8 +289,18 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     observerNotice: hasObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : ''),
     speech: { stt: sttCapability(), tts: ttsCapability() },
     feedbackOptIn: { offered: optInOffered, choice: existingOptIn?.choice ?? null },
+    // When the interview is booked for, written in the zone it was booked in
+    // (else the organisation's, else UTC) so the page and the email agree.
+    schedule,
   });
 }));
+
+// Once the interview has started, the booking has done its job.
+async function portalSchedule(s: { tenantId: string; scheduledAt: Date | null; scheduledTimeZone: string | null; startedAt: Date | null }) {
+  if (!s.scheduledAt || s.startedAt) return null;
+  const timeZone = s.scheduledTimeZone ?? await tenantTimeZone(s.tenantId);
+  return { at: s.scheduledAt, timeZone, text: formatScheduledTime(s.scheduledAt, timeZone) };
+}
 
 
 const integrityEventSchema = z.object({

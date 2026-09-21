@@ -360,7 +360,7 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     profile: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' }) : null,
     fit: profileVersion ? parseJsonStrict<Record<string, unknown>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' }) : null,
     rawText: profileVersion?.rawText ?? '',
-    interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, createdAt: i.createdAt })),
+    interviews: interviews.map((i) => ({ id: i.id, state: i.state, scheduledAt: i.scheduledAt, scheduledTimeZone: i.scheduledTimeZone, createdAt: i.createdAt })),
     candidateFeedback,
   });
 }));

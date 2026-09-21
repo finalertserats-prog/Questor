@@ -6,7 +6,8 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { Skeleton } from '../components/Skeleton';
 import { POLL_DELAY_MS, nextPollDelay } from '../components/pollBackoff';
-import { formatDateTime } from '../components/dateFormat';
+import { formatScheduled } from '../components/dateFormat';
+import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import {
   CandidateLinkCard, InterviewerConsentCard, ObserverRoomControls, ObserverTranscript,
 } from '../components/ObserverPanels';
@@ -33,6 +34,7 @@ export function ObserverRoom() {
   const { roundId = '' } = useParams();
   const base = `/observer/rounds/${encodeURIComponent(roundId)}`;
   const [view, setView] = useState<ObserverRoundView | null>(null);
+  const orgZone = useOrgTimeZone();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [degraded, setDegraded] = useState('');
@@ -152,7 +154,7 @@ export function ObserverRoom() {
       <PageHeader
         icon="eye"
         title={`AI observer · ${view.round.stageKey}`}
-        subtitle={`Round scheduled ${formatDateTime(view.round.scheduledAt)}`}
+        subtitle={`Round scheduled ${formatScheduled(view.round.scheduledAt, view.round.scheduledTimeZone, orgZone)}`}
         actions={<Link className="btn ghost" to={`/candidates/${view.round.candidateId}`}><Icon name="arrow-left" size={16} />Back to candidate</Link>}
       />
       {error && <Banner kind="error">{error}</Banner>}

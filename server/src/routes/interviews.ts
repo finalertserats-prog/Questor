@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { assertCanAccessCandidate, assertCanAccessSession, candidateScope } from '../services/access.js';
+import { assertCanAccessCandidate, assertCanAccessSession, candidateScope, hasCapability } from '../services/access.js';
 import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { roleTechStack } from '../services/roleTechStack.js';
@@ -32,6 +32,9 @@ import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { assertRoleOpen } from '../services/roleOpen.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { replanPending } from '../services/interviewReplan.js';
+import { formatScheduledTime } from '../services/zonedTime.js';
+import { tenantTimeZone } from '../services/tenantTimeZone.js';
+import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -49,19 +52,31 @@ interface InviteDetails {
   readonly portalUrl: string;
   readonly durationMinutes: number;
   readonly expiresAt: Date | null;
+  /** The booked time, when one is set and still ahead. */
+  readonly scheduledAt: Date | null;
+  /** The zone the email states times in: the booking's, else the organisation's; null means UTC. */
+  readonly timeZone: string | null;
 }
 
-const INVITE_DATE = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+function inviteDate(at: Date, timeZone: string | null): string {
+  const zone = timeZone ?? 'UTC';
+  const day = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: zone }).format(at);
+  return `${day} (${zone})`;
+}
 
 function buildInvite(d: InviteDetails) {
   const first = firstName(d.candidateName) || 'there';
-  const intro = `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you can do online, whenever it suits you. It takes about ${d.durationMinutes} minutes.`;
+  const booked = d.scheduledAt ? formatScheduledTime(d.scheduledAt, d.timeZone) : null;
+  const intro = booked
+    ? `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you do online. It is booked for ${booked}, and takes about ${d.durationMinutes} minutes.`
+    : `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you can do online, whenever it suits you. It takes about ${d.durationMinutes} minutes.`;
   const tips = [
     'Find a quiet spot. A laptop or a phone both work.',
     'Speak or type your answers, whichever you prefer.',
     'If you need any adjustments, you can ask for them when you open the link.',
   ];
-  const until = d.expiresAt ? `The link is open until ${INVITE_DATE.format(d.expiresAt)}. You can start straight away or pick a time from the same link.` : 'You can start straight away or pick a time from the same link.';
+  const whenToStart = booked ? 'Please open the link at that time.' : 'You can start straight away or pick a time from the same link.';
+  const until = d.expiresAt ? `The link is open until ${inviteDate(d.expiresAt, d.timeZone)}. ${whenToStart}` : whenToStart;
   const text = [
     `Hi ${first},`,
     '',
@@ -201,7 +216,7 @@ interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(asyn
     include: { candidate: true, role: true, assessments: { orderBy: { version: 'desc' }, take: 1 }, invitation: true },
   });
   res.json({ sessions: sessions.map((s) => ({
-    id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt,
+    id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt, scheduledTimeZone: s.scheduledTimeZone,
     candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
     recommendation: s.assessments[0]?.recommendation ?? null, assessmentId: s.assessments[0]?.id ?? null,
     invited: !!s.invitation, createdAt: s.createdAt,
@@ -300,6 +315,13 @@ interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), bul
   res.json({ results });
 }));
 
+// The organisation's time zone, for the scheduling picker's first suggestion
+// and as the zone a time booked without one is shown in. Not sensitive — any
+// signed-in member of the organisation may read it.
+interviewsRouter.get('/time-zone', asyncHandler(async (req, res) => {
+  res.json({ timeZone: await tenantTimeZone(req.auth!.tenantId) });
+}));
+
 // Session detail.
 //
 // This response includes the live invitation token, which is a bearer
@@ -318,7 +340,7 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
   ]);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.detail_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
-    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
+    session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, scheduledTimeZone: session.scheduledTimeZone, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
     plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
     // The plan above is what was built at setup; a newer approved scorecard
     // means the interview will be re-planned from it when it starts.
@@ -519,6 +541,12 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
  */
 interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
   const session = await getSession(req, req.params.id);
+  res.json(await resendInvitation(req, session));
+}));
+
+type ResendableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null };
+
+async function resendInvitation(req: Request, session: ResendableSession) {
   // The link only starts an interview from these states. Resending it for one
   // that is live, finished, cancelled or handed to a person emails the
   // candidate a link that opens onto "this interview is not open".
@@ -545,46 +573,90 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
 
   try {
     const tenant = await prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } });
-    await email.send({ ...buildInvite({ candidateName: candidate!.fullName, roleTitle: role!.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt: invitation.expiresAt }), to: candidate!.email });
+    const timing = await inviteTiming(session);
+    await email.send({ ...buildInvite({ candidateName: candidate!.fullName, roleTitle: role!.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt: invitation.expiresAt, ...timing }), to: candidate!.email });
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation resend failed');
     throw new HttpError(502, 'The email could not be sent. Copy the link and send it yourself, or try again.');
   }
 
   const events = parseJsonOptional<Array<Record<string, unknown>>>(invitation.eventsJson, [], { model: 'Invitation', id: invitation.id, field: 'eventsJson' });
-  events.push({ type: 'resent', at: new Date().toISOString(), by: req.auth!.userId });
   await prisma.invitation.update({
     where: { id: invitation.id },
-    data: { status: invitation.status === 'created' ? 'sent' : invitation.status, sentAt: new Date(), eventsJson: JSON.stringify(events) },
+    data: { status: invitation.status === 'created' ? 'sent' : invitation.status, sentAt: new Date(), eventsJson: JSON.stringify([...events, { type: 'resent', at: new Date().toISOString(), by: req.auth!.userId }]) },
   });
 
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'invitation.resent', entityType: 'InterviewSession', entityId: session.id });
-  res.json({ resent: true, to: candidate!.email, portalUrl, deliveryNote: `Sent again to ${candidate!.email}.` });
-}));
+  return { resent: true, to: candidate!.email, portalUrl, deliveryNote: `Sent again to ${candidate!.email}.` };
+}
+
+/**
+ * The booked time an invitation states, and the zone it states every date in.
+ * A time already gone is left out: "booked for yesterday" helps nobody. The
+ * zone falls back to the organisation's, then UTC, never the server's clock.
+ */
+async function inviteTiming(session: { tenantId: string; scheduledAt: Date | null; scheduledTimeZone: string | null }) {
+  const ahead = session.scheduledAt && session.scheduledAt.getTime() > Date.now() ? session.scheduledAt : null;
+  return { scheduledAt: ahead, timeZone: session.scheduledTimeZone ?? await tenantTimeZone(session.tenantId) };
+}
 
 // Schedule (FR-013).
 //
 // Gated on interview:schedule, which recruiter, manager and admin hold (not
 // reviewer or auditor) — the same people who held the invite grant these two
 // routes borrowed before the capability existed.
+const scheduleSchema = z.object({
+  ...scheduleTimeFields,
+  // Save, then invite (or resend to someone already invited) in the same step,
+  // so the candidate's email carries the time just set.
+  send: z.boolean().optional(),
+});
+
 interviewsRouter.post('/:id/schedule', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
+  const body = scheduleSchema.parse(req.body);
+  if (body.send && !hasCapability(req.auth!, 'interview:invite')) throw new HttpError(403, 'Your account does not have permission to send invitations.');
   const session = await getSession(req, req.params.id);
-  // A bare string became `new Date('x')`, an Invalid Date, a Prisma throw and a 500.
-  const at = z.object({ scheduledAt: z.string().datetime({ offset: true }) }).parse(req.body).scheduledAt;
+  // Checked on the resolved instant, whichever form it came in: a bare string
+  // became `new Date('x')`, an Invalid Date, a Prisma throw and a 500.
+  const { at, timeZone } = resolveScheduleTime(body);
+  assertInFuture(at);
   // A date on a closed, cancelled or already-held interview is a promise to the
   // candidate that nothing will keep. Conditional, so a session that moves on
-  // between the read and the write is refused rather than overwritten.
+  // between the read and the write is refused rather than overwritten. The
+  // zone is always written, so the older form clears one set before.
   const { count } = await prisma.interviewSession.updateMany({
     where: { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
-    data: { scheduledAt: new Date(at) },
+    data: { scheduledAt: at, scheduledTimeZone: timeZone },
   });
   if (count !== 1) {
     throw new HttpError(409, `This interview is ${session.state}, so it can no longer be scheduled.`);
   }
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at } });
+  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.scheduled', entityType: 'InterviewSession', entityId: session.id, after: { scheduledAt: at.toISOString(), scheduledTimeZone: timeZone } });
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'interview.scheduled' });
-  res.json({ ok: true, scheduledAt: at });
+  const scheduled = { ...session, scheduledAt: at, scheduledTimeZone: timeZone };
+  const delivery = body.send ? await sendSchedule(req, scheduled) : undefined;
+  res.json({ ok: true, scheduledAt: at.toISOString(), scheduledTimeZone: timeZone, ...(delivery ? { delivery } : {}) });
 }));
+
+/**
+ * Invite a candidate not yet invited, otherwise resend. The schedule is already
+ * saved, so a send that fails is reported next to it rather than as an error
+ * that would read as though nothing had been saved.
+ */
+async function sendSchedule(req: Request, session: InvitableSession & ResendableSession) {
+  try {
+    if (session.state === 'PROVISIONED' || session.state === 'RESCHEDULE_REQUIRED') {
+      await assertRoleOpen(session.roleId);
+      const invitation = await inviteSession(req, session);
+      return { sent: invitation.delivered, note: invitation.deliveryNote };
+    }
+    const resent = await resendInvitation(req, session);
+    return { sent: true, note: resent.deliveryNote };
+  } catch (err) {
+    if (!(err instanceof HttpError)) throw err;
+    return { sent: false, note: `The schedule was saved, but nothing was sent: ${err.message}` };
+  }
+}
 
 // Cancel / reschedule (FR-014)
 interviewsRouter.post('/:id/cancel', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
@@ -754,7 +826,7 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
  * only the tenant in hand — the tenant-only lookup this replaced was the single
  * line behind every leak on this router.
  */
-type InvitableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; personaJson: string; durationMinutes: number };
+type InvitableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; personaJson: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null };
 
 async function inviteSession(req: Request, session: InvitableSession) {
   const candidate = await prisma.candidate.findUnique({ where: { id: session.candidateId } });
@@ -788,7 +860,7 @@ async function inviteSession(req: Request, session: InvitableSession) {
   const portalUrl = `${config.webOrigin}/portal/${token}`;
   const email = getEmail();
   const tenant = await prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } });
-  const invite = buildInvite({ candidateName: candidate.fullName, roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt });
+  const invite = buildInvite({ candidateName: candidate.fullName, roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt, ...await inviteTiming(session) });
 
   // Delivery is reported honestly, and a failure never loses the invitation.
   // The link is the valuable artefact — a recruiter who can see it can send it

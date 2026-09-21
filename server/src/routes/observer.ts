@@ -72,7 +72,7 @@ async function view(req: Request, round: RoundWithPipeline) {
   return {
     round: {
       id: round.id, candidateId: round.pipeline.candidateId, stageKey: round.stageKey, status: round.status,
-      aiObserver: observerApplies(round), scheduledAt: round.scheduledAt,
+      aiObserver: observerApplies(round), scheduledAt: round.scheduledAt, scheduledTimeZone: round.scheduledTimeZone,
     },
     notice: OBSERVER_CAPTURE_NOTICE,
     capture: { mode: serverSttReady() ? 'server' : 'browser', provider: stt.provider },

@@ -62,6 +62,8 @@ export interface JourneySession {
   readonly id: string;
   readonly state: string;
   readonly scheduledAt: string | null;
+  /** The zone the time was booked in; absent on an older server. */
+  readonly scheduledTimeZone?: string | null;
   readonly createdAt: string;
 }
 
@@ -94,6 +96,8 @@ export interface JourneyRound {
   readonly sessionId: string | null;
   readonly interviewers: readonly string[];
   readonly scheduledAt: string;
+  /** The zone the round was booked in; absent on an older server. */
+  readonly scheduledTimeZone?: string | null;
   readonly status: string;
   readonly notes?: string;
   readonly completedAt?: string | null;
@@ -239,6 +243,7 @@ export interface AiInterviewColumn extends ColumnBase {
   readonly personaName: string;
   readonly statusNote: string;
   readonly scheduledAt: string | null;
+  readonly scheduledTimeZone: string | null;
   readonly completedAt: string | null;
   readonly awaitingHumanReview: boolean;
   readonly observeHref: string | null;
@@ -255,6 +260,7 @@ export interface JourneyRoundCard {
   readonly interviewers: readonly string[];
   readonly interviewerNote: string;
   readonly scheduledAt: string;
+  readonly scheduledTimeZone: string | null;
   readonly completedAt: string | null;
   readonly status: string;
 }
@@ -587,6 +593,8 @@ function buildAiInterview(input: JourneyInput, state: ColumnState, selected: Sel
     personaName: interviewer,
     statusNote: phase === 'in-progress' ? `Underway with ${interviewer} now.` : PHASE_NOTE[phase],
     scheduledAt: aiRound?.scheduledAt ?? session?.scheduledAt ?? null,
+    // The zone travels with whichever time was taken.
+    scheduledTimeZone: (aiRound?.scheduledAt ? aiRound.scheduledTimeZone : session?.scheduledTimeZone) ?? null,
     completedAt: aiRound?.completedAt ?? null,
     awaitingHumanReview: phase === 'awaiting-review',
     observeHref: live && session ? `/interviews/${session.id}/observe` : null,
@@ -615,6 +623,7 @@ function toRoundCard(round: JourneyRound, pipeline: JourneyPipeline | null): Jou
     interviewers: round.interviewers,
     interviewerNote: round.interviewers.length > 0 ? '' : NO_INTERVIEWERS,
     scheduledAt: round.scheduledAt,
+    scheduledTimeZone: round.scheduledTimeZone ?? null,
     completedAt: round.completedAt ?? null,
     status: round.status,
   };

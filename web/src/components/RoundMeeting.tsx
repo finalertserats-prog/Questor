@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { api } from '../api/client';
 import { Icon } from './Icon';
 import { meetingLinkProblem, meetingSummary, providerLabel, type MeetingOutcome, type RoundMeetingView } from './roundMeetingModel';
+import { EMPTY_SCHEDULE, TimeZoneDateTimePicker } from './TimeZoneDateTimePicker';
+import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft } from './zonedScheduleModel';
 
 export interface RoundForMeeting {
   id: string;
@@ -92,10 +94,11 @@ export function RoundMeeting({ pipelineId, round, busy, run, onOutcome, onError,
 
 /** Move or cancel a scheduled round. Cancelling asks once more: it removes the meeting too. */
 export function RoundActions(
-  { pipelineId, round, busy, run, onOutcome, onError, canReschedule = true }: Props & { canReschedule?: boolean },
+  { pipelineId, round, busy, run, onOutcome, onError, canReschedule = true, orgZone }:
+  Props & { canReschedule?: boolean; orgZone: string | null | undefined },
 ) {
   const [moving, setMoving] = useState(false);
-  const [when, setWhen] = useState('');
+  const [when, setWhen] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
   // AI rounds are moved or cancelled with their interview session, not here.
@@ -103,13 +106,13 @@ export function RoundActions(
 
   const reschedule = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!when) return;
-    if (new Date(when).getTime() < Date.now()) {
-      onError('That time has already passed. Pick a date and time in the future.');
+    const preview = schedulePreview(when, new Date(), browserTimeZone());
+    if (preview.kind !== 'ok') {
+      onError(preview.kind === 'problem' ? preview.text : 'Pick the time zone, then the date and time.');
       return;
     }
-    void run(() => api.post<{ meeting: MeetingOutcome | null }>(`${base(pipelineId, round.id)}/reschedule`, { scheduledAt: new Date(when).toISOString() })
-      .then((resp) => { onOutcome(resp.meeting); setMoving(false); setWhen(''); }));
+    void run(() => api.post<{ meeting: MeetingOutcome | null }>(`${base(pipelineId, round.id)}/reschedule`, scheduleRequest(when))
+      .then((resp) => { onOutcome(resp.meeting); setMoving(false); setWhen((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone })); }));
   };
 
   const cancel = () => run(() => api.post<{ meeting: MeetingOutcome | null }>(`${base(pipelineId, round.id)}/cancel`, {})
@@ -117,11 +120,12 @@ export function RoundActions(
 
   if (moving) {
     return (
-      <form className="row" style={{ gap: 6 }} onSubmit={reschedule}>
-        <label className="visually-hidden" htmlFor={`reschedule-${round.id}`}>New date and time</label>
-        <input id={`reschedule-${round.id}`} type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} required />
-        <button className="btn sm" disabled={busy}>Move</button>
-        <button type="button" className="btn sm ghost" onClick={() => setMoving(false)}>Back</button>
+      <form onSubmit={reschedule} aria-label="Move this round">
+        <TimeZoneDateTimePicker idPrefix={`reschedule-${round.id}`} value={when} onChange={setWhen} orgZone={orgZone} disabled={busy} compact />
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn sm" disabled={busy}>Move</button>
+          <button type="button" className="btn sm ghost" onClick={() => setMoving(false)}>Back</button>
+        </div>
       </form>
     );
   }
