@@ -198,7 +198,7 @@ const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => `&#${c.char
  * was actually delivered — the console provider delivers nothing, and saying
  * "sent" regardless is how links silently go unseen.
  */
-async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; timeZone: string | null; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
+async function notifyScheduler(o: { to: string; stageLabel: string; scheduledAt: Date; timeZone: string; link: string; aiRound: boolean; meetingUrl: string | null }): Promise<SchedulingNotice> {
   const email = getEmail();
   if (!email.delivers) {
     return { delivered: false, link: o.link, deliveryNote: `Email is not configured to deliver (provider "${email.name}"). Use the link here.` };

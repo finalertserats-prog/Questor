@@ -9,6 +9,8 @@
  * only drives the preview and the "already passed" check.
  */
 
+import { effectiveOrgTimeZone } from './orgTimeZone';
+
 export interface ScheduleDraft {
   readonly timeZone: string;
   readonly date: string;
@@ -106,11 +108,9 @@ export function timeZoneOptionLabel(timeZone: string, at: Date): string {
   return part?.value ?? '';
 }
 
-/** The organisation's zone when it has one, else this browser's, else UTC. */
-export function initialTimeZone(orgZone: string | null | undefined, browserZone: string | undefined): string {
-  if (orgZone && isKnownTimeZone(orgZone)) return currentZoneName(orgZone);
-  if (browserZone && isKnownTimeZone(browserZone)) return currentZoneName(browserZone);
-  return 'UTC';
+/** The organisation's zone, IST when it has none — never this browser's. */
+export function initialTimeZone(orgZone: string | null | undefined): string {
+  return currentZoneName(effectiveOrgTimeZone(orgZone));
 }
 
 function clock(at: Date, timeZone: string): string {

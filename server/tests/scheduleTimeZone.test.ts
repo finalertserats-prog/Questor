@@ -234,6 +234,17 @@ describe('the candidate portal', () => {
     expect(res.body.schedule).toBeNull();
   });
 
+  // The page decides whether the candidate is early from these: the instant
+  // itself, not the words, so the check does not parse a formatted date.
+  it('gives the booked instant alongside the words', async () => {
+    const at = new Date(Date.now() + 86_400_000);
+    await prisma.interviewSession.update({ where: { id: demo.sessionId }, data: { scheduledAt: at } });
+
+    const res = await request(app).get(`/api/portal/${demo.token}`);
+
+    expect(res.body.schedule?.at).toBe(at.toISOString());
+  });
+
   it('has no schedule when none was set', async () => {
     const res = await request(app).get(`/api/portal/${demo.token}`);
 
@@ -250,10 +261,49 @@ describe('the organisation time zone', () => {
     expect(res.body.timeZone).toBe('Asia/Kolkata');
   });
 
-  it('is null when the organisation has not set one', async () => {
+  it('is IST when the organisation has not set one', async () => {
     const res = await request(app).get('/api/interviews/time-zone').set(auth());
 
-    expect(res.body.timeZone).toBeNull();
+    expect(res.body.timeZone).toBe('Asia/Kolkata');
+  });
+
+  it('is IST when the stored zone is one the runtime does not know', async () => {
+    await setTenantZone('Mars/Olympus_Mons');
+
+    const res = await request(app).get('/api/interviews/time-zone').set(auth());
+
+    expect(res.body.timeZone).toBe('Asia/Kolkata');
+  });
+});
+
+// An organisation that never chose a zone works in IST: every place a time
+// booked without a zone is written falls back to it, not to UTC.
+describe('a time booked without a zone, in an organisation without one', () => {
+  const inThreeDays = () => new Date(Date.now() + 3 * 86_400_000).toISOString();
+
+  it('is stated in IST in the invitation', async () => {
+    await request(app).post(`/api/interviews/${demo.sessionId}/schedule`).set(auth()).send({ scheduledAt: inThreeDays(), send: true });
+
+    expect(mail.messages.at(-1)?.text ?? '').toContain('(Asia/Kolkata)');
+  });
+
+  it('is stated in IST on the candidate portal', async () => {
+    await prisma.interviewSession.update({ where: { id: demo.sessionId }, data: { scheduledAt: new Date(Date.now() + 86_400_000) } });
+
+    const res = await request(app).get(`/api/portal/${demo.token}`);
+
+    expect(res.body.schedule?.timeZone).toBe('Asia/Kolkata');
+  });
+
+  it('is stated in IST to the scheduler of a round', async () => {
+    const pipelineId = (await request(app).post('/api/pipelines').set(auth()).send({ candidateId: demo.candidateId })).body.pipeline.id as string;
+    for (const key of ['bronze', 'silver', 'gold']) {
+      await request(app).post(`/api/pipelines/${pipelineId}/advance`).set(auth()).send({ toStageKey: key });
+    }
+
+    await request(app).post(`/api/pipelines/${pipelineId}/rounds`).set(auth()).send({ stageKey: 'gold', scheduledAt: inThreeDays() });
+
+    expect(mail.messages.at(-1)?.text ?? '').toContain('(Asia/Kolkata)');
   });
 });
 

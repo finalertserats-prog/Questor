@@ -290,7 +290,7 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     speech: { stt: sttCapability(), tts: ttsCapability() },
     feedbackOptIn: { offered: optInOffered, choice: existingOptIn?.choice ?? null },
     // When the interview is booked for, written in the zone it was booked in
-    // (else the organisation's, else UTC) so the page and the email agree.
+    // (else the organisation's, IST when it has none) so the page and the email agree.
     schedule,
   });
 }));

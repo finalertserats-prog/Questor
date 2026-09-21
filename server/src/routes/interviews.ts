@@ -54,14 +54,13 @@ interface InviteDetails {
   readonly expiresAt: Date | null;
   /** The booked time, when one is set and still ahead. */
   readonly scheduledAt: Date | null;
-  /** The zone the email states times in: the booking's, else the organisation's; null means UTC. */
-  readonly timeZone: string | null;
+  /** The zone the email states times in: the booking's, else the organisation's (IST when it has none). */
+  readonly timeZone: string;
 }
 
-function inviteDate(at: Date, timeZone: string | null): string {
-  const zone = timeZone ?? 'UTC';
-  const day = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: zone }).format(at);
-  return `${day} (${zone})`;
+function inviteDate(at: Date, timeZone: string): string {
+  const day = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(at);
+  return `${day} (${timeZone})`;
 }
 
 function buildInvite(d: InviteDetails) {
@@ -316,8 +315,9 @@ interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), bul
 }));
 
 // The organisation's time zone, for the scheduling picker's first suggestion
-// and as the zone a time booked without one is shown in. Not sensitive — any
-// signed-in member of the organisation may read it.
+// and as the zone a time booked without one is shown in (IST when the
+// organisation has not chosen one). Not sensitive — any signed-in member of
+// the organisation may read it.
 interviewsRouter.get('/time-zone', asyncHandler(async (req, res) => {
   res.json({ timeZone: await tenantTimeZone(req.auth!.tenantId) });
 }));
@@ -593,7 +593,8 @@ async function resendInvitation(req: Request, session: ResendableSession) {
 /**
  * The booked time an invitation states, and the zone it states every date in.
  * A time already gone is left out: "booked for yesterday" helps nobody. The
- * zone falls back to the organisation's, then UTC, never the server's clock.
+ * zone falls back to the organisation's (IST when it has none), never the
+ * server's clock.
  */
 async function inviteTiming(session: { tenantId: string; scheduledAt: Date | null; scheduledTimeZone: string | null }) {
   const ahead = session.scheduledAt && session.scheduledAt.getTime() > Date.now() ? session.scheduledAt : null;

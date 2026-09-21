@@ -42,7 +42,7 @@ describe('formatDate', () => {
 });
 
 // A scheduled time is read on the clock it was booked on, never silently on
-// the viewer's: stored zone, then the organisation's, then UTC, labelled.
+// the viewer's: stored zone, then the organisation's, then IST.
 describe('formatScheduled', () => {
   const AT = '2026-10-01T09:00:00.000Z';
 
@@ -62,8 +62,12 @@ describe('formatScheduled', () => {
     expect(formatScheduled(AT, null, 'Asia/Kolkata', 'Asia/Kolkata')).toContain('14:30');
   });
 
-  it('falls back to UTC, labelled, when there is no zone at all', () => {
-    expect(formatScheduled(AT, null, null, 'UTC')).toMatch(/09:00 UTC$/);
+  it('falls back to IST when the organisation has no zone', () => {
+    expect(formatScheduled(AT, null, null, 'Asia/Kolkata')).toContain('14:30');
+  });
+
+  it('names IST when it falls back to it', () => {
+    expect(formatScheduled(AT, null, null, 'Asia/Kolkata')).toContain('Asia/Kolkata');
   });
 
   it('adds the viewer’s own time in brackets when their clock differs', () => {

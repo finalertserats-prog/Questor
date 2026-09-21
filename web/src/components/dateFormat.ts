@@ -9,6 +9,7 @@
  */
 
 import { NO_SCORE } from './scoreFormat';
+import { effectiveOrgTimeZone } from './orgTimeZone';
 
 function parse(value: unknown): Date | null {
   if (typeof value !== 'string' && !(value instanceof Date)) return null;
@@ -51,8 +52,8 @@ function clockIn(at: Date, timeZone: string): string {
 /**
  * A scheduled time, on the clock it was booked on.
  *
- * The zone is the booking's own, else the organisation's, else UTC — and it is
- * always named. Never the viewer's clock silently: the viewer's own time is
+ * The zone is the booking's own, else the organisation's (IST when it has
+ * none) — and it is always named. Never the viewer's clock silently: the viewer's own time is
  * added in brackets when it differs, so nobody converts in their head.
  */
 export function formatScheduled(
@@ -63,9 +64,8 @@ export function formatScheduled(
 ): string {
   const at = parse(value);
   if (!at) return NO_SCORE;
-  const zone = knownZone(storedZone) ?? knownZone(orgZone);
-  const dayPart = at.toLocaleDateString('en-GB', { timeZone: zone ?? 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
-  if (!zone) return `${dayPart}, ${clockIn(at, 'UTC')} UTC`;
+  const zone = knownZone(storedZone) ?? effectiveOrgTimeZone(orgZone);
+  const dayPart = at.toLocaleDateString('en-GB', { timeZone: zone, day: 'numeric', month: 'short', year: 'numeric' });
   const offset = at.toLocaleString('en-GB', { timeZone: zone, timeZoneName: 'shortOffset' }).split(' ').pop() ?? '';
   const main = `${dayPart}, ${clockIn(at, zone)} ${offset} (${zone})`;
   const viewer = knownZone(viewerZone);

@@ -9,6 +9,7 @@ import { Skeleton } from '../components/Skeleton';
 import { accommodationHint, canSubmitConsent, consentAction } from '../components/portalConsentModel';
 import { entryFromRefusal, portalEntry, type PortalEntry } from '../components/portalEntryModel';
 import { aiAcknowledgement, splitDisclosure, whatHappensFirst } from '../components/interviewerModel';
+import { earlyStartNote } from '../components/portalEarlyStartModel';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -215,6 +216,7 @@ export function Portal() {
   // The journey (first visit, not yet consented): the AI disclosure is shown
   // here, before the interview, naming the interviewer.
   const interviewer = info.persona?.name ?? null;
+  const earlyNote = earlyStartNote(info.schedule, new Date());
   const disclosure = splitDisclosure(info.aiDisclosure);
 
   return (
@@ -321,6 +323,8 @@ export function Portal() {
               </span>
               <button className="btn secondary sm" onClick={testSpeaker}><Icon name="speaker" size={14} />Play test sound</button>
             </div>
+            {/* Early is fine: the booked time is stated, starting is never blocked. */}
+            {earlyNote && <p className="small" style={{ marginTop: 12 }} data-testid="portal-early-start">{earlyNote}</p>}
             <button className="btn" style={{ width: '100%', marginTop: 12 }} disabled={busy} onClick={finishTechCheck}>
               {busy ? 'Starting…' : mic && speaker ? 'Start interview' : 'Continue anyway'}<Icon name="arrow-right" size={16} />
             </button>
