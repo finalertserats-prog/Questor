@@ -18,7 +18,7 @@ export interface RawResponse {
 
 export type Interpreted =
   | { readonly kind: 'data'; readonly data: unknown }
-  | { readonly kind: 'error'; readonly status: number; readonly message: string; readonly code?: string };
+  | { readonly kind: 'error'; readonly status: number; readonly message: string; readonly code?: string; readonly candidateId?: string };
 
 function parseJson(text: string): { parsed: true; value: unknown } | { parsed: false } {
   try {
@@ -33,6 +33,13 @@ function statedCode(value: unknown): string | null {
   if (typeof value !== 'object' || value === null) return null;
   const code = (value as { code?: unknown }).code;
   return typeof code === 'string' && code ? code : null;
+}
+
+/** The existing application a candidate_exists refusal points at. */
+function statedCandidateId(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const candidateId = (value as { candidateId?: unknown }).candidateId;
+  return typeof candidateId === 'string' && candidateId ? candidateId : null;
 }
 
 function statedError(value: unknown): string | null {
@@ -59,7 +66,11 @@ export function interpretResponse(res: RawResponse): Interpreted {
   if (!res.ok) {
     const stated = body.parsed ? statedError(body.value) : null;
     const code = body.parsed ? statedCode(body.value) : null;
-    return { kind: 'error', status: res.status, message: stated ?? (res.statusText || UNREADABLE_MESSAGE), ...(code ? { code } : {}) };
+    const candidateId = body.parsed ? statedCandidateId(body.value) : null;
+    return {
+      kind: 'error', status: res.status, message: stated ?? (res.statusText || UNREADABLE_MESSAGE),
+      ...(code ? { code } : {}), ...(candidateId ? { candidateId } : {}),
+    };
   }
   if (!body.parsed) return { kind: 'error', status: res.status, message: UNREADABLE_MESSAGE };
   return { kind: 'data', data: body.value };

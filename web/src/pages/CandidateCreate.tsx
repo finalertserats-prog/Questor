@@ -12,7 +12,9 @@ import { roleDisplayLabels } from '../components/roleLabelModel';
 import { CandidatePersonCombobox } from '../components/CandidatePersonCombobox';
 import {
   COPIED_DETAILS_NOTE,
+  alreadyOnRoleNotice,
   applyFailureMessage,
+  existingApplicationId,
   initialRoleId,
   roleEntryLabel,
   rolesAcceptingCandidates,
@@ -47,7 +49,7 @@ export function CandidateCreate() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState<{ text: string; candidateId: string } | null>(null);
+  const [notice, setNotice] = useState<{ text: string; candidateId: string; linkText?: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [source, setSource] = useState<CandidateSource>('manual');
@@ -122,10 +124,18 @@ export function CandidateCreate() {
   // goes on to the resume; an existing one is pointed at, not overwritten.
   const createRecord = async (): Promise<{ id: string; name: string } | null> => {
     if (source === 'manual') {
-      const { candidate } = await api.post<{ candidate: { id: string } }>('/candidates', {
-        fullName, email, phone: phone || undefined, roleId,
-      });
-      return { id: candidate.id, name: fullName };
+      try {
+        const { candidate } = await api.post<{ candidate: { id: string } }>('/candidates', {
+          fullName, email, phone: phone || undefined, roleId,
+        });
+        return { id: candidate.id, name: fullName };
+      } catch (err: unknown) {
+        // One application per person per role: point at the one already there.
+        const existingId = existingApplicationId(err);
+        if (!existingId) throw err;
+        setNotice({ text: alreadyOnRoleNotice(fullName), candidateId: existingId, linkText: 'Open that application' });
+        return null;
+      }
     }
     const result = await api.post<ImportResult>('/candidates/import-ats', importPayload(form));
     const already = importNotice(result, { withResume });
@@ -191,7 +201,7 @@ export function CandidateCreate() {
       {notice && (
         <Banner kind="info">
           {notice.text}{' '}
-          <Link className="link-action" to={`/candidates/${notice.candidateId}`}>Open the candidate</Link>
+          <Link className="link-action" to={`/candidates/${notice.candidateId}`}>{notice.linkText ?? 'Open the candidate'}</Link>
         </Banner>
       )}
       {roles.length === 0 && (

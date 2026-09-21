@@ -4,6 +4,8 @@ import {
   alsoInRolesLabel,
   applyFailureMessage,
   existingApplicationFor,
+  existingApplicationId,
+  alreadyOnRoleNotice,
   initialRoleId,
   isSearchable,
   otherRoleCounts,
@@ -146,5 +148,29 @@ describe('alsoInRolesLabel', () => {
 
   it('uses the plural for several', () => {
     expect(alsoInRolesLabel(3)).toBe('Also in 3 other roles');
+  });
+});
+
+describe('existingApplicationId', () => {
+  it('is the application a candidate_exists refusal names', () => {
+    expect(existingApplicationId(new ApiError(409, 'x', 'candidate_exists', 'cand-7'))).toBe('cand-7');
+  });
+
+  it('is null for a candidate_exists refusal that names none', () => {
+    expect(existingApplicationId(new ApiError(409, 'x', 'candidate_exists'))).toBeNull();
+  });
+
+  it('is null for any other refusal', () => {
+    expect(existingApplicationId(new ApiError(409, 'x', 'role_archived', 'cand-7'))).toBeNull();
+  });
+});
+
+describe('alreadyOnRoleNotice', () => {
+  it('names the person', () => {
+    expect(alreadyOnRoleNotice('Asha Rao')).toBe('Asha Rao is already a candidate for this role.');
+  });
+
+  it('has a fallback when no name was typed', () => {
+    expect(alreadyOnRoleNotice('  ')).toBe('This person is already a candidate for this role.');
   });
 });

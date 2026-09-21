@@ -20,6 +20,8 @@ export interface AddCandidateForm {
 export interface ImportResult {
   readonly candidate: { readonly id: string; readonly fullName: string };
   readonly alreadyImported: boolean;
+  /** Why an existing record was answered: the same ATS record, or the same address already on the role. */
+  readonly matchedBy?: 'ats_record' | 'email';
 }
 
 /** Why the form cannot be sent yet, in words for the person filling it; null when it can. */
@@ -52,7 +54,9 @@ export function importPayload(form: AddCandidateForm): { externalCandidateId: st
  */
 export function importNotice(result: ImportResult, opts: { withResume?: boolean } = {}): string | null {
   if (!result.alreadyImported) return null;
-  const base = `${result.candidate.fullName} was already imported from your ATS, so nothing new was created.`;
+  const base = result.matchedBy === 'email'
+    ? `${result.candidate.fullName} is already a candidate for this role, so nothing new was created.`
+    : `${result.candidate.fullName} was already imported from your ATS, so nothing new was created.`;
   return opts.withResume
     ? `${base} The resume you added was not uploaded, so the record already here stays as it is; open it to see whether it still needs one.`
     : base;
