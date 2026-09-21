@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { eraseCandidate, retentionDays, runRetentionSweep } from '../src/services/dataRights.js';
-import { extractEvidenceQuotes } from '../src/services/observerQuotes.js';
+import { extractEvidenceQuotes, QUOTES_STALE_MS } from '../src/services/observerQuotes.js';
 import { colleagueAuth, listening, observationOf, seededObserver, sendText, SPOKEN } from './observerHelpers.js';
 
 /**
@@ -123,6 +123,42 @@ describe('extracting quotes from an ended round', () => {
     const stored = await prisma.roundObservation.findUniqueOrThrow({ where: { id: observationId } });
     expect(stored.quotesStatus).toBe('UNAVAILABLE');
     expect(stored.quotesJson).toBe('[]');
+  });
+
+  it('settles as unavailable, never left pending, when extraction crashes outside the model call', async () => {
+    const { observationId } = await endedRound();
+    await prisma.roundObservation.update({ where: { id: observationId }, data: { quotesStatus: 'PENDING' } });
+
+    await extractEvidenceQuotes(observationId, { enabled: () => { throw new Error('config exploded'); }, ask: async () => ({}) });
+
+    expect((await prisma.roundObservation.findUniqueOrThrow({ where: { id: observationId } })).quotesStatus).toBe('UNAVAILABLE');
+  });
+
+  it('shows an extraction that never finished (a restart mid-way) as unavailable, so it can be retried', async () => {
+    const { ids, roundId, observationId } = await endedRound();
+    await prisma.roundObservation.update({ where: { id: observationId }, data: { quotesStatus: 'PENDING', endedAt: new Date(Date.now() - QUOTES_STALE_MS - 1000) } });
+
+    const res = await request(app).get(`/api/observer/rounds/${roundId}`).set('Authorization', ids.auth);
+
+    expect(res.body.observation.quotes.status).toBe('UNAVAILABLE');
+  });
+
+  it('leaves a recent pending extraction alone', async () => {
+    const { ids, roundId, observationId } = await endedRound();
+    await prisma.roundObservation.update({ where: { id: observationId }, data: { quotesStatus: 'PENDING', endedAt: new Date() } });
+
+    const res = await request(app).get(`/api/observer/rounds/${roundId}`).set('Authorization', ids.auth);
+
+    expect(res.body.observation.quotes.status).toBe('PENDING');
+  });
+
+  it('lets HR retry an extraction that never finished', async () => {
+    const { ids, roundId, observationId } = await endedRound();
+    await prisma.roundObservation.update({ where: { id: observationId }, data: { quotesStatus: 'PENDING', endedAt: new Date(Date.now() - QUOTES_STALE_MS - 1000) } });
+
+    const res = await request(app).post(`/api/observer/rounds/${roundId}/quotes`).set('Authorization', ids.auth).send({});
+
+    expect(res.status).toBe(200);
   });
 
   it('does not rewrite quotes once they are ready', async () => {

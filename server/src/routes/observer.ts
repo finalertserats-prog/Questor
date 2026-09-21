@@ -8,7 +8,7 @@ import {
   audioBytesMatchMimeType, isTranscribableMimeType, serverSttReady, sttCapability, transcribeServerSpeech,
 } from '../providers/speech.js';
 import { logAudit } from '../services/audit.js';
-import { extractEvidenceQuotes } from '../services/observerQuotes.js';
+import { expireStalePendingQuotes, extractEvidenceQuotes } from '../services/observerQuotes.js';
 import {
   OBSERVER_CAPTURE_NOTICE, appendSegment, assertCapturing, candidateConsents, candidateDeclines, candidateStops,
   candidateView, endObservation, findByCandidateToken, interviewerConsents, interviewerDeclines, interviewerStops,
@@ -67,6 +67,7 @@ const audioSegmentSchema = z.object(timing);
 const gapSchema = z.object({ ...timing, reason: z.string().trim().max(80).regex(/^[a-z0-9_-]*$/i).default('') });
 
 async function view(req: Request, round: RoundWithPipeline) {
+  await expireStalePendingQuotes(round.id);
   const observation = await observationForRound(round.id);
   const stt = sttCapability();
   return {
@@ -130,6 +131,7 @@ observerRouter.post('/rounds/:roundId/end', requireCapability('interview:schedul
 // Retry after an outage. READY quotes are never rewritten.
 observerRouter.post('/rounds/:roundId/quotes', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
   const round = await loadRoundForStaff(req.auth!, req.params.roundId);
+  await expireStalePendingQuotes(round.id);
   const observation = await observationForRound(round.id);
   if (!observation || observation.status !== 'ENDED' || observation.quotesStatus !== 'UNAVAILABLE') {
     throw new HttpError(409, 'Quotes can only be retried for an ended round whose extraction was unavailable.');
