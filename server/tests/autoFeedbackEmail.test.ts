@@ -50,7 +50,7 @@ function render(over: Partial<Parameters<typeof renderAutoFeedbackEmail>[0]> = {
   return renderAutoFeedbackEmail({
     to: 'jayesh@example.test', candidateName: 'Dr. Jayesh Rahul', roleTitle: 'Project Manager',
     companyName: 'Acme Research', content: CONTENT, talkUrl: null,
-    interviewedAt: new Date('2026-09-20T09:00:00.000Z'), durationMinutes: 30, signOff: 'questor', ...over,
+    interviewedAt: new Date('2026-09-20T09:00:00.000Z'), timeZone: 'Asia/Kolkata', durationMinutes: 30, signOff: 'questor', ...over,
   });
 }
 
@@ -64,7 +64,19 @@ describe('the header band', () => {
   });
 
   it('names the candidate, the date and how long it took', () => {
-    expect(render().message.html).toContain('Jayesh · interviewed 20 September 2026 · 30 minutes');
+    expect(render().message.html).toContain('Jayesh · interviewed 20 September 2026 (Asia/Kolkata) · 30 minutes');
+  });
+
+  it('dates the interview in the given zone, not UTC', () => {
+    // 20:45 UTC on the 21st is 02:15 on the 22nd in Kolkata.
+    const late = new Date('2026-09-21T20:45:00.000Z');
+    expect(render({ interviewedAt: late }).message.text).toContain('interviewed 22 September 2026 (Asia/Kolkata)');
+  });
+
+  it('dates the interview in a zone west of UTC as that zone reads it', () => {
+    // 01:00 UTC on the 22nd is still the evening of the 21st in New York.
+    const evening = new Date('2026-09-22T01:00:00.000Z');
+    expect(render({ interviewedAt: evening, timeZone: 'America/New_York' }).message.html).toContain('interviewed 21 September 2026 (America/New_York)');
   });
 
   it('greets them by first name', () => {

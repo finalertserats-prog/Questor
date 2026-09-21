@@ -34,6 +34,8 @@ export interface AutoFeedbackEmailInput {
   /** The single-purpose "speak to a person" link, when one could be issued. */
   readonly talkUrl: string | null;
   readonly interviewedAt: Date | null;
+  /** The zone the date is written in: the booking's, else the organisation's (IST when it has none). */
+  readonly timeZone: string;
   readonly durationMinutes: number;
   /** Who the letter is signed by. Questor unless the organisation asked to sign it. */
   readonly signOff: FeedbackSignOff;
@@ -49,7 +51,11 @@ export interface RenderedAutoFeedbackEmail {
   readonly storedText: string;
 }
 
-const INTERVIEW_DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+/** The day of the interview as the candidate's clock read it, with the zone named (as the invitation does). */
+function interviewDate(at: Date, timeZone: string): string {
+  const day = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(at);
+  return `${day} (${timeZone})`;
+}
 
 // The palette of the approved design.
 const INK = '#1a1a22';
@@ -125,7 +131,7 @@ function footerLine(companyName: string, signOff: FeedbackSignOff): string {
 function textBody(input: AutoFeedbackEmailInput, first: string, talkLine: string | null): string {
   const c = input.content;
   const company = input.companyName.trim();
-  const when = input.interviewedAt ? `interviewed ${INTERVIEW_DATE.format(input.interviewedAt)} · ` : '';
+  const when = input.interviewedAt ? `interviewed ${interviewDate(input.interviewedAt, input.timeZone)} · ` : '';
   const lines: string[] = [
     'INTERVIEW FEEDBACK',
     company ? `${input.roleTitle} · ${company}` : input.roleTitle,
@@ -230,7 +236,7 @@ function talkSection(talkUrl: string): string {
 function htmlBody(input: AutoFeedbackEmailInput, first: string): string {
   const c = input.content;
   const company = input.companyName.trim();
-  const when = input.interviewedAt ? `interviewed ${INTERVIEW_DATE.format(input.interviewedAt)} · ` : '';
+  const when = input.interviewedAt ? `interviewed ${interviewDate(input.interviewedAt, input.timeZone)} · ` : '';
   const title = company ? `${input.roleTitle} · ${company}` : input.roleTitle;
 
   return `<div style="background:#eef0f5;padding:28px 12px;font-family:Segoe UI,system-ui,-apple-system,Helvetica,Arial,sans-serif">
