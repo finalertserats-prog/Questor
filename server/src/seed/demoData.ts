@@ -171,7 +171,7 @@ export async function createDemoData(): Promise<DemoIds> {
 
   // Candidate + resume + fit
   const candidate = await prisma.candidate.create({
-    data: { tenantId: tenant.id, roleId: role.id, fullName: 'Priya Sharma', email: 'priya.sharma@example.com', phone: '' },
+    data: { tenantId: tenant.id, roleId: role.id, fullName: 'Priya Sharma', email: 'priya.sharma@example.com', emailNormalized: 'priya.sharma@example.com', phone: '' },
   });
   // Direct grant as well as the one inherited from the role: the demo is the
   // fixture the API tests and the E2E script drive, so it should exercise both

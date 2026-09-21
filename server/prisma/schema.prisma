@@ -291,6 +291,9 @@ model Candidate {
   role          Role?    @relation(fields: [roleId], references: [id])
   fullName      String
   email         String
+  // trim + lowercase of `email`, the one spelling searches and the
+  // same-person-same-role check compare. Written by every create path.
+  emailNormalized String @default("")
   phone         String   @default("")
   createdAt     DateTime @default(now())
   profiles      CandidateProfileVersion[]
@@ -305,6 +308,7 @@ model Candidate {
   feedbackEmails   CandidateFeedbackEmail[]
 
   @@index([tenantId, createdAt])
+  @@index([tenantId, emailNormalized])
 }
 
 model CandidateProfileVersion {

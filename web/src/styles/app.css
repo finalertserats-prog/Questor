@@ -1288,6 +1288,13 @@ tr.in-flight td:first-child {
   font-weight: 600;
 }
 
+/* A person picked on Add candidate: marked by a rule, never a tinted block. */
+.existing-person {
+  border-left: 2px solid var(--focus);
+  padding: 4px 0 4px 12px;
+  margin: 12px 0;
+}
+
 /* The hidden attribute wins over any display a class sets. */
 [hidden] {
   display: none !important;

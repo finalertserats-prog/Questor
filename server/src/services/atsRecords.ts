@@ -1,6 +1,7 @@
 import type { CandidateAtsLink } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { normalizeEmail } from './userEmail.js';
 import { HttpError } from '../middleware/index.js';
 import type { AtsRequisition } from '../providers/ats/index.js';
 import type { AuthClaims } from './auth.js';
@@ -144,7 +145,7 @@ export async function importCandidate(o: { auth: AuthClaims; externalCandidateId
 
   try {
     const candidate = await prisma.$transaction(async (tx) => {
-      const made = await tx.candidate.create({ data: { tenantId, roleId: o.roleId, ...contact.data } });
+      const made = await tx.candidate.create({ data: { tenantId, roleId: o.roleId, ...contact.data, emailNormalized: normalizeEmail(contact.data.email) } });
       await assignCandidate(made.id, o.auth.userId, 'owner', tx);
       await tx.candidateAtsLink.create({
         data: { tenantId, candidateId: made.id, connectionId: connection.id, externalCandidateId: o.externalCandidateId, source: 'import', createdById: o.auth.userId },

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { candidateDetailTabs, nextCandidateDetailTab, candidateDetailPanelId, candidateDetailTabId } from '../src/pages/CandidateDetail';
+import { candidateDetailTabs, candidateDetailTabFromParam, nextCandidateDetailTab, candidateDetailPanelId, candidateDetailTabId } from '../src/pages/CandidateDetail';
 
 describe('candidate detail tab model', () => {
   it('defaults to the candidate profile tab', () => {
@@ -24,5 +24,15 @@ describe('candidate detail tab model', () => {
     expect(nextCandidateDetailTab('journey', 'Home')).toBe('profile');
     expect(nextCandidateDetailTab('profile', 'End')).toBe('journey');
     expect(nextCandidateDetailTab('profile', 'Tab')).toBe('profile');
+  });
+});
+
+describe('candidateDetailTabFromParam', () => {
+  it('opens the journey tab when the link asks for it', () => {
+    expect(candidateDetailTabFromParam('journey')).toBe('journey');
+  });
+
+  it('opens the profile tab for anything else', () => {
+    expect(candidateDetailTabFromParam('nonsense')).toBe('profile');
   });
 });
