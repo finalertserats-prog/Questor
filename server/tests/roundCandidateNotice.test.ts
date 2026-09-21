@@ -42,6 +42,10 @@ function futureDate(days = 5): string {
   return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 }
 
+function pastDate(days = 1): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+}
+
 const toCandidate = () => mail.messages.filter((m) => m.to === CANDIDATE);
 
 async function pipelineAt(stage: 'silver' | 'gold'): Promise<string> {
@@ -237,7 +241,7 @@ describe('a human round cancelled', () => {
 
   it('emails nobody when the round was already past', async () => {
     const pipelineId = await pipelineAt('gold');
-    const roundId = (await bookGold(pipelineId, { date: '2026-01-05' })).body.round.id as string;
+    const roundId = (await bookGold(pipelineId, { date: pastDate(2) })).body.round.id as string;
     mail.messages.length = 0;
 
     await cancel(pipelineId, roundId);

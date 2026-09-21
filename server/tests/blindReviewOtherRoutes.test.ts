@@ -50,8 +50,10 @@ async function silverPipeline(ids: Awaited<ReturnType<typeof assessedInterview>>
   for (const key of ['bronze', 'silver']) {
     await request(app).post(`/api/pipelines/${id}/advance`).set(ids.auth).send({ toStageKey: key });
   }
+  // The interview has already been held, so its round is recorded in the past:
+  // a future time would ask to move a finished interview, which is refused.
   await request(app).post(`/api/pipelines/${id}/rounds`).set(ids.auth)
-    .send({ stageKey: 'silver', scheduledAt: '2026-10-01T09:00:00.000Z', sessionId: ids.sessionId });
+    .send({ stageKey: 'silver', scheduledAt: new Date(Date.now() - 86_400_000).toISOString(), sessionId: ids.sessionId });
   return id;
 }
 
