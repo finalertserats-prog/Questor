@@ -6,6 +6,7 @@ import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
 import { BLIND_BYPASS_ACTION, BLIND_REVIEW_STATUS, type Disposition } from './shadowModeCommon.js';
 import { blindReviewRequiredForTenant } from './candidateFeedbackPolicy.js';
 import { logAudit } from './audit.js';
+import { personaNameOf } from '../domain/persona.js';
 
 // ---------------------------------------------------------------------------
 // Blind view — the assessment with every AI conclusion withheld
@@ -32,6 +33,7 @@ export interface BlindTurn {
   readonly index: number;
   readonly speaker: string;
   readonly text: string;
+  readonly startMs: number;
   readonly competencyId: string;
 }
 
@@ -40,6 +42,12 @@ export interface BlindAssessmentView {
   readonly sessionId: string;
   readonly candidate: { readonly id: string; readonly name: string };
   readonly role: { readonly id: string; readonly title: string };
+  readonly session: {
+    readonly interviewer: string | null;
+    readonly startedAt: Date | null;
+    readonly completedAt: Date | null;
+    readonly durationMinutes: number;
+  };
   readonly competencies: readonly BlindCompetency[];
   readonly transcript: readonly BlindTurn[];
   readonly levelScale: Readonly<Record<string, string>>;
@@ -139,11 +147,22 @@ export async function getBlindView(
     sessionId: assessment.sessionId,
     candidate: { id: assessment.session.candidateId, name: assessment.session.candidate.fullName },
     role: { id: assessment.session.roleId, title: assessment.session.role.title },
+    // Who interviewed, when and how long: what the review page's header says
+    // above the transcript. Facts about the conversation, not about the score.
+    session: {
+      interviewer: personaNameOf(assessment.session.personaJson, assessment.session.id),
+      startedAt: assessment.session.startedAt,
+      completedAt: assessment.session.completedAt,
+      durationMinutes: assessment.session.durationMinutes,
+    },
     competencies,
     transcript: turns.map((t) => ({
       index: t.index,
       speaker: t.speaker,
       text: t.text,
+      // Time into the interview: the review page stamps each turn with it.
+      // A clock is not a conclusion, so it is not withheld.
+      startMs: t.startMs,
       competencyId: t.competencyId,
     })),
     levelScale: LEVEL_SCALE,

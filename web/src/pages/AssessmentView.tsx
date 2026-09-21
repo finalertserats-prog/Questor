@@ -21,6 +21,9 @@ import { humanise, recommendationStatus } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
 import { useAuth } from '../auth';
 import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
+import { ReviewFactsStrip, TranscriptReader, TranscriptReadNote } from '../components/review/TranscriptReader';
+import { useReadProgress, useReviewTranscript, type TranscriptSource } from '../components/review/useTranscriptReader';
+import { REVIEW_SECTION_ID } from '../components/review/transcriptReaderModel';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -222,6 +225,38 @@ export function AssessmentView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // The transcript, before anything else on the page. Once the assessment is
+  // open it comes from the interview's own transcript endpoint; while the
+  // organisation's blind-review policy is still withholding the assessment,
+  // it comes from the blind view — the reviewer judges from the transcript,
+  // so the gate must never hide it. Hooks, so they sit above the early returns.
+  const transcriptSource: TranscriptSource | null = blocked && id
+    ? { kind: 'blind', assessmentId: id }
+    : data
+      ? {
+        kind: 'interview', sessionId: data.sessionId, candidate: data.candidate.name, role: data.role.title,
+        competencyNames: Object.fromEntries((data.result.competencies ?? []).map((c) => [c.id, c.name])),
+      }
+      : null;
+  const transcript = useReviewTranscript(transcriptSource);
+  const reading = useReadProgress(transcript.status === 'ready', transcript.key);
+  const transcriptBlock = (
+    <>
+      {transcript.view && <ReviewFactsStrip facts={transcript.view.facts} />}
+      <TranscriptReader
+        ref={reading.blockRef}
+        status={transcript.status}
+        rows={transcript.view?.rows ?? []}
+        fraction={reading.fraction}
+        read={reading.read}
+        showJump={reading.showJump}
+        onJump={reading.jumpToReview}
+        onRetry={transcript.retry}
+        error={transcript.error}
+      />
+    </>
+  );
+
   const skipBlind = async () => {
     if (skipReason.trim().length < 10) return;
     setError('');
@@ -237,7 +272,11 @@ export function AssessmentView() {
   if (blocked) {
     return (
       <div className="stack">
-        <h2 className="card-title"><Icon name="lock" />Independent review required</h2>
+        {transcriptBlock}
+        <TranscriptReadNote read={reading.read} />
+        <h2 id={REVIEW_SECTION_ID} className="card-title review-section" tabIndex={-1}>
+          <Icon name="lock" />Independent review required
+        </h2>
         <Banner kind="info">
           The AI's recommendation and scores are hidden until you record your own judgement.
           This keeps your read independent — which is both the point of a second opinion and
@@ -500,7 +539,11 @@ export function AssessmentView() {
       <PageHeader
         icon="evidence"
         title="Assessment"
-        badge={recBadge(outcome.recommendation)}
+        // The reviewer's verdict may lead the page; the AI's may not. Until a
+        // person has reviewed, the recommendation waits on the AI tab, below
+        // the transcript — otherwise the header hands over the conclusion
+        // before the reviewer has read a word of the record.
+        badge={outcome.source === 'human' ? recBadge(outcome.recommendation) : undefined}
         subtitle={(
           <>
             <Link to={`/candidates/${candidate.id}`}>{candidate.name}</Link> · {role.title}
@@ -530,6 +573,17 @@ export function AssessmentView() {
       {notice && <Banner kind="ok">{notice}</Banner>}
       {exportStatus && <Banner kind="info">{exportStatusSentence(exportStatus)}</Banner>}
 
+      {/* The transcript before the readings: the reviewer meets the record
+          of the interview before any account of it, the AI's included. */}
+      {transcriptBlock}
+
+      {/* Everything from here on is the review. The section is the target of
+          the transcript's "Jump to review", and focusable so the landing is
+          announced. Reaching it early is allowed — the note says what the page
+          would rather the reviewer did, and the page does not enforce it. */}
+      <section id={REVIEW_SECTION_ID} className="review-section" tabIndex={-1} aria-label="Review">
+      <TranscriptReadNote read={reading.read} />
+
       {/* Above the score, not below it. A reviewer who has already read
           "76/100" has formed the impression the notice is meant to qualify. */}
       <ValidationStatus />
@@ -553,7 +607,8 @@ export function AssessmentView() {
       {panel('ai', (
       <div className="stack">
       {scored ? (
-        <div className="grid cols-3" style={{ marginBottom: 16 }}>
+        <div className="grid cols-4" style={{ marginBottom: 16 }}>
+          <Stat label="AI recommendation" value={recBadge(result.recommendation)} />
           <Stat label="Overall score" value={formatScoreOutOf100(result.overallScore)} />
           <Stat label="Confidence" value={formatPercent(result.confidence)} />
           <Stat label="Evidence coverage" value={formatPercent(result.evidenceCoverage)} />
@@ -630,6 +685,7 @@ export function AssessmentView() {
       </div>
       </div>
       ))}
+      </section>
 
       {/* What the candidate was emailed automatically after the interview, and
           "Send feedback now" when nothing went. Keyed so a different

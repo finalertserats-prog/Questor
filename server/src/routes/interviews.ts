@@ -725,7 +725,20 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
   ]);
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.transcript_read', entityType: 'InterviewSession', entityId: session.id });
   res.json({
-    transcript: turns.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs })),
+    // The competency each question was asked for, so the review page can tag
+    // the interviewer's turns; and the Leave button, which a reviewer must be
+    // able to tell from anything said. Nothing the AI concluded travels here:
+    // this is what the assessment page shows BEFORE the reading, including
+    // to a reviewer the blind-review policy is still keeping the scores from.
+    transcript: turns.map((t) => ({
+      index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, competencyId: t.competencyId,
+      ...(leftByButton(t) ? { source: LEAVE_SOURCE } : {}),
+    })),
+    // Enough to place the conversation — who interviewed, when, how long.
+    session: {
+      interviewer: personaNameOf(session.personaJson, session.id),
+      startedAt: session.startedAt, completedAt: session.completedAt, durationMinutes: session.durationMinutes,
+    },
     // Human-review context only; never an automated scoring input.
     integrityEvents: { count: integrityEvents.length, events: integrityEvents },
   });

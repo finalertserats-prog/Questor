@@ -22,6 +22,7 @@ import './styles/catalogReview.css';
 import './styles/library.css';
 import './styles/room.css';
 import './styles/scorecard.css';
+import './styles/review.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -275,7 +275,7 @@ describe('shadow mode routes', () => {
     // NAME the hidden fields, so substring-scanning the payload would false-positive.
     expect(Object.keys(res.body).sort()).toEqual([
       'assessmentId', 'blindVerdictRecorded', 'candidate', 'competencies',
-      'instructions', 'levelScale', 'role', 'sessionId', 'transcript', 'withheld',
+      'instructions', 'levelScale', 'role', 'session', 'sessionId', 'transcript', 'withheld',
     ]);
     for (const competency of res.body.competencies) {
       expect(Object.keys(competency).sort()).toEqual([
@@ -283,7 +283,7 @@ describe('shadow mode routes', () => {
       ]);
     }
     for (const turn of res.body.transcript) {
-      expect(Object.keys(turn).sort()).toEqual(['competencyId', 'index', 'speaker', 'text']);
+      expect(Object.keys(turn).sort()).toEqual(['competencyId', 'index', 'speaker', 'startMs', 'text']);
     }
   });
 

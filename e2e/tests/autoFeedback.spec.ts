@@ -81,6 +81,31 @@ test('a completed typed interview shows its assessment at once and records the f
   await expect(page.getByText('Independent review required')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Review this blind' })).toBeVisible();
 
+  // The transcript comes first, above the readings and the form — with who
+  // spoke, when, and what each question was asked for.
+  const transcript = page.getByTestId('transcript-reader');
+  await expect(transcript.getByTestId('transcript-turn').first()).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId('review-facts')).toContainText('Interviewer');
+  await expect(transcript.getByText(ANSWER).first()).toBeVisible();
+  const transcriptTop = (await transcript.boundingBox())?.y ?? Number.NaN;
+  const tabsTop = (await page.getByRole('tablist', { name: 'Assessment readings' }).boundingBox())?.y ?? Number.NaN;
+  expect(transcriptTop).toBeLessThan(tabsTop);
+
+  // On a short screen the transcript is longer than the page, so the note
+  // asks for it to be read first, and the sticky control offers the review.
+  await page.setViewportSize({ width: 1280, height: 600 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const readNote = page.getByTestId('transcript-read-note');
+  await expect(readNote).toContainText('Read the transcript before recording your review');
+  await expect(page.getByTestId('transcript-progress')).toContainText(/Read \d+%/);
+  await page.getByTestId('jump-to-review').click();
+  await expect(page.getByRole('tablist', { name: 'Assessment readings' })).toBeInViewport();
+
+  // Scrolling through to the end of the transcript is what turns the note.
+  await page.getByTestId('transcript-end').scrollIntoViewIfNeeded();
+  await expect(readNote).toContainText('Transcript read');
+  await expect(page.getByTestId('transcript-progress')).toContainText('Transcript read');
+
   // Three readings, and nobody has reviewed this one yet.
   await expect(page.getByRole('tab', { name: 'Human review' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'AI assessment' })).toHaveAttribute('aria-selected', 'true');

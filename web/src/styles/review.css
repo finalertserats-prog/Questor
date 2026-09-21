@@ -1,0 +1,197 @@
+/* ==========================================================================
+   Transcript-first review (AssessmentView → components/review/*)
+   The transcript sits in the page's own flow, so scrolling the page is
+   reading it. State is marked with rules and brackets, never a tinted fill.
+   ========================================================================== */
+
+/* --- the compact header ------------------------------------------------- */
+
+.review-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin: 0 0 14px;
+  padding: 8px 0;
+  border-top: var(--hair) solid var(--rule);
+  border-bottom: var(--hair) solid var(--rule);
+}
+.review-fact {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.review-fact dt {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.review-fact dd {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* --- the transcript block ----------------------------------------------- */
+
+.reader {
+  /* The sticky bar needs the card to be its containing block, and the card
+     must not clip it. */
+  position: relative;
+  overflow: visible;
+}
+
+/* Stays at the top of the viewport for as long as the transcript is on
+   screen, then leaves with it. Negative margins let it span the card so the
+   rule beneath it meets the card's edges. */
+.reader-bar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: -18px -20px 12px;
+  padding: 14px 20px 10px;
+  background: var(--sheet);
+  border-bottom: var(--hair) solid var(--rule);
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+}
+.reader-bar .card-title {
+  margin: 0;
+}
+.reader-bar-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.reader-progress {
+  font-family: var(--font-data);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  padding-left: 8px;
+  border-left: var(--rail) solid var(--rule-strong);
+}
+.reader-progress[data-read='true'] {
+  color: var(--pass);
+  border-left-color: var(--pass);
+}
+
+.reader-turns {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+/* Interviewer turns hang from a faint accent rule; the candidate's answers
+   step in and carry a heavier ink rule, so the two voices read apart at a
+   glance without either being painted. */
+.reader-turn {
+  margin: 0 0 16px;
+  padding: 2px 0 2px 14px;
+  border-left: var(--rail) solid var(--accent-edge);
+}
+.reader-turn.is-candidate {
+  margin-left: 24px;
+  border-left-color: var(--ink);
+}
+.reader-turn.is-system {
+  border-left-style: dashed;
+  border-left-color: var(--rule-strong);
+  color: var(--ink-3);
+}
+.reader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 4px;
+}
+.reader-who {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.reader-turn.is-candidate .reader-who {
+  color: var(--ink);
+}
+.reader-stamp {
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+/* Bracketed, not filled: the competency the question was asked for. */
+.reader-tag {
+  font-size: 11.5px;
+  color: var(--accent);
+  padding: 0 6px;
+  border-left: var(--hair) solid var(--accent-edge);
+  border-right: var(--hair) solid var(--accent-edge);
+}
+.reader-text {
+  margin: 0;
+  line-height: 1.62;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.reader-turn.is-candidate .reader-text {
+  color: var(--ink);
+}
+.reader-end {
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: var(--hair) solid var(--rule);
+  font-family: var(--font-data);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  text-align: center;
+}
+
+/* --- the note beside the review ----------------------------------------- */
+
+.reader-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 6px 0 6px 12px;
+  border-left: var(--rail) solid var(--hold);
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.reader-note.is-read {
+  border-left-color: var(--pass);
+  color: var(--pass);
+}
+
+/* The section the jump lands on. Focusable so the landing is announced;
+   the ring is the page's, not a box of its own. */
+.review-section:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 6px;
+}
+
+@media (max-width: 820.98px) {
+  /* The floating Menu button sits at the top-left of every page at this
+     width; the stuck bar leaves it room rather than sliding under it. */
+  .reader-bar {
+    padding-left: 104px;
+  }
+  .reader-turn.is-candidate {
+    margin-left: 12px;
+  }
+}
