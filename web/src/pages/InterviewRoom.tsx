@@ -39,6 +39,8 @@ import { useFeedbackOptIn, useIntegrityEvents, useVisualViewport } from '../comp
 type AgentTurn = PortalTurn;
 interface PortalInfo {
   candidateName: string; roleTitle: string; durationMinutes: number;
+  /** The session's language code ('en', 'en-GB', …); absent on an older server. */
+  language?: string;
   /** Who conducts this interview; absent on an older server. voiceHint picks the browser voice when there is no server voice; never a provider voice id. */
   persona?: { name: string | null; interviewerId?: string | null; voiceHint?: string } | null;
   recordingConsented?: boolean;
@@ -113,12 +115,15 @@ export function InterviewRoom() {
   // Read by callbacks created before the portal info arrived, so the fallback
   // browser voice is always this interviewer's, never the default.
   const voiceHintRef = useRef<string | undefined>(undefined);
+  // Likewise, the language the recognizer listens in.
+  const languageRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`)
       .then((d) => {
         setInfo(d);
         voiceHintRef.current = d.persona?.voiceHint;
+        languageRef.current = d.language;
         canCaptureRef.current = shouldCaptureAudio(d.recordingConsented);
         // No consent to capture voice means no microphone at all — the
         // interview is answered by typing. The AI still speaks: that is output,
@@ -205,7 +210,7 @@ export function InterviewRoom() {
   };
 
   const voice = useVoiceAnswer({
-    token, phaseRef, textModeRef, canCaptureRef, pausedRef, speechSeqRef, voiceHintRef, setPhase, setTextMode, setInterim, setErr,
+    token, phaseRef, textModeRef, canCaptureRef, pausedRef, speechSeqRef, voiceHintRef, languageRef, setPhase, setTextMode, setInterim, setErr,
     submitAnswer: (text) => { void submitAnswer(text); },
     addNudge: (text) => { addMsg({ speaker: 'agent', text, nudge: true }); },
     mergeIntoDraft,

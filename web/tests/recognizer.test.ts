@@ -75,6 +75,20 @@ async function loadSpeech() {
 /** The recognition object the code is currently driving. */
 const current = () => FakeRecognition.live[FakeRecognition.live.length - 1];
 
+describe('createRecognizer language', () => {
+  it('listens in the language it is given', async () => {
+    const { createRecognizer } = await loadSpeech();
+    createRecognizer({ onFinal: vi.fn() }, { lang: 'en-IN' });
+    expect(current().lang).toBe('en-IN');
+  });
+
+  it('listens in US English when given none', async () => {
+    const { createRecognizer } = await loadSpeech();
+    createRecognizer({ onFinal: vi.fn() });
+    expect(current().lang).toBe('en-US');
+  });
+});
+
 describe('createRecognizer turn-taking', () => {
   beforeEach(() => { FakeRecognition.live = []; });
 
