@@ -254,7 +254,7 @@ describe('finalising a candidate', () => {
     const candidateId = await onboardCandidate(ids);
     const pipeline = await currentStage(ids, candidateId);
     await request(app).post(`/api/pipelines/${pipeline!.id}/decision`).set('Authorization', ids.auth)
-      .send({ decision: 'REJECTED', reason: 'Not enough evidence on the core competency.' });
+      .send({ decision: 'REJECTED', reason: 'Not enough evidence on the core competency.', stageKey: 'participation' });
 
     const res = await finalize(ids, pipeline!.id);
 

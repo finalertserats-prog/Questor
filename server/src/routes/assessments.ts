@@ -7,7 +7,7 @@ import type { AssessmentResult } from '../domain/types.js';
 import { renderReportMarkdown } from '../engines/reportWriter.js';
 import { logAudit } from '../services/audit.js';
 import { emitEvent } from '../services/webhooks.js';
-import { notePipelineEvent } from '../services/pipelineAutonomy.js';
+import { notePipelineEvent, noteReviewDecision } from '../services/pipelineAutonomy.js';
 import { atsFailure, requireTenantAts } from '../services/atsConnections.js';
 import { findCandidateLink } from '../services/atsRecords.js';
 import { getEmail } from '../providers/email/index.js';
@@ -600,6 +600,12 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, disposition: body.disposition });
   // A reviewed interview is an assessed one: Gold, if the finalisation had not already got there.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId, event: 'interview.assessed', trigger: 'review.completed' });
+  // And the verdict is the decision on that round: PROCEED keeps them moving,
+  // DO_NOT_PROGRESS closes their pipeline, CONSIDER waits for a person.
+  const pipelineDecision = await noteReviewDecision({
+    tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId,
+    disposition: body.disposition, reason: body.reason, reviewerId: req.auth!.userId,
+  });
   if (previous && body.supersede) {
     await prisma.humanReview.update({ where: { id: previous.id }, data: { supersededAt: new Date(), supersededReason: body.supersede.reason } });
     await logAudit({
@@ -612,7 +618,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // Where this reviewer parted company with the AI, kept for later analysis
   // (services/assessmentReview.ts). Written now, at the moment the fact exists.
   await recordReviewDifference(req.auth!.tenantId, a.id, review.id);
-  res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview }, feedbackReleased });
+  res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview }, feedbackReleased, pipeline: pipelineDecision });
 }));
 
 // Export to ATS (FR-040)

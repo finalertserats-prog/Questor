@@ -64,3 +64,57 @@ export function resolveTransition(stages: readonly PipelineStage[], currentStage
   if (fromIndex < 0 || toIndex <= fromIndex) return null;
   return { from: currentStageKey, to: target };
 }
+
+/**
+ * Decisions. A person records one — as the verdict on an assessment review, or
+ * on the pipeline itself — and the pipeline follows it without anyone pressing
+ * "Move to …" afterwards:
+ *
+ *   APPROVED at a stage    → the stage after it (Silver → Gold, Gold → Diamond);
+ *                            at the last stage, the pipeline closes approved
+ *   REJECTED / WITHDRAWN   → the pipeline closes with that outcome, where it is
+ *
+ * Approval is the one decision that moves anyone, and it obeys the same two
+ * rules as the events above: forward only, and approving a stage the candidate
+ * has already left changes nothing. It is also how the last stage is reached
+ * without the Finalise button — still a person's decision, only recorded once.
+ */
+
+export const DECISION_OUTCOMES = ['APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
+export type DecisionOutcome = (typeof DECISION_OUTCOMES)[number];
+
+export type DecisionEffect =
+  | { readonly kind: 'advance'; readonly from: string; readonly to: string; readonly final: boolean }
+  | { readonly kind: 'close'; readonly outcome: DecisionOutcome; readonly atStageKey: string };
+
+/**
+ * What a decision about `aboutStageKey` does to a candidate at
+ * `currentStageKey`, or null when it does nothing. A rejection or withdrawal
+ * closes the pipeline at the stage the candidate is actually at — the decision
+ * may be about an earlier round, but nobody is moved back to it.
+ */
+export function resolveDecision(
+  stages: readonly PipelineStage[], currentStageKey: string, outcome: DecisionOutcome, aboutStageKey: string,
+): DecisionEffect | null {
+  if (outcome !== 'APPROVED') return { kind: 'close', outcome, atStageKey: currentStageKey };
+  const currentIndex = stages.findIndex((stage) => stage.key === currentStageKey);
+  const aboutIndex = stages.findIndex((stage) => stage.key === aboutStageKey);
+  if (currentIndex < 0 || aboutIndex < 0) return null;
+  const lastIndex = stages.length - 1;
+  if (aboutIndex === lastIndex) {
+    return currentIndex === lastIndex ? { kind: 'close', outcome, atStageKey: currentStageKey } : null;
+  }
+  const toIndex = aboutIndex + 1;
+  if (toIndex <= currentIndex) return null;
+  return { kind: 'advance', from: currentStageKey, to: stages[toIndex].key, final: toIndex === lastIndex };
+}
+
+/**
+ * The decision a review's disposition amounts to. CONSIDER is a person saying
+ * "not yet", so it decides nothing; the pipeline waits for them.
+ */
+export function decisionOfDisposition(disposition: string): DecisionOutcome | null {
+  if (disposition === 'PROCEED') return 'APPROVED';
+  if (disposition === 'DO_NOT_PROGRESS') return 'REJECTED';
+  return null;
+}

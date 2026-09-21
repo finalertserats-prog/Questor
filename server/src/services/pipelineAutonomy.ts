@@ -2,8 +2,11 @@ import type { CandidatePipeline } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
-import { DEFAULT_STAGES, parseStages, parseStagesStrict } from '../domain/pipelineStages.js';
-import { resolveTransition, type PipelineEvent, type StageTransition } from '../domain/pipelineAutonomy.js';
+import { DEFAULT_STAGES, parseStages, parseStagesStrict, type StageKind } from '../domain/pipelineStages.js';
+import {
+  decisionOfDisposition, resolveDecision, resolveTransition,
+  type DecisionEffect, type DecisionOutcome, type PipelineEvent, type StageTransition,
+} from '../domain/pipelineAutonomy.js';
 
 /**
  * Applies the autonomous journey (domain/pipelineAutonomy.ts) to the database.
@@ -32,7 +35,7 @@ const RETRIES = 3;
  * pipeline both try to create it; the unique (candidate, role) key lets exactly
  * one succeed and the other reads what it created.
  */
-async function ensurePipeline(o: PipelineEventInput & { readonly roleId: string }): Promise<CandidatePipeline> {
+async function ensurePipeline(o: { readonly tenantId: string; readonly candidateId: string; readonly roleId: string; readonly trigger: string }): Promise<CandidatePipeline> {
   const where = { tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId };
   const existing = await prisma.candidatePipeline.findFirst({ where });
   if (existing) return existing;
@@ -99,5 +102,132 @@ export async function notePipelineEvent(o: PipelineEventInput): Promise<void> {
     await applyPipelineEvent(o);
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), candidateId: o.candidateId, event: o.event }, 'Pipeline event could not be applied');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Decisions (domain/pipelineAutonomy.ts, resolveDecision)
+// ---------------------------------------------------------------------------
+
+export type DecisionSource = 'review' | 'pipeline';
+
+export interface PipelineDecisionInput {
+  readonly tenantId: string;
+  readonly outcome: DecisionOutcome;
+  /** Kept on the pipeline, which erasure removes; the audit records only that one was given. */
+  readonly reason: string;
+  /**
+   * The stage the decision is about. The pipeline panel names the key; the
+   * assessment review knows it judged the AI interview, not which key this
+   * role's plan gave that stage, so it names the kind.
+   */
+  readonly about: { readonly stageKey: string } | { readonly stageKind: StageKind };
+  readonly source: DecisionSource;
+  /** The person whose decision this is. The system only carries it out. */
+  readonly actorId: string;
+  readonly trigger: string;
+}
+
+export type DecisionResult =
+  | { readonly applied: true; readonly effect: DecisionEffect }
+  | { readonly applied: false; readonly because: 'already_decided' | 'nothing_to_do' | 'contended' };
+
+async function auditDecision(pipeline: CandidatePipeline, o: PipelineDecisionInput, effect: DecisionEffect, about: string): Promise<void> {
+  const actor = { tenantId: o.tenantId, actorType: 'user' as const, actorId: o.actorId, entityType: 'CandidatePipeline', entityId: pipeline.id };
+  if (effect.kind === 'close') {
+    await logAudit({
+      ...actor, action: 'pipeline.decided',
+      after: { decision: effect.outcome, stage: effect.atStageKey, about, source: o.source, trigger: o.trigger, reasonRecorded: true },
+    });
+    return;
+  }
+  // Reaching the last stage is a finalisation whoever's button it was, so the
+  // trail reads the same as the Finalise endpoint's.
+  await logAudit({
+    ...actor, action: effect.final ? 'pipeline.finalized' : 'pipeline.advanced',
+    before: { stage: effect.from }, after: { stage: effect.to, decision: o.outcome, source: o.source, trigger: o.trigger },
+  });
+}
+
+/**
+ * Apply a person's decision to a pipeline already loaded (and scoped) by the
+ * caller. Same conditional-update discipline as the events: the write only
+ * lands on the stage and status that were read, so a decision racing an
+ * autonomous move, a manual advance, a Finalise or another decision either
+ * re-resolves from the winner's state or reports the contention — it never
+ * closes a pipeline at a stage the candidate had already left.
+ */
+export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecisionInput): Promise<DecisionResult> {
+  let pipeline = loaded;
+  for (let attempt = 0; attempt < RETRIES; attempt++) {
+    if (pipeline.status !== 'ACTIVE') return { applied: false, because: 'already_decided' };
+    const wanted = o.about;
+    // A decision named by stage key is about the stage the person was looking
+    // at. If a Finalise or an autonomous move has carried the candidate past
+    // it since, that decision is stale — it must not close them at a stage
+    // nobody judged. A verdict named by kind (the review of the AI round)
+    // stands wherever the candidate has got to.
+    if ('stageKey' in wanted && pipeline.currentStageKey !== wanted.stageKey) return { applied: false, because: 'contended' };
+    const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
+    const about = 'stageKey' in wanted ? wanted.stageKey : stages.find((s) => s.kind === wanted.stageKind)?.key;
+    const effect = about ? resolveDecision(stages, pipeline.currentStageKey, o.outcome, about) : null;
+    if (!effect || !about) return { applied: false, because: 'nothing_to_do' };
+
+    const written = effect.kind === 'advance'
+      ? await prisma.candidatePipeline.updateMany({
+        where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: effect.from },
+        data: { currentStageKey: effect.to },
+      })
+      : await prisma.candidatePipeline.updateMany({
+        where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: effect.atStageKey },
+        data: {
+          status: 'DECIDED', decision: effect.outcome, decisionReason: o.reason,
+          decidedAtStageKey: effect.atStageKey, decidedById: o.actorId, decidedAt: new Date(),
+        },
+      });
+    if (written.count === 1) {
+      await auditDecision(pipeline, o, effect, about);
+      return { applied: true, effect };
+    }
+    pipeline = await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipeline.id } });
+  }
+  logger.warn({ pipelineId: pipeline.id, outcome: o.outcome }, 'Pipeline kept changing while a decision was applied; giving up');
+  return { applied: false, because: 'contended' };
+}
+
+export interface ReviewDecisionInput {
+  readonly tenantId: string;
+  readonly candidateId: string;
+  readonly roleId: string | null;
+  readonly disposition: string;
+  readonly reason: string;
+  readonly reviewerId: string;
+}
+
+/**
+ * The verdict on an assessment review, applied to the candidate's pipeline:
+ * PROCEED approves the AI interview stage, DO_NOT_PROGRESS rejects, CONSIDER
+ * decides nothing. Null when there was no decision or no pipeline to carry
+ * it to. The review itself has committed; like the events, a failure here is
+ * logged loudly and never undoes it.
+ */
+export async function noteReviewDecision(o: ReviewDecisionInput): Promise<DecisionResult | null> {
+  const outcome = decisionOfDisposition(o.disposition);
+  if (!outcome || !o.roleId) return null;
+  try {
+    const pipeline = await ensurePipeline({ tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId, trigger: 'review.completed' });
+    const result = await decidePipeline(pipeline, {
+      tenantId: o.tenantId, outcome, reason: o.reason, about: { stageKind: 'ai_interview' },
+      source: 'review', actorId: o.reviewerId, trigger: 'review.completed',
+    });
+    if (!result.applied && result.because === 'already_decided') {
+      // A superseding verdict cannot reopen a closed pipeline: the earlier
+      // decision stands until a person records otherwise.
+      logger.warn({ pipelineId: pipeline.id, disposition: o.disposition }, 'Review verdict arrived for a pipeline already decided; left as it is');
+    }
+    return result;
+  } catch (err) {
+    logger.error({ err: err instanceof Error ? err.message : String(err), candidateId: o.candidateId }, 'Review verdict could not be applied to the pipeline');
+    return null;
   }
 }

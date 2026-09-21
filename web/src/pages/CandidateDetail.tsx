@@ -163,6 +163,15 @@ export function CandidateDetail() {
   const [version, setVersion] = useState(0);
   const refresh = useCallback(() => setVersion((v) => v + 1), []);
 
+  // The pipeline and journey move on their own — a review completed in
+  // another tab decides them — so coming back to this tab re-reads both
+  // rather than showing the stage the candidate had when the tab was left.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refresh]);
+
   // interview setup form
   const [durationMinutes, setDurationMinutes] = useState(45);
   // Random is the recommended default. Tone below is a separate setting and is

@@ -16,7 +16,8 @@ import { formatRoundTime } from '../services/roundTime.js';
 import {
   DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, stagesSchema, type PipelineStage,
 } from '../domain/pipelineStages.js';
-import { resolveTransition } from '../domain/pipelineAutonomy.js';
+import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
+import { decidePipeline } from '../services/pipelineAutonomy.js';
 import {
   createMeeting, initialMeetingFields, isStaleCreation, tenantMeetingProvider, MEETING_STATUS, type MeetingOutcome,
 } from '../services/roundMeeting.js';
@@ -423,38 +424,40 @@ pipelinesRouter.post('/:id/finalize', requireCapability('assessment:review'), as
 }));
 
 const decisionSchema = z.object({
-  decision: z.enum(['APPROVED', 'REJECTED', 'WITHDRAWN']),
+  decision: z.enum(DECISION_OUTCOMES),
   reason: z.string().trim().min(10, 'Record why this decision was made.').max(1000),
+  // The stage the person was looking at when they decided. Required, and it
+  // must still be where the candidate is: a retried approval that reads the
+  // stage afresh would move them twice and skip a human round.
+  stageKey: z.string().min(1),
 });
 
-// A person records the outcome. Held to assessment:review, the same capability
-// that signs off an assessment, so this cannot become an automated step.
+// A person records the outcome, and the pipeline follows it: approval moves
+// the candidate to the next stage (the last stage closes them as approved),
+// rejection and withdrawal close the pipeline (services/pipelineAutonomy.ts).
+// Held to assessment:review, the same capability that signs off an
+// assessment, so this cannot become an automated step.
 pipelinesRouter.post('/:id/decision', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const body = decisionSchema.parse(req.body);
   const pipeline = await loadPipeline(req, req.params.id);
-
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, DECIDED);
 
-  // Conditional on the stage we read as well as the status: a concurrent
-  // advance would otherwise leave the decision recorded against a stage the
-  // candidate had already left.
-  const decided = await prisma.candidatePipeline.updateMany({
-    where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: pipeline.currentStageKey },
-    data: {
-      status: 'DECIDED', decision: body.decision, decisionReason: body.reason,
-      decidedAtStageKey: pipeline.currentStageKey, decidedById: req.auth!.userId, decidedAt: new Date(),
-    },
-  });
-  if (decided.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
+  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
+  if (body.stageKey !== pipeline.currentStageKey) {
+    throw new HttpError(409, `That decision was about ${labelOf(stages, body.stageKey)}, but the candidate is now at ${labelOf(stages, pipeline.currentStageKey)}. Reload and decide again.`);
+  }
 
-  // The reason itself stays on the pipeline, which erasure removes. Audit rows
-  // outlive erasure, so they record that a reason was given, not what it said.
-  await logAudit({
-    tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
-    action: 'pipeline.decided', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    after: { decision: body.decision, stage: pipeline.currentStageKey, reasonRecorded: true },
+  const result = await decidePipeline(pipeline, {
+    tenantId: req.auth!.tenantId, outcome: body.decision, reason: body.reason,
+    about: { stageKey: pipeline.currentStageKey }, source: 'pipeline', actorId: req.auth!.userId, trigger: 'pipeline.decision',
   });
-  res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
+  if (!result.applied) {
+    if (result.because === 'already_decided') throw new HttpError(409, DECIDED);
+    // "Nothing to do" here means a concurrent move carried the candidate past
+    // the stage this decision was about: the same answer as a contended write.
+    throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
+  }
+  res.json({ pipeline: presentPipeline(await reload(pipeline.id)), effect: result.effect });
 }));
 
 interface StageSummary extends PipelineStage {

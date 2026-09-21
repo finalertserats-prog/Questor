@@ -598,6 +598,10 @@ describe('a decided candidate', () => {
     });
   });
 
+  it('states the outcome as the final word on the journey', () => {
+    expect(journey.decision.decision.outcome).toBe('Approved at Gold. The journey is complete.');
+  });
+
   it('shows the assessment summary with its evidence quoted and timed', () => {
     expect(journey.decision.assessment.summary).toBe('Consistent ownership of production systems.');
     expect(journey.decision.assessment.quotes).toEqual([
@@ -666,5 +670,43 @@ describe('a role with its own stage plan', () => {
     }));
 
     expect(journey.decision.humanNotes[0].stageLabel).toBe('removed_stage');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. The outcome line
+// ---------------------------------------------------------------------------
+
+/**
+ * Decisions move the journey on their own (server: domain/pipelineAutonomy.ts).
+ * The board reports where that left the candidate in one line — the outcome —
+ * so a rejection reads as the end of the journey and an approval as progress.
+ */
+describe('the outcome line', () => {
+  it('says a rejected candidate is not progressing, with no stage after it', () => {
+    const journey = buildJourney(input({
+      pipeline: pipeline({ currentStageKey: 'gold', status: 'DECIDED', decision: 'REJECTED', decidedAtStageKey: 'gold', decisionReason: 'Missing the core competency.' }),
+    }));
+
+    expect([journey.decision.decision.outcome, journey.schedule.stages.map((s) => s.state)])
+      .toEqual(['Not progressing. The journey ended at Gold.', ['decided', 'skipped']]);
+  });
+
+  it('says a withdrawn candidate withdrew', () => {
+    const journey = buildJourney(input({
+      pipeline: pipeline({ currentStageKey: 'silver', status: 'DECIDED', decision: 'WITHDRAWN', decidedAtStageKey: 'silver' }),
+    }));
+
+    expect(journey.decision.decision.outcome).toBe('The candidate withdrew at Silver. The journey ended there.');
+  });
+
+  it('says a candidate approved out of the AI interview is progressing to the next round', () => {
+    const journey = buildJourney(input({ pipeline: pipeline({ currentStageKey: 'gold' }) }));
+
+    expect(journey.decision.decision.outcome).toBe('Progressing to the next round: Gold.');
+  });
+
+  it('has nothing to say before a pipeline exists', () => {
+    expect(buildJourney(input()).decision.decision.outcome).toBeNull();
   });
 });

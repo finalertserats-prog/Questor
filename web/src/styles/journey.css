@@ -287,6 +287,27 @@
   font-size: 11px;
 }
 
+/* Where the journey stands, in one line. A rule and a label, not a tinted
+   block: the sentence is the state. Shared by the journey board's decision
+   column and the pipeline panel's decided banner. */
+.journey-outcome {
+  margin: 0 0 8px;
+  padding: 6px 0 6px 10px;
+  border-left: 2px solid var(--ink);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.journey-outcome-label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .journey-stage-group + .journey-stage-group {
   margin-top: 10px;
 }

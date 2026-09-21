@@ -20,7 +20,7 @@
  */
 
 import type { IconName } from './Icon';
-import { stageStates, type PipelineStageView, type StageKind, type StageState } from './pipelineView';
+import { pipelineOutcome, stageStates, type PipelineStageView, type StageKind, type StageState } from './pipelineView';
 import { roundScore } from './scoreFormat';
 import { buildFeedbackView } from './journeyFeedbackView';
 
@@ -309,6 +309,12 @@ export interface JourneyDecisionRecord {
   readonly reason: string;
   readonly stageLabel: string | null;
   readonly decidedAt: string | null;
+  /**
+   * Where the journey stands, in one line (pipelineView.pipelineOutcome): the
+   * final word once a decision has ended it, progress until then. Null with
+   * no pipeline — there is no journey to report on yet.
+   */
+  readonly outcome: string | null;
 }
 
 /**
@@ -765,6 +771,7 @@ function buildDecision(input: JourneyInput, state: ColumnState, selected: Select
       reason: pipeline?.decisionReason ?? '',
       stageLabel: pipeline?.decidedAtStageKey ? labelOf(pipeline, pipeline.decidedAtStageKey) : null,
       decidedAt: pipeline?.decidedAt ?? null,
+      outcome: pipeline ? pipelineOutcome(pipeline.stages, pipeline).text : null,
     },
     evidenceGaps: input.missingEvidence,
     candidateFeedback: buildFeedbackView(input.candidateFeedback),

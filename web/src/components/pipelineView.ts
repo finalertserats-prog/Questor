@@ -51,3 +51,40 @@ export function finalStage(stages: readonly PipelineStageView[], currentKey: str
   const index = stages.findIndex((stage) => stage.key === currentKey);
   return index >= 0 && index < stages.length - 1 ? stages[stages.length - 1] : null;
 }
+
+/** The fields of a pipeline the outcome line reads. */
+export interface PipelineStanding {
+  readonly currentStageKey: string;
+  readonly status: string;
+  readonly decision: string | null;
+  readonly decidedAtStageKey: string | null;
+}
+
+export interface PipelineOutcome {
+  /** True once the journey has ended: nothing after this is a stage. */
+  readonly final: boolean;
+  readonly text: string;
+}
+
+/**
+ * Where the journey stands, in one sentence. Decisions move candidates on
+ * their own (server: domain/pipelineAutonomy.ts), so the panel and the journey
+ * board both read this rather than each inferring it — and a rejection reads
+ * as the end of the journey, never as a stage still to come.
+ */
+export function pipelineOutcome(stages: readonly PipelineStageView[], pipeline: PipelineStanding): PipelineOutcome {
+  const labelOf = (key: string) => stages.find((stage) => stage.key === key)?.label ?? key;
+  if (pipeline.status === 'DECIDED') {
+    const at = labelOf(pipeline.decidedAtStageKey ?? pipeline.currentStageKey);
+    if (pipeline.decision === 'REJECTED') return { final: true, text: `Not progressing. The journey ended at ${at}.` };
+    if (pipeline.decision === 'WITHDRAWN') return { final: true, text: `The candidate withdrew at ${at}. The journey ended there.` };
+    if (pipeline.decision === 'APPROVED') return { final: true, text: `Approved at ${at}. The journey is complete.` };
+    return { final: true, text: `Decided at ${at}.` };
+  }
+  const index = stages.findIndex((stage) => stage.key === pipeline.currentStageKey);
+  const current = index >= 0 ? stages[index] : null;
+  const label = labelOf(pipeline.currentStageKey);
+  if (current && index === stages.length - 1) return { final: false, text: `Finalised as ${label}. A person records the final outcome.` };
+  if (current?.kind === 'human_interview') return { final: false, text: `Progressing to the next round: ${label}.` };
+  return { final: false, text: `In progress: ${label}.` };
+}

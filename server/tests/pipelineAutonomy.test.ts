@@ -4,7 +4,9 @@ import { join } from 'node:path';
 import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { DEFAULT_STAGES, type PipelineStage } from '../src/domain/pipelineStages.js';
-import { PIPELINE_EVENTS, resolveTransition, targetStageKey } from '../src/domain/pipelineAutonomy.js';
+import {
+  DECISION_OUTCOMES, PIPELINE_EVENTS, decisionOfDisposition, resolveDecision, resolveTransition, targetStageKey,
+} from '../src/domain/pipelineAutonomy.js';
 
 /**
  * The autonomous candidate journey: Participation → Bronze → Silver → Gold →
@@ -86,6 +88,92 @@ describe('resolveTransition', () => {
   it('never reaches Diamond from an interview event', () => {
     const reached = ['candidate.onboarded', 'candidate.profiled', 'interview.scheduled', 'interview.assessed'] as const;
     expect(reached.map((event) => resolveTransition(DEFAULT_STAGES, 'participation', event)?.to)).not.toContain('diamond');
+  });
+});
+
+/**
+ * A person's decision drives the pipeline: approving a stage moves the
+ * candidate to the one after it (Silver → Gold, Gold → Diamond); approving
+ * the last stage, or rejecting or withdrawing anywhere, closes it. Forward
+ * only, and approving a stage already left changes nothing.
+ */
+describe('resolveDecision', () => {
+  it('moves an approved Silver candidate to Gold', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'silver', 'APPROVED', 'silver'))
+      .toEqual({ kind: 'advance', from: 'silver', to: 'gold', final: false });
+  });
+
+  it('moves an approved Gold candidate to Diamond, and says so is the last stage', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'gold', 'APPROVED', 'gold'))
+      .toEqual({ kind: 'advance', from: 'gold', to: 'diamond', final: true });
+  });
+
+  it('closes an approved Diamond candidate as approved', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'diamond', 'APPROVED', 'diamond'))
+      .toEqual({ kind: 'close', outcome: 'APPROVED', atStageKey: 'diamond' });
+  });
+
+  it('closes a rejected candidate at the stage they are at, whatever the decision was about', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'gold', 'REJECTED', 'silver'))
+      .toEqual({ kind: 'close', outcome: 'REJECTED', atStageKey: 'gold' });
+  });
+
+  it('closes a withdrawn candidate at the stage they are at', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'bronze', 'WITHDRAWN', 'bronze'))
+      .toEqual({ kind: 'close', outcome: 'WITHDRAWN', atStageKey: 'bronze' });
+  });
+
+  it('does nothing when the approved stage has already been left', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'gold', 'APPROVED', 'silver')).toBeNull();
+  });
+
+  it('is idempotent: approving the same stage twice resolves to nothing the second time', () => {
+    const first = resolveDecision(DEFAULT_STAGES, 'silver', 'APPROVED', 'silver');
+    expect(resolveDecision(DEFAULT_STAGES, first?.kind === 'advance' ? first.to : 'silver', 'APPROVED', 'silver')).toBeNull();
+  });
+
+  it('catches up a candidate the events left behind when a later stage is approved', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'bronze', 'APPROVED', 'silver'))
+      .toEqual({ kind: 'advance', from: 'bronze', to: 'gold', final: false });
+  });
+
+  it('does nothing for an approval of a stage the plan does not contain', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'silver', 'APPROVED', 'platinum')).toBeNull();
+  });
+
+  it('does nothing for an approval when the current stage is not in the plan', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'platinum', 'APPROVED', 'silver')).toBeNull();
+  });
+
+  it('never approves a candidate straight into the last stage from behind it', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'silver', 'APPROVED', 'diamond')).toBeNull();
+  });
+
+  it('reaches the last stage of a plan whose only human stage is the last one, because a person approved it', () => {
+    expect(resolveDecision(NO_AI_INTERVIEW, 'intake', 'APPROVED', 'intake'))
+      .toEqual({ kind: 'advance', from: 'intake', to: 'panel', final: true });
+  });
+
+  it('knows exactly three outcomes', () => {
+    expect(DECISION_OUTCOMES).toEqual(['APPROVED', 'REJECTED', 'WITHDRAWN']);
+  });
+});
+
+describe('decisionOfDisposition', () => {
+  it('reads PROCEED as approval', () => {
+    expect(decisionOfDisposition('PROCEED')).toBe('APPROVED');
+  });
+
+  it('reads DO_NOT_PROGRESS as rejection', () => {
+    expect(decisionOfDisposition('DO_NOT_PROGRESS')).toBe('REJECTED');
+  });
+
+  it('reads CONSIDER as no decision at all', () => {
+    expect(decisionOfDisposition('CONSIDER')).toBeNull();
+  });
+
+  it('reads anything else as no decision', () => {
+    expect(decisionOfDisposition('')).toBeNull();
   });
 });
 

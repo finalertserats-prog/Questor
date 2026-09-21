@@ -358,6 +358,15 @@ export function CandidateJourneyBoard({ journey }: { journey: CandidateJourney }
           )}
 
           <Block title="Decision">
+            {/* The journey follows decisions on its own; this line is where
+                that left the candidate, and it reads the same in the pipeline
+                panel below. */}
+            {decision.decision.outcome && (
+              <p className="journey-outcome" data-testid="journey-outcome">
+                <span className="journey-outcome-label">Outcome</span>
+                {decision.decision.outcome}
+              </p>
+            )}
             {decision.decision.recorded ? (
               <>
                 <div className="journey-links" style={{ marginBottom: 6 }}>

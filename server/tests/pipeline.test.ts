@@ -127,16 +127,18 @@ describe('moving through stages', () => {
 describe('deciding', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('records an approval at any stage', async () => {
+  // Approval moves the candidate on; only at the last stage does it close the
+  // pipeline (tests/pipelineDecision.test.ts covers every transition).
+  it('moves an approved candidate to the next stage instead of closing the pipeline', async () => {
     const ids = await seeded();
     const created = await createPipeline(ids);
     const id = created.body.pipeline.id;
     await request(app).post(`/api/pipelines/${id}/advance`).set('Authorization', ids.auth).send({ toStageKey: 'bronze' });
 
     const res = await request(app).post(`/api/pipelines/${id}/decision`).set('Authorization', ids.auth)
-      .send({ decision: 'APPROVED', reason: 'Strong evidence across the profile review and first round.' });
+      .send({ decision: 'APPROVED', reason: 'Strong evidence across the profile review and first round.', stageKey: 'bronze' });
 
-    expect(res.body.pipeline).toMatchObject({ status: 'DECIDED', decision: 'APPROVED', decidedAtStageKey: 'bronze' });
+    expect(res.body.pipeline).toMatchObject({ status: 'ACTIVE', currentStageKey: 'silver', decision: null });
   });
 
   it('stops a decided pipeline from advancing', async () => {
@@ -144,7 +146,7 @@ describe('deciding', () => {
     const created = await createPipeline(ids);
     const id = created.body.pipeline.id;
     await request(app).post(`/api/pipelines/${id}/decision`).set('Authorization', ids.auth)
-      .send({ decision: 'REJECTED', reason: 'Role requirements were not met in the evidence.' });
+      .send({ decision: 'REJECTED', reason: 'Role requirements were not met in the evidence.', stageKey: 'participation' });
 
     const res = await request(app).post(`/api/pipelines/${id}/advance`).set('Authorization', ids.auth).send({ toStageKey: 'bronze' });
 
@@ -155,7 +157,7 @@ describe('deciding', () => {
     const ids = await seeded();
     const created = await createPipeline(ids);
     await request(app).post(`/api/pipelines/${created.body.pipeline.id}/decision`).set('Authorization', ids.auth)
-      .send({ decision: 'APPROVED', reason: 'Strong evidence across the profile review and first round.' });
+      .send({ decision: 'REJECTED', reason: 'Role requirements were not met in the evidence.', stageKey: 'participation' });
 
     const audit = await prisma.auditEvent.findFirst({ where: { action: 'pipeline.decided', entityId: created.body.pipeline.id } });
 
@@ -165,8 +167,8 @@ describe('deciding', () => {
   it('keeps the free-text reason out of the audit log, which outlives candidate erasure', async () => {
     const ids = await seeded();
     const created = await createPipeline(ids);
-    const reason = 'Strong evidence across the profile review and first round.';
-    await request(app).post(`/api/pipelines/${created.body.pipeline.id}/decision`).set('Authorization', ids.auth).send({ decision: 'APPROVED', reason });
+    const reason = 'Role requirements were not met in the evidence.';
+    await request(app).post(`/api/pipelines/${created.body.pipeline.id}/decision`).set('Authorization', ids.auth).send({ decision: 'REJECTED', reason, stageKey: 'participation' });
 
     const audit = await prisma.auditEvent.findFirstOrThrow({ where: { action: 'pipeline.decided', entityId: created.body.pipeline.id } });
 

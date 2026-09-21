@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
-import { finalStage, nextStage, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
+import { finalStage, nextStage, pipelineOutcome, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
 import { decisionStatus, interviewStatus } from './statusModel';
 import { sessionOptionLabels } from './roleLabelModel';
 import { interviewerName } from './candidateJourney';
@@ -63,6 +63,11 @@ interface InterviewOption {
 }
 
 type Decision = 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
+
+/** What the server did with a decision (routes/pipelines.ts, POST /:id/decision). */
+type DecisionEffect =
+  | { kind: 'advance'; from: string; to: string; final: boolean }
+  | { kind: 'close'; outcome: Decision; atStageKey: string };
 
 /** The server's own floor for a decision reason, checked here too. */
 const MIN_DECISION_REASON = 10;
@@ -140,6 +145,10 @@ export function PipelinePanel(
   const [pendingAdvance, setPendingAdvance] = useState<string | null>(null);
   // Set while finalising the candidate waits to be confirmed.
   const [pendingFinalize, setPendingFinalize] = useState(false);
+  // What the last decision did: an approval moves the candidate on, and the
+  // person who recorded it should be told so rather than left to spot the
+  // stage track changing.
+  const [decisionNotice, setDecisionNotice] = useState('');
 
   const load = useCallback(async () => {
     const loadId = ++latestLoad.current;
@@ -289,13 +298,28 @@ export function PipelinePanel(
       setError(`Say why in at least ${MIN_DECISION_REASON} characters — this is the record of the decision.`);
       return;
     }
-    void run(() => api.post(`/pipelines/${pipeline.id}/decision`, { decision, reason: reason.trim() })
-      .then(() => { setReason(''); setPendingDecision(null); }));
+    // The stage travels with the decision: if the candidate moved on while the
+    // form was open, the server refuses rather than deciding the wrong round.
+    void run(() => api.post<{ effect: DecisionEffect }>(`/pipelines/${pipeline.id}/decision`, {
+      decision, reason: reason.trim(), stageKey: pipeline.currentStageKey,
+    }).then((resp) => {
+      setReason('');
+      setPendingDecision(null);
+      const effect = resp.effect;
+      if (effect?.kind === 'advance') {
+        setDecisionNotice(effect.final
+          ? `${candidateName} is finalised as ${labelFor(effect.to)}.`
+          : `${candidateName} moves to ${labelFor(effect.to)}.`);
+      } else {
+        setDecisionNotice('');
+      }
+    }));
   };
 
-  // Approving moves someone forward; the other two end their candidacy and
-  // close the pipeline, and nothing in this panel undoes that. Those two get
-  // named back — outcome and person — before they are recorded.
+  // Approving moves someone forward — to the next stage, or to a recorded
+  // approval at the last one; the other two end their candidacy and close the
+  // pipeline, and nothing in this panel undoes that. Those two get named
+  // back — outcome and person — before they are recorded.
   const recordDecision = (e: React.FormEvent) => {
     e.preventDefault();
     if (reason.trim().length < MIN_DECISION_REASON) {
@@ -331,6 +355,9 @@ export function PipelinePanel(
         <StatusBadge kind="pipeline" value={pipeline.status} />
       </div>
       {error && <Banner kind="error">{error}</Banner>}
+      {decisionNotice && pipeline.status === 'ACTIVE' && (
+        <Banner kind="ok"><span data-testid="decision-notice">{decisionNotice}</span></Banner>
+      )}
 
       {meetingNotice && (
         <Banner kind={meetingNotice.ok ? 'ok' : 'error'}>
@@ -363,11 +390,17 @@ export function PipelinePanel(
       </ol>
 
       {pipeline.status === 'DECIDED' ? (
-        <Banner kind="info">
-          {/* Badge labels come from statusModel and match DECISION_TEXT. */}
-          <StatusBadge kind="decision" value={pipeline.decision ?? 'APPROVED'} />{' '}
-          at {labelFor(pipeline.decidedAtStageKey)}. {pipeline.decisionReason}
-        </Banner>
+        <>
+          <p className="journey-outcome" data-testid="pipeline-outcome">
+            <span className="journey-outcome-label">Outcome</span>
+            {pipelineOutcome(pipeline.stages, pipeline).text}
+          </p>
+          <Banner kind="info">
+            {/* Badge labels come from statusModel and match DECISION_TEXT. */}
+            <StatusBadge kind="decision" value={pipeline.decision ?? 'APPROVED'} />{' '}
+            at {labelFor(pipeline.decidedAtStageKey)}. {pipeline.decisionReason}
+          </Banner>
+        </>
       ) : (
         <div className="pipeline-actions grid cols-3">
           <div className="pipeline-action">
