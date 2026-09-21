@@ -53,6 +53,7 @@ export interface DashboardMetrics {
     candidate: { id: string; name: string };
     role: { id: string; title: string; level: string; regionCode: string | null; experienceBand: string | null; createdAt: string };
   }>;
+  readonly needsAttention: NeedsAttention;
   /** Added by the dashboard route from the role metrics service. */
   readonly roles?: {
     readonly kpis: {
@@ -64,6 +65,63 @@ export interface DashboardMetrics {
     readonly topByInterviewed: ReadonlyArray<RoleTopItem>;
     readonly minSample: number;
   };
+}
+
+export type AttentionKind = 'review' | 'accommodation' | 'human_request';
+
+/**
+ * The things waiting on a person: an assessment to review, an interview paused
+ * on an accommodation request, a candidate who asked to talk to someone. Each
+ * of these used to be visible only on that candidate's own page.
+ */
+export interface NeedsAttention {
+  readonly counts: Readonly<Record<AttentionKind, number>>;
+  /** Newest first, at most ATTENTION_ITEM_LIMIT. */
+  readonly items: ReadonlyArray<{
+    kind: AttentionKind; at: string; sessionId: string; assessmentId: string | null;
+    candidate: { id: string; name: string };
+    role: { id: string; title: string };
+  }>;
+}
+
+const ATTENTION_ITEM_LIMIT = 10;
+/** Nothing marks a human request as handled, so it stops asking after a month. */
+const HUMAN_REQUEST_WINDOW_DAYS = 30;
+
+async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWhereInput, now: Date): Promise<NeedsAttention> {
+  const requestedSince = new Date(now.getTime() - HUMAN_REQUEST_WINDOW_DAYS * DAY_MS);
+  const sessionSelect = {
+    id: true, state: true, createdAt: true, completedAt: true,
+    candidate: { select: { id: true, fullName: true } },
+    role: { select: { id: true, title: true } },
+    assessments: { orderBy: { version: 'desc' as const }, take: 1, select: { id: true, createdAt: true } },
+  };
+  const requestWhere: Prisma.CandidateHumanRequestWhereInput = { tenantId, candidate, status: 'REQUESTED', requestedAt: { gte: requestedSince } };
+  const [reviews, handoffs, requests, reviewCount, handoffCount, requestCount] = await Promise.all([
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
+    prisma.candidateHumanRequest.findMany({
+      where: requestWhere, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
+      select: { requestedAt: true, session: { select: sessionSelect } },
+    }),
+    prisma.interviewSession.count({ where: { tenantId, candidate, state: 'REVIEW_READY' } }),
+    prisma.interviewSession.count({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' } }),
+    prisma.candidateHumanRequest.count({ where: requestWhere }),
+  ]);
+  type Row = (typeof reviews)[number];
+  const item = (kind: AttentionKind, s: Row, at: Date) => ({
+    kind, at: at.toISOString(), sessionId: s.id, assessmentId: s.assessments[0]?.id ?? null,
+    candidate: { id: s.candidate.id, name: s.candidate.fullName },
+    role: { id: s.role.id, title: s.role.title },
+  });
+  const items = [
+    ...reviews.map((s) => item('review', s, s.assessments[0]?.createdAt ?? s.completedAt ?? s.createdAt)),
+    // The request time lives only inside consentJson, which this service never
+    // reads; the interview's creation orders it close enough.
+    ...handoffs.map((s) => item('accommodation', s, s.createdAt)),
+    ...requests.map((r) => item('human_request', r.session, r.requestedAt ?? r.session.createdAt)),
+  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ATTENTION_ITEM_LIMIT);
+  return { counts: { review: reviewCount, accommodation: handoffCount, human_request: requestCount }, items };
 }
 
 /** Index of the rolling 7-day bucket a time falls in, newest = weeks - 1; -1 when outside. */
@@ -114,7 +172,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
     scheduledSessions, scheduledRounds,
     completedSessions, completedRounds,
     stateRows, stageRows, decisionRows,
-    turnaroundRows, sessionSeries, roundSeries, recentRows,
+    turnaroundRows, sessionSeries, roundSeries, recentRows, needsAttention,
   ] = await Promise.all([
     prisma.role.count({ where: { AND: [rScope as Prisma.RoleWhereInput, { status: { not: 'archived' } }] } }),
     prisma.candidate.count({ where: candidate }),
@@ -166,6 +224,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
         role: { select: { id: true, title: true, level: true, regionCode: true, experienceBand: true, createdAt: true } },
       },
     }),
+    getNeedsAttention(tenantId, candidate, now),
   ]);
 
   const decisions: Record<Decision, number> = { APPROVED: 0, REJECTED: 0, WITHDRAWN: 0 };
@@ -212,6 +271,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
 
   return {
     generatedAt: now.toISOString(),
+    needsAttention,
     truncated: turnaroundRows.length >= seriesRowLimit || sessionSeries.length >= seriesRowLimit || roundSeries.length >= seriesRowLimit,
     kpis: {
       openRoles,
