@@ -26,12 +26,14 @@ interface Props {
   onError: (message: string) => void;
   /** The organisation's current provider can create meetings. */
   vendorReady?: boolean;
+  /** The viewer cannot schedule: the meeting is shown, its fixes are not (the server would refuse them). */
+  readOnly?: boolean;
 }
 
 const base = (pipelineId: string, roundId: string) => `/pipelines/${pipelineId}/rounds/${roundId}`;
 
 /** A human round's meeting: its join link, what went wrong, and how to fix it. */
-export function RoundMeeting({ pipelineId, round, busy, run, onOutcome, onError, vendorReady = false }: Props) {
+export function RoundMeeting({ pipelineId, round, busy, run, onOutcome, onError, vendorReady = false, readOnly = false }: Props) {
   const [adding, setAdding] = useState(false);
   const [link, setLink] = useState('');
 
@@ -62,19 +64,21 @@ export function RoundMeeting({ pipelineId, round, busy, run, onOutcome, onError,
       <div className={`small ${summary.tone === 'error' ? 'round-meeting-error' : 'muted'}`} role={summary.tone === 'error' ? 'alert' : undefined}>
         {summary.text}
       </div>
-      <div className="row" style={{ gap: 6, marginTop: 4 }}>
-        {summary.canRetry && (
-          <button type="button" className="btn sm secondary" disabled={busy} onClick={() => { void retry(); }}>
-            {round.meeting.status === 'NEEDS_LINK' && !round.meeting.error ? 'Create meeting' : 'Try again'}
-          </button>
-        )}
-        {summary.canAddLink && !adding && (
-          <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setAdding(true)}>
-            {round.meeting.status === 'MANUAL' ? 'Change link' : 'Add link manually'}
-          </button>
-        )}
-      </div>
-      {adding && (
+      {!readOnly && (
+        <div className="row" style={{ gap: 6, marginTop: 4 }}>
+          {summary.canRetry && (
+            <button type="button" className="btn sm secondary" disabled={busy} onClick={() => { void retry(); }}>
+              {round.meeting.status === 'NEEDS_LINK' && !round.meeting.error ? 'Create meeting' : 'Try again'}
+            </button>
+          )}
+          {summary.canAddLink && !adding && (
+            <button type="button" className="btn sm ghost" disabled={busy} onClick={() => setAdding(true)}>
+              {round.meeting.status === 'MANUAL' ? 'Change link' : 'Add link manually'}
+            </button>
+          )}
+        </div>
+      )}
+      {!readOnly && adding && (
         <form className="row" style={{ gap: 6, marginTop: 4 }} onSubmit={saveLink}>
           <label className="visually-hidden" htmlFor={`meeting-link-${round.id}`}>Meeting link</label>
           <input

@@ -582,7 +582,7 @@ export function PipelinePanel(
                   <td>
                     <RoundMeeting
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
-                      onOutcome={reportRound} onError={setError}
+                      onOutcome={reportRound} onError={setError} readOnly={!maySchedule}
                       vendorReady={meetingProvider !== null && meetingProvider.provider !== 'manual' && meetingProvider.configured}
                     />
                   </td>
