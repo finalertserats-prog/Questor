@@ -45,7 +45,7 @@ await rescheduleLegacyFeedbackEmails().catch((err: unknown) => {
 startFeedbackEmailDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();
-startJob({ name: JD_DRAFT_JOB.name, intervalMs: 5_000, ttlMs: JD_DRAFT_JOB.ttlMs, fn: runJdDraftJob });
+startJob({ name: JD_DRAFT_JOB.name, intervalMs: JD_DRAFT_JOB.intervalMs, ttlMs: JD_DRAFT_JOB.ttlMs, fn: runJdDraftJob });
 startCatalogRefreshSchedule();
 reportMissingOperatorAccounts().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not check platform operator accounts');

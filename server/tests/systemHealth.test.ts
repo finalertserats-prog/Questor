@@ -8,7 +8,8 @@ import { signToken } from '../src/services/auth.js';
 import { _resetRateLimits } from '../src/middleware/rateLimit.js';
 import { _setSystemHealthDepsForTest, rollupStatus, runCheck } from '../src/services/systemHealth.js';
 import { backupsSection, judgeDisk, BACKUP_WARN_AGE_MS, BACKUP_FAIL_AGE_MS, PRODUCTION_BACKUP_DIR } from '../src/services/systemHealthPlatform.js';
-import { judgeJob, KNOWN_JOBS, JOB_MIN_WARN_MS } from '../src/services/systemHealthJobs.js';
+import { judgeJob, judgeLibraryWorker, KNOWN_JOBS, JOB_MIN_WARN_MS } from '../src/services/systemHealthJobs.js';
+import type { WorkerStatus } from '../src/library/workerState.js';
 import { judgeModelFailures } from '../src/services/systemHealthDelivery.js';
 import type { HealthDeps, HealthReport, HealthCheck } from '../src/services/systemHealthTypes.js';
 
@@ -75,6 +76,11 @@ beforeAll(async () => {
     await prisma.webhookDelivery.create({ data: { endpointId: endpoint.id, event: 'x', payloadJson: '{}', status: 'failed' } });
   }
   await prisma.interviewSession.update({ where: { id: demo.sessionId }, data: { state: 'PROCESSING', updatedAt: new Date(Date.now() - 3 * HOUR) } });
+  // ...and a feedback email the provider refused for good.
+  const assessment = await prisma.assessmentVersion.create({ data: { sessionId: demo.sessionId, scorecardId: demo.scorecardId } });
+  await prisma.candidateFeedbackEmail.create({
+    data: { sessionId: demo.sessionId, assessmentId: assessment.id, candidateId: demo.candidateId, tenantId: tenantBId, status: 'FAILED', lastError: 'SMTP 535' },
+  });
 
   // A failing job whose note carries a secret and an internal address.
   process.env.SENDGRID_API_KEY = DUMMY_SECRET;
@@ -159,6 +165,18 @@ describe('who sees what', () => {
     const res = await getHealth(tenantBToken);
 
     expect(findCheck(res.body, 'organisation', 'webhook-deliveries')).toMatchObject({ status: 'warn', value: 3 });
+  });
+
+  it('shows tenant B its feedback emails that could not be sent', async () => {
+    const res = await getHealth(tenantBToken);
+
+    expect(findCheck(res.body, 'organisation', 'feedback-emails')).toMatchObject({ status: 'warn', value: 1 });
+  });
+
+  it('does not show tenant A the failed feedback emails of tenant B', async () => {
+    const res = await getHealth(tenantAToken);
+
+    expect(findCheck(res.body, 'organisation', 'feedback-emails')?.value).toBe(0);
   });
 
   it('does not show tenant A the stuck interviews of tenant B', async () => {
@@ -326,6 +344,36 @@ describe('background job thresholds', () => {
 
   it('is ok while a recent run is still going', () => {
     expect(judgeJob(sweep, finished(1000, null), deps()).status).toBe('ok');
+  });
+});
+
+describe('which background jobs are watched', () => {
+  it.each(['candidate-feedback-email', 'jd-draft-generate', 'catalog-refresh-schedule', 'demo-purge'])('watches %s', (name) => {
+    expect(KNOWN_JOBS.map((j) => j.name)).toContain(name);
+  });
+});
+
+describe('the library worker check', () => {
+  const NOW = new Date('2026-09-17T12:00:00Z');
+  const status = (over: Partial<WorkerStatus> = {}): WorkerStatus => ({
+    state: 'running', reason: '', holder: 'h', since: NOW, lastBatchAt: new Date(NOW.getTime() - 60_000), lastError: '', updatedAt: NOW, ...over,
+  });
+  const deps = fakeDeps({ now: () => NOW });
+
+  it('fails while the worker is paused after failed batches', () => {
+    expect(judgeLibraryWorker(status({ state: 'paused', reason: 'batch failed: model returned garbage' }), deps).status).toBe('fail');
+  });
+
+  it('warns when the worker is switched on but not running', () => {
+    expect(judgeLibraryWorker(status({ state: 'stopped', reason: 'never started' }), deps).status).toBe('warn');
+  });
+
+  it('is ok while it fills', () => {
+    expect(judgeLibraryWorker(status(), deps).status).toBe('ok');
+  });
+
+  it('only informs while it waits for credits', () => {
+    expect(judgeLibraryWorker(status({ state: 'waiting_for_credits', reason: 'OpenAI 429 insufficient_quota' }), deps).status).toBe('info');
   });
 });
 

@@ -8,6 +8,13 @@ import type { WorkerState } from './types.js';
 
 const ROW_ID = 'worker';
 
+/** Reasons the worker writes when it pauses after an error (worker.ts), as opposed to a cap or an empty queue. */
+const FAILURE_REASONS = ['batch failed:', 'worker error:'] as const;
+
+export function isFailureReason(reason: string): boolean {
+  return FAILURE_REASONS.some((prefix) => reason.startsWith(prefix));
+}
+
 export interface WorkerStatus {
   readonly state: WorkerState;
   readonly reason: string;

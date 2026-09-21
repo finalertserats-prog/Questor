@@ -165,6 +165,31 @@ const feedbackDrafts: CheckDef = {
   },
 };
 
+/**
+ * Feedback emails go out with no human check, so one the provider refused (or
+ * whose send cannot be confirmed) is otherwise seen only on that one
+ * assessment's page. Counted by the last attempt, within the same window.
+ */
+const feedbackEmails: CheckDef = {
+  id: 'feedback-emails',
+  label: 'Feedback emails',
+  run: async ({ deps, tenantId }) => {
+    const since = new Date(deps.now().getTime() - FEEDBACK_FAILED_WINDOW_MS);
+    const [failed, unconfirmed] = await Promise.all([
+      prisma.candidateFeedbackEmail.count({ where: { tenantId, status: 'FAILED', updatedAt: { gte: since } } }),
+      prisma.candidateFeedbackEmail.count({ where: { tenantId, status: 'SENT_UNVERIFIED', updatedAt: { gte: since } } }),
+    ]);
+    const count = failed + unconfirmed;
+    if (count === 0) return { status: 'ok', value: 0, summary: 'No feedback emails failed in the last 7 days.' };
+    return {
+      status: 'warn', value: count,
+      summary: `In the last 7 days, ${plural(failed, 'feedback email')} could not be sent and ${unconfirmed} may not have arrived.`,
+      detail: 'Candidates were told nothing for these. The email provider may be refusing mail.',
+      action: 'Open each interview\'s feedback panel to resend, and check the email settings.',
+    };
+  },
+};
+
 const legalHolds: CheckDef = {
   id: 'legal-holds',
   label: 'Legal holds',
@@ -199,5 +224,5 @@ const noResume: CheckDef = {
 export const tenantSection: SectionDef = {
   id: 'organisation',
   title: 'Your organisation',
-  checks: [webhookDeliveries, webhookV1, ats, roundMeetings, stuckFinishing, technicalFailures, idleLive, feedbackDrafts, legalHolds, noResume],
+  checks: [webhookDeliveries, webhookV1, ats, roundMeetings, stuckFinishing, technicalFailures, idleLive, feedbackDrafts, feedbackEmails, legalHolds, noResume],
 };

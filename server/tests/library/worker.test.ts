@@ -204,6 +204,37 @@ describe('the worker loop', () => {
     expect((await getWorkerStatus()).state).toBe('stopped');
   });
 
+  describe('when batches keep failing', () => {
+    const failing: WorkerDeps['generator'] = {
+      name: 'failing',
+      generateStandard: async () => { throw new Error('model returned garbage'); },
+      generateQuestions: async () => { throw new Error('model returned garbage'); },
+    };
+
+    it('alerts the operator after three failures in a row', async () => {
+      const alerts: string[] = [];
+      await runWorkerUnderLease(deps({ generator: failing, maxIterations: 3, alert: async (message) => { alerts.push(message); } }), { stopped: () => false });
+      expect(alerts).toEqual([expect.stringContaining('model returned garbage')]);
+    });
+
+    it('does not alert on a failure or two', async () => {
+      const alerts: string[] = [];
+      await runWorkerUnderLease(deps({ generator: failing, maxIterations: 2, alert: async (message) => { alerts.push(message); } }), { stopped: () => false });
+      expect(alerts).toEqual([]);
+    });
+
+    it('does not count a wait for credits as a failure', async () => {
+      const broke: WorkerDeps['generator'] = {
+        name: 'broke',
+        generateStandard: async () => { throw new LlmApiError('OpenAI', 429, 'insufficient_quota'); },
+        generateQuestions: async () => { throw new LlmApiError('OpenAI', 429, 'insufficient_quota'); },
+      };
+      const alerts: string[] = [];
+      await runWorkerUnderLease(deps({ generator: broke, maxIterations: 4, alert: async (message) => { alerts.push(message); } }), { stopped: () => false });
+      expect(alerts).toEqual([]);
+    });
+  });
+
   it('resumes filling on the next run', async () => {
     await runWorkerUnderLease(deps(), { stopped: () => false });
     const before = await prisma.libraryEntry.count();

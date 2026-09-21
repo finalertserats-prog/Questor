@@ -18,7 +18,7 @@ const STALE_CLAIM_MS = 10 * 60_000;
  * queues and nudges this job; it never generates itself, so a burst of
  * requests cannot fan out into parallel model calls.
  */
-export const JD_DRAFT_JOB = { name: 'jd-draft-generate', ttlMs: 5 * 60_000, batch: 3 } as const;
+export const JD_DRAFT_JOB = { name: 'jd-draft-generate', intervalMs: 5_000, ttlMs: 5 * 60_000, batch: 3 } as const;
 
 /** New shared drafts one person / one organisation may queue. Reading existing drafts is not counted. */
 const QUEUE_LIMIT_PER_USER = { windowMs: 15 * 60_000, max: 30 } as const;

@@ -4,6 +4,11 @@ import { DELIVER_EVERY_MS } from './webhooks.js';
 import { RATE_LIMIT_PURGE_EVERY_MS } from '../middleware/rateLimit.js';
 import { RETENTION_SWEEP_EVERY_MS } from './dataRights.js';
 import { INCOMPLETE_SWEEP_EVERY_MS } from './incompleteInterviews.js';
+import { FEEDBACK_EMAIL_JOB } from './autoFeedback.js';
+import { JD_DRAFT_JOB } from './jdDrafts.js';
+import { CATALOG_REFRESH_SCHEDULE } from './catalogRefresh.js';
+import { DEMO_PURGE_EVERY_MS } from './demoPurgeJob.js';
+import { getWorkerStatus, isFailureReason, type WorkerStatus } from '../library/workerState.js';
 import {
   formatDuration, type CheckContext, type CheckDef, type CheckOutcome, type HealthDeps, type SectionDef,
 } from './systemHealthTypes.js';
@@ -40,6 +45,10 @@ export const KNOWN_JOBS: readonly KnownJob[] = [
     name: 'retention-sweep', label: 'Retention sweep', intervalMs: RETENTION_SWEEP_EVERY_MS,
     notScheduled: (deps) => (deps.env.RETENTION_SWEEP_ENABLED === 'true' ? null : 'Not scheduled: the retention sweep is switched off (see Delivery and obligations).'),
   },
+  { name: FEEDBACK_EMAIL_JOB.name, label: 'Candidate feedback emails', intervalMs: FEEDBACK_EMAIL_JOB.intervalMs, notScheduled: () => null },
+  { name: JD_DRAFT_JOB.name, label: 'JD drafts', intervalMs: JD_DRAFT_JOB.intervalMs, notScheduled: () => null },
+  { name: CATALOG_REFRESH_SCHEDULE.name, label: 'Catalog refresh schedule', intervalMs: CATALOG_REFRESH_SCHEDULE.intervalMs, notScheduled: () => null },
+  { name: 'demo-purge', label: 'Demo cleanup', intervalMs: DEMO_PURGE_EVERY_MS, notScheduled: () => null },
 ];
 
 const ADDRESS = /\b(?:[a-z][a-z0-9+.-]*:\/\/[^\s]+|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|[a-z0-9-]+(?:\.[a-z0-9-]+)+:\d+)/gi;
@@ -112,8 +121,36 @@ function jobCheck(job: KnownJob): CheckDef {
   };
 }
 
+/**
+ * The library worker holds one run open for the life of its process, so its
+ * JobRun never finishes and cannot be judged like the others. Its own state
+ * row says whether it is filling, waiting or failing.
+ */
+export function judgeLibraryWorker(status: WorkerStatus, deps: HealthDeps): CheckOutcome {
+  const since = `since ${formatDuration(deps.now().getTime() - status.since.getTime())} ago`;
+  const logs = 'Read `pm2 logs` for the library worker, fix the cause, and confirm a later batch is written.';
+  if (isFailureReason(status.reason)) {
+    return { status: 'fail', summary: `Batches are failing (${since}).`, detail: `Reason: ${redactNote(status.reason, deps.env)}`, action: logs };
+  }
+  if (status.state === 'stopped') {
+    return { status: 'warn', summary: 'Switched on but not running.', detail: status.reason ? `Last said: ${redactNote(status.reason, deps.env)}` : undefined, action: logs };
+  }
+  const lastBatch = status.lastBatchAt ? `Last batch ${formatDuration(deps.now().getTime() - status.lastBatchAt.getTime())} ago.` : 'No batch written yet.';
+  if (status.state === 'running' || status.state === 'idle') return { status: 'ok', summary: `${status.state === 'idle' ? 'Idle: every pool is at target.' : 'Filling.'} ${lastBatch}` };
+  return { status: 'info', summary: `Paused (${status.state.replace(/_/g, ' ')}, ${since}). ${lastBatch}`, detail: status.reason ? redactNote(status.reason, deps.env) : undefined };
+}
+
+const libraryWorkerCheck: CheckDef = {
+  id: 'job-library-worker',
+  label: 'Question library worker',
+  run: async ({ deps }: CheckContext) => {
+    if (!config.library.workerEnabled) return { status: 'info', summary: 'Not scheduled: the library worker is switched off.' };
+    return judgeLibraryWorker(await getWorkerStatus(), deps);
+  },
+};
+
 export const jobsSection: SectionDef = {
   id: 'jobs',
   title: 'Background jobs',
-  checks: KNOWN_JOBS.map(jobCheck),
+  checks: [...KNOWN_JOBS.map(jobCheck), libraryWorkerCheck],
 };
