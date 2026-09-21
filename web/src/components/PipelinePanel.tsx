@@ -13,7 +13,8 @@ import { interviewerName } from './candidateJourney';
 import { formatScheduled } from './dateFormat';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker } from './TimeZoneDateTimePicker';
 import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft } from './zonedScheduleModel';
-import { useOrgTimeZone } from './useOrgTimeZone';
+import { useOrgTimeZoneStatus } from './useOrgTimeZone';
+import { orgTimeZoneLoadNotice } from './orgTimeZone';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
 import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
@@ -133,7 +134,7 @@ export function PipelinePanel(
   const latestLoad = useRef(0);
 
   const [roundDraft, setRoundDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
-  const orgZone = useOrgTimeZone();
+  const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
   const [interviewers, setInterviewers] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [decision, setDecision] = useState<Decision>('APPROVED');
@@ -462,6 +463,7 @@ export function PipelinePanel(
             <h3 className="card-title"><Icon name="schedule" size={16} />Schedule {current ? `${current.label} round` : 'round'}</h3>
             {isInterviewStage ? (
               <>
+                {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
                 <TimeZoneDateTimePicker idPrefix="round-when" value={roundDraft} onChange={setRoundDraft} orgZone={orgZone} disabled={busy} />
                 {current?.kind === 'ai_interview' ? (
                   <>

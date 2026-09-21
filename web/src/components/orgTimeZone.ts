@@ -20,6 +20,11 @@ function isKnownTimeZone(timeZone: string): boolean {
  * loaded yet, or this browser does not know it. The single web fallback for
  * "no zone on the booking".
  */
+/** Shown next to a time picker when the organisation's zone could not be read. */
+export function orgTimeZoneLoadNotice(): string {
+  return `Your organisation's time zone could not be loaded, so times are shown in ${DEFAULT_ORG_TIME_ZONE} for now. Check the time zone before you book.`;
+}
+
 export function effectiveOrgTimeZone(orgZone: string | null | undefined): string {
   return orgZone && isKnownTimeZone(orgZone) ? orgZone : DEFAULT_ORG_TIME_ZONE;
 }

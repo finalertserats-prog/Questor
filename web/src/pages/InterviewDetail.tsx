@@ -10,7 +10,8 @@ import { isInFlight } from './CandidatesList';
 import { formatDateTime, formatScheduled } from '../components/dateFormat';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker, isSchedulable } from '../components/TimeZoneDateTimePicker';
 import { scheduleRequest, type ScheduleDraft } from '../components/zonedScheduleModel';
-import { useOrgTimeZone } from '../components/useOrgTimeZone';
+import { useOrgTimeZoneStatus } from '../components/useOrgTimeZone';
+import { orgTimeZoneLoadNotice } from '../components/orgTimeZone';
 import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 import { invitationPanel } from '../components/invitationPanelModel';
@@ -58,7 +59,7 @@ export function InterviewDetail() {
   const [notice, setNotice] = useState('');
   const [copied, setCopied] = useState(false);
   const [draft, setDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
-  const orgZone = useOrgTimeZone();
+  const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
   const [busyAction, setBusyAction] = useState<Action | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
 
@@ -322,6 +323,7 @@ export function InterviewDetail() {
               Now: {formatScheduled(session.scheduledAt, session.scheduledTimeZone, orgZone)}
             </p>
           )}
+          {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
           <TimeZoneDateTimePicker idPrefix="schedule" value={draft} onChange={setDraft} orgZone={orgZone} disabled={busyAction !== null} />
           <div className="row" style={{ gap: 8 }}>
             <button type="button" className="btn" onClick={() => schedule(true)} disabled={busyAction !== null || !isSchedulable(draft)}>
