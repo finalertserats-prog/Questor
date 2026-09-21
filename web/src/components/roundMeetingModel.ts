@@ -22,6 +22,12 @@ export interface MeetingProviderInfo {
   readonly configured: boolean;
 }
 
+/** Whether the candidate was emailed about a round, and what the recruiter should know. */
+export interface CandidateNotice {
+  readonly sent: boolean;
+  readonly note: string;
+}
+
 export interface MeetingOutcome {
   readonly ok: boolean;
   readonly provider: string;

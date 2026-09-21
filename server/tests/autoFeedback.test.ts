@@ -521,6 +521,25 @@ describe('sending from the background job', () => {
     expect(row.bodyText).toBe(mail.sent[0].text.replace(link, TALK_LINK_PLACEHOLDER));
   });
 
+  it("dates the interview in the organisation's zone when the booking named none", async () => {
+    const ids = await completedInterview();
+    await setPolicy(ids.tenantId, { timeZone: 'America/New_York' });
+    // 01:00 UTC on the 22nd is the evening of the 21st in New York.
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { completedAt: new Date('2026-09-22T01:00:00.000Z'), scheduledTimeZone: null } });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await deliverDueFeedbackEmails(LATER());
+    expect(mail.sent[0].text).toContain('interviewed 21 September 2026 (America/New_York)');
+  });
+
+  it('dates the interview in the zone it was booked in', async () => {
+    const ids = await completedInterview();
+    await setPolicy(ids.tenantId, { timeZone: 'America/New_York' });
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { completedAt: new Date('2026-09-22T01:00:00.000Z'), scheduledTimeZone: 'Asia/Kolkata' } });
+    await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+    await deliverDueFeedbackEmails(LATER());
+    expect(mail.sent[0].text).toContain('interviewed 22 September 2026 (Asia/Kolkata)');
+  });
+
   it('marks the row sent with the time it went', async () => {
     const ids = await completedInterview();
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });

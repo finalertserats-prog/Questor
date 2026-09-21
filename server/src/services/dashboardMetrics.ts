@@ -49,7 +49,9 @@ export interface DashboardMetrics {
   readonly pipelineStages: ReadonlyArray<{ key: string; label: string; count: number }>;
   readonly stateCounts: Readonly<Record<string, number>>;
   readonly recentInterviews: ReadonlyArray<{
-    id: string; state: string; createdAt: Date; scheduledAt: Date | null; completedAt: Date | null;
+    id: string; state: string; createdAt: Date; scheduledAt: Date | null;
+    /** The zone it was booked in, so the console states the time on that clock. */
+    scheduledTimeZone: string | null; completedAt: Date | null;
     candidate: { id: string; name: string };
     role: { id: string; title: string; level: string; regionCode: string | null; experienceBand: string | null; createdAt: string };
   }>;
@@ -161,7 +163,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       take: options.recent,
       select: {
-        id: true, state: true, createdAt: true, scheduledAt: true, completedAt: true,
+        id: true, state: true, createdAt: true, scheduledAt: true, scheduledTimeZone: true, completedAt: true,
         candidate: { select: { id: true, fullName: true } },
         role: { select: { id: true, title: true, level: true, regionCode: true, experienceBand: true, createdAt: true } },
       },
@@ -227,7 +229,7 @@ export async function getDashboardMetrics(auth: AuthClaims, options: DashboardMe
     pipelineStages,
     stateCounts: Object.fromEntries(stateRows.map((r) => [r.state, r._count._all])),
     recentInterviews: recentRows.map((s) => ({
-      id: s.id, state: s.state, createdAt: s.createdAt, scheduledAt: s.scheduledAt, completedAt: s.completedAt,
+      id: s.id, state: s.state, createdAt: s.createdAt, scheduledAt: s.scheduledAt, scheduledTimeZone: s.scheduledTimeZone, completedAt: s.completedAt,
       candidate: { id: s.candidate.id, name: s.candidate.fullName },
       role: { id: s.role.id, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt.toISOString() },
     })),

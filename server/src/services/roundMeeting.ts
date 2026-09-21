@@ -5,6 +5,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { isProviderReady, resolveRoundMeetingProvider, vendorFor } from '../providers/meeting/roundMeetings.js';
 import { MeetingProviderError } from '../providers/meeting/vendorHttp.js';
+import { tenantTimeZone } from './tenantTimeZone.js';
 import {
   isRoundMeetingProviderId, PROVIDER_LABEL,
   type MeetingDetails, type MeetingVendor, type RoundMeetingProviderId,
@@ -106,13 +107,18 @@ export function storedProvider(round: Pick<InterviewRound, 'meetingProvider'>): 
 }
 
 /** No candidate name or contact detail: the event lives outside Questor's erasure reach. */
-function detailsFor(round: Pick<InterviewRound, 'scheduledAt' | 'durationMinutes'>, ctx: RoundContext): MeetingDetails {
+async function detailsFor(
+  round: Pick<InterviewRound, 'scheduledAt' | 'scheduledTimeZone' | 'durationMinutes' | 'tenantId'>,
+  ctx: RoundContext,
+): Promise<MeetingDetails> {
   const label = ctx.stageLabel.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 120);
   return {
     title: `${label} interview (Questor)`,
     description: `Interview round scheduled in Questor. Candidate and pipeline: ${config.webOrigin}/candidates/${ctx.candidateId}`,
     startsAt: round.scheduledAt,
     durationMinutes: round.durationMinutes,
+    // The zone the round was booked in, else the organisation's: the same rule as Questor's own emails.
+    timeZone: round.scheduledTimeZone ?? await tenantTimeZone(round.tenantId),
     requestId: randomUUID(),
   };
 }
@@ -155,7 +161,7 @@ export async function createMeeting(round: InterviewRound, ctx: RoundContext): P
 
   let created: { externalId: string; joinUrl: string };
   try {
-    created = await vendor.create(detailsFor(round, ctx));
+    created = await vendor.create(await detailsFor(round, ctx));
   } catch (err) {
     const message = failureMessage(err, provider);
     await setMeeting(creating, { meetingStatus: MEETING_STATUS.NEEDS_LINK, meetingError: message });
@@ -210,7 +216,7 @@ async function syncTime(round: InterviewRound, vendor: MeetingVendor, ctx: Round
     message = notReadyMessage(provider);
   } else {
     try {
-      await vendor.update(externalId, detailsFor(round, ctx));
+      await vendor.update(externalId, await detailsFor(round, ctx));
     } catch (err) {
       message = failureMessage(err, provider);
     }

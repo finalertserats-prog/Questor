@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api/client';
 import { Icon } from './Icon';
-import { meetingLinkProblem, meetingSummary, providerLabel, type MeetingOutcome, type RoundMeetingView } from './roundMeetingModel';
+import { meetingLinkProblem, meetingSummary, providerLabel, type CandidateNotice, type MeetingOutcome, type RoundMeetingView } from './roundMeetingModel';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker } from './TimeZoneDateTimePicker';
 import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft } from './zonedScheduleModel';
 
@@ -13,7 +13,9 @@ export interface RoundForMeeting {
 }
 
 type Run = (action: () => Promise<unknown>) => Promise<void>;
-type Report = (outcome: MeetingOutcome | null) => void;
+/** The meeting's outcome, and whether the candidate was emailed about the change. */
+type Report = (outcome: MeetingOutcome | null, candidate?: CandidateNotice | null) => void;
+type RoundResponse = { meeting: MeetingOutcome | null; candidateNotice?: CandidateNotice };
 
 interface Props {
   pipelineId: string;
@@ -38,15 +40,15 @@ export function RoundMeeting({ pipelineId, round, busy, run, onOutcome, onError,
 
   const summary = meetingSummary(round.meeting, round.status, vendorReady);
 
-  const retry = () => run(() => api.post<{ meeting: MeetingOutcome }>(`${base(pipelineId, round.id)}/meeting/retry`, {})
-    .then((resp) => onOutcome(resp.meeting)));
+  const retry = () => run(() => api.post<RoundResponse>(`${base(pipelineId, round.id)}/meeting/retry`, {})
+    .then((resp) => onOutcome(resp.meeting, resp.candidateNotice ?? null)));
 
   const saveLink = (e: React.FormEvent) => {
     e.preventDefault();
     const problem = meetingLinkProblem(link);
     if (problem) { onError(problem); return; }
-    void run(() => api.put<{ meeting: MeetingOutcome }>(`${base(pipelineId, round.id)}/meeting-link`, { url: link.trim() })
-      .then((resp) => { onOutcome(resp.meeting); setAdding(false); setLink(''); }));
+    void run(() => api.put<RoundResponse>(`${base(pipelineId, round.id)}/meeting-link`, { url: link.trim() })
+      .then((resp) => { onOutcome(resp.meeting, resp.candidateNotice ?? null); setAdding(false); setLink(''); }));
   };
 
   return (
@@ -111,8 +113,8 @@ export function RoundActions(
       onError(preview.kind === 'problem' ? preview.text : 'Pick the time zone, then the date and time.');
       return;
     }
-    void run(() => api.post<{ meeting: MeetingOutcome | null }>(`${base(pipelineId, round.id)}/reschedule`, scheduleRequest(when))
-      .then((resp) => { onOutcome(resp.meeting); setMoving(false); setWhen((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone })); }));
+    void run(() => api.post<RoundResponse>(`${base(pipelineId, round.id)}/reschedule`, scheduleRequest(when))
+      .then((resp) => { onOutcome(resp.meeting, resp.candidateNotice ?? null); setMoving(false); setWhen((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone })); }));
   };
 
   const cancel = () => run(() => api.post<{ meeting: MeetingOutcome | null }>(`${base(pipelineId, round.id)}/cancel`, {})

@@ -3,6 +3,7 @@ import {
   createRecognizer, speakNudge, startRecording, transcribeOnServer,
   type Recognizer, type Recording,
 } from '../../speech';
+import { recognitionLang } from '../../speechLang';
 import {
   NOTHING_HELD, answerFromHeld, heldText, holdSegment, untranscribed, type HeldAnswer,
 } from './roomComposerModel';
@@ -30,6 +31,8 @@ export interface VoiceAnswerDeps {
   readonly speechSeqRef: { current: number };
   /** The interviewer's browser-voice hint, for a check-in spoken without a server voice. */
   readonly voiceHintRef?: { readonly current: string | undefined };
+  /** The session's language ('en', 'en-GB', …), for the language the recognizer listens in. */
+  readonly languageRef?: { readonly current: string | undefined };
   readonly setPhase: (phase: RoomPhase) => void;
   readonly setTextMode: (textMode: boolean) => void;
   readonly setInterim: (text: string) => void;
@@ -314,7 +317,7 @@ export function useVoiceAnswer(deps: VoiceAnswerDeps) {
       onSilence: () => { if (recognizerRef.current === rec) void checkInRef.current(); },
       // Capture is broken and will not recover.
       onDead: () => { if (recognizerRef.current === rec) micDeadRef.current(); },
-    });
+    }, { lang: recognitionLang(d.languageRef?.current, typeof navigator === 'undefined' ? [] : navigator.languages ?? []) });
     if (!rec) {
       needsServerRef.current = true;
       // No browser recognition at all. Recording alone still works if the

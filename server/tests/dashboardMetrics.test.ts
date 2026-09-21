@@ -257,8 +257,16 @@ describe('GET /api/dashboard/metrics — counts', () => {
     const { admin } = await seedTenant();
     const res = await getMetrics(admin.token, '?recent=1');
     expect(Object.keys(res.body.recentInterviews[0]).sort()).toEqual(
-      ['candidate', 'completedAt', 'createdAt', 'id', 'role', 'scheduledAt', 'state'],
+      ['candidate', 'completedAt', 'createdAt', 'id', 'role', 'scheduledAt', 'scheduledTimeZone', 'state'],
     );
+  });
+
+  it('carries the zone a recent interview was booked in', async () => {
+    const { admin } = await seedTenant();
+    const newestId = (await getMetrics(admin.token, '?recent=1')).body.recentInterviews[0].id as string;
+    await prisma.interviewSession.update({ where: { id: newestId }, data: { scheduledTimeZone: 'America/New_York' } });
+    const res = await getMetrics(admin.token, '?recent=1');
+    expect(res.body.recentInterviews[0].scheduledTimeZone).toBe('America/New_York');
   });
 });
 

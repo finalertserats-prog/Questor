@@ -25,6 +25,7 @@ import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
 import { ReviewFactsStrip, TranscriptReader, TranscriptReadNote } from '../components/review/TranscriptReader';
 import { useReadProgress, useReviewTranscript, type TranscriptSource } from '../components/review/useTranscriptReader';
 import { REVIEW_SECTION_ID } from '../components/review/transcriptReaderModel';
+import { formatDateTime } from '../components/dateFormat';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -501,7 +502,7 @@ export function AssessmentView() {
                     <td>{recBadge(r.disposition)}</td>
                     <td className="muted small">{r.reason}</td>
                     <td>{humanise(r.status)}</td>
-                    <td className="muted small">{r.completedAt ? new Date(r.completedAt).toLocaleString() : '—'}</td>
+                    <td className="muted small">{formatDateTime(r.completedAt)}</td>
                   </tr>
                 ))}
               </tbody>

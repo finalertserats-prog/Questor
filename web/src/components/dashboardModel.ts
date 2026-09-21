@@ -3,6 +3,8 @@
  * unit tested in the node environment (see web/tests/dashboardModel.test.ts).
  */
 
+import { formatDateTime, formatScheduled } from './dateFormat';
+
 export interface StateGroup {
   readonly key: string;
   readonly label: string;
@@ -357,6 +359,28 @@ export function axisLabelStride(slotWidth: number, labelWidth: number): number {
   if (labelWidth <= 0) return 1;
   if (slotWidth <= 0) return Number.MAX_SAFE_INTEGER;
   return Math.max(1, Math.ceil((labelWidth + BAR_LAYOUT.axisLabelGap) / slotWidth));
+}
+
+export interface RecentInterviewDates {
+  readonly createdAt: string;
+  readonly scheduledAt: string | null;
+  readonly scheduledTimeZone: string | null;
+  readonly completedAt: string | null;
+}
+
+/**
+ * The date that matters most for where an interview is in its life, written
+ * down. A booked time is on the clock it was booked on (else the
+ * organisation's), never the viewer's alone; the other dates name their zone.
+ */
+export function recentInterviewDate(
+  row: RecentInterviewDates,
+  orgZone: string | null | undefined,
+  viewerZone?: string,
+): { readonly label: string; readonly text: string } {
+  if (row.completedAt) return { label: 'Completed', text: formatDateTime(row.completedAt) };
+  if (row.scheduledAt) return { label: 'Scheduled', text: formatScheduled(row.scheduledAt, row.scheduledTimeZone, orgZone, viewerZone) };
+  return { label: 'Created', text: formatDateTime(row.createdAt) };
 }
 
 /** A centred label's x, moved in so a `labelWidth` label stays inside [0, width]. */

@@ -13,11 +13,12 @@ import { interviewerName } from './candidateJourney';
 import { formatScheduled } from './dateFormat';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker } from './TimeZoneDateTimePicker';
 import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft } from './zonedScheduleModel';
-import { useOrgTimeZone } from './useOrgTimeZone';
+import { useOrgTimeZoneStatus } from './useOrgTimeZone';
+import { orgTimeZoneLoadNotice } from './orgTimeZone';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
 import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
-  type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
+  type CandidateNotice, type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
 } from './roundMeetingModel';
 
 interface Round {
@@ -133,7 +134,7 @@ export function PipelinePanel(
   const latestLoad = useRef(0);
 
   const [roundDraft, setRoundDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
-  const orgZone = useOrgTimeZone();
+  const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
   const [interviewers, setInterviewers] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [decision, setDecision] = useState<Decision>('APPROVED');
@@ -144,6 +145,7 @@ export function PipelinePanel(
   const [meetingLink, setMeetingLink] = useState('');
   const [durationMinutes, setDurationMinutes] = useState<number>(60);
   const [meetingNotice, setMeetingNotice] = useState<MeetingOutcome | null>(null);
+  const [candidateNotice, setCandidateNotice] = useState<CandidateNotice | null>(null);
   const [meetingProvider, setMeetingProvider] = useState<MeetingProviderInfo | null>(null);
   // Set while a candidacy-ending outcome waits to be confirmed.
   const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
@@ -274,7 +276,7 @@ export function PipelinePanel(
       setError(linkProblem);
       return;
     }
-    void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null }>(`/pipelines/${pipeline.id}/rounds`, {
+    void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null; candidateNotice?: CandidateNotice }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
       ...scheduleRequest(roundDraft),
       ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
@@ -284,11 +286,17 @@ export function PipelinePanel(
     }).then((resp) => {
       setSchedulingNotice(resp.notification ?? null);
       setMeetingNotice(resp.meeting ?? null);
+      setCandidateNotice(resp.candidateNotice ?? null);
       setRoundDraft((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone }));
       setInterviewers('');
       setSessionId('');
       setMeetingLink('');
     }));
+  };
+
+  const reportRound = (outcome: MeetingOutcome | null, candidate?: CandidateNotice | null) => {
+    setMeetingNotice(outcome);
+    setCandidateNotice(candidate ?? null);
   };
 
   const completeRound = (e: React.FormEvent) => {
@@ -377,6 +385,12 @@ export function PipelinePanel(
         </Banner>
       )}
 
+      {candidateNotice && (
+        <Banner kind={candidateNotice.sent ? 'ok' : 'info'}>
+          <span data-testid="round-candidate-notice">{candidateNotice.note}</span>
+        </Banner>
+      )}
+
       {schedulingNotice && (
         <Banner kind={schedulingNotice.delivered ? 'ok' : 'info'}>
           Round scheduled. {schedulingNotice.deliveryNote}{' '}
@@ -449,6 +463,7 @@ export function PipelinePanel(
             <h3 className="card-title"><Icon name="schedule" size={16} />Schedule {current ? `${current.label} round` : 'round'}</h3>
             {isInterviewStage ? (
               <>
+                {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
                 <TimeZoneDateTimePicker idPrefix="round-when" value={roundDraft} onChange={setRoundDraft} orgZone={orgZone} disabled={busy} />
                 {current?.kind === 'ai_interview' ? (
                   <>
@@ -550,14 +565,14 @@ export function PipelinePanel(
                   <td>
                     <RoundMeeting
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
-                      onOutcome={setMeetingNotice} onError={setError}
+                      onOutcome={reportRound} onError={setError}
                       vendorReady={meetingProvider !== null && meetingProvider.provider !== 'manual' && meetingProvider.configured}
                     />
                   </td>
                   <td>
                     <RoundActions
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
-                      onOutcome={setMeetingNotice} onError={setError}
+                      onOutcome={reportRound} onError={setError}
                       canReschedule={pipeline.status === 'ACTIVE'} orgZone={orgZone}
                     />
                   </td>

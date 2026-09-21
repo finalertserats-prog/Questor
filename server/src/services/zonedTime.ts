@@ -36,6 +36,14 @@ function wallClockAsUtc(at: number, timeZone: string): number {
   return Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
 }
 
+/**
+ * The zone's wall clock at an instant as "YYYY-MM-DDTHH:mm:ss", with no
+ * offset: the form calendar APIs pair with a zone name (Graph's dateTime).
+ */
+export function zonedWallClock(at: Date, timeZone: string): string {
+  return new Date(wallClockAsUtc(at.getTime(), timeZone)).toISOString().slice(0, 19);
+}
+
 /** How far the zone's clock is ahead of UTC at an instant, in ms. */
 function offsetAt(at: number, timeZone: string): number {
   return wallClockAsUtc(at, timeZone) - Math.floor(at / 1000) * 1000;

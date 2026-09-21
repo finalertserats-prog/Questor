@@ -26,6 +26,12 @@ export interface MeetingDetails {
   readonly description: string;
   readonly startsAt: Date;
   readonly durationMinutes: number;
+  /**
+   * The IANA zone the round was booked in (else the organisation's). The
+   * vendor writes its own invitation in the event's zone, so UTC here made
+   * Zoom and calendar invites contradict Questor's emails.
+   */
+  readonly timeZone: string;
   /** Stable per attempt; Google uses it to de-duplicate conference creation. */
   readonly requestId: string;
 }

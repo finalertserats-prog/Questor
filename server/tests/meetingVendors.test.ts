@@ -17,6 +17,7 @@ const DETAILS: MeetingDetails = {
   description: 'Candidate page: https://hire.example.com/candidates/c1',
   startsAt: new Date('2026-10-08T09:00:00.000Z'),
   durationMinutes: 45,
+  timeZone: 'Asia/Kolkata',
   requestId: 'round-1',
 };
 
@@ -115,7 +116,7 @@ describe('Zoom (Server-to-Server OAuth)', () => {
       url: 'https://api.zoom.us/v2/users/host%40example.com/meetings',
       method: 'POST',
       auth: `Bearer ${TOKEN}`,
-      body: expect.objectContaining({ topic: DETAILS.title, type: 2, start_time: '2026-10-08T09:00:00Z', duration: 45, timezone: 'UTC' }),
+      body: expect.objectContaining({ topic: DETAILS.title, type: 2, start_time: '2026-10-08T09:00:00Z', duration: 45, timezone: 'Asia/Kolkata' }),
     });
   });
 
@@ -165,7 +166,7 @@ describe('Zoom (Server-to-Server OAuth)', () => {
     expect({ url: patch.url, method: patch.init.method, body: patch.body }).toEqual({
       url: 'https://api.zoom.us/v2/meetings/123456789',
       method: 'PATCH',
-      body: expect.objectContaining({ start_time: '2026-10-09T10:30:00Z', duration: 30 }),
+      body: expect.objectContaining({ start_time: '2026-10-09T10:30:00Z', duration: 30, timezone: 'Asia/Kolkata' }),
     });
   });
 
@@ -254,8 +255,9 @@ describe('Microsoft Teams (Graph, app-only)', () => {
         subject: DETAILS.title,
         isOnlineMeeting: true,
         onlineMeetingProvider: 'teamsForBusiness',
-        start: { dateTime: '2026-10-08T09:00:00.000', timeZone: 'UTC' },
-        end: { dateTime: '2026-10-08T09:45:00.000', timeZone: 'UTC' },
+        // Graph reads dateTime as the wall clock in timeZone: 09:00 UTC is 14:30 in Kolkata.
+        start: { dateTime: '2026-10-08T14:30:00', timeZone: 'Asia/Kolkata' },
+        end: { dateTime: '2026-10-08T15:15:00', timeZone: 'Asia/Kolkata' },
       }),
     });
   });
@@ -288,7 +290,7 @@ describe('Microsoft Teams (Graph, app-only)', () => {
     expect({ url: patch.url, method: patch.init.method, body: patch.body }).toEqual({
       url: 'https://graph.microsoft.com/v1.0/users/organiser-guid/events/AAMkAD-event',
       method: 'PATCH',
-      body: { start: { dateTime: '2026-10-09T10:00:00.000', timeZone: 'UTC' }, end: { dateTime: '2026-10-09T11:00:00.000', timeZone: 'UTC' } },
+      body: { start: { dateTime: '2026-10-09T15:30:00', timeZone: 'Asia/Kolkata' }, end: { dateTime: '2026-10-09T16:30:00', timeZone: 'Asia/Kolkata' } },
     });
   });
 
@@ -359,8 +361,8 @@ describe('Google Meet (Calendar API, service account)', () => {
       auth: `Bearer ${TOKEN}`,
       body: expect.objectContaining({
         summary: DETAILS.title,
-        start: { dateTime: '2026-10-08T09:00:00.000Z', timeZone: 'UTC' },
-        end: { dateTime: '2026-10-08T09:45:00.000Z', timeZone: 'UTC' },
+        start: { dateTime: '2026-10-08T09:00:00.000Z', timeZone: 'Asia/Kolkata' },
+        end: { dateTime: '2026-10-08T09:45:00.000Z', timeZone: 'Asia/Kolkata' },
         conferenceData: { createRequest: { requestId: 'round-1', conferenceSolutionKey: { type: 'hangoutsMeet' } } },
       }),
     });
@@ -391,7 +393,7 @@ describe('Google Meet (Calendar API, service account)', () => {
     expect({ url: patch.url, method: patch.init.method, body: patch.body }).toEqual({
       url: 'https://www.googleapis.com/calendar/v3/calendars/primary/events/evt123?sendUpdates=none',
       method: 'PATCH',
-      body: { start: { dateTime: '2026-10-09T10:00:00.000Z', timeZone: 'UTC' }, end: { dateTime: '2026-10-09T10:30:00.000Z', timeZone: 'UTC' } },
+      body: { start: { dateTime: '2026-10-09T10:00:00.000Z', timeZone: 'Asia/Kolkata' }, end: { dateTime: '2026-10-09T10:30:00.000Z', timeZone: 'Asia/Kolkata' } },
     });
   });
 

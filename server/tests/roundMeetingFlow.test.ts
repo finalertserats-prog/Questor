@@ -160,6 +160,27 @@ describe('scheduling with Zoom selected', () => {
       .toMatchObject({ start_time: '2026-10-08T09:00:00Z', duration: 45 });
   });
 
+  it('books the meeting in the zone the round was booked in', async () => {
+    const f = await atGoldStage();
+    configureZoom();
+    await useProvider(f, 'zoom');
+    const fetchMock = zoomVendor();
+    await request(app).post(`/api/pipelines/${f.pipelineId}/rounds`).set('Authorization', f.auth)
+      .send({ stageKey: 'gold', date: '2026-10-08', time: '10:00', timeZone: 'America/New_York', interviewers: ['Hiring manager'] });
+    expect(callsTo(fetchMock, 'POST').find((c) => c.url.endsWith('/meetings'))?.body)
+      .toMatchObject({ start_time: '2026-10-08T14:00:00Z', timezone: 'America/New_York' });
+  });
+
+  it("books a round given without a zone in the organisation's zone, not UTC", async () => {
+    const f = await atGoldStage();
+    configureZoom();
+    await useProvider(f, 'zoom');
+    const fetchMock = zoomVendor();
+    await schedule(f);
+    expect(callsTo(fetchMock, 'POST').find((c) => c.url.endsWith('/meetings'))?.body)
+      .toMatchObject({ timezone: 'Asia/Kolkata' });
+  });
+
   it('keeps the vendor meeting id on the round, out of the response', async () => {
     const f = await atGoldStage();
     configureZoom();

@@ -5,6 +5,8 @@ import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessRole, hasCapability } from '../services/access.js';
 import { aiConclusionVisible } from '../services/shadowMode.js';
+import { notifyCandidateOfHumanRound, type CandidateNotice } from '../services/roundCandidateNotice.js';
+import { SCHEDULABLE_STATES, sendInterviewSchedule } from './interviews.js';
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
 import { endObservation } from '../services/roundObserver.js';
@@ -238,6 +240,31 @@ async function firstMeeting(round: InterviewRound, stageLabel: string, candidate
   return { ok: false, provider: 'manual', status: MEETING_STATUS.NEEDS_LINK, url: null, message: 'No meeting provider is selected. Add a meeting link for this round.' };
 }
 
+/**
+ * Tell the candidate about a round just booked. The AI round goes out as the
+ * interview invitation, carrying the time the session now holds; a human round
+ * as a note with the time and meeting link. A round already past sends nothing.
+ */
+async function noticeForNewRound(
+  req: Request,
+  round: InterviewRound,
+  o: { pipeline: CandidatePipeline; stageLabel: string; aiRound: boolean },
+): Promise<CandidateNotice> {
+  if (round.scheduledAt.getTime() <= Date.now()) {
+    return { sent: false, note: 'The round time has passed, so the candidate was not emailed.' };
+  }
+  if (o.aiRound && round.sessionId) return sendInterviewSchedule(req, round.sessionId);
+  if (round.conductedBy !== 'HUMAN') {
+    return { sent: false, note: 'No interview is linked to this round yet, so the candidate was not emailed.' };
+  }
+  if (!hasCapability(req.auth!, 'interview:invite')) {
+    return { sent: false, note: 'Your account cannot email candidates, so the candidate was not emailed.' };
+  }
+  return notifyCandidateOfHumanRound({
+    round, candidateId: o.pipeline.candidateId, roleId: o.pipeline.roleId, stageLabel: o.stageLabel, kind: 'booked',
+  });
+}
+
 const roundSchema = z.object({
   stageKey: z.string().min(1),
   // A date, time and zone, or the older offset-aware instant (see
@@ -309,6 +336,17 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
       }
     }
 
+    // The AI round IS the interview session: the portal, the invitation and
+    // the interview page read the session's time, so it takes the round's.
+    // Only an interview still ahead is moved; a round recorded afterwards
+    // leaves a held interview's record alone.
+    if (!humanRound && body.sessionId && booked.at.getTime() > Date.now()) {
+      await tx.interviewSession.updateMany({
+        where: { id: body.sessionId, tenantId, state: { in: [...SCHEDULABLE_STATES] } },
+        data: { scheduledAt: booked.at, scheduledTimeZone: booked.timeZone },
+      });
+    }
+
     const created = await tx.interviewRound.create({
       data: {
         tenantId, pipelineId: pipeline.id, stageKey: stage.key,
@@ -363,7 +401,8 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   });
 
   const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
-  res.status(201).json({ round: presentRound(saved), notification, meeting });
+  const candidateNotice = await noticeForNewRound(req, saved, { pipeline, stageLabel: stage.label, aiRound });
+  res.status(201).json({ round: presentRound(saved), notification, meeting, candidateNotice });
 }));
 
 const completeSchema = z.object({

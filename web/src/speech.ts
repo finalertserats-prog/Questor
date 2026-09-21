@@ -119,11 +119,12 @@ export function createRecognizer(handlers: {
   onSilence?: () => void;
   /** Capture has stopped and cannot be recovered; the turn is still open. */
   onDead?: (reason: string) => void;
-}): Recognizer | null {
+}, options: { readonly lang?: string } = {}): Recognizer | null {
   if (!sttSupported()) return null;
   const Ctor = AnyWindow.SpeechRecognition || AnyWindow.webkitSpeechRecognition;
   const rec = new Ctor();
-  rec.lang = 'en-US';
+  // The interview's language (speechLang.ts); US English only when none is known.
+  rec.lang = options.lang ?? 'en-US';
   rec.continuous = true;
   rec.interimResults = true;
 

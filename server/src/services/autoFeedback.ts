@@ -8,6 +8,7 @@ import { getEmail, type EmailMessage, type EmailProvider } from '../providers/em
 import { EMAIL_SEND_TIMEOUT_MS, SendTimeoutError } from '../providers/email/timing.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
+import { tenantTimeZone } from './tenantTimeZone.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
 import {
   autoCandidateFeedbackEnabledForTenant, feedbackReviewWindowHoursForTenant, feedbackSignOffForTenant,
@@ -388,7 +389,7 @@ async function loadClaimed(id: string) {
       assessment: { select: { id: true, resultJson: true, scorecardId: true } },
       session: {
         select: {
-          id: true, state: true, completedAt: true, tenantId: true, candidateId: true, durationMinutes: true,
+          id: true, state: true, completedAt: true, tenantId: true, candidateId: true, durationMinutes: true, scheduledTimeZone: true,
           candidate: { select: { fullName: true, email: true } },
           role: { select: { title: true } },
           tenant: { select: { name: true } },
@@ -496,7 +497,7 @@ async function sendClaimed(id: string, claim: Claim): Promise<Outcome> {
   const rendered = renderAutoFeedbackEmail({
     to: s.candidate.email, candidateName: s.candidate.fullName, roleTitle: s.role.title,
     companyName: s.tenant.name, content, talkUrl: await talkLink(s),
-    interviewedAt: s.completedAt, durationMinutes: s.durationMinutes,
+    interviewedAt: s.completedAt, timeZone: s.scheduledTimeZone ?? await tenantTimeZone(s.tenantId), durationMinutes: s.durationMinutes,
     signOff: await feedbackSignOffForTenant(s.tenantId),
   });
   // Stored before the send: if the process dies after the mail went, the row
@@ -796,7 +797,7 @@ export async function previewFeedbackEmail(opts: {
   const session = await prisma.interviewSession.findUniqueOrThrow({
     where: { id: opts.sessionId },
     select: {
-      tenantId: true, candidateId: true, completedAt: true, durationMinutes: true,
+      tenantId: true, candidateId: true, completedAt: true, durationMinutes: true, scheduledTimeZone: true,
       candidate: { select: { fullName: true, email: true } },
       role: { select: { title: true } }, tenant: { select: { name: true } },
     },
@@ -843,7 +844,7 @@ export async function previewFeedbackEmail(opts: {
   const rendered = renderAutoFeedbackEmail({
     to: session.candidate.email, candidateName: session.candidate.fullName, roleTitle: session.role.title,
     companyName: session.tenant.name, content,
-    interviewedAt: session.completedAt, durationMinutes: session.durationMinutes,
+    interviewedAt: session.completedAt, timeZone: session.scheduledTimeZone ?? await tenantTimeZone(session.tenantId), durationMinutes: session.durationMinutes,
     signOff: await feedbackSignOffForTenant(session.tenantId),
     // Stands in for the link minted at send time; the preview text shows where it goes.
     talkUrl: `${config.webOrigin.replace(/\/+$/, '')}/talk-to-a-person/preview`,

@@ -10,6 +10,7 @@ import { formatScoreOutOf100, hasScore } from '../components/scoreFormat';
 import { roleDisplayLabels } from '../components/roleLabelModel';
 import { alsoInRolesLabel, otherRoleCounts } from '../components/candidateReuseModel';
 import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
+import { formatDate } from '../components/dateFormat';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
@@ -238,7 +239,7 @@ export function CandidatesList() {
                       number?" is. */}
                   <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>{formatScoreOutOf100(c.fit?.overall)}</td>
                   <td>{interviewCell(c.latestInterview)}</td>
-                  <td className="muted small">{new Date(c.createdAt).toLocaleDateString()}</td>
+                  <td className="muted small">{formatDate(c.createdAt)}</td>
                   <td>
                     {/* The interview shortcut matters more than it looks: until this
                         page existed, a candidate whose interview had not produced an

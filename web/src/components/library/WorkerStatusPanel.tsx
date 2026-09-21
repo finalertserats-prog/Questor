@@ -1,4 +1,5 @@
 import { Banner } from '../ui';
+import { formatDateTime } from '../dateFormat';
 import { budgetBurn, workerAdvice, workerStateLabel, workerStateTone, type LibraryOverview } from './libraryAdminModel';
 
 /** Worker state, budget burn and the status counts, read at a glance. */
@@ -19,7 +20,7 @@ export function WorkerStatusPanel({ overview }: { overview: LibraryOverview }) {
           <div><dt>Library</dt><dd>{overview.enabled ? 'on for organisations' : 'dark (LIBRARY_ENABLED=false)'}</dd></div>
           <div><dt>Worker switch</dt><dd>{overview.workerEnabled ? 'on' : 'off'}</dd></div>
           <div><dt>Critic</dt><dd>{overview.critic.provider} · {overview.critic.model} · {overview.critic.configured ? 'configured' : 'not configured'}</dd></div>
-          <div><dt>Last batch</dt><dd>{overview.worker.lastBatchAt ? new Date(overview.worker.lastBatchAt).toLocaleString() : 'never'}</dd></div>
+          <div><dt>Last batch</dt><dd>{overview.worker.lastBatchAt ? formatDateTime(overview.worker.lastBatchAt) : 'never'}</dd></div>
         </dl>
         <div className="library-budget" data-testid="library-budget">
           <div className="library-budget-row">
