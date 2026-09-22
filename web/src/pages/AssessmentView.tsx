@@ -117,9 +117,18 @@ export function AssessmentView() {
   // The candidate's letter is being sent and the review has to wait a minute:
   // shown as information with a retry, not as a red error.
   const [reviewWait, setReviewWait] = useState('');
-  // Held for the life of one attempt, so every retry of THIS press carries the
-  // same id and the server records one review however many arrive.
+  /**
+   * The id of the judgement being submitted, not of the press.
+   *
+   * It is kept across failures on purpose: the case idempotency exists for is
+   * a response lost AFTER the server committed, and a retry that invented a
+   * fresh id would come back as "already reviewed" for the reviewer's own
+   * review. It is cleared when the judgement itself changes — a different
+   * verdict or a different reason is a different submission, and must not
+   * replay the previous one — and when a submit succeeds.
+   */
   const submissionRef = useRef('');
+  const startNewSubmission = () => { submissionRef.current = ''; };
 
   // Per-competency levels the reviewer disagrees with. Empty means "the AI's
   // level stands", which is a verdict in itself and is recorded as agreement.
@@ -306,9 +315,13 @@ export function AssessmentView() {
       // state from before the review landed.
       await load();
     } catch (err: unknown) {
+      // The id is deliberately NOT cleared here. A failure this side of the
+      // wire says nothing about whether the server committed, and pressing
+      // again with the same id is what turns a lost answer back into the
+      // reviewer's own review rather than a refusal.
       const refused = reviewRefusal(err instanceof ApiError ? err : { message: err instanceof Error ? err.message : '' });
       if (refused.kind === 'wait') setReviewWait(refused.message);
-      else { setError(refused.message); submissionRef.current = ''; }
+      else setError(refused.message);
     } finally {
       setSubmitting(false);
     }
@@ -400,9 +413,9 @@ export function AssessmentView() {
               } : null}
               candidate={candidate.name}
               verdict={verdict}
-              onVerdict={setVerdict}
+              onVerdict={(v) => { startNewSubmission(); setVerdict(v); }}
               reason={reason}
-              onReason={setReason}
+              onReason={(r) => { startNewSubmission(); setReason(r); }}
               copy={copy}
               canSubmit={canSubmit}
               submitting={submitting}

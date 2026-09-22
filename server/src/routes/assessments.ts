@@ -642,9 +642,12 @@ const reviewSchema = z.object({
   // request whose response was lost, sends the same one — and gets the first
   // submit's answer back rather than recording the judgement twice.
   submissionId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/, 'A submission id is 8-64 url-safe characters.').optional(),
-  // "Just record it": write the review and leave the journey alone. The
-  // default is the whole act, because a verdict nobody carries out was the
-  // thing that needed fixing.
+  // "Just record it": write the review WITHOUT recording the decision on the
+  // round. It cannot leave the journey untouched — reviewing an interview is
+  // what assesses it, and that stage event is a fact about the interview
+  // rather than about the verdict — so the page says so beside the button
+  // (verdictFlowModel.recordOnlyNote). The default is the whole act, because
+  // a verdict nobody carried out was the thing that needed fixing.
   applyToJourney: z.boolean().default(true),
 }).strict();
 assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
@@ -670,15 +673,83 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     if (found.assessmentId !== a.id) throw new HttpError(409, 'That submission belongs to a different assessment.');
     return found;
   };
-  const replay = (row: { id: string; disposition: string; comments: string }) => {
+  /**
+   * Carry the journey and record the decision once — the half of the submit
+   * that happens outside the review's own transaction.
+   *
+   * Every step is safe to repeat, and deliberately so. The review commits
+   * first (it is what the candidate's letter is released against), and if this
+   * process then died before the pipeline moved, a retry would otherwise
+   * replay "it worked" over a candidate nobody had moved. So a replay runs
+   * this too: the stage event is forward-only, the decision is a conditional
+   * update that resolves again from wherever the candidate actually is, and
+   * the audit is written only when this review has not already been recorded
+   * as decided. Repeating it repairs; it does not duplicate.
+   */
+  async function carryJourney(reviewId: string): Promise<JourneyMove | null> {
+    // Read here rather than passed in: this runs on the replay path too,
+    // which returns long before the fresh path's snapshot is taken.
+    const before = await journeyStanding(a.session.candidateId, a.session.roleId);
+    // A reviewed interview is an assessed one: Gold, if the finalisation had
+    // not already got there. This is a fact about the interview rather than
+    // the verdict, so "Just record it" does not suppress it.
+    await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId, event: 'interview.assessed', trigger: 'review.completed' });
+    // And the verdict is the decision on that round: Proceed keeps them
+    // moving, Do not progress ends their journey, Consider waits for a person.
+    // Skipped when the reviewer chose "Just record it".
+    const decision = body.applyToJourney
+      ? await noteReviewDecision({
+        tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId,
+        verdict: body.verdict, reason: body.reason, reviewerId: req.auth!.userId,
+      })
+      : null;
+    if (!before) return null;
+    const stages = parseStages(
+      (await prisma.candidatePipeline.findUnique({ where: { id: before.pipelineId }, select: { stagesJson: true } }))?.stagesJson
+        ?? JSON.stringify(DEFAULT_STAGES),
+    );
+    const moved = await journeyMove(before, stages);
+    // Once per review, including when it moved nobody: "nothing happened" is
+    // what people come to an audit trail for as often as "something did".
+    const already = await prisma.auditEvent.findFirst({
+      where: { action: 'review.decision', entityId: a.id, afterJson: { contains: reviewId } }, select: { id: true },
+    });
+    if (already) return moved;
+    await logAudit({
+      tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.decision',
+      entityType: 'AssessmentVersion', entityId: a.id,
+      before: { stage: before.currentStageKey, status: before.status },
+      after: {
+        verdict: body.verdict, decision: decisionOfVerdict(body.verdict) ?? 'none',
+        applied: body.applyToJourney, outcome: decision?.applied === true ? 'applied' : decision?.because ?? 'not_applied',
+        stage: moved.toStageKey, moved: moved.moves, closed: moved.closes,
+        reviewId,
+      },
+    });
+    return moved;
+  }
+
+  const replay = async (row: { id: string; disposition: string; comments: string }) => {
+    // The journey is carried again rather than reported as nothing: a submit
+    // whose answer was lost may also have died before the candidate moved.
+    // A failure here is logged rather than swallowed — the review exists
+    // either way, and a replay that quietly repaired nothing is the state
+    // this whole path was added to prevent.
+    const moved = await carryJourney(row.id).catch((err: unknown) => {
+      logger.error(
+        { err: err instanceof Error ? err.message : String(err), assessmentId: a.id, reviewId: row.id },
+        'Replayed review could not carry the journey; the candidate may be left at the wrong stage',
+      );
+      return null;
+    });
     res.status(200).json({
       review: { id: row.id, verdict: row.disposition, selfReview: row.comments.includes(SELF_REVIEW_NOTE) },
-      replayed: true, feedbackReleased: false, journey: null, export: offer,
+      replayed: true, feedbackReleased: false, journey: moved, export: offer,
     });
   };
 
   const landed = await replayOf();
-  if (landed) { replay(landed); return; }
+  if (landed) { await replay(landed); return; }
 
   // "Final" has to mean something. Once a review is completed it is the
   // version the team acts on and the version the candidate's feedback is
@@ -687,7 +758,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   if (previous && !body.supersede) {
     // Unless the review already there is this very submit, arriving twice.
     const mine = await replayOf();
-    if (mine) { replay(mine); return; }
+    if (mine) { await replay(mine); return; }
     throw new HttpError(409, 'This assessment has already been reviewed. To replace that review, say that you mean to and give a reason.');
   }
 
@@ -706,7 +777,6 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // Where the candidate stood before this submit. The move is reported by
   // comparing this with the row afterwards, so what the reviewer is told
   // happened is the record rather than a second prediction.
-  const standingBefore = await journeyStanding(a.session.candidateId, a.session.roleId);
   // The review and the release of the candidate's letter are one transaction:
   // the gate refuses (409 feedback_sending) while a send holds the row, and
   // the review then does not exist — the email cannot be unsent, so the
@@ -745,10 +815,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     throw new HttpError(409, 'This assessment has already been reviewed. To replace that review, say that you mean to and give a reason.');
   });
   if ('replayed' in written) {
-    res.status(200).json({
-      review: { id: written.review.id, verdict: written.review.disposition, selfReview },
-      replayed: true, feedbackReleased: false, journey: null, export: offer,
-    });
+    await replay(written.review);
     return;
   }
   const { review, feedbackReleased } = written;
@@ -763,37 +830,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     after: { verdict: body.verdict, reason: body.reason, selfReview, applyToJourney: body.applyToJourney },
   });
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, verdict: body.verdict });
-  // A reviewed interview is an assessed one: Gold, if the finalisation had not already got there.
-  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId, event: 'interview.assessed', trigger: 'review.completed' });
-  // And the verdict is the decision on that round: Proceed keeps them moving,
-  // Do not progress ends their journey, Consider waits for a person. Skipped
-  // only when the reviewer chose "Just record it".
-  const pipelineDecision = body.applyToJourney
-    ? await noteReviewDecision({
-      tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId,
-      verdict: body.verdict, reason: body.reason, reviewerId: req.auth!.userId,
-    })
-    : null;
-  // The decision, recorded once and in one vocabulary — including the cases
-  // where it moved nobody. "Nothing happened" is the answer people came to the
-  // audit trail for as often as "something did".
-  const move: JourneyMove | null = standingBefore
-    ? await journeyMove(standingBefore, parseStages(
-      (await prisma.candidatePipeline.findUnique({ where: { id: standingBefore.pipelineId }, select: { stagesJson: true } }))?.stagesJson
-        ?? JSON.stringify(DEFAULT_STAGES),
-    ))
-    : null;
-  await logAudit({
-    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.decision',
-    entityType: 'AssessmentVersion', entityId: a.id,
-    before: standingBefore ? { stage: standingBefore.currentStageKey, status: standingBefore.status } : { pipeline: 'none' },
-    after: {
-      verdict: body.verdict, decision: decisionOfVerdict(body.verdict) ?? 'none',
-      applied: body.applyToJourney, outcome: pipelineDecision?.applied === true ? 'applied' : pipelineDecision?.because ?? 'not_applied',
-      stage: move?.toStageKey ?? null, moved: move?.moves ?? false, closed: move?.closes ?? null,
-      reviewId: review.id,
-    },
-  });
+  const move = await carryJourney(review.id);
   if (previous && body.supersede) {
     // The row itself was superseded inside the transaction above, with the
     // new review; only the trail is written here.
@@ -817,7 +854,6 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     // Offered here rather than behind another screen: the moment a verdict is
     // recorded is the moment somebody wants it in the ATS.
     export: offer,
-    pipeline: pipelineDecision,
   });
 }));
 

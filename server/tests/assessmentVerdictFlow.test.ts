@@ -220,6 +220,34 @@ describe('"Just record it"', () => {
 
     expect(await prisma.humanReview.count({ where: { assessmentId, status: 'COMPLETED' } })).toBe(1);
   });
+
+  /**
+   * It cannot un-assess the interview. Reviewing one is what assesses it, and
+   * that stage event is a fact about the interview rather than about the
+   * verdict — so a candidate the event has not caught up with still moves.
+   * The page says so beside the button rather than implying otherwise.
+   */
+  it('does not pretend to hold back the move that reviewing the interview causes', async () => {
+    const ids = await seeded();
+    const { assessmentId, pipelineId } = await assessed(ids);
+    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'silver' } });
+
+    const res = await submit(ids, assessmentId, 'PROCEED', { applyToJourney: false });
+
+    expect([res.body.journey.toStageKey, res.body.journey.moves]).toEqual(['gold', true]);
+    expect((await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipelineId } })).currentStageKey).toBe('gold');
+  });
+
+  it('records no decision on the round, even when the candidate moved', async () => {
+    const ids = await seeded();
+    const { assessmentId, pipelineId } = await assessed(ids);
+    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'silver' } });
+
+    await submit(ids, assessmentId, 'DO_NOT_PROGRESS', { applyToJourney: false });
+
+    expect(await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipelineId } }))
+      .toMatchObject({ status: 'ACTIVE', decision: null });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -257,6 +285,50 @@ describe('a submit that arrives twice', () => {
 
     await submit(ids, assessmentId, 'DO_NOT_PROGRESS', { submissionId: SUBMISSION });
     await submit(ids, assessmentId, 'DO_NOT_PROGRESS', { submissionId: SUBMISSION });
+
+    expect((await audits(assessmentId, 'review.decision')).length).toBe(1);
+  });
+
+  /**
+   * The review commits first — it is what the candidate's letter is released
+   * against — and the journey is carried after it. A submit that died in
+   * between would leave a recorded verdict over a candidate nobody moved, and
+   * a replay that only said "it worked" would make that permanent.
+   */
+  it('carries a journey the first submit recorded a verdict for but never moved', async () => {
+    const ids = await seeded();
+    const { assessmentId, pipelineId } = await assessed(ids);
+    await submit(ids, assessmentId, 'DO_NOT_PROGRESS', { submissionId: SUBMISSION });
+    // The state a submit that died after writing the review would have left.
+    await prisma.candidatePipeline.update({
+      where: { id: pipelineId },
+      data: { status: 'ACTIVE', decision: null, decisionReason: '', decidedAtStageKey: null, decidedById: null, decidedAt: null },
+    });
+
+    const retry = await submit(ids, assessmentId, 'DO_NOT_PROGRESS', { submissionId: SUBMISSION });
+
+    expect(retry.body.replayed).toBe(true);
+    expect(await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipelineId } }))
+      .toMatchObject({ status: 'DECIDED', decision: 'REJECTED' });
+  });
+
+  it('reports what the journey actually did, rather than nothing, on a replay', async () => {
+    const ids = await seeded();
+    const { assessmentId } = await assessed(ids);
+    await submit(ids, assessmentId, 'PROCEED', { submissionId: SUBMISSION });
+
+    const retry = await submit(ids, assessmentId, 'PROCEED', { submissionId: SUBMISSION });
+
+    expect(retry.body.journey).toMatchObject({ toStageKey: 'gold', toStageLabel: 'Gold' });
+  });
+
+  it('still records the decision once after repairing a replay', async () => {
+    const ids = await seeded();
+    const { assessmentId } = await assessed(ids);
+
+    await submit(ids, assessmentId, 'PROCEED', { submissionId: SUBMISSION });
+    await submit(ids, assessmentId, 'PROCEED', { submissionId: SUBMISSION });
+    await submit(ids, assessmentId, 'PROCEED', { submissionId: SUBMISSION });
 
     expect((await audits(assessmentId, 'review.decision')).length).toBe(1);
   });

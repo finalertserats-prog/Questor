@@ -112,6 +112,41 @@ describe('the verdict panel', () => {
     expect(screen.getByTestId('verdict-ai-withheld').textContent).toContain('Withheld');
   });
 
+  /**
+   * Roving tabIndex without arrow keys is worse than no roving at all: one
+   * button is reachable by Tab and the other two by nothing, so a keyboard
+   * user could record Proceed and nothing else.
+   */
+  it('moves between the three with the arrow keys, as a radio group must', () => {
+    const chosen: string[] = [];
+    panel({ onVerdict: (v: string) => chosen.push(v) });
+    const group = screen.getByRole('radiogroup', { name: 'Your decision' });
+
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+
+    expect(chosen).toEqual(['PROCEED']);
+  });
+
+  it('steps on from the chosen one, and wraps', () => {
+    const chosen: string[] = [];
+    panel({ verdict: 'DO_NOT_PROGRESS', onVerdict: (v: string) => chosen.push(v) });
+    const group = screen.getByRole('radiogroup', { name: 'Your decision' });
+
+    fireEvent.keyDown(group, { key: 'ArrowRight' });
+    fireEvent.keyDown(group, { key: 'ArrowLeft' });
+
+    expect(chosen).toEqual(['PROCEED', 'CONSIDER']);
+  });
+
+  it('leaves other keys to the browser', () => {
+    const chosen: string[] = [];
+    panel({ onVerdict: (v: string) => chosen.push(v) });
+
+    fireEvent.keyDown(screen.getByRole('radiogroup', { name: 'Your decision' }), { key: 'Tab' });
+
+    expect(chosen).toEqual([]);
+  });
+
   it('says plainly when the decision is not this reader\'s to make', () => {
     panel({ refusal: 'Only a hiring manager, a reviewer or an admin can record a review.' });
     expect(screen.getByTestId('verdict-refusal').textContent).toContain('Only a hiring manager');

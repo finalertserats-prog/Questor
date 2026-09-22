@@ -1,3 +1,4 @@
+import type { KeyboardEvent } from 'react';
 import { Icon } from '../Icon';
 import { VERDICTS, verdictLabel, verdictMark, type Verdict } from './verdictVocabulary';
 import type { ConsequenceCopy } from './verdictFlowModel';
@@ -69,6 +70,31 @@ function AiSide({ ai }: { readonly ai: AiReading | null }) {
   );
 }
 
+const ARROW_STEP: Readonly<Record<string, number>> = {
+  ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1,
+};
+
+/**
+ * Arrow-key movement inside the decision group.
+ *
+ * The group looks like radios and is announced as radios, so it has to move
+ * like radios. Roving tabIndex on its own is worse than nothing: it leaves one
+ * button reachable by Tab and the other two reachable by nothing at all, so a
+ * keyboard user could record Proceed and could not record anything else.
+ * (Same rule, same reason, as the level picker on the blind review page.)
+ */
+function moveChoice(
+  event: KeyboardEvent<HTMLDivElement>, value: Verdict | '', onChange: (next: Verdict) => void,
+) {
+  const step = ARROW_STEP[event.key];
+  if (step === undefined) return;
+  event.preventDefault();
+  const at = VERDICTS.indexOf(value as Verdict);
+  const next = at === -1 ? 0 : (at + step + VERDICTS.length) % VERDICTS.length;
+  onChange(VERDICTS[next]);
+  event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+}
+
 export function VerdictPanel(props: VerdictPanelProps) {
   const { verdict, copy, refusal } = props;
   const chosen = verdict !== '';
@@ -84,7 +110,12 @@ export function VerdictPanel(props: VerdictPanelProps) {
           ? <p className="muted" data-testid="verdict-refusal">{refusal}</p>
           : (
             <>
-              <div className="v-seg" role="radiogroup" aria-label="Your decision">
+              <div
+                className="v-seg"
+                role="radiogroup"
+                aria-label="Your decision"
+                onKeyDown={(e) => moveChoice(e, verdict, props.onVerdict)}
+              >
                 {VERDICTS.map((v) => {
                   const mark = verdictMark(v);
                   return (
