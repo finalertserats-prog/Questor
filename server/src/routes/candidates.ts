@@ -20,6 +20,8 @@ import {
 import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { roleTechStack } from '../services/roleTechStack.js';
+import { listCandidates } from '../services/candidateList.js';
+import { pagingQuerySchema } from '../services/listPaging.js';
 import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
 import { assertDemoCreationCap } from '../services/demoAccess.js';
@@ -86,25 +88,15 @@ function sanitizeFilename(original: string): string {
 // auditor holds no capability to see them.
 // A repeated `?roleId=a&roleId=b` arrives as an array; cast to string it
 // reached Prisma as one and failed there as a 500.
-const listQuerySchema = z.object({ roleId: z.string().min(1).max(64).optional() });
+const listQuerySchema = pagingQuerySchema.extend({ roleId: z.string().min(1).max(64).optional() });
 
+// Paged, searched and counted on the server (services/candidateList.ts): the
+// page used to load the caller's whole pipeline with nested detail and filter
+// it in the browser. `roleId` is ANDed with the caller's scope, so it can only
+// ever NARROW the result set, never enumerate another requisition's pipeline.
 candidatesRouter.get('/', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
-  const { roleId } = listQuerySchema.parse(req.query);
-  // `roleId` is ANDed with the caller's scope, so it can only ever NARROW the
-  // result set. Previously it was the whole filter beside tenantId, which turned
-  // a display convenience into "enumerate any requisition's pipeline by id".
-  const candidates = await prisma.candidate.findMany({
-    where: { ...(await candidateScope(req.auth!)), ...(roleId ? { roleId } : {}) },
-    orderBy: { createdAt: 'desc' },
-    include: { profiles: { orderBy: { version: 'desc' }, take: 1 }, role: true, interviews: { orderBy: { createdAt: 'desc' }, take: 1 } },
-  });
-  res.json({ candidates: candidates.map((c) => ({
-    id: c.id, fullName: c.fullName, email: c.email, roleId: c.roleId, roleTitle: c.role?.title ?? null,
-    roleLevel: c.role?.level ?? null, roleRegionCode: c.role?.regionCode ?? null, roleExperienceBand: c.role?.experienceBand ?? null, roleCreatedAt: c.role?.createdAt ?? null,
-    fit: c.profiles[0] ? parseJsonOptional<Record<string, unknown> | null>(c.profiles[0].fitScoreJson, null, { model: 'CandidateProfileVersion', id: c.profiles[0].id, field: 'fitScoreJson' }) : null,
-    latestInterview: c.interviews[0] ? { id: c.interviews[0].id, state: c.interviews[0].state } : null,
-    createdAt: c.createdAt,
-  })) });
+  const query = listQuerySchema.parse(req.query);
+  res.json(await listCandidates(req.auth!, query));
 }));
 
 // People already in Questor, for the type-ahead on Add candidate and for

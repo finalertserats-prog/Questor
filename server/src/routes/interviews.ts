@@ -36,6 +36,7 @@ import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { replanPending } from '../services/interviewReplan.js';
 import { formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
+import { interviewListQuerySchema, listInterviews } from '../services/interviewList.js';
 import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 
 export const interviewsRouter = Router();
@@ -211,40 +212,8 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
 // candidate's name and their recommendation — an auditor holds audit:read and
 // has no business reading candidate detail here.
 interviewsRouter.get('/', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
-  // Sessions have no scope of their own; they inherit the candidate's. Filtering
-  // through the candidate relation keeps that single definition of scope rather
-  // than reimplementing the assignment rules in this query.
-  const scope = (await candidateScope(req.auth!)) as Prisma.CandidateWhereInput;
-  const sessions = await prisma.interviewSession.findMany({
-    where: { tenantId: req.auth!.tenantId, candidate: scope }, orderBy: { createdAt: 'desc' },
-    include: {
-      candidate: true, role: true, invitation: true,
-      assessments: { orderBy: { version: 'desc' }, take: 1, include: { reviews: { where: { status: 'COMPLETED', supersededAt: null }, orderBy: { completedAt: 'desc' }, take: 1, select: { disposition: true } } } },
-    },
-  });
-  // The blind-review policy applies here as on the assessment page: a reviewer
-  // it still holds back gets the assessment id, to reach the blind review, but
-  // not the AI's call.
-  const visible = await aiConclusionVisible({
-    assessmentIds: sessions.flatMap((s) => s.assessments.map((a) => a.id)),
-    userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'), tenantId: req.auth!.tenantId,
-  });
-  res.json({ sessions: sessions.map((s) => {
-    const latest = s.assessments[0];
-    // A colleague's verdict is held back with the AI's: either would bias the
-    // independent review the policy is waiting for.
-    const conclusion = !latest ? { recommendation: null, humanRecommendation: null }
-      : visible.has(latest.id)
-        // The reviewer's verdict once a person has given one; `recommendation` stays the AI's.
-        ? { recommendation: latest.recommendation, humanRecommendation: humanVerdict(latest.reviews[0]?.disposition) }
-        : { blindReviewPending: true };
-    return {
-      id: s.id, state: s.state, provider: s.provider, scheduledAt: s.scheduledAt, scheduledTimeZone: s.scheduledTimeZone,
-      candidate: { id: s.candidateId, name: s.candidate.fullName }, role: { id: s.roleId, title: s.role.title, level: s.role.level, regionCode: s.role.regionCode, experienceBand: s.role.experienceBand, createdAt: s.role.createdAt },
-      ...conclusion, assessmentId: latest?.id ?? null,
-      invited: !!s.invitation, createdAt: s.createdAt,
-    };
-  }) });
+  // Paged, filtered and searched on the server (services/interviewList.ts).
+  res.json(await listInterviews(req.auth!, interviewListQuerySchema.parse(req.query)));
 }));
 
 const pipelineSummaryQuerySchema = z.object({
