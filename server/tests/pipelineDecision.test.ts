@@ -316,7 +316,7 @@ describe('the verdict on an assessment review', () => {
 
     const res = await review(ids, assessmentId, 'DO_NOT_PROGRESS');
 
-    expect(res.body.pipeline).toEqual({ applied: true, effect: { kind: 'close', outcome: 'REJECTED', atStageKey: 'gold' } });
+    expect(res.body.journey).toMatchObject({ fromStageKey: 'gold', toStageKey: 'gold', moves: false, closes: 'REJECTED' });
   });
 
   it('CONSIDER decides nothing', async () => {
@@ -325,7 +325,7 @@ describe('the verdict on an assessment review', () => {
 
     const res = await review(ids, assessmentId, 'CONSIDER');
 
-    expect([res.status, (await stored(pipelineId)).status, res.body.pipeline]).toEqual([201, 'ACTIVE', null]);
+    expect([res.status, (await stored(pipelineId)).status, res.body.journey.closes]).toEqual([201, 'ACTIVE', null]);
   });
 
   it('never reopens a decided pipeline when a later review supersedes the verdict', async () => {
@@ -335,7 +335,8 @@ describe('the verdict on an assessment review', () => {
 
     const res = await review(ids, assessmentId, 'PROCEED', { supersede: { reason: 'A second reviewer read the transcript differently.' } });
 
-    expect([res.status, (await stored(pipelineId)).decision, res.body.pipeline]).toEqual([201, 'REJECTED', { applied: false, because: 'already_decided' }]);
+    expect([res.status, (await stored(pipelineId)).decision]).toEqual([201, 'REJECTED']);
+    expect(res.body.journey).toMatchObject({ toStageKey: 'gold', moves: false, closes: null });
   });
 
   it('still records the review when the pipeline plan is corrupt', async () => {

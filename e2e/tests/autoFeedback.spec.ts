@@ -81,18 +81,18 @@ test('a completed typed interview shows its assessment at once and records the f
   await expect(page.getByText('Independent review required')).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Review this blind' })).toBeVisible();
 
-  // The transcript comes first, above the readings and the form — with who
-  // spoke, when, and what each question was asked for.
-  const transcript = page.getByTestId('transcript-reader');
+  // The record of the interview sits beside the decision — who spoke, when,
+  // and what each question was asked for — and carries the candidate's words.
+  const transcript = page.getByTestId('assessment-transcript');
   await expect(transcript.getByTestId('transcript-turn').first()).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByTestId('review-facts')).toContainText('Interviewer');
   await expect(transcript.getByText(ANSWER).first()).toBeVisible();
-  const transcriptTop = (await transcript.boundingBox())?.y ?? Number.NaN;
-  const tabsTop = (await page.getByRole('tablist', { name: 'Assessment readings' }).boundingBox())?.y ?? Number.NaN;
-  expect(transcriptTop).toBeLessThan(tabsTop);
 
-  // On a short screen the transcript is longer than the page, so the note
-  // asks for it to be read first, and the sticky control offers the review.
+  // Beside, not below: at desk width the transcript starts to the RIGHT of the
+  // decision, which is what keeps a skill and its evidence on screen together.
+  const verdictBox = await page.getByTestId('verdict-panel').boundingBox();
+  const transcriptBox = await transcript.boundingBox();
+  expect(transcriptBox?.x ?? 0).toBeGreaterThan((verdictBox?.x ?? 0) + (verdictBox?.width ?? 0) - 1);
+
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.evaluate(() => window.scrollTo(0, 0));
   // The decision leads the page; the transcript is the column beside it, and
@@ -129,10 +129,14 @@ test('a completed typed interview shows its assessment at once and records the f
   await expect(page.getByText(/The reviewer changed 1 of/)).toBeVisible();
   await expect(page.getByText('Read the transcript differently.')).toBeVisible();
 
-  // The completed review releases the candidate's feedback at once.
+  // The completed review releases the candidate's feedback at once. The letter
+  // is reference rather than the work, so it lives in a fold that has to be
+  // opened — textContent reads it either way, the View control needs it open.
+  const letterFold = page.getByText("The candidate's feedback letter");
   const status = page.getByTestId('feedback-email-status');
   await expect.poll(async () => {
     await page.goto(assessmentUrl);
+    await letterFold.click();
     return (await status.textContent({ timeout: 10_000 })) ?? '';
   }, { timeout: 60_000 }).toContain('Feedback sent to the candidate on');
   const panel = page.getByTestId('feedback-email');
