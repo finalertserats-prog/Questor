@@ -22,7 +22,7 @@ import { noteSessionActivity } from './liveSessions.js';
 import { OBSERVER_NOTICE, hasObserverNotice } from '../services/observerPolicy.js';
 import { openingQuestion } from '../engines/openingModel.js';
 import { currentSitting } from '../engines/conversationModel.js';
-import { traceServing } from '../providers/llm/servingTrace.js';
+import { traceServing, type ServedCall } from '../providers/llm/servingTrace.js';
 import { servingMeta } from '../services/interviewServing.js';
 import { anchorsFor, recordLibraryUsage } from '../library/usage.js';
 
@@ -116,9 +116,9 @@ async function loadContext(sessionId: string) {
  * question again without its lead-in. A damaged or absent record reads as
  * neither, which the conversation treats as an ordinary question.
  */
-function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed' | 'libraryEntryId' | 'form'> {
+function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed' | 'libraryEntryId' | 'form' | 'rungIndex'> {
   try {
-    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown; libraryEntryId?: unknown; form?: unknown };
+    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown; libraryEntryId?: unknown; form?: unknown; rungIndex?: unknown };
     return {
       ...(typeof meta.kind === 'string' ? { kind: meta.kind } : {}),
       ...(typeof meta.question === 'string' ? { question: meta.question } : {}),
@@ -126,6 +126,7 @@ function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question'
       // A question drawn on a library entry: which one, and the form it was tagged with.
       ...(typeof meta.libraryEntryId === 'string' ? { libraryEntryId: meta.libraryEntryId } : {}),
       ...(typeof meta.form === 'string' ? { form: meta.form } : {}),
+      ...(typeof meta.libraryEntryId === 'string' && Number.isInteger(meta.rungIndex) ? { rungIndex: meta.rungIndex as number } : {}),
     };
   } catch {
     return {};
@@ -268,10 +269,7 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.
-    // Two separate records share the turn's metadata: which model layer wrote
-    // it (degraded mode) and which library rung it drew on. Distinct keys, so
-    // neither overwrites the other.
-  }, { kind: utter.kind, ...(utter.question ? { question: utter.question } : {}), ...libraryMeta(utter), ...servingMeta(served) }, (_tx, tail) => {
+  }, agentTurnMeta(utter, served), (_tx, tail) => {
     if ((tail?.id ?? null) !== readTailId) throw new TranscriptMovedError();
   });
 
@@ -287,6 +285,22 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   return {
     turnId: agentTurn.id, index: agentTurn.index, text: utter.text, competencyId: utter.competencyId,
     kind: utter.kind, state: session.state, done, withdrawn,
+  };
+}
+
+/**
+ * What an agent turn stores in Turn.metaJson. Two separate records share it:
+ * which library rung the turn drew on (libraryEntryId, form, rungIndex,
+ * rungMove) and which model layer wrote it (`serving`, degraded mode). Their
+ * keys are distinct and neither is written anywhere else, so one never
+ * overwrites the other. With both off it is { kind, question } as it always was.
+ */
+export function agentTurnMeta(utter: AgentUtterance, served: readonly ServedCall[]): Record<string, unknown> {
+  return {
+    kind: utter.kind,
+    ...(utter.question ? { question: utter.question } : {}),
+    ...libraryMeta(utter),
+    ...servingMeta(served),
   };
 }
 

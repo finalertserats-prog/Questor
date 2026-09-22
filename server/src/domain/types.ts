@@ -214,6 +214,8 @@ export interface TurnRecord {
   libraryEntryId?: string;
   /** For an agent turn: the question form it was stored with, when known (a library question's tag). */
   form?: string;
+  /** For an agent turn that asked a library question: the rung of the block's ladder it drew on. */
+  rungIndex?: number;
 }
 
 export interface EvidenceSpan {

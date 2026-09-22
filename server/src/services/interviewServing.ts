@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import type { ServedCall } from '../providers/llm/servingTrace.js';
+import { ranDegraded, type ServedCall } from '../providers/llm/servingTrace.js';
 
 /**
  * Degraded mode, recorded per interviewer turn and read back for the
@@ -30,7 +30,7 @@ const RANK: Record<Layer, number> = { primary: 0, local: 1, 'built-in': 2 };
 export function servingMeta(served: readonly ServedCall[]): { serving?: TurnServing } {
   if (served.length === 0) return {};
   const lowest = served.reduce((a, b) => (RANK[b.layer] > RANK[a.layer] ? b : a));
-  const degraded = served.some((c) => c.layer === 'local' || (c.layer === 'built-in' && c.failure !== undefined));
+  const degraded = ranDegraded(served);
   return { serving: { layer: lowest.layer, degraded, ...(lowest.failure ? { failure: lowest.failure } : {}) } };
 }
 

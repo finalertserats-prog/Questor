@@ -34,3 +34,20 @@ export function noteServed(call: ServedCall): void {
   const store = trace.getStore();
   if (store) store.served = [...store.served, call];
 }
+
+/**
+ * The calls made during `work`, which still count towards the enclosing turn's
+ * trace. Lets one part of a turn (a library rung attempt) ask whether it ran
+ * degraded without hiding its calls from the turn's own record.
+ */
+export async function servedDuring<T>(work: () => Promise<T>): Promise<{ result: T; served: readonly ServedCall[] }> {
+  const outer = trace.getStore();
+  const { result, served } = await traceServing(work);
+  if (outer) outer.served = [...outer.served, ...served];
+  return { result, served };
+}
+
+/** Whether an outage put any of these calls below the primary: the turn ran in fallback mode. */
+export function ranDegraded(served: readonly ServedCall[]): boolean {
+  return served.some((c) => c.layer === 'local' || (c.layer === 'built-in' && c.failure !== undefined));
+}
