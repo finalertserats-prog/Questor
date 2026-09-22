@@ -8,6 +8,7 @@ import { WorkerStatusPanel } from '../components/library/WorkerStatusPanel';
 import { PoolHealthTable } from '../components/library/PoolHealthTable';
 import { EntryReviewList, type ReviewAction } from '../components/library/EntryReviewList';
 import { EntryDetail } from '../components/library/EntryDetail';
+import { TrialReportPanel } from '../components/library/TrialReportPanel';
 import { useLibraryAdminData } from '../components/library/useLibraryAdminData';
 import { decisionMessage, percent, stratumLabel, type EntryView } from '../components/library/libraryAdminModel';
 import { useToast } from '../components/Toast';
@@ -93,6 +94,8 @@ export function LibraryAdmin() {
           emptyTitle="No sample today" emptyMessage="Nothing probational or live is left to sample."
         />
       </section>
+
+      <TrialReportPanel />
 
       <section className="card" aria-labelledby="library-pools-heading">
         <h2 id="library-pools-heading" className="library-section-title">Pool health</h2>

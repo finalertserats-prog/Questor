@@ -28,6 +28,8 @@ import { useReadProgress, useReviewTranscript, type TranscriptSource } from '../
 import { REVIEW_SECTION_ID } from '../components/review/transcriptReaderModel';
 import { formatDateTime } from '../components/dateFormat';
 import { servingModeSentence, type ServingModeView } from '../components/servingModeModel';
+import { QuestionsAskedCard } from '../components/QuestionsAskedCard';
+import type { AskedQuestion } from '../components/questionsAskedModel';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -59,6 +61,8 @@ interface AssessmentResp {
   outcome?: { source: 'human' | 'ai'; recommendation: string; reviewedAt: string | null };
   /** Turns written by a fallback during an AI provider outage. Absent on an older server. */
   servingMode?: ServingModeView;
+  /** What the interviewer asked, for interviews the question library planned; absent otherwise. */
+  questionsAsked?: AskedQuestion[];
 }
 
 // ---------------------------------------------------------------------------
@@ -697,6 +701,8 @@ export function AssessmentView() {
         </table>
         </div>
       </div>
+
+      {data.questionsAsked && <QuestionsAskedCard questions={data.questionsAsked} />}
 
       <div className="grid cols-2">
         <StringCard title="Strengths" items={result.strengths} />

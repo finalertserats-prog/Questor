@@ -6,6 +6,7 @@ import { Badge, Banner, Stat } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
 import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/RoundMeetingSetting';
 import { HiringPolicySettings } from '../components/HiringPolicySettings';
+import { QuestionLibrarySettings } from '../components/QuestionLibrarySettings';
 import { OrgTimeZoneSetting } from '../components/OrgTimeZoneSetting';
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
@@ -289,6 +290,7 @@ export function Admin() {
       </div>
       <OrgTimeZoneSetting />
       <HiringPolicySettings />
+      <QuestionLibrarySettings />
       </>
       ))}
 
