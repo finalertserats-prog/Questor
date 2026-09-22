@@ -6,7 +6,7 @@ import { loadState, newState, runLogger, saveState, withPools, writeJsonl } from
 import { spawnRunner } from './lanes.js';
 import { cliProvider } from './provider.js';
 import { runSeed } from './run.js';
-import { LaneScheduler } from './scheduler.js';
+import { generatorsFor, LaneScheduler } from './scheduler.js';
 import { summarize, type LogEvent } from './summary.js';
 
 /**
@@ -15,7 +15,7 @@ import { summarize, type LogEvent } from './summary.js';
  *   npm run library:seed-generate -- --pools pools.json --out runs/pilot [options]
  *
  *   --lanes claude,codex,gemini   lanes to use (at least two; default all three)
- *   --generators claude,codex     lanes allowed to write (default: every lane); the rest only critique
+ *   --generators claude,codex     lanes allowed to write (default claude,codex among --lanes); the rest only judge
  *   --per-pool 4                  questions asked for per pool batch (the worker asks for 10)
  *   --concurrency 2               pools in flight (each lane still runs one call at a time)
  *   --min-gap-sec 5               pause between calls on one lane
@@ -103,13 +103,11 @@ async function main(): Promise<number> {
   const log = runLogger(join(out, 'run.log'), now);
   const lanes = lanesArg();
   const maxPerLane = arg('max-calls-per-lane');
-  const generatorsText = arg('generators');
-  const generators = generatorsText ? generatorsText.split(',').map((s) => s.trim()).filter((l): l is SeedLane => lanes.includes(l as SeedLane)) : undefined;
-  if (generators && generators.length === 0) throw new Error('--generators must name at least one of the --lanes');
+  const generators = generatorsFor(lanes, arg('generators')?.split(',').map((s) => s.trim()).filter(Boolean));
   const scheduler = new LaneScheduler(lanes, {
     minGapMs: num('min-gap-sec', 5) * 1000, now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     ...(maxPerLane ? { maxCallsPerLane: num('max-calls-per-lane', 0) } : {}),
-    ...(generators ? { generators } : {}),
+    generators,
   }, state.lanes);
   const timeoutMs = num('timeout-sec', 420) * 1000;
 
@@ -120,7 +118,7 @@ async function main(): Promise<number> {
     process.stderr.write('Stopping after the calls in flight (Ctrl-C again to abort)...\n');
   });
 
-  log({ event: 'run_start', runId: state.runId, pools: file.pools.length, lanes });
+  log({ event: 'run_start', runId: state.runId, pools: file.pools.length, lanes, generators });
   const maxCalls = arg('max-calls');
   const result = await runSeed(file.pools, state, {
     perPool: num('per-pool', 4), concurrency: num('concurrency', 2), tiebreak: !process.argv.includes('--no-tiebreak'),

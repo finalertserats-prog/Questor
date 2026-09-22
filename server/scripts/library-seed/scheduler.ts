@@ -22,6 +22,24 @@ export interface Assignment {
   readonly tiebreak: Lane | null;
 }
 
+/**
+ * Lanes that write by default (owner decision 2026-09-22): in the pilot Gemini
+ * wrote 3 accepted questions of 40 against 24 of 44 for each of the others,
+ * so it judges and breaks ties only.
+ */
+export const DEFAULT_GENERATORS: readonly Lane[] = ['claude', 'codex'];
+
+/** The writers for a run: the explicit list, or the default writers among the lanes in use. */
+export function generatorsFor(lanes: readonly Lane[], explicit?: readonly string[]): Lane[] {
+  if (explicit && explicit.length > 0) {
+    const chosen = explicit.filter((l): l is Lane => (lanes as readonly string[]).includes(l));
+    if (chosen.length !== explicit.length) throw new Error('--generators must name lanes that are in --lanes');
+    return chosen;
+  }
+  const defaults = lanes.filter((l) => DEFAULT_GENERATORS.includes(l));
+  return defaults.length > 0 ? defaults : [...lanes];
+}
+
 const BACKOFF_BASE_MS = 60_000;
 const BACKOFF_MAX_MS = 30 * 60_000;
 

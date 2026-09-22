@@ -7,7 +7,7 @@ import { classifyFailure, DEFAULT_LIMIT_COOLDOWN_MS, laneCommand, parseResetTime
 import { parseQuestions, parseVerdicts, PoolStageError, runPool, type PipelineDeps } from '../../scripts/library-seed/pipeline.js';
 import { cliProvider, LaneLimitError } from '../../scripts/library-seed/provider.js';
 import { runSeed } from '../../scripts/library-seed/run.js';
-import { LaneScheduler } from '../../scripts/library-seed/scheduler.js';
+import { generatorsFor, LaneScheduler } from '../../scripts/library-seed/scheduler.js';
 import { summarize } from '../../scripts/library-seed/summary.js';
 
 /** The laptop side of the seed: limits, rotation, defensive parsing, the pool loop, resume. */
@@ -115,6 +115,22 @@ describe('LaneScheduler', () => {
     const s = new LaneScheduler(['claude', 'codex', 'gemini'], { minGapMs: 0, now: () => NOW.getTime(), sleep: async () => undefined, generators: ['claude'] });
     s.limited('claude', new Date(NOW.getTime() + 60_000));
     expect(s.assign(0)).toBeNull();
+  });
+
+  it('lets Claude and Codex write and keeps Gemini to judging by default', () => {
+    expect(generatorsFor(['claude', 'codex', 'gemini'])).toEqual(['claude', 'codex']);
+  });
+
+  it('keeps the default to the lanes in use', () => {
+    expect(generatorsFor(['codex', 'gemini'])).toEqual(['codex']);
+  });
+
+  it('honours an explicit list of writers', () => {
+    expect(generatorsFor(['claude', 'codex', 'gemini'], ['gemini', 'claude'])).toEqual(['gemini', 'claude']);
+  });
+
+  it('refuses writers that are not among the lanes', () => {
+    expect(() => generatorsFor(['claude', 'codex'], ['gemini'])).toThrow(/--generators/);
   });
 
   it('has no assignment when fewer than two lanes can run', () => {
