@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import { Banner } from './ui';
+import { useToast } from './Toast';
 import {
   LIBRARY_MODE_OPTIONS, libraryModePatch, libraryNumbersPatch, librarySettingsOf,
   type LibraryMode, type LibrarySettingsView,
@@ -18,7 +19,9 @@ export function QuestionLibrarySettings() {
   const [trialPercent, setTrialPercent] = useState('');
   const [windowDays, setWindowDays] = useState('');
   const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  // A save that worked is confirmed with a toast; only a failure stays on the page.
+  const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -42,16 +45,16 @@ export function QuestionLibrarySettings() {
 
   const save = async (body: object) => {
     setSaving(true);
-    setNotice(null);
+    setError(null);
     try {
       const saved = await api.put<{ policy: Record<string, unknown> }>('/admin/policy', body);
       const view = librarySettingsOf(saved.policy ?? {});
       setSettings(view);
       setTrialPercent(String(view.trialPercent));
       setWindowDays(String(view.windowDays));
-      setNotice({ ok: true, text: 'Saved.' });
+      toast.show('Saved.');
     } catch (err: unknown) {
-      setNotice({ ok: false, text: err instanceof Error ? err.message : 'The setting could not be saved.' });
+      setError(err instanceof Error ? err.message : 'The setting could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -61,7 +64,7 @@ export function QuestionLibrarySettings() {
     e.preventDefault();
     const patch = libraryNumbersPatch(Number(trialPercent), Number(windowDays));
     if (!patch) {
-      setNotice({ ok: false, text: 'Give a trial share between 0 and 100, and a window between 1 and 365 days.' });
+      setError('Give a trial share between 0 and 100, and a window between 1 and 365 days.');
       return;
     }
     void save(patch);
@@ -109,7 +112,7 @@ export function QuestionLibrarySettings() {
           </p>
         </form>
       )}
-      {notice && <Banner kind={notice.ok ? 'ok' : 'error'}>{notice.text}</Banner>}
+      {error && <Banner kind="error">{error}</Banner>}
     </div>
   );
 }
