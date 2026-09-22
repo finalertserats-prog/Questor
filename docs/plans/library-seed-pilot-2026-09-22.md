@@ -6,13 +6,43 @@
 
 The owner asked to fill the question library from the Brahmastra (the Claude, Codex and Gemini command-line tools on the owner's laptop) instead of waiting for an Anthropic key and OpenAI credits on the server. This document covers the offline path that was built for that and a pilot run on two roles.
 
-**Result.** Two rounds over 2 roles × 4 competencies × 2 bands (16 pools) wrote 128 questions. **51 were accepted (40%)** after an independent critic and, where the critic failed a question, a third-lane tie-break. That took **110 CLI calls in 60 minutes: 2.2 calls and 70 seconds per accepted entry, about 51 accepted an hour.** No lane hit a usage limit. All 51 were imported into a local Postgres through the new import. It ran every question through the worker's own gates, and **all 51 are drafts in the owner queue**, because every seeded stratum starts as new. Importing the same file again wrote nothing.
+**Result.** Two rounds over 2 roles × 4 competencies × 2 bands (16 pools) wrote 128 questions. **51 were accepted (40%)** after an independent critic and, where the critic failed a question, a third-lane tie-break. That took **110 CLI calls in 60 minutes: 2.2 calls and 70 seconds per accepted entry, about 51 accepted an hour.** No lane hit a usage limit. All 51 were imported into a local Postgres through the new import, which ran every question through the worker's own gates; importing the same file again wrote nothing.
 
-**Three things the owner should decide before a large run:**
+**After the owner's decisions of the same day, a third round over the pools still below target accepted 32 of 52 (62%) at 1.22 calls and 77 entries an hour**, with every pool filled and seven question forms covered. The numbers below are from the first two rounds unless they say otherwise.
 
-1. **Gemini should not write questions.** As generator it had 3 of 40 accepted (7.5%). Claude and Codex each had 24 of 44 (55%). As critic and tie-break Gemini was fine. It is also the slowest lane: 76–103 s a call against about 20 s for the other two. The run takes `--generators claude,codex` for this; Gemini then only judges.
-2. **The L0 critic rule "anchors leaked" rejects most of what fails.** It appears in 61 of the 77 rejections. The critics read any question on the competency's own topic (for example "trade concessions for commitments") as leaking the standard. That standard is the same one the server's worker will use. Decide whether a leak means "gives away what a strong answer contains" (the intent) or "mentions the topic". Then reword the critic prompt for the worker and the seed alike. Loosening it would roughly double what gets accepted.
-3. **The owner queue, not generation, sets the pace.** A stratum (scope × role × band × form × prompt version) needs 20 approvals the owner makes without edits before its entries skip the queue. With 8 forms, that is 160 owner approvals per role and band. For the core fill (about 60 roles × 5 bands) it comes to tens of thousands of approvals. Either sample by a coarser stratum for seeded content or lower the per-stratum count. As it stands, every seeded entry waits for the owner.
+**The owner decided all three on 2026-09-22, plus how entries are approved.** What changed, and what a third round measured, is in "After the owner's decisions" below. The findings that prompted them:
+
+1. **Gemini should not write questions.** As generator it had 3 of 40 accepted (7.5%). Claude and Codex each had 24 of 44 (55%). As critic and tie-break Gemini was fine. It is also the slowest lane: 76–103 s a call against about 20 s for the other two.
+2. **The L0 critic rule "anchors leaked" rejected most of what failed.** It appeared in 61 of the 77 rejections, including questions that only named the competency's topic.
+3. **The owner queue, not generation, set the pace.** A stratum (scope × role × band × form × prompt version) needed 20 approvals the owner made without edits before its entries could skip the queue: 160 approvals per role and band, tens of thousands across the core fill.
+
+## After the owner's decisions
+
+The owner settled all four points on 2026-09-22 and this branch carries them:
+
+1. **Claude and Codex write; Gemini judges and breaks ties.** That is now the run's default (`--generators` still overrides).
+2. **"Leaked" means the question gives the answer away.** The critic rubric (`library-critic-v2`, used by the server worker and the seed run alike) says so, and carries calibration pairs: the same topic and anchors, once as a leak, once as a fair question. Asking about the competency's topic is not a leak.
+3. **Approval by policy plus a daily sample.** An entry that passes the generator, a critic of a different model family, the linter and the injection screen goes to `probational` on its own — never live; live still needs clean uses in interviews. Critic-unsure and tie-broken entries still go to the owner queue. The per-stratum 20-approvals gate is gone; the owner watches through the stratified daily sample, sized by `LIBRARY_DAILY_SAMPLE_SIZE` (default 20), and a rejection in the sample still sends that stratum's next 200 entries to the queue.
+4. **Only global-catalog text leaves the server.** The export now keeps a pool only when its competency is one of the platform's own and words it as the platform does; it skips catalog roles an organisation typed in, and it carries questions and standards only where the seed run itself wrote them. Pools for an organisation's own competencies stay on the server for the worker, and the export reports how many it left behind.
+
+### Round 3: the decisions, measured
+
+The same two roles, the 13 pools still below target, batch of 4, critic v2, Claude and Codex writing, Gemini judging:
+
+| | Rounds 1–2 (before) | Round 3 (after) |
+| --- | --- | --- |
+| Accepted / generated | 51 / 128 (40%) | **32 / 52 (62%)** |
+| Calls per accepted entry | 2.2 | **1.22** |
+| Accepted per hour | 51 | **77** |
+| Pools with nothing accepted | 3 of 16 | **0 of 13** |
+| Question forms covered | 4 | **7** |
+| Accepted by writer | claude 24, codex 24, gemini 3 | claude 16, codex 16 |
+
+39 calls in 24.8 minutes, no usage limit, no failed call. 13 of the 32 went through a tie-break, so they land in the owner queue; the other 19 pass to probational by policy. The two Software Engineer debugging pools that had nothing after two rounds now have entries. Form coverage widened because the export now counts the forms of entries still waiting for the owner, so the next batch asks for the forms a pool lacks.
+
+**Round 3 through the import.** 32 records, 0 invalid, 0 refused, 0 rejected: **10 went to probational by policy and 22 to the owner queue** — 13 because the critics split and a tie-break decided them, the rest for a reading level above grade 14, a critic confidence in the grey band, or a question written without a question mark. That is the approval the owner asked for: clean entries land on their own, the doubtful ones wait.
+
+**The leak rule, checked on held-out questions.** Eight questions the v1 critics had failed only for "anchors leaked", plus two written to leak on purpose, were put to all three lanes under v2: every lane caught both planted leaks (2/2), and they still failed 6, 7 and 4 of the 8 held-out ones. Reading those questions back, most do spell out the anchors ("pushed back by requiring reciprocal business commitments"), so the critics are not wrong: v2 draws the line where the owner wanted it rather than opening the floodgates. The acceptance rise in round 3 comes from both decisions together, with the writer change doing most of the work.
 
 ## What was built
 
@@ -60,7 +90,7 @@ Pass goes to probational, unsure to the owner queue, fail to rejected with its r
 | --- | --- |
 | Roles | Software Engineer (Engineering / Technical Delivery); Enterprise Account Executive (Professional / Operations) |
 | Bands | developing, senior |
-| Competencies | 4 per role, from a hand-written approved scorecard (`scripts/library-seed/pilotWorld.ts`). Production pools use each organisation's approved scorecard, so the export must run against production to get the real competency keys. |
+| Competencies | 4 per role, from an approved scorecard (`scripts/library-seed/pilotWorld.ts`). Rounds 1–2 used hand-written competencies; since decision 4 the export carries only the platform's own competencies, and the pilot fixture uses those. |
 | Shared text | A catalog JD draft per role and band, written for the pilot (generic, no employer) |
 | Batch | 4 questions per pool per round (the worker asks for 10) |
 | Lanes | Round 1 in the order claude → codex → gemini; round 2 reversed (claude → gemini → codex), so all six generator → critic pairings were measured |
@@ -98,7 +128,7 @@ On the laptop, 75 of the 77 rejected questions were failed by both the critic an
 
 No question was dropped as malformed or by the linter or duplicate check on the laptop. All replies from all three lanes parsed.
 
-At import (51 questions): 0 refused, 0 invalid, 0 rejected, **51 queued for the owner, 0 probational**. Every one carries `stratum:new`. Other reasons attached:
+At import (51 questions): 0 refused, 0 invalid, 0 rejected, **51 queued for the owner, 0 probational** — every one carried `stratum:new`, the per-stratum gate that decision 3 has since removed. Other reasons attached:
 
 | Reason | Entries |
 | --- | --- |
@@ -149,20 +179,19 @@ Only four forms were asked for (star, opinion, disagreement, hypothetical). With
 
 ## Throughput and projection
 
-Measured: about **60 accepted entries an hour in steady state** (standards exist), 51 an hour including writing the standards. That is with three lanes, a batch of 4, and no usage limit reached in 110 calls, about 35–40 calls per lane an hour.
+Measured before the owner's decisions: about **60 accepted entries an hour in steady state** (standards exist), 51 an hour including writing the standards. Measured after them (round 3, the same pools, Claude and Codex writing, critic v2): **77 an hour at 1.22 calls per accepted entry**. That is with three lanes, a batch of 4, and no usage limit reached in 149 calls, about 35–40 calls per lane an hour.
 
 The subscriptions' own limits are the unknown. Claude and Codex both meter in rolling windows and weekly caps, and this pilot did not reach them. Projections, stated with their assumptions:
 
 | Scenario | Assumption | Accepted a day |
 | --- | --- | --- |
-| Pilot settings, working day | 8 h of calls, no limit reached | ~400–480 |
-| Pilot settings, unattended | 16 h (laptop kept awake), no limit reached | ~800–950 |
-| Gemini as critic and tie-break only | acceptance ~55% instead of 40% | ×1.35 on either line |
+| Round 3 settings, working day | 8 h of calls, no limit reached | ~600 |
+| Round 3 settings, unattended | 16 h (laptop kept awake), no limit reached | ~1,200 |
 | Batch of 10 instead of 4 | the same calls cover 2.5× the questions; call time grows with the batch (unmeasured) | up to ×1.5–2 |
 
 **If a usage limit is hit,** the run parks that lane and carries on with the other two. With only one lane left it sleeps until the reset time the CLI printed, capped by `--max-wait-hours`. After that it stops, and a re-run resumes.
 
-For scale: the plan's core fill is about 21,600 entries. At about 500 a day that is 6–7 weeks of laptop time; at about 950, 3–4 weeks. **The next step to firm up the numbers** is one long unattended run (6–8 h over the top 10 roles) to find where the first limit lands.
+For scale: the plan's core fill is about 21,600 entries. At about 600 a day that is 5–6 weeks of laptop time; at about 1,200, under three weeks. **The next step to firm up the numbers** is one long unattended run (6–8 h over the top 10 roles) to find where the first limit lands.
 
 ## Sample entries
 
@@ -342,11 +371,10 @@ Nothing here has touched production. The owner or coordinator does these steps:
    - Delete the file after the run.
 3. **Generate on the laptop.**
    - Check the lanes: `cd server && npm run library:seed-generate -- --probe`.
-   - Run: `npm run library:seed-generate -- --pools pools.json --out runs/<name> --lanes claude,codex,gemini --generators claude,codex --per-pool 10`.
-   - `--generators claude,codex` keeps Gemini to critic and tie-break work, per decision 1.
+   - Run: `npm run library:seed-generate -- --pools pools.json --out runs/<name> --per-pool 10`. Claude and Codex write and Gemini judges by default; `--generators` overrides.
    - Re-run the same command to resume.
 4. **Import on the VPS.** Stop the worker if it is running (`pm2 stop questor-library`). Copy `runs/<name>/seed.jsonl` up and run `node dist/library/seedImportMain.js seed.jsonl --report /tmp/seed-report.json`. It prints counts only. A second run is harmless.
-5. **Work the owner queue** on `/library-admin`. Every seeded entry is there until its stratum has 20 approvals made without edits (see decision 3 above).
+5. **Watch the daily sample** on `/library-admin`, and work the owner queue, which now holds only the entries the critics were unsure about or split over. A rejection in the sample retires that entry and sends its stratum's next 200 entries to the queue.
 
 ## Reproducing the pilot locally
 
