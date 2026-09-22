@@ -13,6 +13,7 @@ import {
   assessmentFacts,
   prepareRoleCandidates,
   shortlistedIds,
+  type RoleCandidateStage,
   type RoleCandidatesQuery,
 } from './roleCandidates.js';
 
@@ -185,8 +186,9 @@ export async function roleCompetencyGrid(
 // ---------------------------------------------------------------------------
 
 export const comparisonQuerySchema = z.object({
-  // Repeated ?ids=a&ids=b arrives as an array; one comma-separated value keeps
-  // the shape the same however the browser sends it.
+  // One comma-separated value, never a repeated ?ids=a&ids=b: a repeated
+  // parameter arrives as an array, and the same request would then have two
+  // shapes depending on how the caller wrote it.
   ids: z.string().min(1).max(400).transform((raw) => raw.split(',').map((s) => s.trim()).filter(Boolean)),
 }).strict();
 
@@ -208,7 +210,7 @@ export interface ComparedCandidate {
   readonly id: string;
   readonly fullName: string;
   readonly email: string;
-  readonly stage: { readonly key: string; readonly label: string; readonly decision: string | null } | null;
+  readonly stage: RoleCandidateStage | null;
   readonly latestInterview: { readonly id: string; readonly state: string } | null;
   readonly assessmentId: string | null;
   readonly blindReviewPending?: boolean;
@@ -260,7 +262,13 @@ export async function compareCandidates(
   const prepared = await prepareRoleCandidates(auth, roleId, {});
   const byId = new Map(prepared.map((p) => [p.row.id, p]));
   const chosen = wanted.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
-  if (chosen.length < MIN_COMPARISON) {
+  // EVERY id, or none of them. Answering with the two that resolved and
+  // silently dropping the third loses a candidate the caller believes they are
+  // comparing — and turns the endpoint into an oracle: add a guessed id, see
+  // whether the answer grows, and you have confirmed a candidate you were
+  // never allowed to see. One 404 for "some of those are not yours", the same
+  // answer an unknown id gets.
+  if (chosen.length !== wanted.length) {
     throw new HttpError(404, 'Those candidates are not on this role, or are not yours to see.');
   }
 
@@ -285,7 +293,7 @@ export async function compareCandidates(
       id: p.row.id,
       fullName: p.row.fullName,
       email: p.row.email,
-      stage: p.stage ? { key: p.stage.key, label: p.stage.label, decision: p.stage.decision } : null,
+      stage: p.stage,
       latestInterview: p.latestInterview,
       assessmentId: p.assessmentId,
       ...(p.withheld

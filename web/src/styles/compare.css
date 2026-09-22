@@ -87,6 +87,11 @@
   cursor: pointer;
 }
 
+.cmp-tick-word {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
 .cmp-tick input {
   width: 16px;
   height: 16px;

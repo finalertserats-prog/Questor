@@ -13,8 +13,15 @@ import type { GridCell } from './comparisonModel';
 export interface RoleCandidateStage {
   readonly key: string;
   readonly label: string;
-  readonly order: number;
-  readonly decision: string | null;
+  /** 1-based position in the role's stage plan; null when the plan does not name the stage. */
+  readonly order: number | null;
+  /**
+   * A decided pipeline, already said in the one vocabulary by the server
+   * (Proceed / Consider / Do not progress / Candidate withdrew). Never the
+   * stored enum, and null while the pipeline is running or while the
+   * blind-review policy holds this viewer back.
+   */
+  readonly outcome: string | null;
 }
 
 export interface ComparabilityNote {
@@ -91,7 +98,7 @@ export interface ComparedCandidate {
   readonly id: string;
   readonly fullName: string;
   readonly email: string;
-  readonly stage: { readonly key: string; readonly label: string; readonly decision: string | null } | null;
+  readonly stage: RoleCandidateStage | null;
   readonly latestInterview: { readonly id: string; readonly state: string } | null;
   readonly assessmentId: string | null;
   readonly blindReviewPending?: boolean;

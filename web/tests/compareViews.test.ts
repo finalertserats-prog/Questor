@@ -163,7 +163,7 @@ describe('the candidates table', () => {
 
   const row = (over: Record<string, unknown> = {}) => ({
     id: 'c1', fullName: 'Ada Lovelace', email: 'ada@example.com',
-    stage: { key: 'silver', label: 'Silver', order: 3, decision: null },
+    stage: { key: 'silver', label: 'Silver', order: 3, outcome: null },
     latestInterview: { id: 'i1', state: 'REVIEW_READY' }, assessmentId: 'a1',
     recommendation: 'PROCEED', humanRecommendation: null, overallScore: 88,
     scorecardVersion: 3, competenciesGraded: 6, durationMinutes: 45,
@@ -195,6 +195,17 @@ describe('the candidates table', () => {
     expect((await screen.findAllByText('Your review first')).length).toBeGreaterThan(0);
   });
 
+  it('says a decided pipeline in the one vocabulary, never the stored enum', async () => {
+    const { container } = tableWith([row({ stage: { key: 'gold', label: 'Gold', order: 4, outcome: 'Proceed' } })]);
+    await screen.findByText('Ada Lovelace');
+    expect(container.textContent).not.toContain('APPROVED');
+  });
+
+  it('shows the decision beside the stage it was taken at', async () => {
+    tableWith([row({ stage: { key: 'gold', label: 'Gold', order: 4, outcome: 'Do not progress' } })]);
+    expect(await screen.findByText('Do not progress')).toBeTruthy();
+  });
+
   it('says plainly when nobody has applied yet', async () => {
     tableWith([]);
     expect(await screen.findByText('No candidates on this role yet')).toBeTruthy();
@@ -204,7 +215,7 @@ describe('the candidates table', () => {
 describe('the side-by-side', () => {
   const compared = (over: Record<string, unknown> = {}) => ({
     id: 'c1', fullName: 'Ada Lovelace', email: 'ada@example.com',
-    stage: { key: 'silver', label: 'Silver', decision: null },
+    stage: { key: 'silver', label: 'Silver', order: 3, outcome: null },
     latestInterview: { id: 'i1', state: 'REVIEW_READY' }, assessmentId: 'a1',
     recommendation: 'PROCEED', humanRecommendation: null, overallScore: 88, levelSource: 'ai',
     competencies: [

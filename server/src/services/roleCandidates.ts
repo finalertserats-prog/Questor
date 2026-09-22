@@ -5,9 +5,12 @@ import { candidateScope, hasCapability } from './access.js';
 import type { AuthClaims } from './auth.js';
 import { aiConclusionVisible } from './shadowMode.js';
 import { humanVerdict } from '../domain/reviewedAssessment.js';
+import { outcomeLabel } from '../domain/verdict.js';
+import { DECISION_OUTCOMES, type DecisionOutcome } from '../domain/pipelineAutonomy.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { anyFieldMatches, foldText, pageMeta, pagingQuerySchema, skipFor, type PageMeta } from './listPaging.js';
 import {
+  DEFAULT_DIRECTION,
   DEFAULT_SORT,
   SORT_KEYS,
   comparabilityNotes,
@@ -31,12 +34,27 @@ import type { AssessmentResult } from '../domain/types.js';
  * Ordering happens HERE, not in the browser: the page shows 25 rows of a
  * pipeline that may hold hundreds, and a sort applied to the visible page is a
  * sort of the wrong set.
+ *
+ * It orders a narrow scan of the role's applicants in application code rather
+ * than in SQL, which is the same trade the Candidates and Interviews lists
+ * make (services/candidateList.ts) and for the same reasons: the verdict and
+ * the stage live inside JSON columns, and case-insensitive search behaves
+ * differently on SQLite and Postgres, so the two would disagree. The scan
+ * selects no large field — the assessment's result JSON is read only for the
+ * rows that end up on the page — and it is bounded by ONE role's pipeline
+ * rather than the tenant's.
  */
 
+/**
+ * `dir` is defaulted FROM the key, not globally: every column but the name
+ * opens at the strongest value, and the name opens at A. Defaulting the whole
+ * query to `desc` made a hand-typed `?sort=name` answer Z-to-A while the page
+ * that never omits `dir` answered A-to-Z — one order with two meanings.
+ */
 export const roleCandidatesQuerySchema = pagingQuerySchema.extend({
   sort: z.enum(SORT_KEYS).default(DEFAULT_SORT),
-  dir: z.enum(['asc', 'desc']).default('desc'),
-}).strict();
+  dir: z.enum(['asc', 'desc']).optional(),
+}).strict().transform((q) => ({ ...q, dir: q.dir ?? DEFAULT_DIRECTION[q.sort] }));
 
 export type RoleCandidatesQuery = z.infer<typeof roleCandidatesQuerySchema>;
 
@@ -70,6 +88,22 @@ const SCAN_SELECT = {
 
 type ScanRow = Prisma.CandidateGetPayload<{ select: typeof SCAN_SELECT }>;
 
+export interface RoleCandidateStage {
+  readonly key: string;
+  readonly label: string;
+  /** 1-based position in the role's stage plan; null when the plan does not name this stage. */
+  readonly order: number | null;
+  /**
+   * A decided pipeline, said in the one vocabulary (Proceed / Consider / Do
+   * not progress / Candidate withdrew) — never the stored APPROVED / REJECTED
+   * / WITHDRAWN enum, which is a storage detail that must not reach a sentence
+   * a person reads. Null while the pipeline is still running, and withheld
+   * with everything else from a viewer who owes their own blind verdict: a
+   * decision is a colleague's judgement and anchors exactly as hard.
+   */
+  readonly outcome: string | null;
+}
+
 /** What the assessment's stored result says, read only for the rows that need it. */
 export interface AssessmentFacts {
   readonly overallScore: number | null;
@@ -80,7 +114,7 @@ export interface RoleCandidateRow {
   readonly id: string;
   readonly fullName: string;
   readonly email: string;
-  readonly stage: { readonly key: string; readonly label: string; readonly order: number; readonly decision: string | null } | null;
+  readonly stage: RoleCandidateStage | null;
   readonly latestInterview: { readonly id: string; readonly state: string } | null;
   readonly assessmentId: string | null;
   /** Absent while the blind-review policy still holds this viewer back. */
@@ -121,16 +155,32 @@ function pipelineFor(row: ScanRow, roleId: string) {
   return row.pipelines.find((p) => p.roleId === roleId) ?? null;
 }
 
-function stageOf(row: ScanRow, roleId: string): RoleCandidateRow['stage'] {
+/**
+ * A stored decision said in the one vocabulary, or null.
+ *
+ * Checked against the enum rather than cast into it: `outcomeLabel` answers
+ * "Candidate withdrew" for anything it does not recognise, so an unexpected
+ * value would have the page state, in plain words, that someone withdrew when
+ * nobody did.
+ */
+function decisionOutcome(decision: string | null): string | null {
+  if (!decision || !(DECISION_OUTCOMES as readonly string[]).includes(decision)) return null;
+  return outcomeLabel(decision as DecisionOutcome);
+}
+
+function stageOf(row: ScanRow, roleId: string, withheld: boolean): RoleCandidateStage | null {
   const pipeline = pipelineFor(row, roleId);
   if (!pipeline) return null;
   const stages = parseStages(pipeline.stagesJson);
   const index = stages.findIndex((s) => s.key === pipeline.currentStageKey);
+  // A stage the snapshotted plan does not name has no position in it. Zero
+  // would sort as a real stage — before every named one — and quietly move the
+  // row to the head of a "furthest along" sort.
   return {
     key: pipeline.currentStageKey,
     label: index >= 0 ? stages[index].label : pipeline.currentStageKey,
-    order: index + 1,
-    decision: pipeline.decision ?? null,
+    order: index >= 0 ? index + 1 : null,
+    outcome: withheld ? null : decisionOutcome(pipeline.decision),
   };
 }
 
@@ -212,7 +262,7 @@ export async function prepareRoleCandidates(
     const withheld = assessment !== null && !visible.has(assessment.id);
     const human = withheld ? null : humanVerdict(assessment?.reviews[0]?.disposition);
     const ai = withheld ? null : assessment?.recommendation ?? null;
-    const stage = stageOf(row, roleId);
+    const stage = stageOf(row, roleId, withheld);
     return {
       row,
       stage,
@@ -271,7 +321,7 @@ export async function listRoleCandidates(
   })));
 
   return {
-    candidates: page.map((p) => shapeRow(p, roleId, pageFacts, shortlisted, notes)),
+    candidates: page.map((p) => shapeRow(p, pageFacts, shortlisted, notes)),
     meta: pageMeta(ordered.length, query),
     sort: { key: query.sort, dir: query.dir },
     shortlistedTotal: [...shortlisted].filter((id) => byId.has(id)).length,
@@ -280,7 +330,6 @@ export async function listRoleCandidates(
 
 function shapeRow(
   p: PreparedCandidate,
-  roleId: string,
   facts: ReadonlyMap<string, AssessmentFacts>,
   shortlisted: ReadonlySet<string>,
   notes: ReadonlyMap<string, readonly ComparabilityNote[]>,
@@ -302,7 +351,9 @@ function shapeRow(
     scorecardVersion: p.withheld ? null : p.scorecardVersion,
     competenciesGraded: p.withheld ? null : fact?.competenciesGraded ?? null,
     durationMinutes: p.durationMinutes,
-    lastMovedAt: lastMovedAt(p.row, roleId),
+    // The same instant the recency sort used, not a second reading of it: two
+    // computations of "when did this move" are two answers waiting to differ.
+    lastMovedAt: new Date(p.sortable.movedAt),
     shortlisted: shortlisted.has(p.row.id),
     comparability: notes.get(p.row.id) ?? [],
   };

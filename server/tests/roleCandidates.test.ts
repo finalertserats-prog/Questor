@@ -94,6 +94,28 @@ async function roleCompetencyIds(roleId: string): Promise<string[]> {
   return profile.competencies.filter((c) => c.classification !== 'non_scoring').map((c) => c.id);
 }
 
+/** Put a candidate's pipeline on this role at a stage, optionally decided. */
+async function decidedPipeline(
+  ids: Awaited<ReturnType<typeof createDemoData>>,
+  candidateId: string,
+  decision: string | null,
+  stageKey = 'gold',
+) {
+  const stages = JSON.stringify([
+    { key: 'participation', label: 'Participation', kind: 'intake' },
+    { key: 'bronze', label: 'Bronze', kind: 'profile_review' },
+    { key: 'silver', label: 'Silver', kind: 'ai_interview' },
+    { key: 'gold', label: 'Gold', kind: 'human_interview' },
+  ]);
+  await prisma.candidatePipeline.create({
+    data: {
+      tenantId: ids.tenantId, candidateId, roleId: ids.roleId, stagesJson: stages, currentStageKey: stageKey,
+      status: decision ? 'DECIDED' : 'ACTIVE', decision, decidedById: decision ? ids.userId : null,
+      decidedAt: decision ? new Date() : null, createdById: ids.userId,
+    },
+  });
+}
+
 async function requireBlind(tenantId: string, value: boolean) {
   await prisma.tenant.update({ where: { id: tenantId }, data: { policyJson: JSON.stringify({ requireBlindReview: value }) } });
 }
@@ -153,6 +175,22 @@ describe('GET /api/roles/:id/candidates', () => {
     expect(res.status).toBe(400);
   });
 
+  it('opens a name sort at A even when the address names no direction', async () => {
+    const ids = await createDemoData();
+    await addApplicant({ ids, name: 'Zoe Last', recommendation: 'CONSIDER', overallScore: 50 });
+    await addApplicant({ ids, name: 'Aaron First', recommendation: 'CONSIDER', overallScore: 50 });
+    const res = await request(app).get(`/api/roles/${ids.roleId}/candidates?sort=name`).set(auth(demoToken(ids)));
+    expect(res.body.candidates[0].fullName).toBe('Aaron First');
+  });
+
+  it('opens a score sort at the highest even when the address names no direction', async () => {
+    const ids = await createDemoData();
+    await addApplicant({ ids, name: 'Low One', recommendation: 'CONSIDER', overallScore: 40 });
+    await addApplicant({ ids, name: 'High One', recommendation: 'CONSIDER', overallScore: 95 });
+    const res = await request(app).get(`/api/roles/${ids.roleId}/candidates?sort=score`).set(auth(demoToken(ids)));
+    expect(res.body.candidates[0].fullName).toBe('High One');
+  });
+
   it('pages the rows it returns', async () => {
     const ids = await createDemoData();
     await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
@@ -191,9 +229,36 @@ describe('the verdict shown on the table', () => {
 
   it('never prints the stored pipeline enum', async () => {
     const ids = await createDemoData();
-    await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
+    const added = await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
+    await decidedPipeline(ids, added.candidateId, 'APPROVED');
     const res = await request(app).get(`/api/roles/${ids.roleId}/candidates`).set(auth(demoToken(ids)));
     expect(JSON.stringify(res.body)).not.toContain('APPROVED');
+  });
+
+  it('says a decided pipeline in the one vocabulary', async () => {
+    const ids = await createDemoData();
+    const added = await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
+    await decidedPipeline(ids, added.candidateId, 'APPROVED');
+    const res = await request(app).get(`/api/roles/${ids.roleId}/candidates`).set(auth(demoToken(ids)));
+    expect(res.body.candidates.find((c: { id: string }) => c.id === added.candidateId).stage.outcome).toBe('Proceed');
+  });
+
+  it('says nothing at all about a decision it does not recognise', async () => {
+    const ids = await createDemoData();
+    const added = await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
+    // "Candidate withdrew" is what an unrecognised value used to read as, which
+    // states something about the person that nobody recorded.
+    await decidedPipeline(ids, added.candidateId, 'SOMETHING_ELSE');
+    const res = await request(app).get(`/api/roles/${ids.roleId}/candidates`).set(auth(demoToken(ids)));
+    expect(res.body.candidates.find((c: { id: string }) => c.id === added.candidateId).stage.outcome).toBeNull();
+  });
+
+  it('gives a stage the plan does not name no position to sort by', async () => {
+    const ids = await createDemoData();
+    const added = await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
+    await decidedPipeline(ids, added.candidateId, null, 'a_stage_that_was_removed');
+    const res = await request(app).get(`/api/roles/${ids.roleId}/candidates`).set(auth(demoToken(ids)));
+    expect(res.body.candidates.find((c: { id: string }) => c.id === added.candidateId).stage.order).toBeNull();
   });
 });
 
@@ -205,6 +270,15 @@ describe('the blind-review policy on the comparison', () => {
     const res = await request(app).get(`/api/roles/${ids.roleId}/candidates`).set(auth(demoToken(ids)));
     const row = res.body.candidates.find((c: { id: string }) => c.id === added.candidateId);
     expect({ pending: row.blindReviewPending, rec: row.recommendation }).toEqual({ pending: true, rec: undefined });
+  });
+
+  it('withholds a decided pipeline, which is a colleague’s judgement too', async () => {
+    const ids = await createDemoData();
+    await requireBlind(ids.tenantId, true);
+    const added = await addApplicant({ ids, name: 'Ada Lovelace', recommendation: 'PROCEED', overallScore: 91 });
+    await decidedPipeline(ids, added.candidateId, 'APPROVED');
+    const res = await request(app).get(`/api/roles/${ids.roleId}/candidates`).set(auth(demoToken(ids)));
+    expect(res.body.candidates.find((c: { id: string }) => c.id === added.candidateId).stage.outcome).toBeNull();
   });
 
   it('withholds the score with the recommendation', async () => {
@@ -449,6 +523,26 @@ describe('GET /api/roles/:id/candidates/comparison', () => {
     const ids = await createDemoData();
     const res = await request(app).get(`/api/roles/${ids.roleId}/candidates/comparison?ids=${ids.candidateId}`).set(auth(demoToken(ids)));
     expect(res.status).toBe(400);
+  });
+
+  it('refuses the whole comparison when one of the ids is not the caller’s to see', async () => {
+    const ids = await createDemoData();
+    const one = await addApplicant({ ids, name: 'One Person', recommendation: 'PROCEED', overallScore: 80 });
+    const other = await prisma.tenant.create({ data: { name: 'Elsewhere Org', region: 'in' } });
+    const stranger = await prisma.candidate.create({
+      data: { tenantId: other.id, fullName: 'Stranger', email: 'stranger@elsewhere.example.com', emailNormalized: 'stranger@elsewhere.example.com' },
+    });
+    const url = `/api/roles/${ids.roleId}/candidates/comparison?ids=${one.candidateId},${ids.candidateId},${stranger.id}`;
+    const res = await request(app).get(url).set(auth(demoToken(ids)));
+    expect(res.status).toBe(404);
+  });
+
+  it('answers an unknown id exactly as it answers one that is out of scope', async () => {
+    const ids = await createDemoData();
+    const one = await addApplicant({ ids, name: 'One Person', recommendation: 'PROCEED', overallScore: 80 });
+    const url = `/api/roles/${ids.roleId}/candidates/comparison?ids=${one.candidateId},${ids.candidateId},no-such-candidate`;
+    const res = await request(app).get(url).set(auth(demoToken(ids)));
+    expect(res.status).toBe(404);
   });
 
   it('refuses more than four', async () => {

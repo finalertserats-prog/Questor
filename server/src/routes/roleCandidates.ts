@@ -72,20 +72,25 @@ roleShortlistRouter.post('/', requireCapability('candidate:read'), asyncHandler(
   const candidate = await assertCanAccessCandidate(req.auth!, candidateId);
   if (candidate.roleId !== role.id) throw new HttpError(404, 'Candidate not found');
 
-  const already = await shortlistedIds(req.auth!, role.id);
-  // Ticking someone already ticked is not a new one, so it cannot push a list
-  // of four over the limit.
-  if (!already.has(candidateId) && already.size >= MAX_SHORTLIST) {
-    throw new HttpError(
-      409,
-      `A shortlist holds up to ${MAX_SHORTLIST} candidates — more than that cannot be read side by side. Untick someone first.`,
-      'shortlist_full',
-    );
-  }
-  await prisma.candidateShortlist.upsert({
-    where: { roleId_userId_candidateId: { roleId: role.id, userId: req.auth!.userId, candidateId } },
-    create: { tenantId: req.auth!.tenantId, roleId: role.id, userId: req.auth!.userId, candidateId },
-    update: {},
+  // Written first, counted after, inside one transaction: a check that runs
+  // before the write is a check two clicks can both pass. Ticking someone
+  // already ticked adds nothing, so it can never push a full list over.
+  // The side-by-side counts the ids it is given independently, so even a list
+  // that somehow grew past the ceiling cannot produce an unreadable comparison.
+  await prisma.$transaction(async (tx) => {
+    await tx.candidateShortlist.upsert({
+      where: { roleId_userId_candidateId: { roleId: role.id, userId: req.auth!.userId, candidateId } },
+      create: { tenantId: req.auth!.tenantId, roleId: role.id, userId: req.auth!.userId, candidateId },
+      update: {},
+    });
+    const held = await tx.candidateShortlist.count({ where: { roleId: role.id, userId: req.auth!.userId, tenantId: req.auth!.tenantId } });
+    if (held > MAX_SHORTLIST) {
+      throw new HttpError(
+        409,
+        `A shortlist holds up to ${MAX_SHORTLIST} candidates — more than that cannot be read side by side. Untick someone first.`,
+        'shortlist_full',
+      );
+    }
   });
   res.status(201).json({ candidateIds: [...await shortlistedIds(req.auth!, role.id)], max: MAX_SHORTLIST });
 }));

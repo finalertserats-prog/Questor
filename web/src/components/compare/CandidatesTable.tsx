@@ -67,9 +67,18 @@ export function ComparabilityMark({ notes }: { notes: readonly ComparabilityNote
   );
 }
 
+/**
+ * The stage, and the decision if one has been made — in the one vocabulary the
+ * server already put it in, so this page never has a second name for it.
+ */
 function stageCell(stage: RoleCandidateRow['stage']) {
   if (!stage) return <span className="muted">Not in the pipeline</span>;
-  return <span className="list-tier">{stage.label}</span>;
+  return (
+    <>
+      <span className="list-tier">{stage.label}</span>
+      {stage.outcome && <div className="muted small">{stage.outcome}</div>}
+    </>
+  );
 }
 
 function scoreCell(row: RoleCandidateRow) {
@@ -94,7 +103,10 @@ export function CandidatesTable(props: {
   const rows = paged.data?.candidates ?? [];
   const { meta, query } = paged;
 
-  const tick = (row: RoleCandidateRow) => {
+  // On a card the box needs a word beside it: a lone checkbox in a column of
+  // one says nothing about what ticking it does. In the table the column has a
+  // heading of its own, so the word would be said twice on every row.
+  const tick = (row: RoleCandidateRow, withWord = false) => {
     const on = props.shortlist.has(row.id);
     return (
       <label className="cmp-tick" title={!on && props.shortlistFull ? 'Your shortlist is full — untick someone first.' : undefined}>
@@ -104,6 +116,7 @@ export function CandidatesTable(props: {
           disabled={!on && props.shortlistFull}
           onChange={(e) => props.onShortlist(row.id, e.target.checked)}
         />
+        {withWord && <span className="cmp-tick-word" aria-hidden="true">Shortlist</span>}
         <span className="visually-hidden">Shortlist {row.fullName}</span>
       </label>
     );
@@ -124,7 +137,7 @@ export function CandidatesTable(props: {
       ...(row.comparability.length ? [<ComparabilityMark notes={row.comparability} />] : []),
     ],
     next: candidateNextAction(row),
-    extra: tick(row),
+    extra: tick(row, true),
   }));
 
   const table = (

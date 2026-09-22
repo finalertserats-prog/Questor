@@ -88,6 +88,7 @@ function PhoneComparison({ candidates, competencies }: { candidates: readonly Co
             <Link to={`/candidates/${c.id}`}>{c.fullName}</Link>
             <span className="muted small">
               {c.stage ? c.stage.label : 'Not in the pipeline'}
+              {c.stage?.outcome ? ` · ${c.stage.outcome}` : ''}
               {c.levelSource ? ` · ${c.levelSource === 'human' ? 'reviewer’s levels' : 'AI levels'}` : ''}
             </span>
             <ComparabilityMark notes={c.comparability} />
@@ -170,6 +171,7 @@ export function SideBySide(props: {
                       <Link to={`/candidates/${c.id}`}>{c.fullName}</Link>
                       <div className="muted small">
                         {c.stage ? c.stage.label : 'Not in the pipeline'}
+                        {c.stage?.outcome ? ` · ${c.stage.outcome}` : ''}
                         {c.levelSource ? ` · ${c.levelSource === 'human' ? 'reviewer’s levels' : 'AI levels'}` : ''}
                       </div>
                       <ComparabilityMark notes={c.comparability} />
