@@ -1,15 +1,23 @@
 import { z } from 'zod';
 import { prisma } from '../db.js';
+import { slugifyCatalogName } from '../domain/catalogText.js';
 import { BANDS } from '../engines/experienceBands.js';
+import { platformCompetencyCatalog, type PlatformCompetency } from '../engines/roleIntelligence.js';
 import { loadDemandQueue } from './demand.js';
 
 /**
  * The pools an offline seed run should fill, as a file the laptop generator
  * reads (scripts/library-seed). It is the worker's own demand queue — global
- * pools below target — carrying exactly what the worker would put in a
- * prompt: the catalog role's shared text (never an organisation's own job
- * description), the scorecard competency, the family standard if one is live,
- * and the questions already in the pool so the generator avoids them.
+ * pools below target — filtered so that only global-catalog text leaves the
+ * server (owner decision 2026-09-22):
+ *
+ *   - the catalog role's title, family and shared JD draft or summary, never
+ *     an organisation's own job description;
+ *   - only pools whose competency is one of the platform's own
+ *     (platformCompetencyCatalog), worded as the platform words it, never
+ *     with the organisation's scorecard definition or indicators; a pool for
+ *     an organisation's own competency stays on the server for the worker;
+ *   - the family standard if one is live, and the pool's global questions.
  *
  * Run it where the demand lives (production, read-only), copy the file to the
  * laptop, generate, copy the JSONL back, import (seedImport.ts).
@@ -42,6 +50,8 @@ export const seedPoolsFileSchema = z.object({
   format: z.literal(SEED_POOLS_FORMAT),
   exportedAt: z.string(),
   pools: z.array(seedPoolSchema),
+  /** Demand pools left on the server because their competency is an organisation's own. */
+  skippedOrgCompetencyPools: z.number().int().min(0).default(0),
 });
 export type SeedPoolsFile = z.infer<typeof seedPoolsFileSchema>;
 
@@ -90,19 +100,21 @@ export async function exportSeedPools(opts: ExportOptions = {}): Promise<SeedPoo
   const now = opts.now ?? new Date();
   const roles = opts.roles && opts.roles.length > 0 ? new Set(opts.roles) : null;
   const bands = opts.bands && opts.bands.length > 0 ? new Set(opts.bands) : null;
-  const queue = (await loadDemandQueue(now))
-    .filter((p) => p.scope === 'global' && (!roles || roles.has(p.roleSlug)) && (!bands || bands.has(p.band)))
-    .slice(0, opts.limit ?? Number.MAX_SAFE_INTEGER);
+  const platform = new Map<string, PlatformCompetency>(platformCompetencyCatalog().map((c) => [slugifyCatalogName(c.name), c]));
+  const wanted = (await loadDemandQueue(now))
+    .filter((p) => p.scope === 'global' && (!roles || roles.has(p.roleSlug)) && (!bands || bands.has(p.band)));
+  const queue = wanted.filter((p) => platform.has(p.competencyKey)).slice(0, opts.limit ?? Number.MAX_SAFE_INTEGER);
   const pools: SeedPool[] = [];
   for (const p of queue) {
+    const competency = platform.get(p.competencyKey) as PlatformCompetency;
     const [content, standard] = await Promise.all([globalPoolContent(p), liveStandardFor(p)]);
     pools.push({
       key: `${p.roleSlug}|${p.competencyKey}|${p.band}`,
       roleSlug: p.roleSlug, roleTitle: p.roleTitle, familySlug: p.familySlug, familyName: p.familyName,
-      competencyKey: p.competencyKey, competency: { ...p.competency, indicators: [...p.competency.indicators] }, band: p.band,
+      competencyKey: p.competencyKey, competency: { name: competency.name, definition: competency.definition, indicators: [...competency.indicators], category: competency.category }, band: p.band,
       jdText: p.jdText, target: p.target, filled: p.filled, formCounts: content.formCounts,
       existingQuestions: content.texts, standard,
     });
   }
-  return { format: SEED_POOLS_FORMAT, exportedAt: now.toISOString(), pools };
+  return { format: SEED_POOLS_FORMAT, exportedAt: now.toISOString(), pools, skippedOrgCompetencyPools: wanted.filter((p) => !platform.has(p.competencyKey)).length };
 }

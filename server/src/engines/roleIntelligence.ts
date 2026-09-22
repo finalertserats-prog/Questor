@@ -51,6 +51,42 @@ const BEHAVIORAL: Array<Omit<Competency, 'id' | 'weight' | 'sourceText' | 'confi
   },
 ];
 
+/** The platform's wording for a taxonomy skill, shared by extraction and the platform catalog below. */
+function taxonomyDefinition(name: string): string {
+  return `Demonstrated, job-relevant capability in ${name.toLowerCase()}.`;
+}
+
+function taxonomyIndicators(name: string): string[] {
+  return [`Explains real decisions involving ${name.toLowerCase()}`, 'Describes trade-offs and outcomes', 'Shows depth appropriate to level'];
+}
+
+const ROLE_SPECIFIC_EXPERTISE = {
+  name: 'Role-Specific Expertise',
+  definition: 'Core job-relevant knowledge and skills for this role.',
+  category: 'domain' as Competency['category'],
+  indicators: ['Explains relevant real work', 'Shows depth for the level'],
+};
+
+export interface PlatformCompetency {
+  readonly name: string;
+  readonly definition: string;
+  readonly indicators: readonly string[];
+  readonly category: Competency['category'];
+}
+
+/**
+ * Every competency the platform itself names and words (taxonomy skills, the
+ * behavioural set, the role-specific fallback), with the platform's wording.
+ * Global text: no organisation wrote any of it.
+ */
+export function platformCompetencyCatalog(): readonly PlatformCompetency[] {
+  return [
+    ...TAXONOMY.map((t) => ({ name: t.name, definition: taxonomyDefinition(t.name), indicators: taxonomyIndicators(t.name), category: t.category })),
+    ...BEHAVIORAL.map((b) => ({ name: b.name, definition: b.definition, indicators: [...b.indicators], category: b.category })),
+    { ...ROLE_SPECIFIC_EXPERTISE, indicators: [...ROLE_SPECIFIC_EXPERTISE.indicators] },
+  ];
+}
+
 export const EXCLUSIONARY_TERMS: Array<{ re: RegExp; suggestion: string }> = [
   { re: /\b(young|energetic recent graduate|digital native)\b/i, suggestion: 'Avoid age-coded language; describe the skill instead.' },
   { re: /\b(rockstar|ninja|guru)\b/i, suggestion: 'Replace hype terms with concrete competencies.' },
@@ -132,13 +168,13 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
       seen.set(t.name, {
         id: nanoid(8),
         name: t.name,
-        definition: `Demonstrated, job-relevant capability in ${t.name.toLowerCase()}.`,
+        definition: taxonomyDefinition(t.name),
         category: t.category,
         classification: classify(t.name, text),
         weight: 0,
         requiredLevel: level.toLowerCase().includes('senior') || /lead|principal|staff/i.test(level) ? 3 : 2,
         targetLevel: 4,
-        indicators: [`Explains real decisions involving ${t.name.toLowerCase()}`, 'Describes trade-offs and outcomes', 'Shows depth appropriate to level'],
+        indicators: taxonomyIndicators(t.name),
         evidenceModes: ['technical_explanation', 'behavioral_example', 'work_sample'],
         sourceText: m[0],
         confidence: 0.7,
@@ -151,10 +187,8 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
   // Guarantee at least a couple technical/domain competencies for thin JDs.
   if (competencies.filter((c) => c.category === 'technical' || c.category === 'domain').length === 0) {
     competencies.unshift({
-      id: nanoid(8), name: 'Role-Specific Expertise',
-      definition: 'Core job-relevant knowledge and skills for this role.',
-      category: 'domain', classification: 'essential', weight: 0, requiredLevel: 2, targetLevel: 4,
-      indicators: ['Explains relevant real work', 'Shows depth for the level'],
+      id: nanoid(8), ...ROLE_SPECIFIC_EXPERTISE, indicators: [...ROLE_SPECIFIC_EXPERTISE.indicators],
+      classification: 'essential', weight: 0, requiredLevel: 2, targetLevel: 4,
       evidenceModes: ['behavioral_example', 'technical_explanation'], confidence: 0.5,
     });
   }

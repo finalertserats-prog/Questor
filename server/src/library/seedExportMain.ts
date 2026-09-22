@@ -9,9 +9,10 @@ import { exportSeedPools } from './seedExport.js';
  *   npm run library:seed-export -- --out pools.json [--roles a,b] [--bands developing,senior] [--limit 40]
  *   node dist/library/seedExportMain.js --out pools.json ...        (production)
  *
- * Read-only. Prints counts only. The file holds catalog text, the scorecard
- * competencies of the pools and the questions already in them: the same text
- * the worker puts in its own prompts. Keep it off shared drives.
+ * Read-only. Prints counts only. The file holds global-catalog text only:
+ * catalog roles, platform competencies in the platform's wording, family
+ * standards and global library questions. No organisation's scorecard or
+ * competency wording is written (seedExport.ts).
  */
 
 function arg(name: string): string | undefined {
@@ -34,7 +35,7 @@ async function main(): Promise<number> {
   const file = await exportSeedPools({ roles: list('roles'), bands: list('bands'), limit: limitText ? Number.parseInt(limitText, 10) : undefined });
   writeFileSync(resolve(out), `${JSON.stringify(file, null, 1)}\n`, 'utf8');
   const roles = new Set(file.pools.map((p) => p.roleSlug)).size;
-  process.stdout.write(`${JSON.stringify({ ok: true, pools: file.pools.length, roles, withStandard: file.pools.filter((p) => p.standard).length, out: resolve(out) })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, pools: file.pools.length, roles, withStandard: file.pools.filter((p) => p.standard).length, skippedOrgCompetencyPools: file.skippedOrgCompetencyPools, out: resolve(out) })}\n`);
   return 0;
 }
 
