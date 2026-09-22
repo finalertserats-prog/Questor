@@ -1,7 +1,7 @@
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import { getEmail } from '../providers/email/index.js';
-import { getLlm } from '../providers/llm/index.js';
+import { getLlm, llmServingStatus, type LlmServingStatus } from '../providers/llm/index.js';
 import { sttCapability, ttsCapability, type SpeechCapability } from '../providers/speech.js';
 import { legacySignatureStatus } from './webhooks.js';
 import { plural, type CheckDef, type CheckOutcome, type SectionDef } from './systemHealthTypes.js';
@@ -70,6 +70,56 @@ const llm: CheckDef = {
     if (isProduction(deps.nodeEnv) || fellBack) return { status: 'warn', value: provider.name, summary, action };
     return { status: 'info', value: provider.name, summary };
   },
+};
+
+const FAILURE_WORDS: Record<string, string> = {
+  auth: 'is refusing its API key',
+  quota: 'is out of credit',
+  rate_limit: 'is rate-limiting requests',
+  server: 'is returning server errors',
+  timeout: 'is not answering in time',
+  network: 'cannot be reached',
+  bad_request: 'rejected a request',
+  bad_reply: 'sent an unusable reply',
+};
+
+/**
+ * Which layer of the failover chain (primary -> local model -> built-in
+ * writer) is serving interviews now. Pure, so every state is tested directly.
+ */
+export function judgeLlmServing(s: LlmServingStatus): CheckOutcome {
+  const detail = `Step-downs since start: ${s.stepDowns.local} to the local model, ${s.stepDowns.builtIn} to the built-in writer.`;
+  if (!s.local.enabled) {
+    return {
+      status: 'info', value: s.layer,
+      summary: 'Local model fallback is off (LOCAL_LLM_ENABLED=false): if the AI provider fails, interviews use the built-in writer.',
+    };
+  }
+  const why = s.primary.lastFailureClass ? `${s.primary.provider} ${FAILURE_WORDS[s.primary.lastFailureClass] ?? 'failed'}` : `${s.primary.provider} is not configured`;
+  const until = s.primary.cooldownEndsAt ? `; it is retried after ${s.primary.cooldownEndsAt}` : '';
+  const action = s.primary.lastFailureClass === 'quota'
+    ? 'Top up the AI provider account credit; interviews move back to it on their own.'
+    : s.primary.lastFailureClass === 'auth'
+      ? 'Check the AI provider API key in the server environment and restart.'
+      : 'Check the AI provider status page; the primary is retried automatically.';
+  if (s.layer === 'primary') {
+    return { status: 'ok', value: 'primary', summary: `${s.primary.provider} serves interviews; the local model (${s.local.model}) stands by.`, detail };
+  }
+  if (s.layer === 'local') {
+    return { status: 'warn', value: 'local', summary: `The local model (${s.local.model}) is serving interviews: ${why}${until}.`, detail, action };
+  }
+  const localWhy = s.local.lastFailureClass ? `the local model ${FAILURE_WORDS[s.local.lastFailureClass] ?? 'failed'}` : 'the local model is unavailable';
+  return {
+    status: 'fail', value: 'built-in',
+    summary: `Interviews are down to the built-in writer: ${why}, and ${localWhy}.`,
+    detail, action: `${action} Check Ollama on the server: systemctl status ollama.`,
+  };
+}
+
+const llmServing: CheckDef = {
+  id: 'llm-serving',
+  label: 'AI serving layer',
+  run: async () => judgeLlmServing(llmServingStatus()),
 };
 
 export function judgeModelFailures(calls: number, failures: number): CheckOutcome {
@@ -167,7 +217,7 @@ const legacyWebhooks: CheckDef = {
 export const deliverySection: SectionDef = {
   id: 'delivery',
   title: 'Delivery and obligations',
-  checks: [email, approver, llm, modelFailures, ...speech, rateLimits, retention, legacyWebhooks],
+  checks: [email, approver, llm, llmServing, modelFailures, ...speech, rateLimits, retention, legacyWebhooks],
 };
 
 const pendingSignups: CheckDef = {

@@ -27,6 +27,7 @@ import { ReviewFactsStrip, TranscriptReader, TranscriptReadNote } from '../compo
 import { useReadProgress, useReviewTranscript, type TranscriptSource } from '../components/review/useTranscriptReader';
 import { REVIEW_SECTION_ID } from '../components/review/transcriptReaderModel';
 import { formatDateTime } from '../components/dateFormat';
+import { servingModeSentence, type ServingModeView } from '../components/servingModeModel';
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -56,6 +57,8 @@ interface AssessmentResp {
   reviewed?: ReviewedView | null;
   differences?: DifferencesView | null;
   outcome?: { source: 'human' | 'ai'; recommendation: string; reviewedAt: string | null };
+  /** Turns written by a fallback during an AI provider outage. Absent on an older server. */
+  servingMode?: ServingModeView;
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +600,12 @@ export function AssessmentView() {
       {/* Above the score, not below it. A reviewer who has already read
           "76/100" has formed the impression the notice is meant to qualify. */}
       <ValidationStatus />
+
+      {/* Beside the validation note, for the same reason: it qualifies the
+          readings below, so it is read before them. */}
+      {servingModeSentence(data.servingMode) && (
+        <p className="muted small" role="note" data-testid="serving-mode-note">{servingModeSentence(data.servingMode)}</p>
+      )}
 
       <AssessmentTabList active={activeTab} onSelect={selectTab} onKeyDown={handleTabKeyDown} />
 

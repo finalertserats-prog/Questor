@@ -22,6 +22,8 @@ import { noteSessionActivity } from './liveSessions.js';
 import { OBSERVER_NOTICE, hasObserverNotice } from '../services/observerPolicy.js';
 import { openingQuestion } from '../engines/openingModel.js';
 import { currentSitting } from '../engines/conversationModel.js';
+import { traceServing } from '../providers/llm/servingTrace.js';
+import { servingMeta } from '../services/interviewServing.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -247,12 +249,14 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   // The opening greets the candidate by first name and names the role. The
   // observation notice is still said aloud when the consent screen carried it:
   // that spoken turn is the server-side proof live observation depends on.
-  const utter = await nextUtterance({
+  // Traced so the turn records which model layer wrote it (degraded mode for
+  // reviewers); nothing is recorded unless the local fallback chain ran.
+  const { result: utter, served } = await traceServing(() => nextUtterance({
     plan, signal, turns, role: profile, persona, sessionId,
     candidateName: session.candidate.fullName, roleTitle: session.role.title, techStack: roleTechStack(session.role),
     observerNotice: hasObserverNotice(consent.disclosureText ?? '') ? OBSERVER_NOTICE : undefined,
     candidateLeft: leftByButton(session.turns[session.turns.length - 1]),
-  });
+  }));
 
   const lastEnd = allTurns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const agentTurn = await appendTurn(sessionId, {
@@ -260,7 +264,7 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.
-  }, { kind: utter.kind, ...(utter.question ? { question: utter.question } : {}) }, (_tx, tail) => {
+  }, { kind: utter.kind, ...(utter.question ? { question: utter.question } : {}), ...servingMeta(served) }, (_tx, tail) => {
     if ((tail?.id ?? null) !== readTailId) throw new TranscriptMovedError();
   });
 

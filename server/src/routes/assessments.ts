@@ -27,6 +27,7 @@ import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
 } from '../services/shadowMode.js';
+import { servingModeForSession } from '../services/interviewServing.js';
 
 export const assessmentsRouter = Router();
 assessmentsRouter.use(authenticate);
@@ -481,6 +482,10 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
       }
       : null,
     differences: await reviewDifferenceView(req.auth!.tenantId, a.id, completed),
+    // Which interviewer turns ran on the local fallback model or the built-in
+    // writer during a model outage, so a thinner probe is not held against the
+    // candidate. Empty unless the local fallback chain (LOCAL_LLM_ENABLED) ran.
+    servingMode: await servingModeForSession(a.sessionId),
     // What the rest of the product should report: the human verdict once there
     // is one, the AI's until then.
     outcome: reviewedOutcome(result, completed),

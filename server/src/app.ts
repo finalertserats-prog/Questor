@@ -9,6 +9,7 @@ import { rateLimit } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
 import { isDraining } from './services/drainState.js';
 import { probeDatabase } from './services/databaseProbe.js';
+import { llmHealthSummary } from './providers/llm/index.js';
 import { beginRequest } from './realtime/liveSessions.js';
 import { orgsRouter } from './routes/orgs.js';
 import { pipelinesRouter, rolePipelineRouter } from './routes/pipelines.js';
@@ -101,6 +102,10 @@ export function createApp() {
       status: databaseUp ? 'ok' : 'unavailable',
       database: databaseUp ? 'ok' : 'unreachable',
       draining: isDraining(),
+      // Which model layer is serving interviews (primary, local fallback or
+      // built-in writer) and why. Added beside the fields deploy verification
+      // reads, never in place of them; no URL, key or provider reply.
+      llm: llmHealthSummary(),
       ts: new Date().toISOString(),
     });
   });
