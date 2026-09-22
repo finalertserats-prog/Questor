@@ -25,7 +25,10 @@
     "library:worker": "tsx src/library/workerMain.ts",
     "library:smoke": "node scripts/library-smoke.mjs",
     "llm:bench": "node scripts/llm-bench.mjs",
-    "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json"
+    "library:seed-export": "tsx src/library/seedExportMain.ts",
+    "library:seed-import": "tsx src/library/seedImportMain.ts",
+    "library:seed-generate": "tsx scripts/library-seed/main.ts",
+    "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json && tsc -p scripts/library-seed/tsconfig.json"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
