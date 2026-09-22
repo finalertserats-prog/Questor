@@ -82,8 +82,10 @@ export async function attachLibrary(plan: InterviewPlan, ctx: LibraryPlanContext
 async function planWithLibrary(plan: InterviewPlan, ctx: LibraryPlanContext): Promise<InterviewPlan> {
   const tenant = await prisma.tenant.findUnique({ where: { id: ctx.tenantId }, select: { policyJson: true, isDemo: true } });
   if (!tenant) return plan;
-  const policy = await loadPolicy();
   const policyJson = parseJsonOptional<Record<string, unknown>>(tenant.policyJson, {}, { model: 'Tenant', id: ctx.tenantId, field: 'policyJson' });
+  // Decided before anything else is read: an organisation with it off costs one row.
+  if (orgLibrarySettings(policyJson, { isDemo: tenant.isDemo, defaultWindowDays: 1 }).mode === 'off') return plan;
+  const policy = await loadPolicy();
   const settings = orgLibrarySettings(policyJson, { isDemo: tenant.isDemo, defaultWindowDays: policy.noRepeatWindowDays });
   if (settings.mode === 'off') return plan;
   const mode = settings.mode;

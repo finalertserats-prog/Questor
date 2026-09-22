@@ -181,6 +181,16 @@ describe('the callback turn', () => {
     expect(plan.some((b) => b.competencyId === CALLBACK_BLOCK_ID)).toBe(false);
   });
 
+  it('is left out when the library served no block', () => {
+    const plan = applyLadders(planOf(['a', 'b', 'c']), input({ mode: 'trial', trialPercent: 0 }));
+    expect(plan.blocks.some((b) => b.competencyId === CALLBACK_BLOCK_ID)).toBe(false);
+  });
+
+  it('is left out when the library could not be read', () => {
+    const plan = unavailableLibrary(planOf(['a', 'b', 'c']), 'on', input().meta, 'select_failed', {});
+    expect(plan.blocks.some((b) => b.competencyId === CALLBACK_BLOCK_ID)).toBe(false);
+  });
+
   it('is added once however often the plan is annotated', () => {
     const plan = withCallback(withCallback(planOf(['a', 'b', 'c']).blocks));
     expect(plan.filter((b) => b.competencyId === CALLBACK_BLOCK_ID).length).toBe(1);

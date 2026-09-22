@@ -973,6 +973,8 @@ async function drawOnRung(
   ctx: { lastText: string; turns: TurnRecord[]; correction: Correction | null; movedOn: boolean; lead: string },
 ): Promise<AgentUtterance | null> {
   const planned = { text: choice.rung.questionText, form: choice.rung.form };
+  // Screened at creation (library linter); screened again here, since a rung is sent to the model.
+  if (detectInjection(planned.text).injection) return null;
   const llm = await tryLlmUtterance(opts, competencyName, block, ctx.lastText, opts.signal, ctx.turns, ctx.correction, ctx.movedOn ? 'moved_on' : 'normal', [], planned);
   if (!llm || isVerbatim(llm.question, planned.text)) return null;
   const heardByModel = !ctx.movedOn && llm.acknowledgement ? llm.acknowledgement : '';
@@ -980,8 +982,9 @@ async function drawOnRung(
   if (!screenQuestion(text).allowed) return null;
   const kind: AgentUtterance['kind'] = opts.signal.action === 'followup' ? 'followup' : 'question';
   const utterance: AgentUtterance = { text: finish(text, ctx.correction), question: llm.question, competencyId: opts.signal.nextCompetencyId ?? '', kind };
-  // A reply that wandered off the rung's subject is an ordinary question, not the library's.
-  if (sourceOverlap(llm.question, planned.text) < MIN_SOURCE_OVERLAP) return utterance;
+  // A reply that wandered off the rung's subject is neither the library's question
+  // nor an honest built-in one: it is dropped, and the built-in bank asks instead.
+  if (sourceOverlap(llm.question, planned.text) < MIN_SOURCE_OVERLAP) return null;
   return {
     ...utterance,
     libraryEntryId: choice.rung.entryId,

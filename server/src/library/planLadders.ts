@@ -91,9 +91,12 @@ export function applyLadders(plan: InterviewPlan, input: LadderPlanInput): Inter
       library: picked ? libraryBlock(ladderOf(block), key, trial, signal) : builtinBlock('trial_control', key, trial, signal),
     };
   });
+  // The callback comes with the library's questions: an interview the library
+  // could not serve at all (or a trial that drew no block) runs as before.
+  const drewOnLibrary = blocks.some((b) => b.library?.source === 'library');
   return {
     ...plan,
-    blocks: withCallback(blocks),
+    blocks: drewOnLibrary ? withCallback(blocks) : blocks,
     library: { ...input.meta, mode: input.mode, ...(input.mode === 'trial' ? { trialPercent: input.trialPercent } : {}) },
   };
 }
@@ -104,7 +107,7 @@ export function unavailableLibrary(plan: InterviewPlan, mode: Exclude<LibraryMod
   const blocks = plan.blocks.map((block): PlanBlock => (isCompetencyBlock(block)
     ? { ...block, library: builtinBlock(blockReason, competencyKeys[block.competencyId] ?? '', false, undefined) }
     : block));
-  return { ...plan, blocks: withCallback(blocks), library: { ...meta, mode, unavailable: reason } };
+  return { ...plan, blocks, library: { ...meta, mode, unavailable: reason } };
 }
 
 /**
