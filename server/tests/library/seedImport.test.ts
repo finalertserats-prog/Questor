@@ -24,9 +24,9 @@ async function withStandard(): Promise<void> {
   await importSeedLines(lines(standardRecord(world)));
 }
 
-async function openSeededStratum(form = 'star'): Promise<void> {
+async function tightenSeededStratum(form = 'star'): Promise<void> {
   const key = stratumKeyOf({ scope: 'global', roleSlug: world.roleSlug, band: BAND, form, generatorPromptVersion: seededPromptVersion(GENERATOR_PROMPT_VERSION) });
-  await prisma.libraryStratum.upsert({ where: { key }, create: { key, cleanApprovals: 20 }, update: { cleanApprovals: 20, tightenedRemaining: 0 } });
+  await prisma.libraryStratum.upsert({ where: { key }, create: { key, tightenedRemaining: 200 }, update: { tightenedRemaining: 200 } });
 }
 
 async function onlyEntry() {
@@ -57,31 +57,31 @@ describe('standards', () => {
 });
 
 describe('the gate', () => {
-  it('sends a clean question of a new seeded stratum to the owner queue', async () => {
+  it('lets a clean question through to probational by policy', async () => {
     await withStandard();
-    await importSeedLines(lines(questionRecord(world)));
-    expect((await onlyEntry()).gateReason).toContain('stratum:new');
-  });
-
-  it('keeps a queued question as a draft', async () => {
-    await withStandard();
-    await importSeedLines(lines(questionRecord(world)));
-    expect((await onlyEntry()).status).toBe('draft');
-  });
-
-  it('lets a clean question of an open seeded stratum through to probational', async () => {
-    await withStandard();
-    await openSeededStratum();
     await importSeedLines(lines(questionRecord(world)));
     expect((await onlyEntry()).status).toBe('probational');
   });
 
-  it("does not count the worker's open stratum for seeded entries", async () => {
+  it('keeps a critic-unsure question as a draft in the owner queue', async () => {
+    await withStandard();
+    await importSeedLines(lines(questionRecord(world, { critic: passingVerdict({ confidence: 0.7 }) })));
+    expect((await onlyEntry()).status).toBe('draft');
+  });
+
+  it('sends a question of a seeded stratum tightened by a sample rejection to the owner queue', async () => {
+    await withStandard();
+    await tightenSeededStratum();
+    await importSeedLines(lines(questionRecord(world)));
+    expect((await onlyEntry()).gateReason).toContain('stratum:tightened');
+  });
+
+  it("is not held back by a tightened worker stratum: seeded entries have their own strata", async () => {
     await withStandard();
     const workerKey = stratumKeyOf({ scope: 'global', roleSlug: world.roleSlug, band: BAND, form: 'star', generatorPromptVersion: GENERATOR_PROMPT_VERSION });
-    await prisma.libraryStratum.create({ data: { key: workerKey, cleanApprovals: 20 } });
+    await prisma.libraryStratum.create({ data: { key: workerKey, tightenedRemaining: 200 } });
     await importSeedLines(lines(questionRecord(world)));
-    expect((await onlyEntry()).status).toBe('draft');
+    expect((await onlyEntry()).status).toBe('probational');
   });
 
   it('rejects a question the critic found generic, keeping the reason', async () => {
@@ -112,9 +112,8 @@ describe('the gate', () => {
     expect(rows[1].gateReason).toMatch(/dedupe:(near|duplicate)/);
   });
 
-  it('sends a tie-broken question to the owner even in an open stratum', async () => {
+  it('sends a tie-broken question to the owner queue', async () => {
     await withStandard();
-    await openSeededStratum();
     const record = questionRecord(world, { critic: passingVerdict({ roleSpecific: false }), tiebreak: passingVerdict() });
     await importSeedLines(lines({ ...record, provenance: { ...record.provenance, tiebreakLane: 'gemini' } }));
     expect((await onlyEntry()).gateReason).toContain('seed:critics_split');
@@ -122,7 +121,6 @@ describe('the gate', () => {
 
   it('sends a question judged against other anchors than the live standard to the owner', async () => {
     await withStandard();
-    await openSeededStratum();
     await importSeedLines(lines(questionRecord(world, { anchors: ['Some other anchor the critic saw', 'And another one'] })));
     expect((await onlyEntry()).gateReason).toContain('seed:anchors_changed');
   });
@@ -182,7 +180,7 @@ describe('idempotency', () => {
 describe('refusals', () => {
   it('reports a malformed line by number and still imports the rest', async () => {
     const report = await importSeedLines(['not json', ...lines(standardRecord(world), questionRecord(world))]);
-    expect([report.invalid, report.questions.queued]).toEqual([[{ line: 1, reason: 'json:invalid' }], 1]);
+    expect([report.invalid, report.questions.probational]).toEqual([[{ line: 1, reason: 'json:invalid' }], 1]);
   });
 
   it('refuses a question for a role the catalog does not have', async () => {

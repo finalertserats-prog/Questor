@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseBooleanSetting, parseCriticProviderSetting } from '../../src/config.js';
+import { config, parseBooleanSetting, parseCriticProviderSetting } from '../../src/config.js';
 
 /** The library's switches refuse a spelling that could mean either thing. */
 
@@ -32,5 +32,11 @@ describe('parseCriticProviderSetting', () => {
 
   it('refuses an unknown provider', () => {
     expect(() => parseCriticProviderSetting('gemini')).toThrow(/LIBRARY_CRITIC_PROVIDER/);
+  });
+});
+
+describe('LIBRARY_DAILY_SAMPLE_SIZE', () => {
+  it('defaults to twenty entries a day', () => {
+    expect(config.library.dailySampleSize).toBe(20);
   });
 });

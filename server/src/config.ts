@@ -412,6 +412,11 @@ export const config = {
     monthlyTokenCap: parsePositiveIntSetting('LIBRARY_MONTHLY_TOKEN_CAP', process.env.LIBRARY_MONTHLY_TOKEN_CAP, 100_000_000),
     criticProvider: parseCriticProviderSetting(process.env.LIBRARY_CRITIC_PROVIDER),
     criticModel: env('LIBRARY_CRITIC_MODEL', 'claude-sonnet-5'),
+    /**
+     * Entries the owner's daily stratified sample draws from probational and
+     * live entries (Approval v2). Changes without a release.
+     */
+    dailySampleSize: parsePositiveIntSetting('LIBRARY_DAILY_SAMPLE_SIZE', process.env.LIBRARY_DAILY_SAMPLE_SIZE, 20),
     /** Batches the worker runs side by side; each is one generator call and one critic call. */
     workerConcurrency: parsePositiveIntSetting('LIBRARY_WORKER_CONCURRENCY', process.env.LIBRARY_WORKER_CONCURRENCY, 4),
   },

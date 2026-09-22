@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideGate, statusForOutcome, stratumAfterApproval, stratumAfterRejection, stratumOpen, type GateInput } from '../../src/library/policy.js';
+import { decideGate, statusForOutcome, stratumAfterApproval, stratumAfterRejection, type GateInput } from '../../src/library/policy.js';
 import { DEFAULT_POLICY, type CriticVerdict } from '../../src/library/types.js';
 
 /** The policy gate: pass → probational, unsure → owner queue, fail → rejected. */
@@ -61,8 +61,8 @@ describe('decideGate', () => {
     expect(decideGate(input({ critic: { ...goodVerdict, formCorrect: false } })).outcome).toBe('unsure');
   });
 
-  it('sends every entry of a new stratum to the owner queue', () => {
-    expect(decideGate(input({ stratum: { cleanApprovals: 3, tightenedRemaining: 0 } })).reasons).toContain('stratum:new');
+  it('passes a clean entry of a stratum the owner has never approved from (approval by policy)', () => {
+    expect(decideGate(input({ stratum: { cleanApprovals: 0, tightenedRemaining: 0 } })).outcome).toBe('pass');
   });
 
   it('sends entries of a tightened stratum to the owner queue', () => {
@@ -89,13 +89,7 @@ describe('statusForOutcome', () => {
 });
 
 describe('stratum state', () => {
-  it('opens after twenty clean approvals', () => {
-    expect(stratumOpen({ cleanApprovals: 20, tightenedRemaining: 0 }, DEFAULT_POLICY)).toBe(true);
-  });
 
-  it('stays closed while tightened', () => {
-    expect(stratumOpen({ cleanApprovals: 20, tightenedRemaining: 1 }, DEFAULT_POLICY)).toBe(false);
-  });
 
   it('counts a clean approval', () => {
     expect(stratumAfterApproval({ cleanApprovals: 1, approvals: 1, rejections: 0, tightenedRemaining: 0 }, true).cleanApprovals).toBe(2);

@@ -214,8 +214,8 @@ export async function approveEntry(id: string, owner: Owner, note: string): Prom
   const entry = await prisma.libraryEntry.findUnique({ where: { id }, select: { stratumKey: true, gateReason: true } });
   if (!entry) return { ok: false, code: 'not_found' };
   const result = await transitionEntry(id, 'probational', { actor: 'owner', actorId: owner.userId, actorTenantId: owner.tenantId, action: 'approved', reason: note, sampleStratum: entry.stratumKey });
-  // Approved untouched: one more clean approval toward opening the stratum,
-  // unless the draft came from an edit (the critic never saw that wording).
+  // Counted for the owner's rates by stratum; an edited draft is not a clean
+  // approval (the critic never saw that wording). The count no longer gates.
   if (result.ok && entry.gateReason !== 'edited') await bumpStratum(entry.stratumKey, 'approve');
   return result;
 }

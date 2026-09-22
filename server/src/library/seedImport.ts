@@ -22,9 +22,10 @@ import { existingQuestions } from './worker.js';
  *   family → policy gate (critic verdict, strata) → draft / probational / rejected
  *
  * The critic verdict in the file stands in for the worker's critic call; the
- * policy gate reads it with the same thresholds. Seeded entries carry their own
- * prompt version, so they form new strata and go to the owner queue until the
- * owner has approved twenty of a stratum untouched. Nothing is ever made live.
+ * policy gate reads it with the same thresholds, so a clean entry goes to
+ * probational by policy and the owner sees it through the daily sample.
+ * Seeded entries carry their own prompt version, so they form their own strata
+ * (sampled and tightened apart from the worker's). Nothing is ever made live.
  *
  * Standards are written only where the family has none; a live standard is
  * never replaced. Re-importing a file writes nothing twice (content hash).
@@ -35,8 +36,8 @@ import { existingQuestions } from './worker.js';
  * Trust boundary: the critic verdicts in the file are taken as written. The
  * import is an operator tool (it needs a shell on the server), the file comes
  * from the owner's own laptop run, and no verdict can make an entry live:
- * seeded strata start in the owner queue, and probational -> live needs real
- * uses. seedImportMain holds the worker's lease, so an import and the worker
+ * probational -> live needs clean uses in interviews, and the daily sample
+ * covers seeded strata like any other. seedImportMain holds the worker's lease, so an import and the worker
  * never gate the same pools at once.
  */
 

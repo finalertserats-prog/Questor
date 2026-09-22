@@ -16,6 +16,7 @@ const app = createApp();
 beforeEach(async () => {
   world = await seedLibraryWorld();
   config.library.enabled = true;
+  config.library.dailySampleSize = 20;
 });
 
 const get = (path: string, token: string) => request(app).get(`/api/library/admin${path}`).set('Authorization', bearer(token));
@@ -135,6 +136,17 @@ describe('the daily sample', () => {
   it('draws at most twenty entries', async () => {
     for (let i = 0; i < 25; i++) await entry(world, { status: 'probational', form: i % 2 ? 'star' : 'opinion' });
     expect((await get('/sample', world.operator.token)).body.entries.length).toBe(20);
+  });
+
+  it('draws the configured number of entries', async () => {
+    config.library.dailySampleSize = 3;
+    for (let i = 0; i < 8; i++) await entry(world, { status: 'probational' });
+    expect((await get('/sample', world.operator.token)).body.entries.length).toBe(3);
+  });
+
+  it('reports the configured sample size in the overview', async () => {
+    config.library.dailySampleSize = 7;
+    expect((await get('/overview', world.operator.token)).body.policy.sampleSize).toBe(7);
   });
 
   it('shows the same sample on a second look', async () => {

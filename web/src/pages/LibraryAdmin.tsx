@@ -107,7 +107,7 @@ export function LibraryAdmin() {
         {data.strata.length === 0 ? <p className="muted small">No entries yet.</p> : (
           <div className="table-scroll" tabIndex={0} role="region" aria-label="Rates by stratum">
             <table className="library-strata" data-testid="library-strata">
-              <thead><tr><th>Stratum</th><th>Entries</th><th>Through the gate</th><th>Rejected</th><th>Clean approvals</th><th>Tightened</th></tr></thead>
+              <thead><tr><th>Stratum</th><th>Entries</th><th>Through the gate</th><th>Rejected</th><th>Owner approvals</th><th>Tightened</th></tr></thead>
               <tbody>
                 {data.strata.map((s) => (
                   <tr key={s.stratumKey}>
@@ -115,7 +115,7 @@ export function LibraryAdmin() {
                     <td>{s.total}</td>
                     <td>{percent(s.promotionRate)}</td>
                     <td>{percent(s.rejectionRate)}</td>
-                    <td>{s.cleanApprovals} / 20</td>
+                    <td>{s.cleanApprovals}</td>
                     <td>{s.tightenedRemaining > 0 ? `${s.tightenedRemaining} to go` : '—'}</td>
                   </tr>
                 ))}

@@ -83,8 +83,8 @@ export function parseCriticVerdict(json: string): CriticVerdict | null {
 export interface LibraryPolicySettings {
   readonly version: number;
   readonly promotionUses: number;
+  /** The owner's daily sample; comes from LIBRARY_DAILY_SAMPLE_SIZE, not the policy row. */
   readonly sampleSize: number;
-  readonly stratumCleanApprovals: number;
   readonly tightenWindow: number;
   readonly criticPassMin: number;
   readonly criticGreyMin: number;
@@ -97,7 +97,6 @@ export const DEFAULT_POLICY: LibraryPolicySettings = {
   version: 1,
   promotionUses: 5,
   sampleSize: 20,
-  stratumCleanApprovals: 20,
   tightenWindow: 200,
   criticPassMin: 0.8,
   criticGreyMin: 0.55,

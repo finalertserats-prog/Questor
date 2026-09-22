@@ -20,6 +20,11 @@ beforeEach(async () => {
   world = await seedLibraryWorld();
 });
 
+async function tightenStratum(form: string): Promise<void> {
+  const key = stratumKeyOf({ scope: 'global', roleSlug: world.roleSlug, band: BAND, form, generatorPromptVersion: GENERATOR_PROMPT_VERSION });
+  await prisma.libraryStratum.upsert({ where: { key }, create: { key, tightenedRemaining: 200 }, update: { tightenedRemaining: 200 } });
+}
+
 async function openStratum(form: string): Promise<void> {
   const key = stratumKeyOf({ scope: 'global', roleSlug: world.roleSlug, band: BAND, form, generatorPromptVersion: GENERATOR_PROMPT_VERSION });
   await prisma.libraryStratum.upsert({ where: { key }, create: { key, cleanApprovals: 20 }, update: { cleanApprovals: 20, tightenedRemaining: 0 } });
@@ -70,10 +75,23 @@ describe('runBatch', () => {
     expect(await prisma.libraryStandard.count({ where: { familySlug: world.familySlug, competencyKey: pool.competencyKey, band: BAND } })).toBe(1);
   });
 
-  it('sends every entry of a new stratum to the owner queue', async () => {
+  it('lets clean entries of a brand-new stratum through to probational (approval by policy)', async () => {
+    const pool = (await loadDemandQueue())[0];
+    const result = await runBatch(pool, testWorkerDeps(), await loadPolicy());
+    expect(result.probational).toBeGreaterThan(0);
+  });
+
+  it('never makes a generated entry live', async () => {
     const pool = (await loadDemandQueue())[0];
     await runBatch(pool, testWorkerDeps(), await loadPolicy());
-    expect(await prisma.libraryEntry.count({ where: { status: 'probational' } })).toBe(0);
+    expect(await prisma.libraryEntry.count({ where: { status: 'live' } })).toBe(0);
+  });
+
+  it('sends entries of a stratum tightened by a sample rejection to the owner queue', async () => {
+    for (const form of ['star', 'opinion', 'disagreement', 'hypothetical', 'walkthrough', 'tradeoff', 'retrospective', 'work_sample']) await tightenStratum(form);
+    const pool = (await loadDemandQueue())[0];
+    const result = await runBatch(pool, testWorkerDeps(), await loadPolicy());
+    expect(result.probational).toBe(0);
   });
 
   it('lets clean entries of an open stratum through to probational', async () => {
