@@ -175,36 +175,48 @@ export interface ComparabilityNote {
 const DEPTH_MINUTES_TOLERANCE = 10;
 
 /**
- * Where two scores in this comparison were not produced the same way.
+ * Where scores being read together were not produced the same way.
  *
  * A number next to another number reads as the same measurement. It is not one
- * when the two candidates were assessed against different versions of the
+ * when the candidates were assessed against different versions of the
  * scorecard, or when one interview covered half the competencies of the other.
  * Rather than quietly drop those rows — which would hide the candidate — the
  * page keeps them and says what is different, so the person comparing decides
  * what to do about it.
  *
- * Measured against the strongest basis present, not against an average: the
- * question is "is this one weaker evidence than the best I have here?".
+ * The two notes are measured against different things ON PURPOSE.
+ *
+ * A SCORECARD VERSION is measured against the role's current one
+ * (`roleScorecardVersion`), which is a fact about the role and does not move.
+ * Measuring it against whoever happens to share the page would mark a
+ * candidate on page one and clear the same candidate on page two, which reads
+ * as the data changing under the reader.
+ *
+ * DEPTH is measured against the others being read together, because that is
+ * the only thing it can mean: "shallower" is a comparison, and the question a
+ * manager is asking is whether the evidence behind THESE figures is even.
  */
 export function comparabilityNotes(
   rows: readonly ComparabilitySource[],
+  roleScorecardVersion?: number,
 ): ReadonlyMap<string, readonly ComparabilityNote[]> {
   const assessed = rows.filter((r) => r.scorecardVersion !== null);
-  const newest = Math.max(...assessed.map((r) => r.scorecardVersion ?? 0), 0);
+  const current = roleScorecardVersion ?? Math.max(...assessed.map((r) => r.scorecardVersion ?? 0), 0);
   const deepest = Math.max(...assessed.map((r) => r.competenciesGraded ?? 0), 0);
   const longest = Math.max(...assessed.map((r) => r.durationMinutes ?? 0), 0);
 
   return new Map(rows.map((row): readonly [string, readonly ComparabilityNote[]] => {
-    // Nothing to be inconsistent with: one candidate, or one with no assessment.
-    if (assessed.length < 2 || row.scorecardVersion === null) return [row.candidateId, []];
+    // A candidate with no assessment has no figure to be inconsistent with.
+    if (row.scorecardVersion === null) return [row.candidateId, []];
     const notes: ComparabilityNote[] = [];
-    if (row.scorecardVersion < newest) {
+    if (row.scorecardVersion < current) {
       notes.push({
         kind: 'scorecard_version',
-        text: `Scored on a different scorecard version (v${row.scorecardVersion}, against v${newest} here) — the levels are not measured against the same rubric.`,
+        text: `Scored on a different scorecard version (v${row.scorecardVersion}; this role is now on v${current}) — the levels are not measured against the same rubric.`,
       });
     }
+    // Nothing to be shallower than when there is only one interview here.
+    if (assessed.length < 2) return [row.candidateId, notes];
     const thin = (row.competenciesGraded ?? 0) < deepest;
     const short = longest - (row.durationMinutes ?? 0) >= DEPTH_MINUTES_TOLERANCE;
     if (thin || short) notes.push({ kind: 'interview_depth', text: depthText(row, { deepest, longest, thin, short }) });

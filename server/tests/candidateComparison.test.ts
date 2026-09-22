@@ -164,6 +164,21 @@ describe('comparabilityNotes', () => {
     expect(notes.get('b')).toEqual([]);
   });
 
+  it('marks an older scorecard against the role’s current one, whoever shares the page', () => {
+    const notes = comparabilityNotes([{ candidateId: 'old', scorecardVersion: 2, ...graded }], 5);
+    expect(notes.get('old')?.map((n) => n.kind)).toEqual(['scorecard_version']);
+  });
+
+  it('names the role’s current version, so the mark reads the same on every page', () => {
+    const notes = comparabilityNotes([{ candidateId: 'old', scorecardVersion: 2, ...graded }], 5);
+    expect(notes.get('old')?.[0].text).toContain('v5');
+  });
+
+  it('leaves a candidate on the role’s current scorecard unmarked', () => {
+    const notes = comparabilityNotes([{ candidateId: 'now', scorecardVersion: 5, ...graded }], 5);
+    expect(notes.get('now')).toEqual([]);
+  });
+
   it('marks the candidate assessed on an older scorecard', () => {
     const notes = comparabilityNotes([
       { candidateId: 'old', scorecardVersion: 2, ...graded },
@@ -221,8 +236,16 @@ describe('comparabilityNotes', () => {
     expect(notes.get('none')).toEqual([]);
   });
 
-  it('says nothing when only one candidate is being looked at', () => {
-    const notes = comparabilityNotes([{ candidateId: 'only', scorecardVersion: 1, competenciesGraded: 2, durationMinutes: 15 }]);
+  it('calls nothing shallow when there is only one interview to read', () => {
+    const notes = comparabilityNotes([{ candidateId: 'only', scorecardVersion: 1, competenciesGraded: 2, durationMinutes: 15 }], 1);
     expect(notes.get('only')).toEqual([]);
+  });
+
+  it('falls back to the newest version present when the role does not name one', () => {
+    const notes = comparabilityNotes([
+      { candidateId: 'old', scorecardVersion: 2, ...graded },
+      { candidateId: 'new', scorecardVersion: 3, ...graded },
+    ]);
+    expect(notes.get('old')?.map((n) => n.kind)).toEqual(['scorecard_version']);
   });
 });

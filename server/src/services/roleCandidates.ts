@@ -287,6 +287,16 @@ export async function prepareRoleCandidates(
   });
 }
 
+/**
+ * The role's newest scorecard version — the rubric it hires against today, and
+ * the one an older assessment's levels are marked as not sharing. A fact about
+ * the role, so the mark says the same thing on every page.
+ */
+export async function currentScorecardVersion(roleId: string): Promise<number | undefined> {
+  const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId }, orderBy: { version: 'desc' }, select: { version: true } });
+  return latest?.version;
+}
+
 /** One page of the role's candidates, ordered by the key the caller asked for. */
 export async function listRoleCandidates(
   auth: AuthClaims,
@@ -312,13 +322,13 @@ export async function listRoleCandidates(
   const pageFacts = scoringAll
     ? facts
     : await assessmentFacts(page.flatMap((p) => (p.assessmentId && !p.withheld ? [p.assessmentId] : [])));
-  const shortlisted = await shortlistedIds(auth, roleId);
+  const [shortlisted, current] = await Promise.all([shortlistedIds(auth, roleId), currentScorecardVersion(roleId)]);
   const notes = comparabilityNotes(page.map((p) => ({
     candidateId: p.row.id,
     scorecardVersion: p.withheld ? null : p.scorecardVersion,
     competenciesGraded: p.assessmentId ? pageFacts.get(p.assessmentId)?.competenciesGraded ?? null : null,
     durationMinutes: p.durationMinutes,
-  })));
+  })), current);
 
   return {
     candidates: page.map((p) => shapeRow(p, pageFacts, shortlisted, notes)),

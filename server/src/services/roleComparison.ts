@@ -158,7 +158,7 @@ export async function roleCompetencyGrid(
       competenciesGraded: read ? (read.result.competencies ?? []).length : null,
       durationMinutes: p.durationMinutes,
     };
-  }));
+  }), scorecard.version);
 
   const rows: GridRow[] = page.map((p) => {
     const read = p.assessmentId && !p.withheld ? reads.get(p.assessmentId) : undefined;
@@ -282,7 +282,7 @@ export async function compareCandidates(
       competenciesGraded: read ? (read.result.competencies ?? []).length : null,
       durationMinutes: p.durationMinutes,
     };
-  }));
+  }), scorecard.version);
 
   const candidates: ComparedCandidate[] = chosen.map((p) => {
     const read = p.assessmentId && !p.withheld ? reads.get(p.assessmentId) : undefined;
