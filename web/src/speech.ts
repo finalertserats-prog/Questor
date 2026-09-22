@@ -5,6 +5,7 @@
 
 import { pickBrowserVoice } from './components/interviewerModel';
 import type { PreviewDeps, PreviewSource } from './components/voicePreviewModel';
+import { levelSpeechClip } from './levelSpeechClip';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const AnyWindow = window as any;
@@ -288,7 +289,8 @@ export async function speakTurn(o: {
     // leave the candidate sitting in silence waiting for a question.
     if (res.status === 204 || !res.ok) { finishLocally(); return; }
 
-    const url = URL.createObjectURL(await res.blob());
+    // Levelled so every turn plays at the same loudness (voiceLevelling.ts).
+    const url = URL.createObjectURL(await levelSpeechClip(await res.blob()));
     stopSpeaking();
     const audio = new Audio(url);
     const id = nextUtterance();
@@ -467,7 +469,8 @@ export async function speakNudge(token: string, index: number, voiceHint?: strin
       return text;
     }
 
-    const url = URL.createObjectURL(await res.blob());
+    // Levelled like every interviewer turn, so a check-in is not louder or quieter than the questions.
+    const url = URL.createObjectURL(await levelSpeechClip(await res.blob()));
     stopSpeaking();
     const audio = new Audio(url);
     const id = nextUtterance();
@@ -502,7 +505,8 @@ async function fetchInterviewerPreview(interviewerId: string): Promise<PreviewSo
   const res = await fetch(`/api/interviewers/${encodeURIComponent(interviewerId)}/preview`, { credentials: 'include' });
   const text = decodeURIComponent(res.headers.get('X-Preview-Text') ?? '');
   const hint = res.headers.get('X-Voice-Hint') ?? '';
-  if (res.status === 200) return { kind: 'audio', url: URL.createObjectURL(await res.blob()) };
+  // Levelled exactly as the room levels it, so HR hears what the candidate will.
+  if (res.status === 200) return { kind: 'audio', url: URL.createObjectURL(await levelSpeechClip(await res.blob())) };
   if (!text) throw new Error('This voice preview is not available right now.');
   return { kind: 'browser', text, hint };
 }
