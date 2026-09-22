@@ -123,7 +123,8 @@ export function CandidatesList() {
         {roleName(c) ?? 'No role'}
         {(c.alsoInRoles ?? 0) > 0 ? ` · ${alsoInRolesLabel(c.alsoInRoles ?? 0).toLowerCase()}` : ''}
       </span>,
-      interviewCell(c.latestInterview),
+      // No dash line for someone not yet interviewed: the next step says so.
+      ...(c.latestInterview ? [interviewCell(c.latestInterview)] : []),
     ],
     next: candidateNextAction(c),
     extra: mayAdd ? anotherRole(c) : undefined,
