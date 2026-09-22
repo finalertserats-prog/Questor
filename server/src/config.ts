@@ -172,6 +172,74 @@ export function parseBooleanSetting(variable: string, raw: string | undefined, f
   throw new Error(`${variable} must be "true" or "false" (got "${raw}").`);
 }
 
+/** Ollama's own default listen address: on the VPS it serves loopback only. */
+export const DEFAULT_LOCAL_LLM_URL = 'http://127.0.0.1:11434';
+export const DEFAULT_LOCAL_LLM_MODEL = 'llama3.2:3b';
+/**
+ * A 3-4B model on 4 CPU cores writes a one-line acknowledgement in 2-3 s, but
+ * reading the interviewer's instructions first costs several more. 12 s is the
+ * same ceiling the primary gets for a spoken turn; past it the built-in writer
+ * takes the turn. The Phase 0 benchmark (npm run llm:bench) sets the real number.
+ */
+export const DEFAULT_LOCAL_LLM_TIMEOUT_MS = 12_000;
+/**
+ * The local model must start speaking within this long or the built-in writer
+ * takes the turn: a candidate waiting in silence is worse than a plainer line.
+ */
+export const DEFAULT_LOCAL_LLM_FIRST_TOKEN_MS = 8_000;
+/** A primary that answers, but slower than this twice running, is treated as failing. */
+export const DEFAULT_LLM_SLOW_CALL_MS = 8_000;
+/** Repeated failures double the cooldown each time, up to this ceiling, so probes never storm. */
+export const DEFAULT_LLM_MAX_COOLDOWN_MS = 15 * 60_000;
+/** Keep the model resident: a cold load from disk on this CPU costs seconds a candidate hears. */
+export const DEFAULT_LOCAL_LLM_KEEP_ALIVE = '24h';
+/** How long a provider that is out of credit or refusing its key is skipped before one probe. */
+export const DEFAULT_LLM_OUTAGE_COOLDOWN_MS = 5 * 60_000;
+/** How long a provider that timed out, errored or was unreachable is skipped before one probe. */
+export const DEFAULT_LLM_TRANSIENT_COOLDOWN_MS = 30_000;
+
+/**
+ * LOCAL_LLM_URL: where Ollama listens. Checked at start, because a typo found
+ * only when the primary fails is found in the middle of an outage.
+ */
+export function parseLocalLlmUrlSetting(raw: string | undefined): string {
+  const value = (raw ?? '').trim();
+  if (value === '') return DEFAULT_LOCAL_LLM_URL;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`LOCAL_LLM_URL must be an http(s) URL such as ${DEFAULT_LOCAL_LLM_URL} (got "${raw}").`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`LOCAL_LLM_URL must be an http(s) URL such as ${DEFAULT_LOCAL_LLM_URL} (got "${raw}").`);
+  }
+  if (url.username || url.password) throw new Error('LOCAL_LLM_URL must not carry credentials.');
+  return value.replace(/\/+$/, '');
+}
+
+/**
+ * The local fallback's settings. Read only when LOCAL_LLM_ENABLED is on: with
+ * it off, a leftover or mistyped LOCAL_LLM_* value must not stop a server that
+ * never uses it, so the defaults stand in unread.
+ */
+export function parseLocalLlmSettings(read: (key: string) => string | undefined) {
+  const enabled = parseBooleanSetting('LOCAL_LLM_ENABLED', read('LOCAL_LLM_ENABLED'), false);
+  const on = (key: string) => (enabled ? read(key) : undefined);
+  return {
+    enabled,
+    url: parseLocalLlmUrlSetting(on('LOCAL_LLM_URL')),
+    model: on('LOCAL_LLM_MODEL')?.trim() || DEFAULT_LOCAL_LLM_MODEL,
+    timeoutMs: parseTimeoutMsSetting('LOCAL_LLM_TIMEOUT_MS', on('LOCAL_LLM_TIMEOUT_MS'), DEFAULT_LOCAL_LLM_TIMEOUT_MS),
+    firstTokenMs: parseTimeoutMsSetting('LOCAL_LLM_FIRST_TOKEN_MS', on('LOCAL_LLM_FIRST_TOKEN_MS'), DEFAULT_LOCAL_LLM_FIRST_TOKEN_MS),
+    keepAlive: on('LOCAL_LLM_KEEP_ALIVE')?.trim() || DEFAULT_LOCAL_LLM_KEEP_ALIVE,
+    outageCooldownMs: parseTimeoutMsSetting('LLM_OUTAGE_COOLDOWN_MS', on('LLM_OUTAGE_COOLDOWN_MS'), DEFAULT_LLM_OUTAGE_COOLDOWN_MS),
+    transientCooldownMs: parseTimeoutMsSetting('LLM_TRANSIENT_COOLDOWN_MS', on('LLM_TRANSIENT_COOLDOWN_MS'), DEFAULT_LLM_TRANSIENT_COOLDOWN_MS),
+    maxCooldownMs: parseTimeoutMsSetting('LLM_MAX_COOLDOWN_MS', on('LLM_MAX_COOLDOWN_MS'), DEFAULT_LLM_MAX_COOLDOWN_MS),
+    slowCallMs: parseTimeoutMsSetting('LLM_SLOW_CALL_MS', on('LLM_SLOW_CALL_MS'), DEFAULT_LLM_SLOW_CALL_MS),
+  };
+}
+
 export const CRITIC_PROVIDERS = ['anthropic', 'openai'] as const;
 export type CriticProvider = (typeof CRITIC_PROVIDERS)[number];
 
@@ -234,6 +302,12 @@ export const config = {
      * never leave someone sitting in silence mid-interview.
      */
     interviewerTimeoutMs: parseTimeoutMsSetting('INTERVIEWER_LLM_TIMEOUT_MS', process.env.INTERVIEWER_LLM_TIMEOUT_MS, DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS),
+    /**
+     * The local model (Ollama on the VPS) that takes the interviewer's
+     * conversational calls when the primary fails. Off by default: off is
+     * exactly the chain before it existed (primary, then built-in writer).
+     */
+    local: parseLocalLlmSettings((key) => process.env[key]),
   },
   stt: {
     provider: env('STT_PROVIDER', 'webspeech'),

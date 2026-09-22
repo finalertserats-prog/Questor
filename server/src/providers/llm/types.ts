@@ -22,6 +22,25 @@ export interface LlmGenerateOptions {
   timeoutMs?: number;
   /** Per-call override of the configured effort, e.g. more for grading than for a spoken turn. */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * The caller will parse the reply as JSON. Only the local adapter acts on it
+   * (Ollama's constrained JSON output, which keeps a small model on shape);
+   * the hosted adapters ignore it, so their requests are unchanged.
+   */
+  responseFormat?: 'json';
+  /**
+   * Abandon the call if the first token has not arrived by then. Only a
+   * streaming adapter (the local one) can tell; the others ignore it.
+   */
+  firstTokenMs?: number;
+}
+
+/** A streamed reply that stopped before it was finished: the connection or the model runner died. */
+export class LlmStreamError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'LlmStreamError';
+  }
 }
 
 /**
