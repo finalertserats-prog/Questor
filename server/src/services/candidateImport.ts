@@ -139,9 +139,8 @@ async function stageRows(auth: AuthClaims, batchId: string, people: readonly Sta
 }
 
 async function insertRows(auth: AuthClaims, batchId: string, people: readonly StagedPerson[]): Promise<void> {
-  const batch = { id: batchId };
   await prisma.$transaction(async (tx) => {
-    const already = await tx.candidateImportRow.count({ where: { batchId: batch.id } });
+    const already = await tx.candidateImportRow.count({ where: { batchId } });
     if (already + people.length > MAX_IMPORT_ROWS) {
       throw new HttpError(400, `An import can hold at most ${MAX_IMPORT_ROWS} people; this would make ${already + people.length}.`);
     }
@@ -149,7 +148,7 @@ async function insertRows(auth: AuthClaims, batchId: string, people: readonly St
       data: people.map((person, index) => {
         const position = already + index + 1;
         return {
-          batchId: batch.id, tenantId: auth.tenantId, rowKey: `r${position}`, position,
+          batchId, tenantId: auth.tenantId, rowKey: `r${position}`, position,
           fullName: inertName(person.fullName), email: person.email.trim().slice(0, 254),
           emailNormalized: normalizeEmail(person.email).slice(0, 254), phone: person.phone.slice(0, 40),
           linkedinUrl: normalizeLinkedinUrl(person.linkedinUrl),
