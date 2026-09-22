@@ -19,7 +19,8 @@ const WEAK_ANSWER_SCORE = 45;
 const STRONG_ANSWER_SCORE = 65;
 
 export function answersNeeded(block: PlanBlock): number {
-  if (block.competencyId.startsWith('__')) return 1;
+  // A resume block with CV-anchored questions (identity L3) takes one answer per question, at most two.
+  if (block.competencyId.startsWith('__')) return Math.max(1, Math.min(2, block.cvAnchors?.length ?? 0));
   return Math.max(1, Math.min(3, Math.round(block.targetMinutes / 2.5)));
 }
 

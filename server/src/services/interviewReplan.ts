@@ -71,6 +71,8 @@ export async function replanFromLatestScorecard(sessionId: string): Promise<Repl
     role: profile, fit, durationMinutes: session.durationMinutes, language: session.language,
     modules: previous.modules ?? [], band: previous.band, bandRationale: previous.bandRationale,
     techStack: roleTechStack(roleRow),
+    // The CV has not changed either: keep the CV-anchored questions (identity L3).
+    cvAnchors: previous.blocks?.find((b) => b.competencyId === '__resume_validation__')?.cvAnchors,
   }), {
     tenantId: session.tenantId, roleId: session.roleId, candidateId: session.candidateId, scorecardId: latest.id,
     competencies: profile.competencies, fit, replanningSessionId: sessionId,

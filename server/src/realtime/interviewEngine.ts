@@ -27,6 +27,7 @@ import { servingMeta } from '../services/interviewServing.js';
 import { anchorsFor, recordLibraryUsage } from '../library/usage.js';
 import { withoutLibrary } from '../library/planLadders.js';
 import { config } from '../config.js';
+import { assertIdentityConfirmed } from '../services/identityAssurance.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -669,6 +670,10 @@ export async function startOrResumeInterview(sessionId: string): Promise<StartOu
         ? 'You asked to be interviewed by a person instead. Our team has your request and will be in touch — there is nothing more to do here. If you would rather continue with the AI interview after all, reply to your invitation email and we will reopen it.'
         : 'This interview is not open right now. If you think that is wrong, reply to your invitation email and we will look into it.');
     }
+    // Identity assurance L1: the one-time code, where the consent recorded one.
+    // Only here, before the interview goes live: a candidate rejoining an
+    // interview already under way is never asked again.
+    await assertIdentityConfirmed(session);
     // Checked here, in the engine, so every transport refuses alike: a process
     // that is shutting down must not begin an interview it will abandon. The
     // session is left exactly as it was, so the retry after restart works.

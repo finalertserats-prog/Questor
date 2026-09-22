@@ -158,6 +158,9 @@ export function createApp() {
   // interview and each upload is one answer, so 60/hour covers a real session
   // with retries and still caps a script at a bounded hourly spend.
   app.use('/api/portal/:token/transcribe', rateLimit({ name: 'portal-transcribe', windowMs: 60 * 60_000, max: 60, keyOf: portalKey }));
+  // Sending mails the candidate and verifying is a guess, so both are bounded
+  // per invitation on top of the per-code attempt limit in the database.
+  app.use('/api/portal/:token/identity', rateLimit({ name: 'portal-identity', windowMs: 15 * 60_000, max: 30, keyOf: portalKey }));
   app.use('/api/portal/:token/integrity-event', rateLimit({ name: 'portal-integrity', windowMs: 60 * 60_000, max: 600, keyOf: portalKey }));
   // Integrity events have their own limiter above and must not also draw on this
   // shared budget: a candidate who switches tabs often (assistive technology

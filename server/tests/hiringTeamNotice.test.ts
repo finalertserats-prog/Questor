@@ -87,6 +87,10 @@ describe('assessment ready for review', () => {
   it('emails the owner a link to the assessment', async () => {
     await request(app).post(`/api/portal/${demo.token}/accept`).send({});
     await request(app).post(`/api/portal/${demo.token}/consent`).send({ recordingConsent: true, accepted: true });
+    // Mail is delivered here, so consent brings the one-time identity code with it.
+    await request(app).post(`/api/portal/${demo.token}/identity/code`).send({});
+    const code = /\b(\d{6})\b/.exec(sent[sent.length - 1]?.text ?? '')?.[1] ?? '';
+    await request(app).post(`/api/portal/${demo.token}/identity/verify`).send({ code });
     await request(app).post(`/api/portal/${demo.token}/start`).send({});
     await request(app).post(`/api/portal/${demo.token}/turn`).send({ text: 'I led the payments platform team and owned the ledger service end to end.' });
     await prisma.turn.updateMany({ where: { sessionId: demo.sessionId }, data: { createdAt: new Date(Date.now() - INACTIVITY_MS - 60_000) } });

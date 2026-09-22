@@ -95,6 +95,11 @@ export interface PlanBlock {
    * without it is byte-for-byte what it always was.
    */
   library?: PlanBlockLibrary;
+  /**
+   * Identity assurance L3, on the resume-validation block only: lines from the
+   * candidate's own CV to ask about, one question each (engines/cvAnchors.ts).
+   */
+  cvAnchors?: CvAnchor[];
 }
 
 /**
@@ -160,6 +165,15 @@ export interface PlanLibrary {
   readonly selectedAt: string;
   /** Set when no ladder could be requested at all; every block is then built-in. */
   readonly unavailable?: 'role_not_in_catalog' | 'select_failed';
+}
+
+/** A specific line from the candidate's CV and the question that asks about it. */
+export interface CvAnchor {
+  source: 'employment' | 'project';
+  /** The CV line, as written (trimmed and, if very long, shortened). */
+  fact: string;
+  /** What the interviewer asks, quoting the line. */
+  question: string;
 }
 
 export interface InterviewPlan {

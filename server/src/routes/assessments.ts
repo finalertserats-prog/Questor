@@ -25,6 +25,7 @@ import { keepFeedbackHeld } from '../services/feedbackHold.js';
 import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from '../services/assessmentReview.js';
 import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import { questionsAskedFor, type AskedQuestion } from '../library/questionsAsked.js';
+import { identityPanelFor } from '../services/identityPanel.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
@@ -536,6 +537,20 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
       scored: result.overallScore !== null,
     }),
   });
+}));
+
+/**
+ * The "Identity & integrity" panel: whether the one-time code was confirmed,
+ * and the CV-anchored questions with their answers. Read-only and advisory.
+ * Gated like the assessment itself, since it sits on the same page.
+ */
+assessmentsRouter.get('/:id/identity', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
+  await assertUnblindedReadAllowed({
+    assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
+    tenantId: req.auth!.tenantId,
+  });
+  res.json(await identityPanelFor(a.session));
 }));
 
 assessmentsRouter.get('/:id/report', requireCapability('assessment:read'), asyncHandler(async (req, res) => {

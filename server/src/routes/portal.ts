@@ -35,6 +35,8 @@ import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services
 import { serverSpeechAllowed } from '../services/demoPolicy.js';
 import { formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
+import { identityCheckForConsent, portalIdentityView, recordedIdentityCheck } from '../services/identityAssurance.js';
+import { CODE_TTL_MS, issueIdentityCode, maskEmail, normalizeCode, verifyIdentityCode } from '../services/identityCode.js';
 
 // Public candidate portal (BRD FR-043). No login — gated by invitation token.
 export const portalRouter = Router();
@@ -293,6 +295,9 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     // When the interview is booked for, written in the zone it was booked in
     // (else the organisation's, IST when it has none) so the page and the email agree.
     schedule,
+    // The one-time code asked for after consent and before the room opens.
+    // Where it goes is shown masked; the code itself never leaves the server.
+    identity: await portalIdentityView(s, hasRecordedConsent(s)),
   });
 }));
 
@@ -455,12 +460,82 @@ portalRouter.post('/:token/consent', asyncHandler(async (req, res) => {
   consent.disclosureShown = monitoringDisclosed
     ? await disclosureWithProctoringPolicy(policyScope, consent.disclosureText ?? '')
     : (consent.disclosureText ?? '');
+  // Which identity check this consent commits to, frozen here: the page said
+  // so before the candidate agreed, and a later change of setting or of mail
+  // delivery must not move the goalposts for someone on their way in.
+  consent.identityCheck = await identityCheckForConsent(inv.session.tenantId, inv.session.candidate.email);
   await prisma.interviewSession.update({
     where: { id: inv.sessionId },
     data: { consentJson: JSON.stringify(consent), recordingConsent: body.recordingConsent },
   });
   await logAudit({ tenantId: inv.session.tenantId, actorType: 'user', actorId: 'candidate', action: 'consent.recorded', entityType: 'InterviewSession', entityId: inv.sessionId, after: { recording: body.recordingConsent, monitoringDisclosed } });
-  res.json({ ok: true, recordingConsent: body.recordingConsent });
+  // The identity check this consent just recorded, so the page moves to the
+  // step the server will actually require rather than to what it previewed.
+  const identity = await portalIdentityView({ ...inv.session, consentJson: JSON.stringify(consent) }, true);
+  res.json({ ok: true, recordingConsent: body.recordingConsent, identity });
+}));
+
+/**
+ * Identity assurance L1: email the candidate a one-time code. Only after
+ * consent recorded that a code applies, and only before the interview is live.
+ * The response names where it went (masked) and never carries the code.
+ */
+portalRouter.post('/:token/identity/code', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  if (!PRE_INTERVIEW_STATES.includes(inv.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
+  if (!hasRecordedConsent(inv.session)) throw new HttpError(409, 'Please agree to the interview first. We send the code after that.', 'consent_required');
+  if (recordedIdentityCheck(inv.session)?.method !== 'email_code') throw new HttpError(409, 'No code is needed for this interview.', 'identity_code_not_needed');
+  const out = await issueIdentityCode(inv.sessionId);
+  switch (out.kind) {
+    case 'sent':
+      return res.json({ sent: true, channel: 'email', destination: out.destination, expiresInSeconds: CODE_TTL_MS / 1000, resendAfterSeconds: out.resendAfterSeconds });
+    case 'already_verified':
+      return res.json({ sent: false, verified: true });
+    case 'wait':
+      // A code went out a moment ago: not an error for the candidate, who
+      // should use it. They are told when they can ask for another.
+      if (out.reason === 'cooldown') {
+        return res.json({ sent: false, destination: maskEmail(inv.session.candidate.email), retryAfterSeconds: out.retryAfterSeconds });
+      }
+      res.setHeader('Retry-After', String(out.retryAfterSeconds));
+      return res.status(429).json({
+        error: out.reason === 'locked'
+          ? 'The last code was entered incorrectly too many times, so it was cancelled. You can ask for a new one in a few minutes.'
+          : 'We have sent several codes in the last hour. Please check your inbox and spam folder, or try again later.',
+        code: out.reason === 'locked' ? 'identity_code_locked' : 'identity_code_limit',
+        retryAfterSeconds: out.retryAfterSeconds,
+      });
+    case 'not_delivered':
+      return res.status(503).json({ error: 'We could not send the email just now. Please try again in a moment.', code: 'identity_code_not_sent' });
+  }
+}));
+
+const identityCodeSchema = z.object({ code: z.string().max(32) });
+
+portalRouter.post('/:token/identity/verify', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { requireUnconsumed: true });
+  if (!PRE_INTERVIEW_STATES.includes(inv.session.state)) throw new HttpError(409, FINISHED_MESSAGE);
+  // A malformed entry is a typo, not a guess: refused before it is counted.
+  const code = normalizeCode(identityCodeSchema.parse(req.body).code);
+  if (!code) throw new HttpError(400, 'Enter the 6-digit code from the email.', 'identity_code_format');
+  const out = await verifyIdentityCode(inv.sessionId, code);
+  switch (out.kind) {
+    case 'verified':
+      return res.json({ verified: true });
+    case 'wrong':
+      return res.status(400).json({
+        error: `That code does not match. You have ${out.attemptsLeft} ${out.attemptsLeft === 1 ? 'try' : 'tries'} left.`,
+        code: 'identity_code_wrong', attemptsLeft: out.attemptsLeft,
+      });
+    case 'locked':
+      res.setHeader('Retry-After', String(out.retryAfterSeconds));
+      return res.status(429).json({
+        error: 'That code was entered incorrectly too many times, so we cancelled it to keep your interview safe. You can ask for a new code shortly.',
+        code: 'identity_code_locked', retryAfterSeconds: out.retryAfterSeconds,
+      });
+    case 'expired':
+      return res.status(400).json({ error: 'This code has expired. Please ask for a new one.', code: 'identity_code_expired' });
+  }
 }));
 
 portalRouter.post('/:token/techcheck', asyncHandler(async (req, res) => {

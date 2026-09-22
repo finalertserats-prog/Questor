@@ -8,6 +8,7 @@ import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
 import { isKnownTimeZone } from '../services/roundTime.js';
+import { ASSURANCE_LEVELS, assuranceLevelOf, isSelectableLevel } from '../domain/identityAssurance.js';
 import { capabilitiesOf, isRoleName, ROLES } from '../domain/capabilities.js';
 import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
@@ -548,7 +549,19 @@ const policySchema = z.object({
   questionLibrary: z.enum(LIBRARY_MODES).optional(),
   questionLibraryTrialPercent: z.number().int().min(0).max(100).optional(),
   questionLibraryWindowDays: z.number().int().min(1).max(MAX_WINDOW_DAYS).optional(),
+  // Candidate identity assurance. Standard is the floor for every
+  // organisation (owner decision 2026-09-22); Enhanced and Verified are not
+  // built yet, so only Standard can be saved.
+  identityAssuranceLevel: z.string().refine(isSelectableLevel, 'Only the Standard identity level is available. Enhanced and Verified are coming later.').optional(),
 }).strict();
+
+// The organisation's identity assurance level, with every level listed so
+// Settings can show the ones not available yet.
+adminRouter.get('/identity-assurance', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId }, select: { policyJson: true } });
+  const policy = parseJsonOptional<Record<string, unknown>>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
+  res.json({ level: assuranceLevelOf(policy), levels: ASSURANCE_LEVELS });
+}));
 
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const patch = z.object({ policy: policySchema }).strict().parse(req.body).policy;

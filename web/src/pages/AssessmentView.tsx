@@ -33,6 +33,8 @@ import {
 } from '../components/assessment/verdictFlowModel';
 import { ValidationStatus } from '../components/assessment/ValidationStatus';
 import { Fold, SwotFold } from '../components/assessment/AssessmentFolds';
+import { IdentityIntegrityPanel } from '../components/IdentityIntegrityPanel';
+import { IDENTITY_PANEL_TITLE } from '../components/identityPanelModel';
 
 /**
  * The assessment, in the order a reviewer actually works.
@@ -145,6 +147,8 @@ export function AssessmentView() {
   const [exporting, setExporting] = useState(false);
   const [report, setReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
+  // The identity fold fetches only once a reviewer opens it.
+  const [identityOpen, setIdentityOpen] = useState(false);
 
   // `cancelled` so a response for an assessment the reviewer has already left
   // cannot overwrite the one in front of them.
@@ -520,9 +524,14 @@ export function AssessmentView() {
           <div className="as-folds">
             <SwotFold result={result} />
 
-            {/* Identity & integrity belongs here, with the other reference
-                readings. The panel that fills it ships with identity 5b.1 and
-                slots in as another <Fold>. */}
+            {/* Identity & integrity: what the checks found, for a person to
+                weigh. Never a decision, and nothing in it feeds the score.
+                Fetched when the fold is first opened, like the full report. */}
+            {id && (
+              <Fold title={IDENTITY_PANEL_TITLE} onOpen={() => setIdentityOpen(true)} testId="identity-fold">
+                {identityOpen && <IdentityIntegrityPanel key={`identity-${id}`} assessmentId={id} />}
+              </Fold>
+            )}
 
             {data.questionsAsked && (
               <Fold title="Questions asked" count={`${data.questionsAsked.length}, in order`}>

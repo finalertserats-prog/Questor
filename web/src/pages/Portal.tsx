@@ -10,6 +10,8 @@ import { accommodationHint, canSubmitConsent, consentAction } from '../component
 import { entryFromRefusal, portalEntry, type PortalEntry } from '../components/portalEntryModel';
 import { aiAcknowledgement, splitDisclosure, whatHappensFirst } from '../components/interviewerModel';
 import { earlyStartNote } from '../components/portalEarlyStartModel';
+import { IdentityCodeStep } from '../components/IdentityCodeStep';
+import { consentIdentityLine, needsIdentityCode, stepAfterConsent, type PortalIdentity } from '../components/identityCodeModel';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -28,6 +30,8 @@ interface PortalInfo {
   persona?: { name: string | null } | null;
   /** When the interview is booked for, already written in the zone it was booked in; absent on an older server. */
   schedule?: { at: string; timeZone: string | null; text: string } | null;
+  /** The one-time code asked for after consent; absent on an older server. */
+  identity?: PortalIdentity;
 }
 
 /**
@@ -87,7 +91,7 @@ export function Portal() {
   const nav = useNavigate();
   const [info, setInfo] = useState<PortalInfo | null>(null);
   const [err, setErr] = useState('');
-  const [step, setStep] = useState<'review' | 'consent' | 'techcheck'>('review');
+  const [step, setStep] = useState<'review' | 'consent' | 'identity' | 'techcheck'>('review');
   // Unticked until the candidate ticks it. A pre-ticked consent box is not a
   // consent box, and the server records exactly what this holds.
   const [recordingConsent, setRecordingConsent] = useState(false);
@@ -109,7 +113,12 @@ export function Portal() {
   useEffect(() => { if (swappedByPress) cardHeadingRef.current?.focus(); }, [swappedByPress]);
 
   useEffect(() => {
-    api.get<PortalInfo>(`/portal/${token}`).then(setInfo).catch((e) => setErr(e.message));
+    api.get<PortalInfo>(`/portal/${token}`).then((loaded) => {
+      setInfo(loaded);
+      // Agreed already but the code is still owed (back from the room, or a
+      // reload on the code step): straight to the code, not the whole journey again.
+      if (loaded.consented === true && needsIdentityCode(loaded.identity)) setStep('identity');
+    }).catch((e) => setErr(e.message));
   }, [token]);
 
   const action = consentAction({ accepted, accommodation });
@@ -144,13 +153,17 @@ export function Portal() {
     if (!canSubmitConsent({ accepted, accommodation, busy })) return;
     setErr(''); setBusy(true);
     try {
-      const res = await api.post<{ handoff?: boolean; message?: string }>(`/portal/${token}/consent`, {
+      const res = await api.post<{ handoff?: boolean; message?: string; identity?: PortalIdentity }>(`/portal/${token}/consent`, {
         recordingConsent, accepted, accommodationRequest: accommodation || undefined,
         monitoringNoticeShown: info?.proctoringEnabled === true,
         observerNoticeShown: info?.observerNotice === true,
       });
       if (res.handoff) { setHandoff(res.message || 'Your request has been recorded.'); return; }
-      setStep('techcheck');
+      // The check the server just recorded, not the preview the page loaded
+      // with: a setting or mail delivery may have changed in between.
+      const identity = res.identity ?? info?.identity;
+      if (info && res.identity) setInfo({ ...info, identity: res.identity });
+      setStep(stepAfterConsent(identity));
     } catch (e: unknown) {
       await handleRefusal(e, 'We could not record your answer. Please try again.');
     } finally { setBusy(false); }
@@ -284,6 +297,10 @@ export function Portal() {
               <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} />
               <span>{aiAcknowledgement(interviewer)}</span>
             </label>
+            {/* Said before the candidate agrees, so the code step is never a surprise. */}
+            {consentIdentityLine(info.identity) && (
+              <p className="small muted" style={{ margin: '4px 0 0 26px' }} data-testid="consent-identity-line">{consentIdentityLine(info.identity)}</p>
+            )}
             {info.accommodationsEnabled && (
               <>
                 <label htmlFor="accommodation">Need an accommodation or a human alternative? Describe it here (optional) and we'll route you to our team instead.</label>
@@ -304,6 +321,17 @@ export function Portal() {
               {action === 'accommodation' ? 'Submit accommodation request' : 'I consent — continue'}
             </button>
           </>
+        )}
+
+        {step === 'identity' && info.identity && token && (
+          <IdentityCodeStep
+            token={token}
+            identity={info.identity}
+            onVerified={() => {
+              setInfo({ ...info, identity: { ...info.identity!, verified: true } });
+              setStep('techcheck');
+            }}
+          />
         )}
 
         {step === 'techcheck' && (

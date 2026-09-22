@@ -163,6 +163,8 @@ async function deleteSessionCascade(
   // this line the foreign key blocked the session delete below, and an erasure
   // that is a legal obligation failed for any candidate who ever switched tabs.
   await count('integrityEvents', () => tx.integrityEvent.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+  // One-time identity codes (hashes and when they were confirmed) belong to the session too.
+  await count('identityCodes', () => tx.identityCodeChallenge.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   // A pipeline round may outlive a purged session; unlink it rather than keep a dangling reference.
   await count('roundSessionLinks', () => tx.interviewRound.updateMany({ where: { sessionId: { in: sessionIds } }, data: { sessionId: null } }));
   await count('sessions', () => tx.interviewSession.deleteMany({ where: { id: { in: sessionIds } } }));

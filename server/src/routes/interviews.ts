@@ -8,6 +8,7 @@ import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.j
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { attachLibrary } from '../library/planning.js';
 import { withoutLadders } from '../library/planLadders.js';
+import { cvAnchorsFrom } from '../engines/cvAnchors.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { resolveCandidateBand } from '../engines/bandCalibration.js';
 import type { FitScore, InterviewPlan, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
@@ -169,6 +170,8 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   const builtPlan = buildInterviewPlan({
     role: profile, fit, durationMinutes: body.durationMinutes, language: body.language, modules: body.modules,
     band: banding.band.id, techStack: roleTechStack(roleRow),
+    // Identity assurance L3 runs at every level (Standard and up).
+    cvAnchors: cvAnchorsFrom(parsed),
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
   });
   // The Q&A library's ladders, when the deployment and this organisation have
@@ -544,6 +547,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const builtPlan = buildInterviewPlan({
     role: profile, fit, durationMinutes: original.durationMinutes, language: original.language, modules: originalModules,
     band: banding.band.id, techStack: roleTechStack(roleRow),
+    cvAnchors: cvAnchorsFrom(parsed),
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
   });
   // A retake never repeats a library question this candidate was offered before (library/planning.ts).

@@ -8,6 +8,7 @@ import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/Roun
 import { HiringPolicySettings } from '../components/HiringPolicySettings';
 import { QuestionLibrarySettings } from '../components/QuestionLibrarySettings';
 import { OrgTimeZoneSetting } from '../components/OrgTimeZoneSetting';
+import { IdentityAssuranceSetting } from '../components/IdentityAssuranceSetting';
 import { formatPercent, formatScore } from '../components/scoreFormat';
 import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
@@ -291,6 +292,7 @@ export function Admin() {
       <OrgTimeZoneSetting />
       <HiringPolicySettings />
       <QuestionLibrarySettings />
+      <IdentityAssuranceSetting />
       </>
       ))}
 

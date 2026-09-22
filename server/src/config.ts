@@ -281,6 +281,14 @@ export const config = {
   webOrigin: env('WEB_ORIGIN', 'http://localhost:5173'),
   authSecret: env('AUTH_SECRET', 'dev-questor-secret-change-me-please-32chars'),
   webhookSigningSecret: env('WEBHOOK_SIGNING_SECRET', 'dev-webhook-secret'),
+  /**
+   * Server-side pepper for the one-time identity codes emailed to candidates
+   * (services/identityCode.ts). Only an HMAC of each code is stored; without
+   * this secret a copy of the database cannot be searched for the code. Kept
+   * apart from AUTH_SECRET so rotating one does not touch the other. Required
+   * in production (preflight refuses to start without it).
+   */
+  identityCodePepper: env('IDENTITY_CODE_PEPPER'),
   webhookV1Signature: parseV1SignatureSetting(env('WEBHOOK_V1_SIGNATURE')),
   signupApproverEmail: env('SIGNUP_APPROVER_EMAIL'),
   /**

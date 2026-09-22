@@ -1,4 +1,4 @@
-import type { Competency, FitScore, InterviewPlan, PlanBlock, RoleSuccessProfile } from '../domain/types.js';
+import type { Competency, CvAnchor, FitScore, InterviewPlan, PlanBlock, RoleSuccessProfile } from '../domain/types.js';
 import { isWorkSampleEligible } from './workSample.js';
 import { bandForRoleSeniority, bandGuidanceFor } from './bandCalibration.js';
 import type { BandId } from './experienceBands.js';
@@ -25,6 +25,8 @@ export function buildInterviewPlan(opts: {
   bandRationale?: string;
   /** The role's technologies: a technical block about a required one is phrased around it. */
   techStack?: readonly TechStackItem[];
+  /** Identity assurance L3: CV lines the resume block asks about (engines/cvAnchors.ts). */
+  cvAnchors?: readonly CvAnchor[];
 }): InterviewPlan {
   const durationMinutes = opts.durationMinutes ?? 45;
   const language = opts.language ?? 'en';
@@ -97,11 +99,18 @@ export function buildInterviewPlan(opts: {
   // that cannot run is more honest as an absence than as an unmet promise.
   if (resumeValidationMin > 0) {
     const probe = opts.fit?.probes?.[0] ?? 'Probe one high-value resume claim for personal contribution and measured result.';
+    // With CV lines to anchor on, the block asks about those specifics instead
+    // (identity assurance L3); the probe stays as the intent for any turn after them.
+    const anchors = (opts.cvAnchors ?? []).slice(0, 2);
     blocks.push({
       competencyId: '__resume_validation__', competencyName: 'Resume Validation',
-      intent: probe, targetMinutes: resumeValidationMin,
+      intent: anchors.length
+        ? `Ask about these specifics from the candidate's own CV, one at a time, listening for first-hand detail: ${anchors.map((a) => `"${a.fact}"`).join('; ')}. Then: ${probe}`
+        : probe,
+      targetMinutes: resumeValidationMin,
       followupHints: ['Personal contribution and measured result.'], prohibited: opts.role.policyRules.prohibitedTopics,
       bandGuidance,
+      ...(anchors.length ? { cvAnchors: anchors } : {}),
     });
   }
   // Candidate questions / close.

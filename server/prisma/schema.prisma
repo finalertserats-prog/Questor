@@ -429,6 +429,7 @@ model InterviewSession {
   feedbackOptInRequest CandidateFeedbackOptInRequest?
   feedbackEmail     CandidateFeedbackEmail?
   reminders         InvitationReminder[]
+  identityCodes     IdentityCodeChallenge[]
 
   // The dashboard counts interviews per tenant by when they were created,
   // scheduled and completed, and groups them by state; the lists read newest
@@ -450,6 +451,31 @@ model IntegrityEvent {
 
   @@index([sessionId])
   @@index([type])
+}
+
+// A one-time code sent to the candidate before the interview (identity
+// assurance L1). Only an HMAC of the code is stored, keyed with a server-side
+// pepper, so a database copy does not reveal a usable code. One row per code
+// sent; the latest unconsumed, unexpired, unlocked row is the live one.
+model IdentityCodeChallenge {
+  id           String   @id @default(cuid())
+  sessionId    String
+  session      InterviewSession @relation(fields: [sessionId], references: [id])
+  // email | sms (sms has no provider yet)
+  channel      String   @default("email")
+  codeHash     String
+  expiresAt    DateTime
+  // Entries against this code, right or wrong.
+  attempts     Int      @default(0)
+  // Set at the last wrong entry allowed; the code is dead and a new one waits out a cooldown.
+  lockedAt     DateTime?
+  // Set when a newer code replaces this one.
+  supersededAt DateTime?
+  // Set once, when the right code is entered. Its presence is the verification.
+  consumedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([sessionId, createdAt])
 }
 
 model Invitation {

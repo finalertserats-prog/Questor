@@ -17,6 +17,7 @@ import { config } from '../config.js';
 import { candidateAnswerVariant, interviewerGlueVariant } from './fallbackGlue.js';
 import { plannedProbes } from './plannedProbes.js';
 import { ranDegraded, servedDuring } from '../providers/llm/servingTrace.js';
+import { anchoredCvQuestion } from './cvAnchors.js';
 import {
   bareYesNo, couldBeUpgraded, detectCandidateIntent, isSubstantiveAnswer, llmIntentSchema, mergeLlmIntent,
   type CandidateIntent, type IntentReading, type LlmIntent,
@@ -857,6 +858,13 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   // ("Probe X: ask for a concrete example…"), never candidate-facing speech —
   // rendering it verbatim leaks the rubric. Turn it into a real question.
   if (blockId === '__resume_validation__') {
+    // Identity assurance L3: a question quoting the candidate's own CV, asked
+    // as written rather than paraphrased by the model, so it stays anchored to
+    // the line. Screened like every question; one that fails falls through.
+    const anchored = anchoredCvQuestion(block, turns);
+    if (anchored && screenQuestion(anchored).allowed) {
+      return { text: finish(`${lead}${anchored}`, correction), question: anchored, competencyId: blockId, kind: 'question' };
+    }
     const fallback = 'I\'d like to dig into one thing from your background. Pick an accomplishment you listed and tell me exactly what your personal contribution was and how you measured the result.';
     const llm = await tryLlmUtterance(opts, block?.competencyName ?? 'the candidate\'s background', block, lastText, signal, turns, correction, movedOn ? 'moved_on' : 'normal', [fallback]);
     const proposed = llm?.question ?? fallback;

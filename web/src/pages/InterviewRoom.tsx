@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { useNavigate, useParams } from 'react-router-dom';
+import { api, ApiError } from '../api/client';
+import { isIdentityCodeRefusal } from '../components/identityCodeModel';
 import {
   speakTurn, stopAllSpeech, createMicMeter, sttSupported, ttsSupported, type MicMeter,
 } from '../speech';
@@ -59,6 +60,7 @@ function errorMessage(error: unknown): string {
 
 export function InterviewRoom() {
   const { token = '' } = useParams();
+  const nav = useNavigate();
   const [info, setInfo] = useState<PortalInfo | null>(null);
   const [phase, setPhase, phaseRef] = useRefState<RoomPhase>('ready');
   const [msgs, setMsgs] = useState<readonly RoomMessage[]>([]);
@@ -285,6 +287,12 @@ export function InterviewRoom() {
       rejoin.applyOpening(await api.post<StartResponse>(`/portal/${token}/start`, {}));
     } catch (e: unknown) {
       if (refusalOf(e) === 'finished') { showFinished(); return; }
+      if (e instanceof ApiError && isIdentityCodeRefusal(e.code)) {
+        meterRef.current?.stop();
+        meterRef.current = null;
+        nav(`/portal/${token}`, { replace: true });
+        return;
+      }
       setErr(errorMessage(e));
       setPhase('ready');
     }

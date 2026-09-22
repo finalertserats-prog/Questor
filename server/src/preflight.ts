@@ -42,6 +42,18 @@ export function collectIssues(env: NodeJS.ProcessEnv = process.env): PreflightIs
     });
   }
 
+  // Candidates are emailed a one-time code before the interview; the stored
+  // HMAC of it is only as strong as this pepper. services/identityCode.ts also
+  // refuses to hash without it in production, so this is the early warning.
+  if (config.identityCodePepper.trim().length < 32) {
+    issues.push({
+      level: isProd ? 'fatal' : 'warn',
+      code: 'IDENTITY_CODE_PEPPER_MISSING',
+      message: 'IDENTITY_CODE_PEPPER is not set (or shorter than 32 characters). The one-time codes candidates enter before the interview cannot be stored safely.',
+      fix: 'Set IDENTITY_CODE_PEPPER in server/.env to a unique random value of at least 32 characters, generated the same way as AUTH_SECRET.',
+    });
+  }
+
   if (DEV_DEFAULTS.has(config.webhookSigningSecret)) {
     issues.push({
       level: isProd ? 'fatal' : 'warn',
