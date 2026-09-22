@@ -82,10 +82,9 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
   const keepHolding = async () => {
     setBusy('hold');
     setError('');
-    setNotice('');
     try {
       setState(await api.post<FeedbackEmailState>(`/assessments/${assessmentId}/feedback-email/hold`, {}));
-      setNotice('The feedback email will stay on hold. You can still send it later.');
+      toast.show('The feedback email will stay on hold. You can still send it later.');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not keep the email on hold.');
       await load();
