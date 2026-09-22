@@ -233,7 +233,7 @@ export const TRUST_SECURITY: readonly TrustItem[] = [
     key: 'sec-tenancy',
     topic: 'Tenant isolation and role-based access',
     asks: 'One organisation must never see another’s candidates, and people see only what their role needs.',
-    questor: 'Every request is tied to the signed-in person’s organisation, and each action checks both the role’s permission and access to that particular record.',
+    questor: 'Data is scoped to the signed-in person’s organisation by design, and actions check the role’s permission and access to the record. Independent testing of this is still planned (see below).',
     status: 'in-place',
   },
   {
@@ -279,6 +279,16 @@ export const TRUST_SECURITY: readonly TrustItem[] = [
     status: 'planned',
   },
 ];
+
+/** The element id a URL hash points at; a malformed hash (`#%`) is ignored rather than thrown on. */
+export function sectionIdFromHash(hash: string): string | null {
+  if (hash.length < 2) return null;
+  try {
+    return decodeURIComponent(hash.slice(1));
+  } catch {
+    return null;
+  }
+}
 
 export interface DpiaPart {
   readonly heading: string;

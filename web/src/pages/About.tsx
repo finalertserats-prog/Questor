@@ -3,6 +3,7 @@ import { PageHeader } from '../components/PageHeader';
 import { useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { TrustSection } from '../components/TrustSection';
+import { sectionIdFromHash } from '../components/trustModel';
 import { BrandLogo } from '../components/BrandLogo';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { SHOWCASE_FEATURES, SHOWCASE_STEPS } from '../components/landingShowcase';
@@ -62,8 +63,8 @@ export function About() {
   // The sign-in footer links to #trust; the router changes the URL but does
   // not scroll, so the section is brought into view here.
   useEffect(() => {
-    if (!hash) return;
-    document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView();
+    const id = sectionIdFromHash(hash);
+    if (id) document.getElementById(id)?.scrollIntoView();
   }, [hash]);
 
   return (

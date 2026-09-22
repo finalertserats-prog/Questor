@@ -14,8 +14,8 @@ function TrustEntry({ item }: { readonly item: TrustItem }) {
         <span className="trust-item-topic">{item.topic}</span>
         <StatusMark status={item.status} />
       </div>
-      <p className="trust-item-line"><span className="trust-item-label">The law asks</span>{item.asks}</p>
-      <p className="trust-item-line"><span className="trust-item-label">What Questor does</span>{item.questor}</p>
+      <p className="trust-item-line"><span className="trust-item-label">The law asks: </span>{item.asks}</p>
+      <p className="trust-item-line"><span className="trust-item-label">What Questor does: </span>{item.questor}</p>
     </li>
   );
 }

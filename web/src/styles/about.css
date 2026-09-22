@@ -360,9 +360,6 @@
   font-size: 12px;
   font-weight: 600;
 }
-.trust-item-label::after {
-  content: ':';
-}
 
 .trust-dpia {
   display: grid;

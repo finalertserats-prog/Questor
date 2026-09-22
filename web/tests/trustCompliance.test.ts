@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
@@ -6,7 +7,7 @@ import { CATALOG_ATTRIBUTIONS as SERVER_ATTRIBUTIONS } from '../../server/src/do
 import { ComplianceFooter } from '../src/components/ComplianceFooter';
 import { TrustSection } from '../src/components/TrustSection';
 import {
-  FOOTER_FRAMEWORKS, TRUST_FRAMEWORKS, TRUST_SECTION_ID, TRUST_SECURITY, TRUST_STATUSES, trustStatusLabel,
+  FOOTER_FRAMEWORKS, TRUST_FRAMEWORKS, TRUST_SECTION_ID, TRUST_SECURITY, TRUST_STATUSES, sectionIdFromHash, trustStatusLabel,
 } from '../src/components/trustModel';
 
 /**
@@ -92,5 +93,33 @@ describe('About trust section', () => {
   it('gives every entry what the law asks and what Questor does', () => {
     const items = TRUST_FRAMEWORKS.flatMap((f) => f.items);
     expect(items.every((i) => i.asks.length > 0 && i.questor.length > 0)).toBe(true);
+  });
+});
+
+describe('the About hash link', () => {
+  it('finds the trust section from the footer link', () => {
+    expect(sectionIdFromHash(`#${TRUST_SECTION_ID}`)).toBe(TRUST_SECTION_ID);
+  });
+
+  it('ignores a malformed hash instead of throwing', () => {
+    expect(sectionIdFromHash('#%')).toBeNull();
+  });
+
+  it('ignores an empty hash', () => {
+    expect(sectionIdFromHash('#')).toBeNull();
+  });
+});
+
+describe('the trust entry labels', () => {
+  it('reads "The law asks:" with a real colon and space, not a CSS one', () => {
+    const item = TRUST_FRAMEWORKS[0].items[0];
+    expect(textOf(inRouter(createElement(TrustSection)))).toContain(`The law asks: ${item.asks}`);
+  });
+});
+
+describe('the sign-in pages', () => {
+  it.each(['Login', 'OrgLogin'])('%s renders the compliance footer', (page) => {
+    const source = readFileSync(new URL(`../src/pages/${page}.tsx`, import.meta.url), 'utf8');
+    expect(source).toMatch(/<ComplianceFooter[\s/>]/);
   });
 });
