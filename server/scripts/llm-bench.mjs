@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // Phase 0 benchmark for the local fallback model (see docs/RUNBOOK.md).
 //
 // Times each candidate model on the three spoken jobs the local model is
