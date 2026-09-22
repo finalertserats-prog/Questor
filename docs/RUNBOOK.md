@@ -189,6 +189,8 @@ HR-Box is the console's Home tab: what needs each HR user, what is coming up, an
 3. Restart: `pm2 restart questor --update-env --kill-timeout 1260000`.
 4. Check: `GET /api/admin/ops` lists `invitation-reminders` and `daily-digest` within 15 minutes, each with a note of what it sent.
 
+**What the first run does.** Reminders are counted from the invitation, not from the day the switch was thrown: candidates already past day 3 with an open, unstarted invitation get their reminder on the next run — the day-10 note if they are past day 10, never both. That is the backlog, and it goes out at up to 25 emails per kind every 15 minutes. If that is not wanted, leave the switch off until the current invitations have closed.
+
 **How it stays at most once.** Each reminder is an `InvitationReminder` row, and each summary a `DigestDelivery` row, written before the email goes under a unique key (invitation + expiry + kind + recipient; user + day). A restart or a second instance cannot send one twice. A crash between the row and the send loses that one email rather than repeating it. A failed send is recorded (`status = failed`) and not retried. Every reminder is audited (`invitation.reminder_sent`, `_failed`, `_skipped`) against the interview.
 
 **To turn them off:** set the switch to `false` and restart. Nothing else changes.
