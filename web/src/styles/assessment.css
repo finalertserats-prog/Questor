@@ -119,7 +119,10 @@
   border-radius: var(--radius);
   cursor: pointer;
 }
-.v-choice .icon { opacity: 0; }
+/* Each verdict keeps its own icon at all times: three options that differ
+   only by their colour and their words are three options one reader can
+   separate and another cannot. */
+.v-choice .icon { color: var(--vc); }
 .v-choice:hover { color: var(--ink); border-color: var(--ink-3); }
 .v-choice[aria-checked='true'] {
   font-weight: 700;
@@ -127,7 +130,6 @@
   border-color: var(--vc);
   box-shadow: inset 0 -3px 0 var(--vc);
 }
-.v-choice[aria-checked='true'] .icon { opacity: 1; }
 .v-choice.is-pass { --vc: var(--pass); }
 .v-choice.is-hold { --vc: var(--hold); }
 .v-choice.is-stop { --vc: var(--stop); }

@@ -404,6 +404,14 @@ export function AssessmentView() {
 
       <div className="as">
         <div className="as-main">
+          {/* Not a gate, and never was: a note about what the page would
+              rather the reviewer did, beside the decision it is about. It
+              turns once the column alongside has been read to the end. */}
+          <p className={transcriptRead ? 'reader-note is-read' : 'reader-note'} data-testid="transcript-read-note" role="status">
+            <Icon name={transcriptRead ? 'check-circle' : 'evidence'} size={16} />
+            {transcriptRead ? 'Transcript read.' : 'Read the transcript before recording your review.'}
+          </p>
+
           <section id={REVIEW_SECTION_ID} className="review-section" tabIndex={-1} aria-label="The verdict">
             <VerdictPanel
               ai={scored ? {
@@ -571,13 +579,6 @@ export function AssessmentView() {
         {transcriptBlock}
       </div>
 
-      {/* Not a gate, and never was: a note about what the page would rather
-          the reviewer did. */}
-      {!transcriptRead && (
-        <p className="reader-note" data-testid="transcript-read-note" role="status">
-          <Icon name="evidence" size={16} />Read the transcript before recording your review.
-        </p>
-      )}
     </div>
   );
 }
