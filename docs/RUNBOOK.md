@@ -122,6 +122,58 @@ Alerts go to `SIGNUP_APPROVER_EMAIL` at most once per job per hour when email is
 - `WEBHOOK_SIGNING_SECRET`: coordinate with receivers; confirm v2 timestamped verification.
 - Provider keys: rotate one at a time, restart with `pm2 restart questor --update-env --kill-timeout 1260000`, then verify `/api/admin/providers` and one low-risk real operation.
 
+## Local model fallback (Ollama)
+
+Interviews keep running when the AI provider fails (no credit, a bad key, an outage, or answers too slow for a spoken turn). The interviewer's spoken turns move down a chain: the provider (OpenAI), then a small open model on this server through Ollama, then the built-in writer. The local model only writes the acknowledgement around a question that is already in the plan (the library ladder, or the built-in writer's own question). It never writes a question, and grading, reports and feedback letters never use it. Its words are checked before they are spoken: length, no question of its own, no name or figure the candidate did not give, no praise, no instructions read back. A reply that fails gets one retry, and then the built-in writer takes the turn. The switch is off by default (`LOCAL_LLM_ENABLED=false`), and off is exactly the old chain.
+
+### Phase 0: benchmark first (about 30 minutes)
+
+Install Ollama as a service. It listens on `127.0.0.1:11434` only. Do not open that port in the firewall or proxy it through nginx.
+
+```bash
+curl -fsSL https://ollama.com/install.sh -o /tmp/ollama-install.sh
+less /tmp/ollama-install.sh            # read it before running it
+sh /tmp/ollama-install.sh              # creates the ollama user and the systemd unit
+systemctl edit ollama                  # add the overrides below, save
+systemctl daemon-reload && systemctl restart ollama && systemctl enable ollama
+ollama pull llama3.2:3b
+ollama pull phi4-mini
+cd /root/Questor/repo && npm run llm:bench -w server -- --runs 3
+```
+
+The overrides for `systemctl edit ollama`. With four cores, one request at a time is fastest, and keeping one model resident avoids a cold load in front of a candidate:
+
+```ini
+[Service]
+Environment="OLLAMA_HOST=127.0.0.1:11434"
+Environment="OLLAMA_NUM_PARALLEL=1"
+Environment="OLLAMA_MAX_LOADED_MODELS=1"
+Environment="OLLAMA_KEEP_ALIVE=24h"
+```
+
+The benchmark prints, for each model and for each of the three spoken jobs: time to first token, total time, writing and prompt-reading speed (tokens per second), whether every reply was valid JSON, one sample reply to judge by ear, and the memory the loaded model holds. Pick the model that stays under the latency targets with acceptable glue. The targets are first token under 8 s and total under 12 s, the defaults of `LOCAL_LLM_FIRST_TOKEN_MS` and `LOCAL_LLM_TIMEOUT_MS`. Both candidate licences are acceptable (Llama 3.2 Community License, MIT). Qwen2.5-3B is not: its licence is research-only. After choosing, remove the other model with `ollama rm <model>`.
+
+### Turning it on
+
+1. In the server `.env`: `LOCAL_LLM_ENABLED=true` and `LOCAL_LLM_MODEL=<the chosen model>`. Keep `LOCAL_LLM_URL` at its default unless Ollama runs elsewhere. Only raise the two latency settings if the benchmark says the model needs it.
+2. Check that `SIGNUP_APPROVER_EMAIL` is set and email delivers. The first credit or key failure sends the operator one email, and no more until the provider answers again (at most one an hour).
+3. Restart: `pm2 restart questor --update-env --kill-timeout 1260000`.
+4. Check: `GET /api/health` now carries `llm: { layer, provider, localFallback: true, coolingDown, lastFailureClass }`. The fields the deploy verifies are unchanged. Admin → System health → "AI serving layer" shows which layer serves interviews, the cooldown and the last failure.
+
+### How switching works
+
+- A provider that fails for a reason another layer can avoid is rested and the next layer takes the turn. Those reasons are a bad key, no credit, rate limits, 5xx, a timeout, a dropped connection, and two slow answers in a row. The rest is 5 minutes for credit or key failures (`LLM_OUTAGE_COOLDOWN_MS`) and 30 s for the others (`LLM_TRANSIENT_COOLDOWN_MS`). It doubles on every repeated failure, up to `LLM_MAX_COOLDOWN_MS` (15 min). When the rest ends, a single request probes the provider, and interviews move back on their own when it answers.
+- A bad request or an unusable reply does not fail over. The built-in writer takes that turn, as before.
+- Every turn shares one budget (`INTERVIEWER_LLM_TIMEOUT_MS`, 12 s). If the provider used it up by timing out, that one turn goes to the built-in writer and the next turns go straight to the local model.
+- The intent read ("stop", "later", "pause" phrased unusually) is not sent to the local model. It would queue ahead of the spoken turn on four cores. The pattern check still runs.
+- Each interviewer turn records which layer wrote it. The assessment page tells the reviewer how many questions ran on the backup model or the built-in bank, so thinner probes are not held against the candidate (`GET /api/assessments/:id` → `servingMode`).
+
+### Incidents
+
+- **Admin → System health says "local model is serving interviews":** read the reason. Out of credit: top up the provider account. Key refused: fix the key and restart. Otherwise it is the provider's outage, and nothing needs doing.
+- **"Interviews are down to the built-in writer":** check Ollama with `systemctl status ollama`, `journalctl -u ollama -n 100` and `curl -s 127.0.0.1:11434/api/ps`. Interviews still run correctly, with plainer wording.
+- **To turn the fallback off:** set `LOCAL_LLM_ENABLED=false` and restart. Ollama can keep running; nothing calls it.
+
 ## Known limits
 
 - Single instance today.

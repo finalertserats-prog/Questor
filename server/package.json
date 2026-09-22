@@ -24,6 +24,7 @@
     "sim:scripted": "tsx sim/scripted.ts",
     "library:worker": "tsx src/library/workerMain.ts",
     "library:smoke": "node scripts/library-smoke.mjs",
+    "llm:bench": "node scripts/llm-bench.mjs",
     "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json"
   },
   "dependencies": {
