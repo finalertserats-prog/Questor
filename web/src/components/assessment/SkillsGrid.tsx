@@ -37,6 +37,7 @@ export interface SkillsGridProps {
 
 export function SkillsGrid({ skills, activeChip, onChip }: SkillsGridProps) {
   if (skills.length === 0) return null;
+  const chipsFor = new Map(skills.map((skill) => [skill.id, evidenceChips(skill.evidence)]));
   return (
     <section aria-labelledby="skills-heading">
       <div className="block-h">
@@ -60,9 +61,9 @@ export function SkillsGrid({ skills, activeChip, onChip }: SkillsGridProps) {
               <p className="skill-thin"><Icon name="alert" size={14} />The interview did not reach this.</p>
             )}
             {skill.rationale && <p className="skill-why muted">{skill.rationale}</p>}
-            {evidenceChips(skill.evidence).length > 0 && (
+            {(chipsFor.get(skill.id) ?? []).length > 0 && (
               <div className="ev-chips">
-                {evidenceChips(skill.evidence).map((chip) => (
+                {(chipsFor.get(skill.id) ?? []).map((chip) => (
                   <button
                     key={chip.key}
                     type="button"

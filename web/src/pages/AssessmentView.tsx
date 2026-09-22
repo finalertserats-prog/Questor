@@ -282,7 +282,12 @@ export function AssessmentView() {
     : !scored
       ? 'Grading did not complete, so there is nothing to record a verdict against. Decide from the candidate\'s page instead.'
       : reviewed
-        ? `Reviewed already: ${outcomeLabel(reviewed.review.disposition)}, ${formatDateTime(reviewed.review.completedAt)}. Replacing a completed review is done from the candidate's page, with a reason.`
+        // Deliberately does not offer a route to replace it. A completed
+        // review is the version the team acts on and the version the
+        // candidate's letter was written from, and nothing in the console
+        // replaces one today — so this says what stands rather than pointing
+        // at a screen that cannot do it.
+        ? `Reviewed already: ${outcomeLabel(reviewed.review.disposition)}, ${formatDateTime(reviewed.review.completedAt)}. That verdict is the one the team acts on.`
         : '';
 
   const submit = async (applyToJourney: boolean) => {
