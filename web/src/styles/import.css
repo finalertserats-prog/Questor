@@ -141,12 +141,21 @@ div.import-mark {
 .import-card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 10px;
   min-width: 0;
+}
+.import-card-top .import-mark {
+  margin-left: auto;
 }
 .import-card-person {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* Fields are full width app-wide; a tick box in a row must not be. */
+.import-row input[type='checkbox'] {
+  flex: none;
+  width: auto;
+  margin: 0;
 }

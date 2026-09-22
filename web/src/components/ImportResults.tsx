@@ -187,7 +187,7 @@ export function ImportResults({ rows, results, canInvite, retrying, onRetry }: P
         </table>
       )}
 
-      {canInvite && invitable.length > 0 && (
+      {canInvite && invitable.some((l) => !outcomes.has(l.result.candidateId!)) && (
         <div className="import-actions">
           <button type="button" className="btn" disabled={inviting || selected.size === 0} onClick={() => void invite()}>
             <Icon name={inviting ? 'hourglass' : 'send'} size={16} />

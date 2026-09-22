@@ -75,7 +75,7 @@ export function inviteSummary(outcomes: ReadonlyMap<string, InviteOutcome>): str
   const skipReasons = [...new Set(all.filter((o) => o.kind === 'skipped').map((o) => o.text.replace(/^Skipped: /, '')))];
   return [
     `${count('invited')} invited`,
-    count('link_only') ? `${count('link_only')} link created but not emailed` : '',
+    count('link_only') ? `${count('link_only')} ${count('link_only') === 1 ? 'link' : 'links'} created but not emailed` : '',
     count('skipped') ? `${count('skipped')} skipped: ${skipReasons.join('; ')}` : '',
     count('failed') ? `${count('failed')} failed` : '',
   ].filter(Boolean).join(', ');

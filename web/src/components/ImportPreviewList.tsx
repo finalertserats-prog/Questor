@@ -74,8 +74,10 @@ function Include({ row, busy, onEdit }: { readonly row: ImportRow; readonly busy
   );
 }
 
-function Source({ row }: { readonly row: ImportRow }) {
+/** Where the row came from; a card leaves the line out when there is nothing to say. */
+function Source({ row, card = false }: { readonly row: ImportRow; readonly card?: boolean }) {
   const bits = [row.filename, row.phone].filter(Boolean);
+  if (card && bits.length === 0) return null;
   return <span className="muted small">{bits.join(' · ') || '—'}</span>;
 }
 
@@ -139,7 +141,7 @@ function PreviewCards({ rows, busy, onEdit }: Props) {
             </div>
             <DraftField id={`import-name-${row.rowKey}`} label={`Name, row ${row.position}`} type="text" value={row.fullName} disabled={locked} onCommit={(fullName) => onEdit(row.rowKey, { fullName })} />
             <DraftField id={`import-email-${row.rowKey}`} label={`Email, row ${row.position}`} type="email" value={row.email} disabled={locked} onCommit={(email) => onEdit(row.rowKey, { email })} />
-            <Source row={row} />
+            <Source row={row} card />
             <Note row={row} />
           </li>
         );
