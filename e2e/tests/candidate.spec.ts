@@ -7,7 +7,7 @@ test('adds a candidate with pasted resume and opens them from the list', async (
 
   await page.goto('/candidates');
   await expect(page.getByRole('columnheader', { name: /Resume fit/ })).toBeVisible();
-  await page.getByLabel('Filter candidates').fill(name);
+  await page.getByLabel('Search candidates').fill(name);
   await page.getByRole('link', { name, exact: true }).click();
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
 });

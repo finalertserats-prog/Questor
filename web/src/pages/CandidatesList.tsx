@@ -1,18 +1,23 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAuth } from '../auth';
 import { can } from '../components/capabilityModel';
 import { Link } from 'react-router-dom';
-import { api } from '../api/client';
 import { stateBadge, Banner } from '../components/ui';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatScoreOutOf100, hasScore } from '../components/scoreFormat';
-import { roleDisplayLabels } from '../components/roleLabelModel';
-import { alsoInRolesLabel, otherRoleCounts } from '../components/candidateReuseModel';
+import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
+import { alsoInRolesLabel } from '../components/candidateReuseModel';
 import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
 import { formatDate } from '../components/dateFormat';
+import { isAwaitingCandidate, isInFlight, isUnderway } from '../components/interviewFlight';
+import { usePagedList } from '../components/usePagedList';
+import { ListPager } from '../components/ListPager';
+import { ResponsiveList, type ListCard } from '../components/ResponsiveList';
+import { candidateNextAction } from '../components/listCardModel';
+import type { PageMeta } from '../components/listPagingModel';
 
 interface CandidateFit { overall: number; confidence: number }
 interface LatestInterview { id: string; state: string }
@@ -22,49 +27,23 @@ interface CandidateRow {
   roleLevel?: string | null; roleRegionCode?: string | null; roleExperienceBand?: string | null;
   fit: CandidateFit | null;
   latestInterview: LatestInterview | null;
+  /** The pipeline stage reached, named as the role names it; absent on an older server. */
+  stage?: { key: string; label: string; decision: string | null } | null;
+  /** Other roles the same person is in, among the ones the viewer may see. */
+  alsoInRoles?: number;
   createdAt: string;
 }
 
-/**
- * States an interview will not leave on its own.
- *
- * Everything else is mid-flight: the candidate is part-way through, or waiting
- * on an invitation they have not acted on. That distinction is the whole point
- * of the marker below — a recruiter scanning this list needs to spot the person
- * who abandoned an interview two weeks ago without opening every row to find
- * out. Kept as a deny-list of endings rather than an allow-list of in-progress
- * states so a newly added intermediate state is treated as "still running"
- * (visible, chased) rather than silently reading as finished.
- */
-const TERMINAL_STATES = new Set([
-  // Not ACCEPTED: the candidate opened the link and has not started, which is
-  // exactly the interview someone still chases or cancels.
-  'REVIEW_READY', 'HUMAN_REVIEWED', 'CLOSED',
-  'CANCELLED', 'NO_SHOW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'CANDIDATE_WITHDREW',
-  // Started, then stopped responding. Terminal so it leaves the chase list —
-  // it was showing as "in progress" for hours after the tab was closed.
-  'INCOMPLETE',
-]);
-
-/**
- * States where the candidate has been invited but has not yet begun. Nothing is
- * happening and nothing is stuck — someone simply has not turned up yet.
- */
-const NOT_STARTED_STATES = new Set(['PROVISIONED', 'INVITED', 'ACCEPTED']);
-
-export function isInFlight(state: string | null | undefined): boolean {
-  return !!state && !TERMINAL_STATES.has(state);
+interface CandidatesPayload {
+  candidates: CandidateRow[];
+  meta?: PageMeta;
+  /** Same-titled roles in scope, so labels tell them apart. */
+  roles?: (RoleLabelSource & { id: string })[];
+  /** Candidates by their latest interview's state, across every page. */
+  summary?: { latestStateCounts: Record<string, number> };
 }
 
-/** Invited, not yet started. */
-export function isAwaitingCandidate(state: string | null | undefined): boolean {
-  return !!state && NOT_STARTED_STATES.has(state);
-}
-
-/** Actually part-way through an interview. */
-export function isUnderway(state: string | null | undefined): boolean {
-  return isInFlight(state) && !isAwaitingCandidate(state);
-}
+export { isInFlight, isAwaitingCandidate, isUnderway } from '../components/interviewFlight';
 
 /**
  * The state badge plus, for an unfinished interview, a plain-language note on
@@ -89,59 +68,114 @@ export function interviewCell(iv: LatestInterview | null) {
   );
 }
 
+/** Candidates whose latest interview is in a state the predicate picks, across every page. */
+function countLatest(counts: Record<string, number> | undefined, pick: (state: string) => boolean): number {
+  return Object.entries(counts ?? {}).reduce((sum, [state, n]) => (pick(state) ? sum + n : sum), 0);
+}
+
+/** The stage a candidate has reached, as the card's badge: a ringed label, never a fill. */
+function stageTag(stage: CandidateRow['stage']) {
+  if (!stage) return undefined;
+  if (stage.decision === 'REJECTED') return <span className="list-tier is-rejected">{stage.label} · not progressing</span>;
+  if (stage.decision === 'APPROVED') return <span className="list-tier is-approved">{stage.label} · approved</span>;
+  return <span className="list-tier">{stage.label}</span>;
+}
+
 export function CandidatesList() {
   // Adding a candidate needs candidate:create, which managers and reviewers lack.
   const mayAdd = can(useAuth().user, 'candidate:create');
-  const [candidates, setCandidates] = useState<CandidateRow[]>([]);
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const paged = usePagedList<CandidatesPayload>({ list: 'candidates', base: '/candidates', failureMessage: 'Could not load candidates.' });
+  const candidates = paged.data?.candidates ?? [];
   // The row whose "Set up for another role" panel is open.
   const [reuseFor, setReuseFor] = useState<CandidateRow | null>(null);
-  // Bumped when someone is set up for another role, so the new row appears.
-  const [reloadKey, setReloadKey] = useState(0);
 
-  // `cancelled` so a response that arrives after someone has navigated away
-  // does not set state on a page that is gone.
-  useEffect(() => {
-    let cancelled = false;
-    api.get<{ candidates: CandidateRow[] }>('/candidates')
-      .then((d) => { if (!cancelled) setCandidates(d.candidates ?? []); })
-      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load candidates.'); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [reloadKey]);
-
-  // Client-side because the endpoint returns the caller's whole scoped pipeline
-  // in one call; a round trip per keystroke would be slower than filtering what
-  // is already here.
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return candidates;
-    return candidates.filter((c) =>
-      [c.fullName, c.email, c.roleTitle ?? ''].some((field) => field.toLowerCase().includes(q)));
-  }, [candidates, query]);
-
-  // Labelled across every candidate, not only the filtered rows, so a role's
-  // label does not change as the filter narrows the list.
+  // Labelled across the same-titled roles in scope (sent with the page), so a
+  // role's label does not change from one page to the next.
   const roleLabelById = useMemo(() => {
-    const withRole = candidates.flatMap((c) => (c.roleId && c.roleTitle
-      ? [{ id: c.roleId, title: c.roleTitle, level: c.roleLevel, regionCode: c.roleRegionCode, experienceBand: c.roleExperienceBand }]
-      : []));
-    const labels = roleDisplayLabels(withRole);
-    return new Map(withRole.map((role, index) => [role.id, labels[index]]));
-  }, [candidates]);
+    const roles = paged.data?.roles ?? [];
+    const labels = roleDisplayLabels(roles);
+    return new Map(roles.map((role, index) => [role.id, labels[index]]));
+  }, [paged.data]);
 
-  // From the viewer's own scoped list, so a role they cannot see is never counted.
-  const otherRolesById = useMemo(() => otherRoleCounts(candidates), [candidates]);
-
-  if (loading) return <PageSkeleton label="Loading candidates…" />;
+  if (paged.loading) return <PageSkeleton label="Loading candidates…" />;
 
   // Counted apart because they need different action. Someone who never started
   // gets a nudge; someone who stopped half-way needs looking at, and may have
-  // hit a fault worth knowing about.
-  const notStarted = candidates.filter((c) => isAwaitingCandidate(c.latestInterview?.state)).length;
-  const underway = candidates.filter((c) => isUnderway(c.latestInterview?.state)).length;
+  // hit a fault worth knowing about. Counted by the server across every page.
+  const counts = paged.data?.summary?.latestStateCounts;
+  const notStarted = countLatest(counts, isAwaitingCandidate);
+  const underway = countLatest(counts, isUnderway);
+  const { meta, query } = paged;
+  const roleName = (c: CandidateRow): string | null => (c.roleId && c.roleTitle ? roleLabelById.get(c.roleId) ?? c.roleTitle : null);
+  const anotherRole = (c: CandidateRow) => (
+    <button type="button" className="link-button link-action" onClick={() => setReuseFor(c)} aria-label={`Set up ${c.fullName} for another role`}>
+      <Icon name="role" size={15} />Another role
+    </button>
+  );
+
+  const cards: ListCard[] = candidates.map((c) => ({
+    key: c.id,
+    testId: 'candidate-card',
+    title: <Link to={`/candidates/${c.id}`}>{c.fullName}</Link>,
+    badge: stageTag(c.stage),
+    lines: [
+      <span className="muted">
+        {roleName(c) ?? 'No role'}
+        {(c.alsoInRoles ?? 0) > 0 ? ` · ${alsoInRolesLabel(c.alsoInRoles ?? 0).toLowerCase()}` : ''}
+      </span>,
+      interviewCell(c.latestInterview),
+    ],
+    next: candidateNextAction(c),
+    extra: mayAdd ? anotherRole(c) : undefined,
+  }));
+
+  const table = (
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th><th>Email</th><th>Role</th>
+          {/* From the resume against the role's scorecard, before any
+              interview. Named so, because a bare "Fit" beside an
+              interview column read as an interview result. */}
+          <th><abbr title="Scored from the resume against the role's scorecard. Not an interview result.">Resume fit</abbr></th>
+          <th>Interview</th><th>Added</th><th><span className="visually-hidden">Actions</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        {candidates.map((c) => (
+          <tr key={c.id} className={isInFlight(c.latestInterview?.state) ? 'in-flight' : undefined}>
+            <td><Link to={`/candidates/${c.id}`}>{c.fullName}</Link></td>
+            <td className="muted">{c.email}</td>
+            <td>
+              {c.roleId && c.roleTitle
+                ? <Link to={`/roles/${c.roleId}`}>{roleName(c)}</Link>
+                : <span className="muted">—</span>}
+              {(c.alsoInRoles ?? 0) > 0 && (
+                <div className="muted small">{alsoInRolesLabel(c.alsoInRoles ?? 0)}</div>
+              )}
+            </td>
+            {/* A fit row stored before `overall` existed still has a fit
+                object, so "c.fit ?" is not the question — "is there a
+                number?" is. */}
+            <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>{formatScoreOutOf100(c.fit?.overall)}</td>
+            <td>{interviewCell(c.latestInterview)}</td>
+            <td className="muted small">{formatDate(c.createdAt)}</td>
+            <td>
+              {/* The interview shortcut matters more than it looks: until this
+                  page existed, a candidate whose interview had not produced an
+                  assessment had no route to it from anywhere in the app. */}
+              <span className="row" style={{ gap: 10 }}>
+                {c.latestInterview
+                  ? <Link to={`/interviews/${c.latestInterview.id}`}><Icon name="interviews" size={15} />Interview</Link>
+                  : <Link to={`/candidates/${c.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
+                {mayAdd && anotherRole(c)}
+              </span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
 
   return (
     <div>
@@ -151,7 +185,7 @@ export function CandidatesList() {
         actions={mayAdd ? <Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
       />
 
-      {error && <Banner kind="error">{error}</Banner>}
+      {paged.error && <Banner kind="error">{paged.error}</Banner>}
 
       {notStarted > 0 && (
         <Banner kind="info">
@@ -178,94 +212,54 @@ export function CandidatesList() {
           fullName={reuseFor.fullName}
           email={reuseFor.email}
           onClose={() => setReuseFor(null)}
-          onApplied={() => setReloadKey((k) => k + 1)}
+          onApplied={paged.reload}
         />
       )}
 
       <div className="card">
-        <div className="row spread" style={{ marginBottom: 12 }}>
+        <div className="row spread list-toolbar">
           <input
             className="filter-input"
-            placeholder="Filter by name, email or role…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            aria-label="Filter candidates"
+            type="search"
+            placeholder="Search by name, email or role…"
+            value={paged.draft}
+            maxLength={200}
+            onChange={(e) => paged.setDraft(e.target.value)}
+            aria-label="Search candidates"
           />
-          <span className="muted small">
-            {filtered.length === candidates.length
-              ? `${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`
-              : `${filtered.length} of ${candidates.length}`}
-          </span>
+          {paged.refreshing && <span className="muted small">Loading…</span>}
         </div>
 
-        {candidates.length === 0 ? (
-          <EmptyState
-            icon="candidates"
-            illustration="/brand/empty-candidates.webp"
-            title="No candidates yet"
-            message="Add a candidate and their resume to see their fit and set up a first-round interview."
-            action={mayAdd ? <Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
-          />
-        ) : filtered.length === 0 ? (
+        {meta.total === 0 && !query ? (
+          paged.error ? null : (
+            <EmptyState
+              icon="candidates"
+              illustration="/brand/empty-candidates.webp"
+              title="No candidates yet"
+              message="Add a candidate and their resume to see their fit and set up a first-round interview."
+              action={mayAdd ? <Link className="btn" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
+            />
+          )
+        ) : meta.total === 0 ? (
           <EmptyState
             compact
             icon="search"
             title="No matches"
             message={`No candidate matches “${query}”.`}
-            action={<button type="button" className="btn secondary sm" onClick={() => setQuery('')}><Icon name="close" size={14} />Clear filter</button>}
+            action={<button type="button" className="btn secondary sm" onClick={paged.clearSearch}><Icon name="close" size={14} />Clear search</button>}
           />
         ) : (
-          <div className="table-scroll" tabIndex={0} role="region" aria-label="Candidates">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th><th>Email</th><th>Role</th>
-                {/* From the resume against the role's scorecard, before any
-                    interview. Named so, because a bare "Fit" beside an
-                    interview column read as an interview result. */}
-                <th><abbr title="Scored from the resume against the role's scorecard. Not an interview result.">Resume fit</abbr></th>
-                <th>Interview</th><th>Added</th><th><span className="visually-hidden">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((c) => (
-                <tr key={c.id} className={isInFlight(c.latestInterview?.state) ? 'in-flight' : undefined}>
-                  <td><Link to={`/candidates/${c.id}`}>{c.fullName}</Link></td>
-                  <td className="muted">{c.email}</td>
-                  <td>
-                    {c.roleId && c.roleTitle
-                      ? <Link to={`/roles/${c.roleId}`}>{roleLabelById.get(c.roleId) ?? c.roleTitle}</Link>
-                      : <span className="muted">—</span>}
-                    {(otherRolesById.get(c.id) ?? 0) > 0 && (
-                      <div className="muted small">{alsoInRolesLabel(otherRolesById.get(c.id) ?? 0)}</div>
-                    )}
-                  </td>
-                  {/* A fit row stored before `overall` existed still has a fit
-                      object, so "c.fit ?" is not the question — "is there a
-                      number?" is. */}
-                  <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>{formatScoreOutOf100(c.fit?.overall)}</td>
-                  <td>{interviewCell(c.latestInterview)}</td>
-                  <td className="muted small">{formatDate(c.createdAt)}</td>
-                  <td>
-                    {/* The interview shortcut matters more than it looks: until this
-                        page existed, a candidate whose interview had not produced an
-                        assessment had no route to it from anywhere in the app. */}
-                    <span className="row" style={{ gap: 10 }}>
-                      {c.latestInterview
-                        ? <Link to={`/interviews/${c.latestInterview.id}`}><Icon name="interviews" size={15} />Interview</Link>
-                        : <Link to={`/candidates/${c.id}`}>Open<Icon name="arrow-right" size={15} /></Link>}
-                      {mayAdd && (
-                        <button type="button" className="link-button link-action" onClick={() => setReuseFor(c)} aria-label={`Set up ${c.fullName} for another role`}>
-                          <Icon name="role" size={15} />Another role
-                        </button>
-                      )}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
+          <>
+            <ResponsiveList label="Candidates" table={table} cards={cards} />
+            <ListPager
+              meta={meta}
+              pageSize={paged.pageSize}
+              noun="candidate"
+              label="Candidates"
+              onPage={paged.setPage}
+              onPageSize={paged.setPageSize}
+            />
+          </>
         )}
       </div>
     </div>

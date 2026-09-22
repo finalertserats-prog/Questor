@@ -92,7 +92,7 @@ test('the candidates list says an application is also in another role, and never
 
   await page.goto('/candidates');
   await dismissTour(page);
-  await page.getByLabel('Filter candidates').fill(email);
+  await page.getByLabel('Search candidates').fill(email);
   const rows = page.getByRole('row').filter({ hasText: email });
   await expect(rows).toHaveCount(2);
   const firstRow = rows.filter({ hasText: firstTitle });

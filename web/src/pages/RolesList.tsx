@@ -10,6 +10,8 @@ import { roleDetailLine, roleDisplayLabels } from '../components/roleLabelModel'
 import { PageSkeleton } from '../components/Skeleton';
 import { Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
+import { ResponsiveList } from '../components/ResponsiveList';
+import { roleNextAction } from '../components/listCardModel';
 import {
   domainsFromRoles,
   EMPTY_ROLE_FILTERS,
@@ -293,7 +295,20 @@ export function RolesList() {
           />
         ) : (
           <>
-            <div className="table-scroll" tabIndex={0} role="region" aria-label="Roles">
+            <ResponsiveList
+              label="Roles"
+              cards={visible.map((role) => ({
+                key: role.id,
+                testId: 'role-card',
+                title: <Link to={`/roles/${role.id}`}>{labelById.get(role.id) ?? role.title}</Link>,
+                badge: <StatusBadge kind="role" value={role.status} />,
+                lines: [
+                  <span className="muted">{roleDetailLine(role)}</span>,
+                  <span>{role.applied} applied · {role.interviewInvited} invited · {role.interviewed} interviewed</span>,
+                ],
+                next: roleNextAction(role),
+              }))}
+              table={(
               <table>
                 <thead>
                   <tr>
@@ -335,7 +350,8 @@ export function RolesList() {
                   ))}
                 </tbody>
               </table>
-            </div>
+              )}
+            />
             <details style={{ marginTop: 12 }}>
               <summary>How these are counted</summary>
               <p className="muted small">Applied: candidates attached to the role.</p>
