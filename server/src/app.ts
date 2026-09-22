@@ -103,9 +103,9 @@ export function createApp() {
       database: databaseUp ? 'ok' : 'unreachable',
       draining: isDraining(),
       // Which model layer is serving interviews (primary, local fallback or
-      // built-in writer) and why. Added beside the fields deploy verification
-      // reads, never in place of them; no URL, key or provider reply.
-      llm: llmHealthSummary(),
+      // built-in writer). This route is public, so only the layer is shown;
+      // provider, cooldown and failure class live on admin System health.
+      llm: { layer: llmHealthSummary().layer },
       ts: new Date().toISOString(),
     });
   });

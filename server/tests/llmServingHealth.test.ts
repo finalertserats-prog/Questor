@@ -28,9 +28,9 @@ describe('/api/health', () => {
     expect(Object.keys(res.body)).toEqual(expect.arrayContaining(['status', 'service', 'commit', 'database', 'draining', 'ts']));
   });
 
-  it('adds the serving layer', async () => {
+  it('adds only the serving layer, since the route is public', async () => {
     const res = await request(app).get('/api/health');
-    expect(res.body.llm).toEqual({ layer: 'built-in', provider: 'heuristic', localFallback: false, coolingDown: false, lastFailureClass: null });
+    expect(res.body.llm).toEqual({ layer: 'built-in' });
   });
 });
 
