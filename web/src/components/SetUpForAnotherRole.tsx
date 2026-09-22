@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from './ui';
 import { Icon } from './Icon';
@@ -23,8 +23,8 @@ interface Role extends ReuseRole {
   readonly createdAt?: string | null;
 }
 
-// Only the refusal stays in the panel; a new application is confirmed in a
-// toast and the panel closes, since the list behind it now shows the row.
+// Only the refusal stays in the panel. A new application is confirmed in a
+// toast and opened, so the way on to it never depends on the toast.
 type Outcome = { readonly kind: 'exists'; readonly candidateId: string | null };
 
 /**
@@ -49,6 +49,7 @@ export function SetUpForAnotherRole(props: {
   const [error, setError] = useState('');
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const toast = useToast();
+  const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
@@ -82,11 +83,9 @@ export function SetUpForAnotherRole(props: {
     try {
       const { candidate } = await api.post<{ candidate: { id: string } }>(`/candidates/${person.candidateId}/apply`, { roleId });
       const roleLabel = labels[roles.findIndex((r) => r.id === roleId)] ?? 'the role';
-      toast.show(`${props.fullName} is now a candidate for ${roleLabel}.`, {
-        action: <Link className="link-action" to={`/candidates/${candidate.id}?tab=journey`}>Set up interview</Link>,
-      });
+      toast.show(`${props.fullName} is now a candidate for ${roleLabel}.`);
       props.onApplied?.();
-      props.onClose();
+      navigate(`/candidates/${candidate.id}`);
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 'candidate_exists') {
         setOutcome({ kind: 'exists', candidateId: existingApplicationId(err) });

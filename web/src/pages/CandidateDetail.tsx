@@ -148,6 +148,19 @@ const DETAIL_LABELS: Readonly<Record<string, string>> = {
   pipeline: 'Pipeline',
 };
 
+const SESSIONS_PAGE_SIZE = 100;
+
+/** Every interview session for one candidate, a page at a time (rarely more than one page). */
+async function fetchCandidateSessions(candidateId: string): Promise<SessionSummary[]> {
+  const pageOf = (page: number) => api.get<{ sessions: SessionSummary[]; meta?: { total: number } }>(
+    `/interviews?candidateId=${encodeURIComponent(candidateId)}&pageSize=${SESSIONS_PAGE_SIZE}&page=${page}`,
+  );
+  const first = await pageOf(1);
+  const pages = Math.ceil((first.meta?.total ?? 0) / SESSIONS_PAGE_SIZE);
+  const rest = pages > 1 ? await Promise.all(Array.from({ length: pages - 1 }, (_, i) => pageOf(i + 2))) : [];
+  return [first, ...rest].flatMap((d) => d.sessions ?? []);
+}
+
 export function CandidateDetail() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -270,12 +283,11 @@ export function CandidateDetail() {
       .then((resp) => { if (!cancelled) { setProfileAnalysis(resp); setProfileAnalysisError(''); } })
       .catch((err: unknown) => { if (!cancelled) setProfileAnalysisError(err instanceof Error ? err.message : 'Could not load candidate profile analysis.'); });
 
-    // Only this candidate's sessions, and all of them: the list is paged now,
-    // and a candidate has far fewer than a page of the largest size.
-    api.get<{ sessions: SessionSummary[] }>(`/interviews?candidateId=${encodeURIComponent(id ?? '')}&pageSize=100`)
-      .then((d) => {
+    // Only this candidate's sessions, and all of them: the list is paged now.
+    fetchCandidateSessions(id ?? '')
+      .then((all) => {
         if (cancelled) return;
-        setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s])));
+        setSessions(Object.fromEntries(all.map((s) => [s.id, s])));
         clearDetail('interviews');
       })
       .catch((err: unknown) => { if (!cancelled) noteDetail('interviews', err); });
