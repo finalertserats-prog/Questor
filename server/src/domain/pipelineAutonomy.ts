@@ -109,12 +109,8 @@ export function resolveDecision(
   return { kind: 'advance', from: currentStageKey, to: stages[toIndex].key, final: toIndex === lastIndex };
 }
 
-/**
- * The decision a review's disposition amounts to. CONSIDER is a person saying
- * "not yet", so it decides nothing; the pipeline waits for them.
+/*
+ * The decision a reviewer's verdict amounts to lives in domain/verdict.ts
+ * (decisionOfVerdict). There is one vocabulary for that judgement and one
+ * place the two stored enums are allowed to meet; it is not here.
  */
-export function decisionOfDisposition(disposition: string): DecisionOutcome | null {
-  if (disposition === 'PROCEED') return 'APPROVED';
-  if (disposition === 'DO_NOT_PROGRESS') return 'REJECTED';
-  return null;
-}

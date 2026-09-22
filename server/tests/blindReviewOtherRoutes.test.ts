@@ -123,7 +123,7 @@ describe('the same reviewer after judging blind', () => {
     const ids = await assessedInterview();
     await requireBlind(ids.tenantId);
     await request(app).post(`/api/assessments/${ids.assessmentId}/blind-verdict`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'My own read of the evidence.' });
+      .send({ verdict: 'CONSIDER', reason: 'My own read of the evidence.' });
     return ids;
   }
 

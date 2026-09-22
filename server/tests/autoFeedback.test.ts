@@ -221,7 +221,7 @@ describe('when the letter goes', () => {
 
   async function completeReview(ids: Awaited<ReturnType<typeof completedInterview>>, overrides: unknown[] = []) {
     const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides });
     expect(res.status).toBe(201);
     return res;
   }
@@ -339,12 +339,12 @@ describe('when the letter goes', () => {
     const inFlight = attemptFeedbackEmail(queued.id, hoursFromNow(13));
     await started;
     const during = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     release();
     mail.hold = null;
     await inFlight;
     const after = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
 
     expect({
       during: { status: during.status, code: during.body.code },
@@ -364,7 +364,7 @@ describe('when the letter goes', () => {
     const inFlight = attemptFeedbackEmail((await rowFor(ids.sessionId)).id, hoursFromNow(13));
     await started;
     const during = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     release();
     mail.hold = null;
     await inFlight;
@@ -382,7 +382,7 @@ describe('when the letter goes', () => {
     const inFlight = attemptFeedbackEmail((await rowFor(ids.sessionId)).id, hoursFromNow(13));
     await started;
     await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     release();
     mail.hold = null;
     await inFlight;
@@ -415,7 +415,7 @@ describe('when the letter goes', () => {
       where: { id: row.id }, data: { status: 'SENDING', claimedAt: new Date(), sendLockUntil: new Date(Date.now() - 1000) },
     });
     const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     expect(res.status).toBe(201);
   });
 
@@ -425,7 +425,7 @@ describe('when the letter goes', () => {
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
     await deliverDueFeedbackEmails(hoursFromNow(13));
     const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     expect({ status: res.status, lock: (await rowFor(ids.sessionId)).sendLockUntil }).toEqual({ status: 201, lock: null });
   });
 
@@ -742,7 +742,7 @@ describe('retries', () => {
     it('refuses a review for as long as the lock stands', async () => {
       const { ids, release } = await timedOut();
       const during = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-        .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+        .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
       release();
       expect({ status: during.status, code: during.body.code }).toEqual({ status: 409, code: 'feedback_sending' });
     });
@@ -752,7 +752,7 @@ describe('retries', () => {
       release();
       await prisma.candidateFeedbackEmail.update({ where: { sessionId: ids.sessionId }, data: { sendLockUntil: new Date(Date.now() - 1000) } });
       const after = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-        .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+        .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
       expect(after.status).toBe(201);
     });
 

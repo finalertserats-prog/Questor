@@ -30,6 +30,8 @@ export interface BlindCompetency {
 }
 
 export interface BlindTurn {
+  /** The turn the evidence spans name; an id is not a conclusion, so it stays. */
+  readonly id: string;
   readonly index: number;
   readonly speaker: string;
   readonly text: string;
@@ -157,6 +159,10 @@ export async function getBlindView(
     },
     competencies,
     transcript: turns.map((t) => ({
+      // The turn the evidence spans name (EvidenceSpan.turnId), so a quote can
+      // be found in the transcript without matching its text. An id is not a
+      // conclusion, so it is not withheld.
+      id: t.id,
       index: t.index,
       speaker: t.speaker,
       text: t.text,

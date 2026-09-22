@@ -173,7 +173,7 @@ describe('an untrustworthy interview is held', () => {
     const ids = await interview({ confidence: 0.25 });
     await enqueue(ids);
     await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Read the transcript myself.', overrides: [] });
     await deliverDueFeedbackEmails(hoursFromNow(1));
     expect({ status: (await rowFor(ids.sessionId)).status, sent: mail.sent.length }).toEqual({ status: 'HELD', sent: 0 });
   });

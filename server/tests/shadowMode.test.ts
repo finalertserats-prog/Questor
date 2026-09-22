@@ -283,7 +283,10 @@ describe('shadow mode routes', () => {
       ]);
     }
     for (const turn of res.body.transcript) {
-      expect(Object.keys(turn).sort()).toEqual(['competencyId', 'index', 'speaker', 'startMs', 'text']);
+      // `id` is the stored turn the evidence spans name, so a quote can be
+      // found in the transcript without matching its text. An id is not a
+      // conclusion about the candidate, so the blind view keeps it.
+      expect(Object.keys(turn).sort()).toEqual(['competencyId', 'id', 'index', 'speaker', 'startMs', 'text']);
     }
   });
 
@@ -306,7 +309,7 @@ describe('shadow mode routes', () => {
       .map((c: { id: string }) => ({ competencyId: c.id, level: 3 }));
 
     const posted = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`).set(authHeader())
-      .send({ disposition: 'CONSIDER', reason: 'Evidence was solid but not deep.', competencyLevels });
+      .send({ verdict: 'CONSIDER', reason: 'Evidence was solid but not deep.', competencyLevels });
     expect(posted.status).toBe(201);
 
     const reveal = await request(app).get(`/api/assessments/${assessmentId}/reveal`).set(authHeader());
@@ -322,7 +325,7 @@ describe('shadow mode routes', () => {
 
   it('will not let a reviewer rewrite their blind verdict after the reveal', async () => {
     const res = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`).set(authHeader())
-      .send({ disposition: 'PROCEED', reason: 'Changed my mind after seeing the AI score.' });
+      .send({ verdict: 'PROCEED', reason: 'Changed my mind after seeing the AI score.' });
     expect(res.status).toBe(409);
   });
 });

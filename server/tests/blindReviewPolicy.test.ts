@@ -78,7 +78,7 @@ describe('when the organisation requires an independent review', () => {
     const ids = await reviewerOnAssessment();
     await requireBlind(ids.tenantId, true);
     await request(app).post(`/api/assessments/${ids.assessmentId}/blind-verdict`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'My own read of the evidence.' });
+      .send({ verdict: 'CONSIDER', reason: 'My own read of the evidence.' });
     const res = await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
     expect(res.status).toBe(200);
   });
@@ -133,7 +133,7 @@ describe('the record of an unblinded read', () => {
   it('records nothing when the reviewer judged blind first', async () => {
     const ids = await reviewerOnAssessment();
     await request(app).post(`/api/assessments/${ids.assessmentId}/blind-verdict`).set(ids.auth)
-      .send({ disposition: 'CONSIDER', reason: 'My own read of the evidence.' });
+      .send({ verdict: 'CONSIDER', reason: 'My own read of the evidence.' });
     await request(app).get(`/api/assessments/${ids.assessmentId}`).set(ids.auth);
     expect(await viewedEvents(ids.assessmentId)).toBe(0);
   });

@@ -31,6 +31,9 @@ import {
 } from '../services/shadowMode.js';
 import { servingModeForSession } from '../services/interviewServing.js';
 import { recordAssessmentOpened } from '../services/assessmentViews.js';
+import { VERDICTS, decisionOfVerdict } from '../domain/verdict.js';
+import { journeyFor, journeyMove, journeyStanding, type JourneyMove } from '../services/verdictJourney.js';
+import { DEFAULT_STAGES, parseStages } from '../domain/pipelineStages.js';
 
 export const assessmentsRouter = Router();
 assessmentsRouter.use(authenticate);
@@ -115,7 +118,9 @@ const MAX_COMPETENCY_ENTRIES = 40;
 // must fail loudly rather than be dropped. A reviewer whose "commments" went
 // nowhere still believes they filed them.
 const blindVerdictSchema = z.object({
-  disposition: z.enum(DISPOSITIONS),
+  // One vocabulary (domain/verdict.ts): the field is the verdict here too, so
+  // the blind read and the open one are recorded in the same words.
+  verdict: z.enum(VERDICTS),
   reason: z.string().min(3).max(MAX_TEXT_CHARS),
   comments: z.string().max(MAX_TEXT_CHARS).optional(),
   competencyLevels: z.array(z.object({
@@ -129,7 +134,7 @@ assessmentsRouter.post('/:id/blind-verdict', requireCapability('assessment:revie
   const body = blindVerdictSchema.parse(req.body);
   // recordBlindVerdict resolves the reviewer from the caller's own claims and
   // records — without blocking — whether they drove this interview themselves.
-  const { reviewId, recordedAt, selfReview } = await recordBlindVerdict(req.auth!, req.params.id, body);
+  const { reviewId, recordedAt, selfReview } = await recordBlindVerdict(req.auth!, req.params.id, { ...body, disposition: body.verdict });
   // Audited because the ORDER of these events is the compliance artefact: it is
   // what shows the human judgement preceded, rather than echoed, the machine's.
   // selfReview rides along so a later audit can find non-independent reviews
@@ -137,7 +142,7 @@ assessmentsRouter.post('/:id/blind-verdict', requireCapability('assessment:revie
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.blind_verdict',
     entityType: 'AssessmentVersion', entityId: req.params.id,
-    after: { reviewId, disposition: body.disposition, competencyCount: body.competencyLevels.length, recordedAt, selfReview },
+    after: { reviewId, verdict: body.verdict, competencyCount: body.competencyLevels.length, recordedAt, selfReview },
   });
   res.status(201).json({ reviewId, recordedAt, selfReview, revealUrl: `/api/assessments/${req.params.id}/reveal` });
 }));
@@ -518,6 +523,18 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     // What the rest of the product should report: the human verdict once there
     // is one, the AI's until then.
     outcome: reviewedOutcome(result, completed),
+    // Where the candidate stands, and what each verdict would do to that —
+    // computed by the same function the submit acts through, so the sentence
+    // beside the button cannot promise something the submit will not do
+    // (domain/verdictConsequence.ts). Null when there is no pipeline to move.
+    journey: await journeyFor(a.session.candidateId, a.session.roleId, a.id),
+    // Whether the ATS export is on offer to this reader, and if not, why. The
+    // page writes the sentence; naming the reason here keeps the offer and the
+    // route that enforces it (POST /:id/export) reading from one rule.
+    export: exportOffer({
+      mayExport: hasCapability(req.auth!, 'assessment:export'),
+      scored: result.overallScore !== null,
+    }),
   });
 }));
 
@@ -560,9 +577,52 @@ assessmentsRouter.post('/:id/skip-blind-review', requireCapability('assessment:r
   res.status(201).json({ ok: true, bypassed: true });
 }));
 
+// ---------------------------------------------------------------------------
+// The verdict: one submit that does the work
+// ---------------------------------------------------------------------------
+
+/**
+ * Why the submit does everything at once.
+ *
+ * A completed review used to write a row and stop. The candidate's stage, the
+ * decision on the round and the export were three more things a person had to
+ * remember, on three other screens, and the review they had just recorded was
+ * the only evidence that any of them were owed. The council review's finding
+ * (2.2) was that the product asked a reviewer to make a decision and then did
+ * not act on it.
+ *
+ * So one submit writes the review, carries the journey, records the decision
+ * once, and offers the export — in that order, each step audited, and each one
+ * described to the reviewer BEFORE they commit to it (domain/verdictConsequence.ts).
+ * "Just record it" (applyToJourney: false) is the deliberate way to write a
+ * review without the consequence; it is a choice, not the default.
+ *
+ * Retries do not repeat any of it: the page sends a submissionId, the column is
+ * unique, and a second arrival replays the first submit's answer.
+ */
+
+/** Why an export is not on offer. The page writes the sentence; this names the reason. */
+type ExportRefusal = 'no_capability' | 'not_scored' | 'no_review';
+
+interface ExportOffer {
+  readonly available: boolean;
+  readonly because: ExportRefusal | null;
+}
+
+function exportOffer(o: { readonly mayExport: boolean; readonly scored: boolean }): ExportOffer {
+  if (!o.mayExport) return { available: false, because: 'no_capability' };
+  // The ATS has no way to render "unavailable", so an unscored assessment must
+  // not reach the system of record (see POST /:id/export).
+  if (!o.scored) return { available: false, because: 'not_scored' };
+  return { available: true, because: null };
+}
+
 // Human review / override (FR-033)
 const reviewSchema = z.object({
-  disposition: z.enum(['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS']),
+  // One vocabulary, end to end (domain/verdict.ts). The column is still called
+  // `disposition` because it holds rows written years of releases ago; the
+  // word everybody says, types and reads is the verdict.
+  verdict: z.enum(VERDICTS),
   reason: z.string().min(3).max(MAX_TEXT_CHARS),
   comments: z.string().max(MAX_TEXT_CHARS).optional(),
   // `from`/`to` stay open because an override may restate a level, a null, or a
@@ -578,16 +638,56 @@ const reviewSchema = z.object({
   // because the candidate may already have been written to on the strength of
   // the first one.
   supersede: z.object({ reason: z.string().min(10, 'Give a real reason (at least 10 characters).').max(MAX_TEXT_CHARS) }).strict().optional(),
+  // The submit this request belongs to. A double-click, or a client retrying a
+  // request whose response was lost, sends the same one — and gets the first
+  // submit's answer back rather than recording the judgement twice.
+  submissionId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/, 'A submission id is 8-64 url-safe characters.').optional(),
+  // "Just record it": write the review and leave the journey alone. The
+  // default is the whole act, because a verdict nobody carries out was the
+  // thing that needed fixing.
+  applyToJourney: z.boolean().default(true),
 }).strict();
 assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const body = reviewSchema.parse(req.body);
+  const scored = readAssessmentResult(a).overallScore !== null;
+  const offer = exportOffer({ mayExport: hasCapability(req.auth!, 'assessment:export'), scored });
+
+  /**
+   * Has this exact submit already landed?
+   *
+   * Asked at every point where this request could otherwise be mistaken for a
+   * second opinion — before anything is read, again before the "already
+   * reviewed" refusal, and once more when a unique index turns it down. The
+   * first two are reads and so can each be overtaken by the winner committing
+   * a moment later; only asking at all three leaves no window in which a
+   * reviewer's retry comes back as a refusal for something they did not do.
+   */
+  const replayOf = async (): Promise<{ id: string; disposition: string; comments: string; assessmentId: string } | null> => {
+    if (!body.submissionId) return null;
+    const found = await prisma.humanReview.findUnique({ where: { submissionId: body.submissionId } });
+    if (!found) return null;
+    if (found.assessmentId !== a.id) throw new HttpError(409, 'That submission belongs to a different assessment.');
+    return found;
+  };
+  const replay = (row: { id: string; disposition: string; comments: string }) => {
+    res.status(200).json({
+      review: { id: row.id, verdict: row.disposition, selfReview: row.comments.includes(SELF_REVIEW_NOTE) },
+      replayed: true, feedbackReleased: false, journey: null, export: offer,
+    });
+  };
+
+  const landed = await replayOf();
+  if (landed) { replay(landed); return; }
 
   // "Final" has to mean something. Once a review is completed it is the
   // version the team acts on and the version the candidate's feedback is
   // written from, so a second one does not quietly replace it.
   const previous = await completedReviewFor(a.id);
   if (previous && !body.supersede) {
+    // Unless the review already there is this very submit, arriving twice.
+    const mine = await replayOf();
+    if (mine) { replay(mine); return; }
     throw new HttpError(409, 'This assessment has already been reviewed. To replace that review, say that you mean to and give a reason.');
   }
 
@@ -603,24 +703,55 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // visible in the compliance record instead of absent from it.
   const selfReview = await ranTheInterview(req.auth!.userId, a.sessionId);
   const comments = body.comments ?? '';
+  // Where the candidate stood before this submit. The move is reported by
+  // comparing this with the row afterwards, so what the reviewer is told
+  // happened is the record rather than a second prediction.
+  const standingBefore = await journeyStanding(a.session.candidateId, a.session.roleId);
   // The review and the release of the candidate's letter are one transaction:
   // the gate refuses (409 feedback_sending) while a send holds the row, and
   // the review then does not exist — the email cannot be unsent, so the
   // review is what waits. When the gate opens, the review becomes visible in
   // the same commit that releases the letter, so no send can read one
   // without the other (services/autoFeedback.ts).
-  const { review, feedbackReleased } = await prisma.$transaction(async (tx) => {
+  const written = await prisma.$transaction(async (tx) => {
     const released = await gateReviewCompletion(tx, a.id);
+    // Superseding releases the previous review's claim on the assessment
+    // first, in the same transaction: the claim is unique, so the new review
+    // cannot take it while the old one still holds it.
+    if (previous && body.supersede) {
+      await tx.humanReview.update({
+        where: { id: previous.id },
+        data: { supersededAt: new Date(), supersededReason: body.supersede.reason, activeForAssessmentId: null },
+      });
+    }
     const created = await tx.humanReview.create({
       data: {
-        assessmentId: a.id, reviewerId: req.auth!.userId, status: 'COMPLETED', disposition: body.disposition,
-        reason: body.reason,
+        assessmentId: a.id, reviewerId: req.auth!.userId, status: 'COMPLETED', disposition: body.verdict,
+        reason: body.reason, submissionId: body.submissionId ?? null, activeForAssessmentId: a.id,
         comments: selfReview ? (comments ? `${comments}\n\n${SELF_REVIEW_NOTE}` : SELF_REVIEW_NOTE) : comments,
         overridesJson: JSON.stringify(body.overrides), completedAt: new Date(),
       },
     });
     return { review: created, feedbackReleased: released };
+  }).catch(async (err: unknown) => {
+    // A unique index decided this, not a read both attempts had passed.
+    // Which index says which race was lost, and the provider spells that
+    // differently, so the answer is read from the data rather than the error:
+    // if this submit's id is now on a row, it is our own retry and replays;
+    // otherwise somebody else's review is the completed one.
+    if ((err as { code?: string }).code !== 'P2002') throw err;
+    const mine = await replayOf();
+    if (mine) return { review: mine, feedbackReleased: false, replayed: true as const };
+    throw new HttpError(409, 'This assessment has already been reviewed. To replace that review, say that you mean to and give a reason.');
   });
+  if ('replayed' in written) {
+    res.status(200).json({
+      review: { id: written.review.id, verdict: written.review.disposition, selfReview },
+      replayed: true, feedbackReleased: false, journey: null, export: offer,
+    });
+    return;
+  }
+  const { review, feedbackReleased } = written;
   // Session -> HUMAN_REVIEWED -> CLOSED
   if (a.session.state === 'REVIEW_READY') {
     await prisma.interviewSession.update({ where: { id: a.sessionId }, data: { state: 'HUMAN_REVIEWED' } });
@@ -629,30 +760,65 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.completed',
     entityType: 'AssessmentVersion', entityId: a.id,
     before: { recommendation: a.recommendation },
-    after: { disposition: body.disposition, reason: body.reason, selfReview },
+    after: { verdict: body.verdict, reason: body.reason, selfReview, applyToJourney: body.applyToJourney },
   });
-  await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, disposition: body.disposition });
+  await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, verdict: body.verdict });
   // A reviewed interview is an assessed one: Gold, if the finalisation had not already got there.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId, event: 'interview.assessed', trigger: 'review.completed' });
-  // And the verdict is the decision on that round: PROCEED keeps them moving,
-  // DO_NOT_PROGRESS closes their pipeline, CONSIDER waits for a person.
-  const pipelineDecision = await noteReviewDecision({
-    tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId,
-    disposition: body.disposition, reason: body.reason, reviewerId: req.auth!.userId,
+  // And the verdict is the decision on that round: Proceed keeps them moving,
+  // Do not progress ends their journey, Consider waits for a person. Skipped
+  // only when the reviewer chose "Just record it".
+  const pipelineDecision = body.applyToJourney
+    ? await noteReviewDecision({
+      tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId,
+      verdict: body.verdict, reason: body.reason, reviewerId: req.auth!.userId,
+    })
+    : null;
+  // The decision, recorded once and in one vocabulary — including the cases
+  // where it moved nobody. "Nothing happened" is the answer people came to the
+  // audit trail for as often as "something did".
+  const move: JourneyMove | null = standingBefore
+    ? await journeyMove(standingBefore, parseStages(
+      (await prisma.candidatePipeline.findUnique({ where: { id: standingBefore.pipelineId }, select: { stagesJson: true } }))?.stagesJson
+        ?? JSON.stringify(DEFAULT_STAGES),
+    ))
+    : null;
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.decision',
+    entityType: 'AssessmentVersion', entityId: a.id,
+    before: standingBefore ? { stage: standingBefore.currentStageKey, status: standingBefore.status } : { pipeline: 'none' },
+    after: {
+      verdict: body.verdict, decision: decisionOfVerdict(body.verdict) ?? 'none',
+      applied: body.applyToJourney, outcome: pipelineDecision?.applied === true ? 'applied' : pipelineDecision?.because ?? 'not_applied',
+      stage: move?.toStageKey ?? null, moved: move?.moves ?? false, closed: move?.closes ?? null,
+      reviewId: review.id,
+    },
   });
   if (previous && body.supersede) {
-    await prisma.humanReview.update({ where: { id: previous.id }, data: { supersededAt: new Date(), supersededReason: body.supersede.reason } });
+    // The row itself was superseded inside the transaction above, with the
+    // new review; only the trail is written here.
     await logAudit({
       tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.superseded',
       entityType: 'AssessmentVersion', entityId: a.id,
-      before: { reviewId: previous.id, disposition: previous.disposition },
-      after: { reviewId: review.id, supersededReviewId: previous.id, disposition: body.disposition, reason: body.supersede.reason },
+      before: { reviewId: previous.id, verdict: previous.disposition },
+      after: { reviewId: review.id, supersededReviewId: previous.id, verdict: body.verdict, reason: body.supersede.reason },
     });
   }
   // Where this reviewer parted company with the AI, kept for later analysis
   // (services/assessmentReview.ts). Written now, at the moment the fact exists.
   await recordReviewDifference(req.auth!.tenantId, a.id, review.id);
-  res.status(201).json({ review: { id: review.id, disposition: review.disposition, selfReview }, feedbackReleased, pipeline: pipelineDecision });
+  res.status(201).json({
+    review: { id: review.id, verdict: review.disposition, selfReview },
+    replayed: false,
+    feedbackReleased,
+    // What the journey actually did — the page reads this back to the
+    // reviewer, so it is measured, never predicted a second time.
+    journey: move,
+    // Offered here rather than behind another screen: the moment a verdict is
+    // recorded is the moment somebody wants it in the ATS.
+    export: offer,
+    pipeline: pipelineDecision,
+  });
 }));
 
 // Export to ATS (FR-040)

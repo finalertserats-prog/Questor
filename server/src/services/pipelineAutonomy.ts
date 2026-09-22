@@ -4,9 +4,10 @@ import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
 import { DEFAULT_STAGES, parseStages, parseStagesStrict, type StageKind } from '../domain/pipelineStages.js';
 import {
-  decisionOfDisposition, resolveDecision, resolveTransition,
+  resolveDecision, resolveTransition,
   type DecisionEffect, type DecisionOutcome, type PipelineEvent, type StageTransition,
 } from '../domain/pipelineAutonomy.js';
+import { decisionOfVerdict, type Verdict } from '../domain/verdict.js';
 
 /**
  * Applies the autonomous journey (domain/pipelineAutonomy.ts) to the database.
@@ -199,20 +200,20 @@ export interface ReviewDecisionInput {
   readonly tenantId: string;
   readonly candidateId: string;
   readonly roleId: string | null;
-  readonly disposition: string;
+  readonly verdict: Verdict;
   readonly reason: string;
   readonly reviewerId: string;
 }
 
 /**
  * The verdict on an assessment review, applied to the candidate's pipeline:
- * PROCEED approves the AI interview stage, DO_NOT_PROGRESS rejects, CONSIDER
- * decides nothing. Null when there was no decision or no pipeline to carry
- * it to. The review itself has committed; like the events, a failure here is
- * logged loudly and never undoes it.
+ * Proceed approves the AI interview stage, Do not progress ends the journey,
+ * Consider decides nothing. Null when there was no decision or no pipeline to
+ * carry it to. The review itself has committed; like the events, a failure
+ * here is logged loudly and never undoes it.
  */
 export async function noteReviewDecision(o: ReviewDecisionInput): Promise<DecisionResult | null> {
-  const outcome = decisionOfDisposition(o.disposition);
+  const outcome = decisionOfVerdict(o.verdict);
   if (!outcome || !o.roleId) return null;
   try {
     const pipeline = await ensurePipeline({ tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId, trigger: 'review.completed' });
@@ -223,7 +224,7 @@ export async function noteReviewDecision(o: ReviewDecisionInput): Promise<Decisi
     if (!result.applied && result.because === 'already_decided') {
       // A superseding verdict cannot reopen a closed pipeline: the earlier
       // decision stands until a person records otherwise.
-      logger.warn({ pipelineId: pipeline.id, disposition: o.disposition }, 'Review verdict arrived for a pipeline already decided; left as it is');
+      logger.warn({ pipelineId: pipeline.id, verdict: o.verdict }, 'Review verdict arrived for a pipeline already decided; left as it is');
     }
     return result;
   } catch (err) {

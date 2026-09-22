@@ -255,7 +255,7 @@ async function assessedInterview(ids: Seeded) {
 
 function review(ids: Seeded, assessmentId: string, disposition: string, extra: Record<string, unknown> = {}) {
   return request(app).post(`/api/assessments/${assessmentId}/review`).set('Authorization', ids.auth)
-    .send({ disposition, reason: REASON, overrides: [], ...extra });
+    .send({ verdict: disposition, reason: REASON, overrides: [], ...extra });
 }
 
 describe('the verdict on an assessment review', () => {

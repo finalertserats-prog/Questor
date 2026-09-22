@@ -43,7 +43,7 @@ describe('recording a blind verdict', () => {
     const res = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        disposition: 'CONSIDER', reason: 'Too many levels.',
+        verdict: 'CONSIDER', reason: 'Too many levels.',
         competencyLevels: many(41, (i) => ({ competencyId: `c${i}`, level: 3 })),
       });
 
@@ -55,7 +55,7 @@ describe('recording a blind verdict', () => {
 
     const res = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ disposition: 'CONSIDER', reason: OVERSIZED, competencyLevels: [] });
+      .send({ verdict: 'CONSIDER', reason: OVERSIZED, competencyLevels: [] });
 
     expect(res.status).toBe(400);
   });
@@ -65,7 +65,7 @@ describe('recording a blind verdict', () => {
 
     const res = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ disposition: 'CONSIDER', reason: 'Solid enough.', commments: 'note the typo' });
+      .send({ verdict: 'CONSIDER', reason: 'Solid enough.', commments: 'note the typo' });
 
     expect(res.status).toBe(400);
   });
@@ -78,7 +78,7 @@ describe('recording a human review', () => {
     const res = await request(app).post(`/api/assessments/${assessmentId}/review`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        disposition: 'CONSIDER', reason: 'Too many overrides.',
+        verdict: 'CONSIDER', reason: 'Too many overrides.',
         overrides: many(41, (i) => ({ competencyId: `c${i}`, from: 2, to: 3, reason: 'Adjusted.' })),
       });
 
@@ -90,7 +90,7 @@ describe('recording a human review', () => {
 
     const res = await request(app).post(`/api/assessments/${assessmentId}/review`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ disposition: 'CONSIDER', reason: 'Fine.', comments: OVERSIZED });
+      .send({ verdict: 'CONSIDER', reason: 'Fine.', comments: OVERSIZED });
 
     expect(res.status).toBe(400);
   });
@@ -101,7 +101,7 @@ describe('recording a human review', () => {
     const res = await request(app).post(`/api/assessments/${assessmentId}/review`)
       .set('Authorization', `Bearer ${token}`)
       .send({
-        disposition: 'CONSIDER', reason: 'Fine.',
+        verdict: 'CONSIDER', reason: 'Fine.',
         overrides: [{ competencyId: 'sql', from: 2, to: 3, reason: OVERSIZED }],
       });
 
@@ -113,7 +113,7 @@ describe('recording a human review', () => {
 
     const res = await request(app).post(`/api/assessments/${assessmentId}/review`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ disposition: 'CONSIDER', reason: 'Want a second panel on leadership scope.', overrides: [] });
+      .send({ verdict: 'CONSIDER', reason: 'Want a second panel on leadership scope.', overrides: [] });
 
     expect(res.status).toBe(201);
   });

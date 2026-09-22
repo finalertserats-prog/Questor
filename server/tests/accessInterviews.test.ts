@@ -199,7 +199,7 @@ describe('assessment review capability', () => {
     const res = await request(app)
       .post(`/api/assessments/${fx.assessmentId}/review`)
       .set(as(fx.recruiterAToken))
-      .send({ disposition: 'PROCEED', reason: 'Looks strong to me.' });
+      .send({ verdict: 'PROCEED', reason: 'Looks strong to me.' });
     expect(res.status).toBe(403);
   });
 
@@ -220,7 +220,7 @@ describe('assessment review capability', () => {
     const res = await request(app)
       .post(`/api/assessments/${fx.assessmentId}/review`)
       .set(as(fx.managerToken))
-      .send({ disposition: 'CONSIDER', reason: 'Want a second panel on leadership scope.' });
+      .send({ verdict: 'CONSIDER', reason: 'Want a second panel on leadership scope.' });
     expect(res.status).toBe(201);
   });
 
@@ -242,7 +242,7 @@ describe('separation of duties (soft)', () => {
     const res = await request(app)
       .post(`/api/assessments/${fx.selfReviewAssessmentId}/review`)
       .set(as(fx.selfReviewingManagerToken))
-      .send({ disposition: 'PROCEED', reason: 'No second reviewer available this week.' });
+      .send({ verdict: 'PROCEED', reason: 'No second reviewer available this week.' });
     selfReviewStatus = res.status;
     selfReviewBody = res.body;
   });

@@ -134,7 +134,7 @@ describe('Questor API end-to-end', () => {
   it('returns a grounded assessment with a recommendation once the verdict is recorded', async () => {
     const verdict = await request(app).post(`/api/assessments/${assessmentId}/blind-verdict`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ disposition: 'CONSIDER', reason: 'Independent read before seeing the machine output.' });
+      .send({ verdict: 'CONSIDER', reason: 'Independent read before seeing the machine output.' });
     expect(verdict.status).toBe(201);
 
     const res = await request(app).get(`/api/assessments/${assessmentId}`).set('Authorization', `Bearer ${token}`);
@@ -156,7 +156,7 @@ describe('Questor API end-to-end', () => {
   });
 
   it('records a human review override with a reason', async () => {
-    const res = await request(app).post(`/api/assessments/${assessmentId}/review`).set('Authorization', `Bearer ${token}`).send({ disposition: 'CONSIDER', reason: 'Want a second panel on leadership scope.' });
+    const res = await request(app).post(`/api/assessments/${assessmentId}/review`).set('Authorization', `Bearer ${token}`).send({ verdict: 'CONSIDER', reason: 'Want a second panel on leadership scope.' });
     expect(res.status).toBe(201);
   });
 

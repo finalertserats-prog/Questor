@@ -5,7 +5,7 @@ import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { DEFAULT_STAGES, type PipelineStage } from '../src/domain/pipelineStages.js';
 import {
-  DECISION_OUTCOMES, PIPELINE_EVENTS, decisionOfDisposition, resolveDecision, resolveTransition, targetStageKey,
+  DECISION_OUTCOMES, PIPELINE_EVENTS, resolveDecision, resolveTransition, targetStageKey,
 } from '../src/domain/pipelineAutonomy.js';
 
 /**
@@ -159,23 +159,11 @@ describe('resolveDecision', () => {
   });
 });
 
-describe('decisionOfDisposition', () => {
-  it('reads PROCEED as approval', () => {
-    expect(decisionOfDisposition('PROCEED')).toBe('APPROVED');
-  });
-
-  it('reads DO_NOT_PROGRESS as rejection', () => {
-    expect(decisionOfDisposition('DO_NOT_PROGRESS')).toBe('REJECTED');
-  });
-
-  it('reads CONSIDER as no decision at all', () => {
-    expect(decisionOfDisposition('CONSIDER')).toBeNull();
-  });
-
-  it('reads anything else as no decision', () => {
-    expect(decisionOfDisposition('')).toBeNull();
-  });
-});
+/*
+ * The verdict → stored-decision mapping moved to domain/verdict.ts, which is
+ * the one place the two enums are allowed to meet, and is covered by
+ * tests/verdictVocabulary.test.ts — including the browser's copy of it.
+ */
 
 /**
  * The Platinum retirement migration is plain SQL (REPLACE and LIKE only), so

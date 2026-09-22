@@ -41,7 +41,7 @@ const OVERRIDES = [{ competencyId: 'stake', from: 2, to: 4, reason: 'Much strong
 
 async function review(ids: Awaited<ReturnType<typeof assessment>>, disposition = 'CONSIDER', extra: Record<string, unknown> = {}) {
   const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-    .send({ disposition, reason: 'My own read of the evidence.', comments: 'Worth a second conversation.', overrides: OVERRIDES, ...extra });
+    .send({ verdict: disposition, reason: 'My own read of the evidence.', comments: 'Worth a second conversation.', overrides: OVERRIDES, ...extra });
   expect(res.status).toBe(201);
   return res;
 }
@@ -138,7 +138,7 @@ describe('a second review of the same assessment', () => {
     const ids = await assessment();
     await review(ids);
     const again = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'PROCEED', reason: 'Changed my mind.', overrides: [] });
+      .send({ verdict: 'PROCEED', reason: 'Changed my mind.', overrides: [] });
     expect({ status: again.status, reviews: await prisma.humanReview.count({ where: { assessmentId: ids.assessmentId, status: 'COMPLETED' } }) })
       .toEqual({ status: 409, reviews: 1 });
   });
@@ -147,7 +147,7 @@ describe('a second review of the same assessment', () => {
     const ids = await assessment();
     await review(ids);
     const again = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'PROCEED', reason: 'Changed my mind.', overrides: [] });
+      .send({ verdict: 'PROCEED', reason: 'Changed my mind.', overrides: [] });
     expect(again.body.error).toMatch(/already been reviewed/i);
   });
 
@@ -173,7 +173,7 @@ describe('a second review of the same assessment', () => {
     const ids = await assessment();
     await review(ids);
     const again = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
-      .send({ disposition: 'PROCEED', reason: 'Changed my mind.', overrides: [], supersede: { reason: 'meh' } });
+      .send({ verdict: 'PROCEED', reason: 'Changed my mind.', overrides: [], supersede: { reason: 'meh' } });
     expect(again.status).toBe(400);
   });
 });

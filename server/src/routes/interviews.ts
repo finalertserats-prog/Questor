@@ -889,8 +889,14 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
     // able to tell from anything said. Nothing the AI concluded travels here:
     // this is what the assessment page shows BEFORE the reading, including
     // to a reviewer the blind-review policy is still keeping the scores from.
+    // `id` because the assessment's evidence spans name the turn they were
+    // taken from (EvidenceSpan.turnId). Without it the review page had to
+    // guess which turn a quote came from by matching text, and a quote that
+    // had been truncated matched nothing — so the evidence chips carry the
+    // turn id the evaluator already recorded rather than re-deriving it.
     transcript: turns.map((t) => ({
-      index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, competencyId: t.competencyId,
+      id: t.id, index: t.index, speaker: t.speaker, text: t.text, startMs: t.startMs, endMs: t.endMs,
+      competencyId: t.competencyId,
       ...(leftByButton(t) ? { source: LEAVE_SOURCE } : {}),
     })),
     // Enough to place the conversation — who interviewed, when, how long.

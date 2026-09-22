@@ -524,7 +524,24 @@ model HumanReview {
   reviewerId     String
   reviewer       User     @relation(fields: [reviewerId], references: [id])
   status         String   @default("PENDING") // PENDING | COMPLETED
+  // The verdict, in the one vocabulary (domain/verdict.ts).
   disposition    String   @default("")         // PROCEED | CONSIDER | DO_NOT_PROGRESS
+  // The submit this review came from, so a retry or a double-click records one
+  // review rather than two. Unique, which is what makes the second attempt
+  // fail at the database rather than at a re-read that both attempts passed.
+  // Null for reviews recorded before the page sent one, and for blind verdicts.
+  submissionId   String?  @unique
+  // The assessment this review is currently THE completed review of.
+  //
+  // "Already reviewed" used to be a read followed by a write, so two submits
+  // landing together both read "not yet" and both inserted: one assessment,
+  // two final verdicts, and the candidate's letter written from whichever the
+  // next query happened to sort first. Unique, so the second insert loses at
+  // the database rather than at a check they had both already passed.
+  //
+  // Null on a blind verdict (which is not the completed review), on a review
+  // that has been superseded, and on rows written before this column existed.
+  activeForAssessmentId String? @unique
   // JSON overrides: [{competencyId, from, to, reason}]
   overridesJson  String   @default("[]")
   comments       String   @default("")
