@@ -7,7 +7,7 @@ import { LIVE_INTERVIEW_STATES } from './observerPolicy.js';
 import { tenantTimeZone } from './tenantTimeZone.js';
 import { zonedLocalToUtc, zonedWallClock } from './zonedTime.js';
 import { EXCEPTION_STATES } from '../domain/stateMachine.js';
-import { collectNeedsYou, enrichRows, type NeedsYouCounts, type NeedsYouRow } from './needsYouRows.js';
+import { collectNeedsYou, enrichRows, PER_KIND_SCAN, type NeedsYouCounts, type NeedsYouRow } from './needsYouRows.js';
 import type { AuthClaims } from './auth.js';
 import type { Paging } from './listPaging.js';
 
@@ -23,6 +23,11 @@ const UPCOMING_DAYS = 7;
 const DONE_DAYS = 7;
 const UPCOMING_LIMIT = 20;
 const DONE_LIMIT = 12;
+/**
+ * The deepest the queue is read per kind: 20 pages of 100. Nobody works a
+ * queue that long from this page; the lists behind each kind are paged.
+ */
+const MAX_SCAN = 2_000;
 /**
  * A live-looking state with no activity for this long is a tab someone closed
  * before the interview began (the stalled sweep only closes out interviews that
@@ -222,7 +227,9 @@ export async function getNeedsYou(auth: AuthClaims, paging: Paging, now: Date = 
   const dayEnd = startOfDay(new Date(dayStart.getTime() + DAY_MS + 2 * HOUR_MS), timeZone);
   const names = new Map(interviewers.map((i) => [i.id, i.name]));
   const [queue, upcoming, done] = await Promise.all([
-    collectNeedsYou(auth, now),
+    // Each kind is read deep enough to fill the page asked for, so a later page
+    // is never empty while the total says there is more (bounded: see MAX_SCAN).
+    collectNeedsYou(auth, now, Math.min(MAX_SCAN, Math.max(PER_KIND_SCAN, paging.page * paging.pageSize))),
     comingUp(auth.tenantId, candidate, now, dayStart, names),
     doneRecently(auth.tenantId, candidate, now, names),
   ]);

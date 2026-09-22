@@ -141,18 +141,38 @@ function baseWhere(now: Date, withinDays: number, statuses: readonly string[]) {
   };
 }
 
-/** Why a reminder must not go now, or null when it may. Re-read at send time. */
-async function ineligibility(inv: Invitation, expiresAt: Date, now: Date): Promise<string | null> {
+/**
+ * Why a reminder must not go now, or null when it may. Read after the claim,
+ * immediately before the send, and re-checks everything the scan filtered on:
+ * the scan is a page read earlier, and any of it may have changed since.
+ */
+async function ineligibility(due: Due, now: Date): Promise<string | null> {
+  const inv = due.invitation;
   const [fresh, decided, asked] = await Promise.all([
-    prisma.invitation.findUnique({ where: { id: inv.id }, select: { expiresAt: true, status: true, session: { select: { state: true } } } }),
+    prisma.invitation.findUnique({
+      where: { id: inv.id },
+      select: {
+        expiresAt: true, status: true, sentAt: true,
+        session: { select: { state: true, role: { select: { status: true } }, tenant: { select: { isDemo: true } } } },
+      },
+    }),
     prisma.candidatePipeline.findFirst({ where: { candidateId: inv.session.candidateId, roleId: inv.session.roleId, status: 'DECIDED' }, select: { id: true } }),
     prisma.candidateHumanRequest.findFirst({ where: { sessionId: inv.sessionId, status: 'REQUESTED' }, select: { id: true } }),
   ]);
-  if (!fresh || fresh.expiresAt?.getTime() !== expiresAt.getTime() || expiresAt <= now) return 'invitation changed or expired';
+  if (!fresh || fresh.expiresAt?.getTime() !== due.expiresAt.getTime() || due.expiresAt <= now) return 'invitation changed or expired';
   if (!NOT_STARTED_STATES.includes(fresh.session.state)) return `interview is ${fresh.session.state}`;
+  if (fresh.session.role.status === 'archived') return 'role archived';
+  if (fresh.session.tenant.isDemo) return 'demo sandbox';
+  const toCandidate = due.recipientKey === 'candidate';
+  if (!(toCandidate ? DELIVERED_STATUSES : OPEN_STATUSES).includes(fresh.status)) return `invitation is ${fresh.status}`;
   if (decided) return 'application decided';
   if (asked) return 'candidate asked to talk to a person';
   return null;
+}
+
+async function resentSince(due: Due, now: Date): Promise<boolean> {
+  const fresh = await prisma.invitation.findUnique({ where: { id: due.invitation.id }, select: { sentAt: true } });
+  return !!fresh?.sentAt && fresh.sentAt.getTime() > now.getTime() - RECENT_SEND_QUIET_MS;
 }
 
 /** Claim, or false when another run (or an earlier one) already has. */
@@ -229,9 +249,12 @@ async function deliver(dues: readonly Due[], now: Date, lease: LeaseHandle | nul
   let skipped = 0;
   for (const due of dues) {
     if (lease && !(await lease.renew(REMINDER_JOB.ttlMs))) return { sent, failed, skipped, stopped: true };
-    const reason = await ineligibility(due.invitation, due.expiresAt, now);
+    // A resend since the scan is a reason to wait, not to give the reminder up:
+    // checked before claiming, so a later run can still send it.
+    if (due.recipientKey === 'candidate' && await resentSince(due, now)) continue;
     const id = await claim(due);
     if (!id) continue;
+    const reason = await ineligibility(due, now);
     if (reason) {
       await finish(id, due, 'skipped', reason);
       skipped += 1;

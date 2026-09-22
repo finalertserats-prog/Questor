@@ -27,7 +27,9 @@ const USERS_PER_RUN = 100;
 
 /**
  * A morning summary that missed its morning (the server was down) is dropped,
- * not sent at night: it may go only this many hours after DIGEST_HOUR.
+ * not sent at night: it may go only this many hours after DIGEST_HOUR, and
+ * never past midnight, since it is that organisation day's summary. A late
+ * DIGEST_HOUR (say 22) therefore has a shorter window, not one into tomorrow.
  */
 const DIGEST_WINDOW_HOURS = 6;
 
@@ -35,7 +37,7 @@ const DIGEST_WINDOW_HOURS = 6;
 export function digestDayFor(now: Date, timeZone: string, hour: number): string | null {
   const wall = zonedWallClock(now, timeZone);
   const local = Number(wall.slice(11, 13));
-  return local >= hour && local < hour + DIGEST_WINDOW_HOURS ? wall.slice(0, 10) : null;
+  return local >= hour && local < Math.min(hour + DIGEST_WINDOW_HOURS, 24) ? wall.slice(0, 10) : null;
 }
 
 interface Recipient { readonly id: string; readonly tenantId: string; readonly role: string; readonly email: string; readonly name: string; readonly day: string }
@@ -73,6 +75,9 @@ async function claim(user: Recipient): Promise<string | null> {
 }
 
 async function sendOne(user: Recipient, now: Date): Promise<'sent' | 'empty' | 'failed' | 'taken'> {
+  // They may have switched it off since the list was read.
+  const still = await prisma.user.findFirst({ where: { id: user.id, digestOptOut: false }, select: { id: true } });
+  if (!still) return 'taken';
   const id = await claim(user);
   if (!id) return 'taken';
   const auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };

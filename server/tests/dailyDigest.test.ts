@@ -64,6 +64,11 @@ describe('daily summary timing', () => {
     expect(digestDayFor(new Date('2026-09-23T01:00:00.000Z'), 'Asia/Kolkata', 8)).toBeNull();
   });
 
+  it('does not carry a late digest hour past midnight into the next day', () => {
+    // 01:00 in Kolkata on the 23rd, with the summary hour set to 22.
+    expect(digestDayFor(new Date('2026-09-22T19:30:00.000Z'), 'Asia/Kolkata', 22)).toBeNull();
+  });
+
   it('refuses a digest hour that is not a whole hour of the day', () => {
     expect(() => parseDigestHour('25')).toThrow(/DIGEST_HOUR/);
   });
