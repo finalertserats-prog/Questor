@@ -5,6 +5,7 @@ import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
 import { BrandLogo } from '../components/BrandLogo';
+import { ComplianceFooter } from '../components/ComplianceFooter';
 
 interface OrgSummary {
   name: string;
@@ -120,6 +121,7 @@ export function OrgLogin() {
           )}
         </div>
       </section>
+      <ComplianceFooter />
     </div>
   );
 }

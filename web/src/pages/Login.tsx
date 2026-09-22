@@ -4,6 +4,7 @@ import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
 import { BrandLogo } from '../components/BrandLogo';
+import { ComplianceFooter } from '../components/ComplianceFooter';
 import { OrgPicker } from '../components/OrgPicker';
 import { orgSearchPath, type Org } from '../components/orgSearchModel';
 
@@ -154,6 +155,7 @@ export function Login() {
           )}
         </div>
       </section>
+      <ComplianceFooter />
     </div>
   );
 }
