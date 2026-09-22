@@ -10,6 +10,8 @@ import { techStackPromptBlock } from './techStackInterview.js';
 import { bandById, type Abstraction, type BandId } from './experienceBands.js';
 import { WARMUP_QUESTION, buildOpeningGreeting, focusAreas, openingQuestion, spokenRoleTitle } from './openingModel.js';
 import { config } from '../config.js';
+import { candidateAnswerVariant, interviewerGlueVariant } from './fallbackGlue.js';
+import { unaskedRungs } from './plannedProbes.js';
 import {
   bareYesNo, couldBeUpgraded, detectCandidateIntent, isSubstantiveAnswer, llmIntentSchema, mergeLlmIntent,
   type CandidateIntent, type IntentReading, type LlmIntent,
@@ -583,7 +585,7 @@ async function manageConversation(
       // asked again as it was.
       const llm = await tryLlmUtterance(
         opts, competencyNameFor(opts, competencyId) || 'the role', opts.plan.blocks.find((b) => b.competencyId === competencyId),
-        lastText, opts.signal, turns, null, 'correction',
+        lastText, opts.signal, turns, null, 'correction', [],
       );
       const reasked = llm?.question
         ?? (premiseIsGrounded(pending.text, []) ? pending.text : `In your own words, then — ${simplerQuestion(pending.text, competencyNameFor(opts, competencyId), turns.length, competencyId)}`);
@@ -629,7 +631,11 @@ async function manageConversation(
  */
 async function answerCandidateQuestionWithLlm(question: string, opts: UtteranceOptions): Promise<string | null> {
   const facts = roleFactsFor(opts);
+  const factsText = [facts.title, ...facts.responsibilities, ...facts.focus, ...(facts.techStack ?? []), `${facts.durationMinutes} minutes`].join('\n');
   const result = await generateJson<{ answer: string }>({
+    // On the local fallback: the same prompt, plus a check that every name and
+    // figure in the reply comes from the role facts.
+    local: candidateAnswerVariant([factsText]),
     fn: 'candidate_question',
     sessionId: opts.sessionId,
     temperature: 0.3,
@@ -809,7 +815,7 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   // rendering it verbatim leaks the rubric. Turn it into a real question.
   if (blockId === '__resume_validation__') {
     const fallback = 'I\'d like to dig into one thing from your background. Pick an accomplishment you listed and tell me exactly what your personal contribution was and how you measured the result.';
-    const llm = await tryLlmUtterance(opts, block?.competencyName ?? 'the candidate\'s background', block, lastText, signal, turns, correction, movedOn ? 'moved_on' : 'normal');
+    const llm = await tryLlmUtterance(opts, block?.competencyName ?? 'the candidate\'s background', block, lastText, signal, turns, correction, movedOn ? 'moved_on' : 'normal', [fallback]);
     const proposed = llm?.question ?? fallback;
     const screened = screenQuestion(proposed);
     const spoken = screened.allowed ? proposed : (screened.rewritten ?? fallback);
@@ -848,8 +854,20 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
     // rather than silently costing the candidate their turn.
   }
 
+  // The built-in writer's question for this turn, decided before any model is
+  // asked: it is what the local fallback model wraps in glue, and what is said
+  // if no model answers. A follow-up digs into the answer; a new question comes
+  // from the plan's library ladder when the library planned this block, and
+  // from the built-in bank otherwise. All deterministic.
+  const followupDue = signal.action === 'followup' && !!lastText && !movedOn;
+  const ladder = unaskedRungs(block, [...asked]);
+  const builtinQuestion = followupDue
+    ? buildFollowup(lastText, signal.depthInstruction, answersHere, plan.band).text
+    : ladder[0] ?? chooseQuestion(competency?.category ?? 'behavioral', competency?.name ?? block?.competencyName ?? 'this area', turns, asked, plan.band).text;
+  const planned = [...new Set([builtinQuestion, ...ladder])].slice(0, 3);
+
   // Try LLM augmentation for a natural, on-competency utterance.
-  const llm = await tryLlmUtterance(opts, competency?.name ?? block?.competencyName ?? 'the role', block, lastText, signal, turns, correction, movedOn ? 'moved_on' : 'normal');
+  const llm = await tryLlmUtterance(opts, competency?.name ?? block?.competencyName ?? 'the role', block, lastText, signal, turns, correction, movedOn ? 'moved_on' : 'normal', planned);
 
   let text: string;
   let kind: AgentUtterance['kind'];
@@ -860,15 +878,12 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
     question = llm.question;
     text = `${movedOn ? `${MOVE_ON_LEAD} ` : heardByModel ? `${heardByModel} ` : lead}${question}`;
     kind = signal.action === 'followup' ? 'followup' : 'question';
-  } else if (signal.action === 'followup' && lastText && !movedOn) {
-    question = buildFollowup(lastText, signal.depthInstruction, answersHere, plan.band).text;
+  } else if (followupDue) {
+    question = builtinQuestion;
     text = lead + question;
     kind = 'followup';
   } else {
     // New competency question. Add a natural transition if we just finished another block.
-    const cat = competency?.category ?? 'behavioral';
-    const name = competency?.name ?? block?.competencyName ?? 'this area';
-    const chosen = chooseQuestion(cat, name, turns, asked, plan.band);
     const priorAnswered = turns.some((t) => t.speaker === 'candidate' && !t.competencyId?.startsWith('__'));
     const newBlock = answersHere === 0;
     const transition = movedOn
@@ -876,7 +891,7 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
       : heard
         ? `${heard} ${newBlock && priorAnswered ? `${pick(SHIFTS, turns.length)} ` : ''}`
         : priorAnswered && newBlock ? `${pick(TRANSITIONS, turns.length)} ` : '';
-    question = chosen.text;
+    question = builtinQuestion;
     text = tonePrefix(persona) + transition + question;
     kind = newBlock && priorAnswered ? 'transition' : 'question';
   }
@@ -930,6 +945,12 @@ async function tryLlmUtterance(
   turns: TurnRecord[],
   correction: Correction | null,
   mode: LlmMode = 'normal',
+  /**
+   * Questions the plan holds for this turn, the built-in writer's first. The
+   * local fallback model may only wrap one of these in glue; with none, it is
+   * not asked at all and the built-in writer speaks.
+   */
+  planned: readonly string[] = [],
 ): Promise<LlmUtterance | null> {
   const injection = detectInjection(lastText);
   const used = recentForms(turns);
@@ -983,6 +1004,9 @@ async function tryLlmUtterance(
   const result = await generateJson<LlmUtterance>({
     fn: 'live_interviewer',
     sessionId: opts.sessionId,
+    local: planned.length
+      ? interviewerGlueVariant(planned, [...candidateSaid(turns), competencyName, opts.roleTitle ?? ''])
+      : 'built-in',
     temperature: 0.6,
     timeoutMs: config.llm.interviewerTimeoutMs,
     system:
