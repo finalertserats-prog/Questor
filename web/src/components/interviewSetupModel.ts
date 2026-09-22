@@ -8,6 +8,9 @@ import { hasScore } from './scoreFormat';
 /** The shortest and longest interview the product will set up. */
 export const MIN_DURATION_MINUTES = 15;
 export const MAX_DURATION_MINUTES = 120;
+/** What Set up interview starts from, and what inviting a bulk import uses for everyone. */
+export const DEFAULT_DURATION_MINUTES = 45;
+export const INTERVIEW_MODULES: readonly string[] = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
 export interface InterviewSetup {
   readonly durationMinutes: unknown;

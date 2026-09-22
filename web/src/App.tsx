@@ -34,6 +34,7 @@ import { RoleCreate } from './pages/RoleCreate';
 import { RoleDetail } from './pages/RoleDetail';
 import { RolesList } from './pages/RolesList';
 import { CandidateCreate } from './pages/CandidateCreate';
+import { CandidateImport } from './pages/CandidateImport';
 import { CandidatesList } from './pages/CandidatesList';
 import { CandidateDetail } from './pages/CandidateDetail';
 import { InterviewsList } from './pages/InterviewsList';
@@ -457,6 +458,7 @@ export function App() {
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />
       <Route path="/candidates" element={<Protected><CandidatesList /></Protected>} />
       <Route path="/candidates/new" element={<Protected><CandidateCreate /></Protected>} />
+      <Route path="/candidates/import" element={<Protected><CandidateImport /></Protected>} />
       <Route path="/candidates/:id" element={<Protected><CandidateDetail /></Protected>} />
       <Route path="/interviews" element={<Protected><InterviewsList /></Protected>} />
       <Route path="/interviews/:id" element={<Protected><InterviewDetail /></Protected>} />

@@ -283,7 +283,12 @@ export function RoleDetail() {
       {approved && isRoleOpen(role.status) && (
         <Banner kind="ok">
           Scorecard approved — ready to interview candidates.{' '}
-          {can(user, 'candidate:create') && <Link className="link-action" to="/candidates/new"><Icon name="add-candidate" size={15} />Add a candidate</Link>}
+          {can(user, 'candidate:create') && (
+            <>
+              <Link className="link-action" to="/candidates/new"><Icon name="add-candidate" size={15} />Add a candidate</Link>{' '}
+              <Link className="link-action" to={`/candidates/import?roleId=${encodeURIComponent(role.id)}`} data-testid="bulk-import-link"><Icon name="resume-upload" size={15} />Add many from a CSV or CVs</Link>
+            </>
+          )}
         </Banner>
       )}
 

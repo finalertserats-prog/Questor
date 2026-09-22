@@ -17,7 +17,7 @@ import { ResumeUploadCard } from '../components/ResumeFields';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
 import {
-  MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
+  DEFAULT_DURATION_MINUTES, INTERVIEW_MODULES, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
 } from '../components/interviewSetupModel';
 import { formatDateTime, formatScheduled } from '../components/dateFormat';
 import { useOrgTimeZone } from '../components/useOrgTimeZone';
@@ -42,7 +42,7 @@ interface Fit {
 interface Interview { id: string; state: string; scheduledAt: string | null; scheduledTimeZone?: string | null; createdAt: string; }
 interface CandidateResp {
   // A candidate can exist before anyone has put them against a role.
-  candidate: { id: string; fullName: string; email: string; phone: string; roleId: string | null };
+  candidate: { id: string; fullName: string; email: string; phone: string; linkedinUrl?: string; roleId: string | null };
   profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
   /** Other applications for the same address; sent only to someone who may erase. */
   otherApplications?: number;
@@ -100,7 +100,6 @@ interface AssessmentResp {
   outcome?: { source: 'human' | 'ai'; recommendation: string } | null;
 }
 
-const MODULES = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
 export type CandidateDetailTabKey = 'profile' | 'journey';
 export const candidateDetailTabs: ReadonlyArray<{ key: CandidateDetailTabKey; label: string }> = [
@@ -211,7 +210,7 @@ export function CandidateDetail() {
   }, [refresh]);
 
   // interview setup form
-  const [durationMinutes, setDurationMinutes] = useState(45);
+  const [durationMinutes, setDurationMinutes] = useState(DEFAULT_DURATION_MINUTES);
   // Random is the recommended default. Tone below is a separate setting and is
   // never set or changed by the interviewer choice.
   const [interviewer, setInterviewer] = useState(DEFAULT_INTERVIEWER_CHOICE);
@@ -424,7 +423,7 @@ export function CandidateDetail() {
         candidateId: candidate.id,
         durationMinutes,
         language: 'en',
-        modules: MODULES,
+        modules: INTERVIEW_MODULES,
         interviewer,
         persona: { tone },
         // The AI interview always runs in Questor's own browser room; meeting
@@ -724,6 +723,10 @@ function CandidateProfileTab({
         <div className="grid cols-3">
           <Stat label="Email" value={candidate.email} />
           <Stat label="Phone" value={candidate.phone || '—'} />
+          {candidate.linkedinUrl && (
+            // Stored only as an https linkedin.com address (server/src/engines/resumeContact.ts).
+            <Stat label="LinkedIn" value={<a className="link-action" href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer">Profile<Icon name="arrow-right" size={14} /></a>} />
+          )}
           <Stat label="Applied role" value={role ? `${role.title}${role.level ? ` · ${role.level}` : ''}` : 'Role not available'} />
         </div>
         {analysis?.profileVersion && (

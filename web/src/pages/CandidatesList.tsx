@@ -183,7 +183,12 @@ export function CandidatesList() {
       <PageHeader
         icon="candidates"
         title="Candidates"
-        actions={mayAdd ? <Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link> : undefined}
+        actions={mayAdd ? (
+          <>
+            <Link className="btn secondary" to="/candidates/import"><Icon name="resume-upload" size={16} />Add candidates</Link>
+            <Link className="btn secondary" to="/candidates/new"><Icon name="add-candidate" size={16} />Add candidate</Link>
+          </>
+        ) : undefined}
       />
 
       {paged.error && <Banner kind="error">{paged.error}</Banner>}
