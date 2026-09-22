@@ -5,6 +5,7 @@ import { Icon } from './Icon';
 import { formatDateTime } from './dateFormat';
 import { toneToBadgeKind } from './statusModel';
 import { consentSummary, requestAction, sendAction, type FeedbackConsent } from './feedbackConsentModel';
+import { useToast } from './Toast';
 
 /**
  * Written feedback for the candidate: draft, approve, send — and whether the
@@ -39,7 +40,7 @@ export function CandidateFeedbackPanel({ assessmentId }: { assessmentId: string 
   const [text, setText] = useState('');
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const toast = useToast();
 
   const load = useCallback(async () => {
     try {
@@ -57,11 +58,10 @@ export function CandidateFeedbackPanel({ assessmentId }: { assessmentId: string 
   const run = async (action: Exclude<Busy, null>, call: () => Promise<unknown>, done: string) => {
     setBusy(action);
     setError('');
-    setNotice('');
     try {
       await call();
       await load();
-      setNotice(done);
+      toast.show(done);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'That did not work. Please try again.');
     } finally {
@@ -110,7 +110,6 @@ export function CandidateFeedbackPanel({ assessmentId }: { assessmentId: string 
       {ask.note && <p className="muted small">{ask.note}</p>}
 
       {error && <Banner kind="error">{error}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
 
       {sent ? (
         <>

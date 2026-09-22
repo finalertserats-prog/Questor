@@ -7,6 +7,7 @@ import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { applicantIntent, joinEmailCaution, withoutSignup, type SignupMode } from '../components/signupModel';
 import { formatDate } from '../components/dateFormat';
+import { useToast } from '../components/Toast';
 
 interface PendingSignup {
   id: string;
@@ -31,7 +32,7 @@ export function SignupQueue() {
   // A failed read is not an empty queue: "No requests waiting" over a failed
   // load told an admin nobody was waiting when they could not know that.
   const [loadFailed, setLoadFailed] = useState(false);
-  const [notice, setNotice] = useState('');
+  const toast = useToast();
   const [actingId, setActingId] = useState<string | null>(null);
   const [pendingDeclineId, setPendingDeclineId] = useState<string | null>(null);
 
@@ -60,7 +61,7 @@ export function SignupQueue() {
       await api.post(`/admin/signups/${signup.id}/${decision}`);
       setSignups((current) => withoutSignup(current, signup.id));
       setPendingDeclineId(null);
-      setNotice(`${signup.name}'s request was ${decision === 'approve' ? 'approved' : 'declined'}.`);
+      toast.show(`${signup.name}'s request was ${decision === 'approve' ? 'approved' : 'declined'}.`);
       // Re-read rather than trust the row we just removed: the same request can
       // be decided from the emailed link, or by another admin, while this page
       // is open, and the queue is the thing that has to be right.
@@ -88,7 +89,6 @@ export function SignupQueue() {
       />
 
       {error && <Banner kind="error">{error}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
 
       <div className="card">
         {signups.length === 0 && loadFailed ? (

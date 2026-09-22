@@ -20,6 +20,7 @@ import {
 } from '../components/webhookSignatureModel';
 import { useAuth, type Tenant } from '../auth';
 import { canManageAdmin } from '../components/profileMenuModel';
+import { useToast } from '../components/Toast';
 
 interface ProviderComponent { provider: string; enabled?: boolean; configured?: boolean; mode?: string; notes?: string; }
 interface Providers {
@@ -71,15 +72,14 @@ export function Admin() {
   const [hookUrl, setHookUrl] = useState('');
   const [hookEvents, setHookEvents] = useState('*');
   const [creating, setCreating] = useState(false);
-  const [hookNotice, setHookNotice] = useState('');
   // The clipboard has its own outcome, and needs its own line to say it in.
   const [copyNotice, setCopyNotice] = useState('');
+  const toast = useToast();
 
   const [orgName, setOrgName] = useState('');
   const [slug, setSlug] = useState('');
   const [savedSlug, setSavedSlug] = useState<string | null>(null);
   const [savingSlug, setSavingSlug] = useState(false);
-  const [slugNotice, setSlugNotice] = useState('');
 
   const applyWebhooks = (d: WebhookList) => {
     setWebhooks(d.webhooks ?? []);
@@ -147,7 +147,7 @@ export function Admin() {
       setHookUrl('');
       setHookEvents('*');
       await loadWebhooks();
-      setHookNotice('Webhook added.');
+      toast.show('Webhook added.');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not add the webhook.');
     } finally {
@@ -157,13 +157,12 @@ export function Admin() {
 
   const setLegacySignature = async (hook: Webhook, sendLegacySignature: boolean) => {
     setError('');
-    setHookNotice('');
     setConfirmV1Off(null);
     setSavingHook(hook.id);
     try {
       await api.patch(`/admin/webhooks/${hook.id}`, { sendLegacySignature });
       await loadWebhooks();
-      setHookNotice(sendLegacySignature
+      toast.show(sendLegacySignature
         ? 'The legacy v1 signature is back on for that webhook.'
         : 'That webhook now receives the v2 signature only.');
     } catch (err: unknown) {
@@ -176,13 +175,12 @@ export function Admin() {
   const saveSlug = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setSlugNotice('');
     setSavingSlug(true);
     try {
       const { org } = await api.patch<{ org: { name: string; slug: string } }>('/admin/org', { slug: slug.trim().toLowerCase() });
       setSavedSlug(org.slug);
       setSlug(org.slug);
-      setSlugNotice('Sign-in link saved.');
+      toast.show('Sign-in link saved.');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not save the sign-in link.');
     } finally {
@@ -199,7 +197,7 @@ export function Admin() {
     setCopyNotice('');
     try {
       await navigator.clipboard.writeText(orgLink);
-      setCopyNotice('Link copied.');
+      toast.show('Link copied.');
     } catch {
       setCopyNotice('We could not reach your clipboard — select the link above and copy it yourself.');
     }
@@ -264,7 +262,6 @@ export function Admin() {
             <button type="button" className="btn secondary sm" onClick={() => setOrgAttempt((n) => n + 1)}>Try again</button>
           </Banner>
         )}
-        {slugNotice && <Banner kind="ok">{slugNotice}</Banner>}
         {copyNotice && <Banner kind="info">{copyNotice}</Banner>}
         {orgLink && (
           <div className="row" style={{ gap: 10, marginBottom: 12 }}>
@@ -428,7 +425,6 @@ export function Admin() {
       <div className="card">
         <h2>Webhooks</h2>
         {panelErrors.webhooks && <Banner kind="error">Webhooks did not load. {panelErrors.webhooks}</Banner>}
-        {hookNotice && <Banner kind="ok">{hookNotice}</Banner>}
         {webhooks.length === 0 ? <div className="muted small">No webhooks configured.</div> : (
           <div className="table-scroll" tabIndex={0} role="region" aria-label="Webhooks">
           <table>
@@ -497,7 +493,7 @@ export function Admin() {
               id="hook-url"
               type="url"
               value={hookUrl}
-              onChange={(e) => { setHookUrl(e.target.value); setHookNotice(''); }}
+              onChange={(e) => { setHookUrl(e.target.value); }}
               placeholder="https://example.com/hook"
               required
             />

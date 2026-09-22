@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from './ui';
 import { Icon } from './Icon';
+import { useToast } from './Toast';
 import { roleDisplayLabels } from './roleLabelModel';
 import {
   COPIED_DETAILS_NOTE,
@@ -22,9 +23,9 @@ interface Role extends ReuseRole {
   readonly createdAt?: string | null;
 }
 
-type Outcome =
-  | { readonly kind: 'created'; readonly candidateId: string; readonly roleLabel: string }
-  | { readonly kind: 'exists'; readonly candidateId: string | null };
+// Only the refusal stays in the panel; a new application is confirmed in a
+// toast and the panel closes, since the list behind it now shows the row.
+type Outcome = { readonly kind: 'exists'; readonly candidateId: string | null };
 
 /**
  * "Set up for another role", from the candidates list or a candidate's page:
@@ -47,6 +48,7 @@ export function SetUpForAnotherRole(props: {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [outcome, setOutcome] = useState<Outcome | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -79,8 +81,12 @@ export function SetUpForAnotherRole(props: {
     setError('');
     try {
       const { candidate } = await api.post<{ candidate: { id: string } }>(`/candidates/${person.candidateId}/apply`, { roleId });
-      setOutcome({ kind: 'created', candidateId: candidate.id, roleLabel: labels[roles.findIndex((r) => r.id === roleId)] ?? 'the role' });
+      const roleLabel = labels[roles.findIndex((r) => r.id === roleId)] ?? 'the role';
+      toast.show(`${props.fullName} is now a candidate for ${roleLabel}.`, {
+        action: <Link className="link-action" to={`/candidates/${candidate.id}?tab=journey`}>Set up interview</Link>,
+      });
       props.onApplied?.();
+      props.onClose();
     } catch (err: unknown) {
       if (err instanceof ApiError && err.code === 'candidate_exists') {
         setOutcome({ kind: 'exists', candidateId: existingApplicationId(err) });
@@ -99,13 +105,6 @@ export function SetUpForAnotherRole(props: {
         <button type="button" className="btn secondary sm" onClick={props.onClose}><Icon name="close" size={14} />Close</button>
       </div>
       {error && <Banner kind="error">{error}</Banner>}
-      {outcome?.kind === 'created' && (
-        <Banner kind="ok">
-          {props.fullName} is now a candidate for {outcome.roleLabel}.{' '}
-          <Link className="link-action" to={`/candidates/${outcome.candidateId}?tab=journey`}><Icon name="schedule" size={15} />Set up interview now</Link>{' '}
-          <Link className="link-action" to={`/candidates/${outcome.candidateId}`}>Open the new application</Link>
-        </Banner>
-      )}
       {outcome?.kind === 'exists' && (
         <Banner kind="info">
           {props.fullName} is already a candidate for that role.{' '}

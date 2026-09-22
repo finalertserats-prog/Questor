@@ -6,6 +6,7 @@
 import { pickBrowserVoice } from './components/interviewerModel';
 import type { PreviewDeps, PreviewSource } from './components/voicePreviewModel';
 import { levelSpeechClip } from './levelSpeechClip';
+import { isNetworkFailure, NETWORK_MESSAGE } from './api/responseModel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const AnyWindow = window as any;
@@ -502,7 +503,14 @@ export async function speakNudge(token: string, index: number, voiceHint?: strin
 // interviewer's hint picks, just as the room would.
 
 async function fetchInterviewerPreview(interviewerId: string): Promise<PreviewSource> {
-  const res = await fetch(`/api/interviewers/${encodeURIComponent(interviewerId)}/preview`, { credentials: 'include' });
+  let res: Response;
+  try {
+    res = await fetch(`/api/interviewers/${encodeURIComponent(interviewerId)}/preview`, { credentials: 'include' });
+  } catch (err: unknown) {
+    // The browser's "Failed to fetch" would otherwise reach the page as is.
+    if (isNetworkFailure(err)) throw new Error(NETWORK_MESSAGE);
+    throw err;
+  }
   const text = decodeURIComponent(res.headers.get('X-Preview-Text') ?? '');
   const hint = res.headers.get('X-Voice-Hint') ?? '';
   // Levelled exactly as the room levels it, so HR hears what the candidate will.

@@ -54,6 +54,8 @@ import { FeedbackConsent } from './pages/FeedbackConsent';
 import { CatalogReview } from './pages/CatalogReview';
 import { LibraryAdmin } from './pages/LibraryAdmin';
 import { can } from './components/capabilityModel';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { isPublicPath } from './components/errorBoundaryModel';
 
 // Below this width the sidebar is an overlay drawer; above it, it is docked
 // beside the page. Kept in step with the breakpoint in styles/sidebar.css.
@@ -332,7 +334,12 @@ function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <main ref={mainRef} className="main">{tenant?.isDemo && tenant.sessionEndsAt && <DemoBanner endsAt={tenant.sessionEndsAt} />}{children}</main>
+      <main ref={mainRef} className="main">
+        {tenant?.isDemo && tenant.sessionEndsAt && <DemoBanner endsAt={tenant.sessionEndsAt} />}
+        {/* Per page, inside the shell: a page that throws keeps the sidebar and
+            every other page reachable. Keyed by the address so leaving clears it. */}
+        <ErrorBoundary scope="page" resetKey={location.pathname}>{children}</ErrorBoundary>
+      </main>
 
       {/* Outside <main>, which is inert while the drawer is open: a tour step
           that opens the drawer to point into it must stay reachable itself. */}
@@ -394,9 +401,20 @@ function PublicOrApp({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * Around every route, including the candidate-facing ones that have no shell:
+ * a fault there shows a way forward rather than a blank page. A candidate has
+ * no dashboard, so their pages offer only "Try again".
+ */
+function RouteBoundary({ children }: { children: React.ReactNode }) {
+  const { pathname } = useLocation();
+  return <ErrorBoundary scope="page" resetKey={pathname} homeHref={isPublicPath(pathname) ? null : '/'}>{children}</ErrorBoundary>;
+}
+
 export function App() {
   return (
     <TourProvider>
+    <RouteBoundary>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/o/:slug" element={<OrgLogin />} />
@@ -453,6 +471,7 @@ export function App() {
       <Route path="/contact" element={<Protected><Contact /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </RouteBoundary>
     </TourProvider>
   );
 }

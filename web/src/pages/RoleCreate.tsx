@@ -13,6 +13,7 @@ import { appendTechStack, jdOriginForSubmit, nextDraftState, previewLines, shoul
 import { TechStackEditor } from '../components/TechStackEditor';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
 import { useTechStackTools } from '../components/useTechStackTools';
+import { useToast } from '../components/Toast';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
@@ -50,6 +51,7 @@ export function RoleCreate() {
   const [techStack, setTechStack] = useState<readonly TechStackItem[]>([]);
   const techTools = useTechStackTools();
   const [notice, setNotice] = useState('');
+  const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [catalogError, setCatalogError] = useState('');
@@ -154,6 +156,7 @@ export function RoleCreate() {
         setSubmitting(false);
         return;
       }
+      toast.show('Role created.');
       nav(`/roles/${resp.role.id}`);
     } catch (err: unknown) {
       // "No ATS connected" is a setup step, not a failure; say who can take it.

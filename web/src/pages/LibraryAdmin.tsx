@@ -10,6 +10,7 @@ import { EntryReviewList, type ReviewAction } from '../components/library/EntryR
 import { EntryDetail } from '../components/library/EntryDetail';
 import { useLibraryAdminData } from '../components/library/useLibraryAdminData';
 import { decisionMessage, percent, stratumLabel, type EntryView } from '../components/library/libraryAdminModel';
+import { useToast } from '../components/Toast';
 
 type Notice = { readonly kind: 'ok' | 'info' | 'error'; readonly text: string };
 
@@ -25,6 +26,7 @@ export function LibraryAdmin() {
   const [busyIds, setBusyIds] = useState<ReadonlySet<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const toast = useToast();
 
   if (!isOperator) {
     return (
@@ -42,7 +44,7 @@ export function LibraryAdmin() {
     markBusy(entry.id, true);
     try {
       await api.post(`/library/admin/entries/${entry.id}/${action}`, action === 'reject' ? { reason: payload.reason ?? '' } : action === 'edit' ? { questionText: payload.questionText ?? '' } : {});
-      setNotice({ kind: 'ok', text: decisionMessage(action, true) });
+      toast.show(decisionMessage(action, true));
     } catch (err: unknown) {
       const apiErr = err instanceof ApiError ? err : null;
       setNotice({ kind: apiErr?.code === 'invalid_transition' ? 'info' : 'error', text: decisionMessage(action, false, apiErr?.code) });

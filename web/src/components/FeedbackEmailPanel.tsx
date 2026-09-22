@@ -4,6 +4,7 @@ import { Banner } from './ui';
 import { Icon } from './Icon';
 import { formatDateTime } from './dateFormat';
 import { feedbackEmailSummary, type FeedbackEmailState } from './feedbackEmailModel';
+import { useToast } from './Toast';
 
 /**
  * The candidate's automatic feedback email, on the assessment page: whether it
@@ -26,7 +27,7 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState<Busy>(null);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const toast = useToast();
   // The second copy is asked for in its own step, naming the risk, so nobody
   // sends one by pressing the same button they pressed a moment ago.
   const [confirmDuplicate, setConfirmDuplicate] = useState(false);
@@ -46,7 +47,6 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
   const askToSend = async () => {
     setBusy('preview');
     setError('');
-    setNotice('');
     try {
       const r = await api.post<{ preview: Preview }>(`/assessments/${assessmentId}/feedback-email/preview`, {});
       setPreview(r.preview);
@@ -69,7 +69,7 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
       setState(next);
       setPreview(null);
       setConfirmDuplicate(false);
-      if (next.email?.status === 'SENT') setNotice('Feedback sent to the candidate.');
+      if (next.email?.status === 'SENT') toast.show('Feedback sent to the candidate.');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'The feedback email could not be sent.');
       setPreview(null);
@@ -120,7 +120,6 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
       )}
 
       {error && <Banner kind="error">{error}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
 
       {preview ? (
         <div role="dialog" aria-labelledby="feedback-email-confirm-title" className="card" style={{ marginTop: 12 }}>

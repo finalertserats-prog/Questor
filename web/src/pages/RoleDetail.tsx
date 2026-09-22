@@ -27,6 +27,7 @@ import { CompetencyEditor } from '../components/scorecard/CompetencyEditor';
 import type { EditableCompetency } from '../components/scorecard/competencyEditModel';
 import { TechStackPanel } from '../components/TechStackPanel';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
+import { useToast } from '../components/Toast';
 
 type Competency = EditableCompetency;
 interface Profile {
@@ -63,7 +64,7 @@ export function RoleDetail() {
   // Hidden once the server says the archive endpoint is missing or not for
   // this user, rather than offering a button that always fails.
   const [archiveUnavailable, setArchiveUnavailable] = useState(false);
-  const [notice, setNotice] = useState('');
+  const toast = useToast();
   const [newFlag, setNewFlag] = useState('');
   const [flagProblem, setFlagProblem] = useState('');
 
@@ -104,7 +105,6 @@ export function RoleDetail() {
     setSaved('');
     setLoadError('');
     setActionError('');
-    setNotice('');
     setNewFlag('');
     setFlagProblem('');
     setArchiveUnavailable(false);
@@ -176,10 +176,9 @@ export function RoleDetail() {
     if (weightsError || !dirty) return;
     setSaving(true);
     setActionError('');
-    setNotice('');
     try {
       await api.put<{ scorecard: Scorecard }>(`/roles/${id}/scorecard`, { profile });
-      setNotice('Changes saved.');
+      toast.show('Changes saved.');
       load(false);
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : 'Could not save the scorecard.');
@@ -193,7 +192,6 @@ export function RoleDetail() {
     approvingRef.current = true;
     setApproving(true);
     setActionError('');
-    setNotice('');
     try {
       // Names the version on screen, so a colleague's newer save is not what gets approved.
       await api.post<{ scorecard: Scorecard }>(`/roles/${id}/approve`, approvePayload(scorecard));
@@ -210,10 +208,9 @@ export function RoleDetail() {
     if (archiving) return;
     setArchiving(true);
     setActionError('');
-    setNotice('');
     try {
       await api.patch(`/roles/${id}/status`, { status: archive.next });
-      setNotice(archive.next === 'archived'
+      toast.show(archive.next === 'archived'
         ? 'Role archived. It no longer shows in the active roles list.'
         : 'Role restored to the active roles list.');
       load(false);
@@ -279,7 +276,6 @@ export function RoleDetail() {
       />
 
       {actionError && <Banner kind="error">{actionError}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
       {dirty && <p className="muted small">Unsaved changes — they are lost if you leave this page.</p>}
       {approved && !isRoleOpen(role.status) && (
         <Banner kind="info">This role is archived. Restore it to add candidates, interview or change the scorecard.</Banner>
@@ -322,7 +318,7 @@ export function RoleDetail() {
         roleId={role.id}
         initial={role.techStack}
         locked={!isRoleOpen(role.status)}
-        onStored={(message) => { setNotice(message); setActionError(''); load(false); }}
+        onStored={(message) => { toast.show(message); setActionError(''); load(false); }}
       />
 
       <CompetencyEditor
@@ -334,7 +330,7 @@ export function RoleDetail() {
         dirty={dirty}
         locked={!isRoleOpen(role.status)}
         onChange={updateCompetencies}
-        onStored={(message) => { setNotice(message); setActionError(''); load(false); }}
+        onStored={(message) => { toast.show(message); setActionError(''); load(false); }}
       />
 
       <div className="card">

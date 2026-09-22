@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../api/client';
 import { Badge, Banner } from './ui';
 import type { EnvPresence } from './connectorGuides';
+import { useToast } from './Toast';
 
 export interface RoundProviderOption {
   provider: string;
@@ -27,6 +28,7 @@ export function RoundMeetingSetting({ status, onSaved }: { status: RoundMeetingS
   const [choice, setChoice] = useState('');
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const toast = useToast();
 
   if (!status) return null;
   const selected = choice || status.provider;
@@ -38,7 +40,7 @@ export function RoundMeetingSetting({ status, onSaved }: { status: RoundMeetingS
     setNotice(null);
     try {
       await api.put('/admin/policy', { policy: { roundMeetingProvider: selected } });
-      setNotice({ ok: true, text: `New human rounds will use ${option?.label ?? selected}.` });
+      toast.show(`New human rounds will use ${option?.label ?? selected}.`);
       setChoice('');
       onSaved();
     } catch (err: unknown) {
@@ -79,7 +81,7 @@ export function RoundMeetingSetting({ status, onSaved }: { status: RoundMeetingS
           . Until then, recruiters are asked to paste links by hand.
         </p>
       )}
-      {notice && <Banner kind={notice.ok ? 'ok' : 'error'}>{notice.text}</Banner>}
+      {notice && !notice.ok && <Banner kind="error">{notice.text}</Banner>}
     </form>
   );
 }

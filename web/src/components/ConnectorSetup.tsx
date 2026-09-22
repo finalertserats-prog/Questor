@@ -5,6 +5,7 @@ import {
   callbackUrlsFor, envSnippet, guideFor, RESTART_NOTE, statusLabel,
   type ConnectorGuide, type EnvPresence,
 } from './connectorGuides';
+import { useToast } from './Toast';
 
 export interface MeetingAdapter {
   provider: string;
@@ -106,6 +107,7 @@ export function MeetingAdapterSetup(
 ) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [tests, setTests] = useState<Readonly<Record<string, TestState>>>({});
+  const toast = useToast();
 
   const toggleGuide = useCallback((id: string) => {
     setOpenId((current) => (current === id ? null : id));
@@ -115,12 +117,18 @@ export function MeetingAdapterSetup(
     setTests((prev) => ({ ...prev, [id]: 'pending' }));
     try {
       const result = await api.post<TestResult>(`/admin/connectors/meeting/${encodeURIComponent(id)}/test`, {});
-      setTests((prev) => ({ ...prev, [id]: { ok: result.ok === true, message: result.message } }));
+      if (result.ok === true) {
+        // A passing test is a confirmation; a failing one stays beside its row.
+        toast.show(result.message);
+        setTests((prev) => Object.fromEntries(Object.entries(prev).filter(([key]) => key !== id)));
+      } else {
+        setTests((prev) => ({ ...prev, [id]: { ok: false, message: result.message } }));
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'The connection test could not be run.';
       setTests((prev) => ({ ...prev, [id]: { ok: false, message } }));
     }
-  }, []);
+  }, [toast]);
 
   return (
     <div className="table-scroll" tabIndex={0} role="region" aria-label="Meeting connectors">
@@ -174,11 +182,11 @@ export function MeetingAdapterSetup(
                   </div>
                 </td>
               </tr>
-              {test && test !== 'pending' && (
+              {test && test !== 'pending' && !test.ok && (
                 <tr>
                   {/* The result arrives after an async call, so it is announced. */}
                   <td colSpan={ADAPTER_COLUMNS} role="status" aria-live="polite">
-                    <Banner kind={test.ok ? 'ok' : 'error'}>{test.message}</Banner>
+                    <Banner kind="error">{test.message}</Banner>
                   </td>
                 </tr>
               )}

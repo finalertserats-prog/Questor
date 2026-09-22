@@ -25,6 +25,7 @@ import { InterviewerSelector } from '../components/InterviewerSelector';
 import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
 import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
 import { EraseCandidateCard } from '../components/EraseCandidateCard';
+import { useToast } from '../components/Toast';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -156,6 +157,7 @@ export function CandidateDetail() {
   const [reuseOpen, setReuseOpen] = useState(false);
   // Set once this application has been erased: the page says so instead.
   const [erasedNotice, setErasedNotice] = useState<string | null>(null);
+  const toast = useToast();
   const [data, setData] = useState<CandidateResp | null>(null);
   // Scheduled times are shown on the clock they were booked on (see formatScheduled).
   const orgZone = useOrgTimeZone();
@@ -268,7 +270,9 @@ export function CandidateDetail() {
       .then((resp) => { if (!cancelled) { setProfileAnalysis(resp); setProfileAnalysisError(''); } })
       .catch((err: unknown) => { if (!cancelled) setProfileAnalysisError(err instanceof Error ? err.message : 'Could not load candidate profile analysis.'); });
 
-    api.get<{ sessions: SessionSummary[] }>('/interviews')
+    // Only this candidate's sessions, and all of them: the list is paged now,
+    // and a candidate has far fewer than a page of the largest size.
+    api.get<{ sessions: SessionSummary[] }>(`/interviews?candidateId=${encodeURIComponent(id ?? '')}&pageSize=100`)
       .then((d) => {
         if (cancelled) return;
         setSessions(Object.fromEntries((d.sessions ?? []).map((s) => [s.id, s])));
@@ -420,6 +424,7 @@ export function CandidateDetail() {
         humanReviewRequired: true,
         approve: true,
       });
+      toast.show('Interview set up.');
       nav(`/interviews/${resp.session.id}`);
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Could not create this interview.');

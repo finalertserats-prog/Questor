@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { interpretResponse, TIMEOUT_MESSAGE, UNREADABLE_MESSAGE } from '../src/api/responseModel';
+import { interpretResponse, isNetworkFailure, NETWORK_MESSAGE, TIMEOUT_MESSAGE, UNREADABLE_MESSAGE } from '../src/api/responseModel';
 
 const ok = (text: string) => interpretResponse({ ok: true, status: 200, statusText: 'OK', text });
 
@@ -89,5 +89,19 @@ describe('interpretResponse keeps the application a duplicate refusal names', ()
   it('leaves the candidateId out when the server sent none', () => {
     const out = interpretResponse({ ok: false, status: 409, statusText: 'Conflict', text: '{"error":"No ATS.","code":"ATS_NOT_CONNECTED"}' });
     expect('candidateId' in out).toBe(false);
+  });
+});
+
+describe('a request that never reached the server', () => {
+  it('is recognised from the TypeError every browser throws', () => {
+    expect(isNetworkFailure(new TypeError('Failed to fetch'))).toBe(true);
+  });
+
+  it('is not confused with any other failure', () => {
+    expect(isNetworkFailure(new Error('Server said no'))).toBe(false);
+  });
+
+  it('is described in plain words, not the browser\'s', () => {
+    expect(NETWORK_MESSAGE).not.toMatch(/fetch/i);
   });
 });

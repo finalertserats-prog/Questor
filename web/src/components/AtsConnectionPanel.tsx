@@ -13,6 +13,7 @@ import {
   type AtsForm,
   type AtsProvider,
 } from './atsModel';
+import { useToast } from './Toast';
 
 type Busy = 'save' | 'test' | 'disconnect' | null;
 
@@ -32,6 +33,7 @@ export function AtsConnectionPanel() {
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState<Busy>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const toast = useToast();
 
   const adopt = useCallback((next: AtsConnectionView | null) => {
     setConn(next);
@@ -59,7 +61,7 @@ export function AtsConnectionPanel() {
     try {
       const d = await api.put<{ connection: AtsConnectionView }>('/admin/ats', savePayload(form));
       adopt(d.connection);
-      setNotice({ kind: 'ok', text: 'Saved. Test the connection to make sure your ATS accepts it.' });
+      toast.show('Saved. Test the connection to make sure your ATS accepts it.');
     } catch (err: unknown) {
       setNotice({ kind: 'error', text: errorText(err, 'Could not save the ATS connection.') });
     } finally {
@@ -74,7 +76,8 @@ export function AtsConnectionPanel() {
     try {
       const d = await api.post<{ ok: boolean; message: string; connection: AtsConnectionView | null }>('/admin/ats/test', {});
       setConn(d.connection);
-      setNotice({ kind: d.ok ? 'ok' : 'error', text: d.message });
+      if (d.ok) toast.show(d.message);
+      else setNotice({ kind: 'error', text: d.message });
     } catch (err: unknown) {
       setNotice({ kind: 'error', text: errorText(err, 'The connection test could not be run.') });
     } finally {
@@ -90,7 +93,7 @@ export function AtsConnectionPanel() {
     try {
       const d = await api.del<{ connection: AtsConnectionView }>('/admin/ats');
       adopt(d.connection);
-      setNotice({ kind: 'info', text: 'Disconnected. The saved key has been deleted.' });
+      toast.show('Disconnected. The saved key has been deleted.');
     } catch (err: unknown) {
       setNotice({ kind: 'error', text: errorText(err, 'Could not disconnect.') });
     } finally {

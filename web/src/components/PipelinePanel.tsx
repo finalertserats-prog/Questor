@@ -22,6 +22,7 @@ import {
   meetingLinkProblem, safeMeetingUrl, scheduleHint,
   type CandidateNotice, type MeetingOutcome, type MeetingProviderInfo, type RoundMeetingView,
 } from './roundMeetingModel';
+import { useToast } from './Toast';
 
 interface Round {
   id: string;
@@ -148,6 +149,7 @@ export function PipelinePanel(
   const [durationMinutes, setDurationMinutes] = useState<number>(60);
   const [meetingNotice, setMeetingNotice] = useState<MeetingOutcome | null>(null);
   const [candidateNotice, setCandidateNotice] = useState<CandidateNotice | null>(null);
+  const toast = useToast();
   const [meetingProvider, setMeetingProvider] = useState<MeetingProviderInfo | null>(null);
   // Set while a candidacy-ending outcome waits to be confirmed.
   const [pendingDecision, setPendingDecision] = useState<Decision | null>(null);
@@ -158,7 +160,6 @@ export function PipelinePanel(
   // What the last decision did: an approval moves the candidate on, and the
   // person who recorded it should be told so rather than left to spot the
   // stage track changing.
-  const [decisionNotice, setDecisionNotice] = useState('');
   // Each action needs the capability its route checks; without it the panel
   // says who can, rather than offering a form that ends in "permission denied".
   const { user } = useAuth();
@@ -293,9 +294,8 @@ export function PipelinePanel(
       ...(human ? { durationMinutes } : {}),
       ...(human && link ? { meetingUrl: link } : {}),
     }).then((resp) => {
-      setSchedulingNotice(resp.notification ?? null);
-      setMeetingNotice(resp.meeting ?? null);
-      setCandidateNotice(resp.candidateNotice ?? null);
+      noteScheduling(resp.notification ?? null);
+      reportRound(resp.meeting ?? null, resp.candidateNotice ?? null);
       setRoundDraft((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone }));
       setInterviewers('');
       setSessionId('');
@@ -303,9 +303,24 @@ export function PipelinePanel(
     }));
   };
 
+  // What went through is confirmed in a toast; only what still needs someone
+  // (a meeting without a link, a candidate not told) stays on the page.
   const reportRound = (outcome: MeetingOutcome | null, candidate?: CandidateNotice | null) => {
-    setMeetingNotice(outcome);
-    setCandidateNotice(candidate ?? null);
+    const meetingUrl = outcome?.ok ? safeMeetingUrl(outcome.url) : null;
+    if (outcome?.ok) {
+      toast.show(outcome.message, meetingUrl ? { action: <a href={meetingUrl} target="_blank" rel="noopener noreferrer">Join link</a> } : undefined);
+    }
+    setMeetingNotice(outcome && !outcome.ok ? outcome : null);
+    if (candidate?.sent) toast.show(candidate.note, { testId: 'round-candidate-notice' });
+    setCandidateNotice(candidate && !candidate.sent ? candidate : null);
+  };
+
+  const noteScheduling = (notice: SchedulingNotice | null) => {
+    const link = notice?.delivered ? safeMeetingUrl(notice.link) : null;
+    if (notice?.delivered) {
+      toast.show(`Round scheduled. ${notice.deliveryNote}`, link ? { action: <a className="break-anywhere" href={link} target="_blank" rel="noopener noreferrer">{notice.link}</a> } : undefined);
+    }
+    setSchedulingNotice(notice && !notice.delivered ? notice : null);
   };
 
   const completeRound = (e: React.FormEvent) => {
@@ -331,12 +346,9 @@ export function PipelinePanel(
       setReason('');
       setPendingDecision(null);
       const effect = resp.effect;
-      if (effect?.kind === 'advance') {
-        setDecisionNotice(effect.final
-          ? `${candidateName} is finalised as ${labelFor(effect.to)}.`
-          : `${candidateName} moves to ${labelFor(effect.to)}.`);
-      } else {
-        setDecisionNotice('');
+      // A final approval closes the pipeline, whose panel then says so itself.
+      if (effect?.kind === 'advance' && !effect.final) {
+        toast.show(`${candidateName} moves to ${labelFor(effect.to)}.`, { testId: 'decision-notice' });
       }
     }));
   };
@@ -380,12 +392,9 @@ export function PipelinePanel(
         <StatusBadge kind="pipeline" value={pipeline.status} />
       </div>
       {error && <Banner kind="error">{error}</Banner>}
-      {decisionNotice && pipeline.status === 'ACTIVE' && (
-        <Banner kind="ok"><span data-testid="decision-notice">{decisionNotice}</span></Banner>
-      )}
 
       {meetingNotice && (
-        <Banner kind={meetingNotice.ok ? 'ok' : 'error'}>
+        <Banner kind="error">
           {meetingNotice.message}{' '}
           {safeMeetingUrl(meetingNotice.url) && (
             <a href={safeMeetingUrl(meetingNotice.url) ?? undefined} target="_blank" rel="noopener noreferrer">Join link</a>
@@ -395,13 +404,13 @@ export function PipelinePanel(
       )}
 
       {candidateNotice && (
-        <Banner kind={candidateNotice.sent ? 'ok' : 'info'}>
+        <Banner kind="info">
           <span data-testid="round-candidate-notice">{candidateNotice.note}</span>
         </Banner>
       )}
 
       {schedulingNotice && (
-        <Banner kind={schedulingNotice.delivered ? 'ok' : 'info'}>
+        <Banner kind="info">
           Round scheduled. {schedulingNotice.deliveryNote}{' '}
           {safeMeetingUrl(schedulingNotice.link)
             ? <a className="break-anywhere" href={safeMeetingUrl(schedulingNotice.link) ?? undefined} target="_blank" rel="noopener noreferrer">{schedulingNotice.link}</a>

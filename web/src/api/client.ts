@@ -7,7 +7,7 @@
 // a header on state-changing calls — the double-submit pattern the server
 // enforces on cookie-authenticated writes.
 
-import { interpretResponse, TIMEOUT_MESSAGE } from './responseModel';
+import { interpretResponse, isNetworkFailure, NETWORK_MESSAGE, TIMEOUT_MESSAGE } from './responseModel';
 
 const CSRF_COOKIE = 'questor_csrf';
 // Long enough for the slowest thing the API does honestly (an LLM-backed
@@ -112,6 +112,9 @@ async function req<T>(method: string, path: string, body?: unknown, isForm = fal
     });
   } catch (err: unknown) {
     if (isAbort(err)) throw new ApiError(0, TIMEOUT_MESSAGE);
+    // Still an ApiError with status 0, so callers that tell "no answer" from a
+    // refusal keep working; only the wording the person sees changes.
+    if (isNetworkFailure(err)) throw new ApiError(0, NETWORK_MESSAGE);
     throw err;
   }
   const text = await res.text();

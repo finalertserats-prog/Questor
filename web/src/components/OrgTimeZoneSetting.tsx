@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { Banner } from './ui';
 import { listTimeZones, timeZoneOptionLabel } from './zonedScheduleModel';
 import { orgTimeZoneField, orgTimeZonePatch, type OrgTimeZoneField } from './orgTimeZoneModel';
+import { useToast } from './Toast';
 
 /**
  * The zone the organisation works in: the scheduling picker starts on it, and
@@ -19,6 +20,7 @@ export function OrgTimeZoneSetting() {
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +49,7 @@ export function OrgTimeZoneSetting() {
       const current = orgTimeZoneField(saved.policy ?? {});
       setField(current);
       setDraft(current.zone);
-      setNotice({ ok: true, text: `Saved. New times are shown in ${current.zone}.` });
+      toast.show(`Saved. New times are shown in ${current.zone}.`);
     } catch (err: unknown) {
       setNotice({ ok: false, text: err instanceof Error ? err.message : 'The setting could not be saved.' });
     } finally {
@@ -90,7 +92,7 @@ export function OrgTimeZoneSetting() {
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>
-          {notice && <Banner kind={notice.ok ? 'ok' : 'error'}>{notice.text}</Banner>}
+          {notice && !notice.ok && <Banner kind="error">{notice.text}</Banner>}
         </form>
       )}
     </div>

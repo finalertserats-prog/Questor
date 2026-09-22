@@ -16,6 +16,7 @@ import {
   BULK_MAX, bulkOutcome, runNowDisabled, decisionErrorMessage, DEFAULT_CATALOG_REVIEW_FILTERS, hasActiveFilters, paginationLabel, selectablePendingIds,
   toggleAll, toggleSelection, type BulkItemResult, type CatalogProposalView, type CatalogReviewFilters,
 } from '../components/catalogReviewModel';
+import { useToast } from '../components/Toast';
 
 type Notice = { readonly kind: 'ok' | 'info' | 'error'; readonly text: string; readonly details?: readonly string[] };
 type BulkAction = 'approve' | 'reject';
@@ -40,6 +41,7 @@ export function CatalogReview() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [starting, setStarting] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     if (searchDraft.trim() === filters.q) return undefined;
@@ -70,7 +72,7 @@ export function CatalogReview() {
     try {
       // Approve names the version on screen, so an edit made meanwhile is not approved blind.
       await api.post(`/catalog-review/proposals/${proposal.id}/${action}`, action === 'approve' && proposal.updatedAt ? { updatedAt: proposal.updatedAt } : {});
-      setNotice({ kind: 'ok', text: action === 'approve' ? `Approved "${proposal.title}". It is now in the shared catalog.` : `Rejected "${proposal.title}".` });
+      toast.show(action === 'approve' ? `Approved "${proposal.title}". It is now in the shared catalog.` : `Rejected "${proposal.title}".`);
     } catch (err: unknown) {
       const apiErr = err instanceof ApiError ? err : null;
       setNotice({ kind: apiErr?.code === 'superseded' || apiErr?.code === 'changed' ? 'info' : 'error', text: decisionErrorMessage({ status: apiErr?.status, code: apiErr?.code, message: err instanceof Error ? err.message : 'Could not record that decision.' }, proposal.title) });
@@ -86,7 +88,7 @@ export function CatalogReview() {
     try {
       await api.patch(`/catalog-review/proposals/${proposal.id}`, patch);
       setEditingId(null);
-      setNotice({ kind: 'ok', text: `Saved changes to "${typeof patch.title === 'string' ? patch.title : proposal.title}".` });
+      toast.show(`Saved changes to "${typeof patch.title === 'string' ? patch.title : proposal.title}".`);
       await data.loadProposals();
       return true;
     } catch (err: unknown) {
@@ -103,7 +105,9 @@ export function CatalogReview() {
     try {
       const res = await api.post<{ results: BulkItemResult[] }>('/catalog-review/proposals/bulk', { ids, action });
       const outcome = bulkOutcome(res.results, titles, action);
-      setNotice({ kind: outcome.failures.length > 0 ? 'info' : 'ok', text: outcome.message, details: outcome.failures });
+      // Partial failures name what did not go through, so they stay on the page.
+      if (outcome.failures.length > 0) setNotice({ kind: 'info', text: outcome.message, details: outcome.failures });
+      else toast.show(outcome.message);
       setSelected(new Set());
     } catch (err: unknown) {
       setNotice({ kind: 'error', text: err instanceof Error ? err.message : 'The bulk action failed. Nothing was changed.' });
@@ -118,7 +122,7 @@ export function CatalogReview() {
     setStarting(true);
     try {
       await api.post('/catalog-review/runs', {});
-      setNotice({ kind: 'ok', text: 'Catalog refresh started. It runs in the background; this page updates when it finishes.' });
+      toast.show('Catalog refresh started. It runs in the background; this page updates when it finishes.');
     } catch (err: unknown) {
       const apiErr = err instanceof ApiError ? err : null;
       const text = apiErr?.code === 'too_soon' ? decisionErrorMessage({ code: 'too_soon', message: apiErr.message }, 'Run now')

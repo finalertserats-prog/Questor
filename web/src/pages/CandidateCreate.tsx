@@ -32,6 +32,7 @@ import {
   type CandidateSource,
   type ImportResult,
 } from '../components/candidateImportModel';
+import { useToast } from '../components/Toast';
 
 interface Role {
   id: string; title: string; level: string; status: string;
@@ -51,6 +52,7 @@ export function CandidateCreate() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState<{ text: string; candidateId: string; linkText?: string } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const toast = useToast();
 
   const [source, setSource] = useState<CandidateSource>('manual');
   const [roleId, setRoleId] = useState('');
@@ -113,6 +115,7 @@ export function CandidateCreate() {
     setSubmitting(true);
     try {
       const { candidate } = await api.post<{ candidate: { id: string } }>(`/candidates/${person.candidateId}/apply`, { roleId });
+      toast.show(`${person.fullName} is now a candidate for this role.`);
       nav(`/candidates/${candidate.id}`);
     } catch (err: unknown) {
       setError(applyFailureMessage(err));
@@ -171,6 +174,7 @@ export function CandidateCreate() {
     }
     try {
       if (withResume) await uploadResume(record.id, resume);
+      toast.show(`${record.name || 'Candidate'} added.`);
       nav(`/candidates/${record.id}`);
     } catch (err: unknown) {
       setError(resumeUploadMessage(err));

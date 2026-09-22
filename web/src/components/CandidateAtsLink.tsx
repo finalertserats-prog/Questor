@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { Banner } from './ui';
 import { Icon } from './Icon';
 import { isAtsId } from './atsModel';
+import { useToast } from './Toast';
 
 interface LinkView { externalCandidateId: string; source: string; createdAt: string }
 interface LinkResp { connected: boolean; link: LinkView | null }
@@ -21,6 +22,7 @@ export function CandidateAtsLink({ candidateId }: { candidateId: string }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  const toast = useToast();
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +44,7 @@ export function CandidateAtsLink({ candidateId }: { candidateId: string }) {
       const d = await api.put<{ link: LinkView }>(`/candidates/${encodeURIComponent(candidateId)}/ats-link`, { externalCandidateId: trimmed });
       setData((prev) => ({ connected: prev?.connected ?? true, link: d.link }));
       setDraft('');
-      setNotice({ kind: 'ok', text: 'Linked. Exports for this candidate now go to that ATS record.' });
+      toast.show('Linked. Exports for this candidate now go to that ATS record.');
     } catch (err: unknown) {
       setNotice({ kind: 'error', text: errorText(err, 'Could not link this candidate.') });
     } finally {
@@ -57,7 +59,7 @@ export function CandidateAtsLink({ candidateId }: { candidateId: string }) {
     try {
       await api.del(`/candidates/${encodeURIComponent(candidateId)}/ats-link`);
       setData((prev) => ({ connected: prev?.connected ?? false, link: null }));
-      setNotice({ kind: 'ok', text: 'Link removed.' });
+      toast.show('Link removed.');
     } catch (err: unknown) {
       setNotice({ kind: 'error', text: errorText(err, 'Could not remove the link.') });
     } finally {

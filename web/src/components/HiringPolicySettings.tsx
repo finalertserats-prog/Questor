@@ -5,6 +5,7 @@ import {
   HIRING_POLICY_TOGGLES, hiringPolicySwitches, policyPatch, reviewWindowField, reviewWindowPatch,
   type HiringPolicyKey, type HiringPolicySwitches,
 } from './hiringPolicyModel';
+import { useToast } from './Toast';
 
 /**
  * The organisation's switches for what happens once an interview is over:
@@ -16,6 +17,7 @@ export function HiringPolicySettings() {
   const [switches, setSwitches] = useState<HiringPolicySwitches | null>(null);
   const [saving, setSaving] = useState<HiringPolicyKey | 'window' | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+  const toast = useToast();
   const [loadError, setLoadError] = useState('');
   const [windowHours, setWindowHours] = useState('');
 
@@ -43,7 +45,7 @@ export function HiringPolicySettings() {
     try {
       const saved = await api.put<{ policy: Record<string, unknown> }>('/admin/policy', patch);
       setWindowHours(String(reviewWindowField(saved.policy ?? {}).hours));
-      setNotice({ ok: true, text: 'Saved.' });
+      toast.show('Saved.');
     } catch (err: unknown) {
       setNotice({ ok: false, text: err instanceof Error ? err.message : 'The setting could not be saved.' });
     } finally {
@@ -57,7 +59,7 @@ export function HiringPolicySettings() {
     try {
       const saved = await api.put<{ policy: Record<string, unknown> }>('/admin/policy', policyPatch(key, value));
       setSwitches(hiringPolicySwitches(saved.policy ?? {}));
-      setNotice({ ok: true, text: 'Saved.' });
+      toast.show('Saved.');
     } catch (err: unknown) {
       setNotice({ ok: false, text: err instanceof Error ? err.message : 'The setting could not be saved.' });
     } finally {
@@ -108,7 +110,7 @@ export function HiringPolicySettings() {
           </p>
         </form>
       )}
-      {notice && <Banner kind={notice.ok ? 'ok' : 'error'}>{notice.text}</Banner>}
+      {notice && !notice.ok && <Banner kind="error">{notice.text}</Banner>}
     </div>
   );
 }

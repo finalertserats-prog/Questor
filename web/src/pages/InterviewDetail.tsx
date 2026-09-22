@@ -16,6 +16,7 @@ import { orgTimeZoneLoadNotice } from '../components/orgTimeZone';
 import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
 import { invitationPanel } from '../components/invitationPanelModel';
+import { useToast } from '../components/Toast';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
 interface Turn {
@@ -70,7 +71,7 @@ export function InterviewDetail() {
   const [data, setData] = useState<InterviewResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const toast = useToast();
   const [copied, setCopied] = useState(false);
   const [draft, setDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
   const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
@@ -102,7 +103,6 @@ export function InterviewDetail() {
     // A different interview: drop everything shown for the previous one.
     setData(null);
     setError('');
-    setNotice('');
     setDraft((current) => ({ ...EMPTY_SCHEDULE, timeZone: current.timeZone }));
     setConfirmCancel(false);
     setReason('');
@@ -141,11 +141,10 @@ export function InterviewDetail() {
   const doAction = async (action: Action, fn: () => Promise<unknown>, ok?: string) => {
     if (busyAction) return;
     setError('');
-    setNotice('');
     setBusyAction(action);
     try {
       await fn();
-      if (ok) setNotice(ok);
+      if (ok) toast.show(ok);
       await load();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'That did not go through.');
@@ -164,7 +163,7 @@ export function InterviewDetail() {
       const resp = await api.post<ScheduleResp>(`/interviews/${id}/schedule`, { ...scheduleRequest(draft), send });
       setDraft((current) => ({ ...EMPTY_SCHEDULE, timeZone: current.timeZone }));
       if (resp.delivery && !resp.delivery.sent) setError(resp.delivery.note);
-      else setNotice(resp.delivery ? `Schedule saved. ${resp.delivery.note}` : 'Schedule saved. Nothing was sent.');
+      else toast.show(resp.delivery ? `Schedule saved. ${resp.delivery.note}` : 'Schedule saved. Nothing was sent.');
     });
   };
   const cancel = () => {
@@ -240,7 +239,6 @@ export function InterviewDetail() {
       )}
 
       {error && <Banner kind="error">{error}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
       {assessment && (
         <Banner kind="ok">
           <span className="row" style={{ display: 'inline-flex' }}>

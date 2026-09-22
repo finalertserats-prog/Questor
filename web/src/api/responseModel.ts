@@ -6,6 +6,20 @@
 /** Shown when the request never got an answer in time. */
 export const TIMEOUT_MESSAGE = 'The server took too long to answer.';
 
+/**
+ * Shown when the request never reached the server at all: offline, a dropped
+ * connection, a blocked request. The browser's own words for this ("Failed to
+ * fetch", "NetworkError when attempting to fetch resource", "Load failed")
+ * differ by browser and mean nothing to the person reading them — a candidate
+ * least of all.
+ */
+export const NETWORK_MESSAGE = 'We could not reach Questor. Check your internet connection and try again.';
+
+/** A fetch that threw before any response arrived: a TypeError in every browser. */
+export function isNetworkFailure(err: unknown): boolean {
+  return err instanceof TypeError;
+}
+
 /** Shown when an answer arrived but was not something this client can read. */
 export const UNREADABLE_MESSAGE = 'The server sent an unreadable response.';
 
