@@ -216,6 +216,8 @@ export interface TurnRecord {
   form?: string;
   /** For an agent turn that asked a library question: the rung of the block's ladder it drew on. */
   rungIndex?: number;
+  /** For an agent turn that asked a library question: how it got to that rung. */
+  rungMove?: 'start' | 'up' | 'down';
 }
 
 export interface EvidenceSpan {

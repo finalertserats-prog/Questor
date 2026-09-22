@@ -25,6 +25,8 @@ import { currentSitting } from '../engines/conversationModel.js';
 import { traceServing, type ServedCall } from '../providers/llm/servingTrace.js';
 import { servingMeta } from '../services/interviewServing.js';
 import { anchorsFor, recordLibraryUsage } from '../library/usage.js';
+import { withoutLibrary } from '../library/planLadders.js';
+import { config } from '../config.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -93,7 +95,9 @@ async function loadContext(sessionId: string) {
   // against. Defaulting either to {} ran an interview with nothing to ask and
   // nothing to score, so an unreadable row stops here — before any state
   // transition, so nothing is left half-moved.
-  const plan = parseJsonStrict<InterviewPlan>(session.plan.planJson, { model: 'InterviewPlanVersion', id: session.plan.id, field: 'planJson' });
+  const storedPlan = parseJsonStrict<InterviewPlan>(session.plan.planJson, { model: 'InterviewPlanVersion', id: session.plan.id, field: 'planJson' });
+  // LIBRARY_ENABLED is the kill switch for running interviews too, not only for planning.
+  const plan = config.library.enabled ? storedPlan : withoutLibrary(storedPlan);
   const profile = parseJsonStrict<RoleSuccessProfile>(session.scorecard.profileJson, { model: 'RoleScorecardVersion', id: session.scorecard.id, field: 'profileJson' });
   // No invented name: a record without one is spoken for as "your AI
   // interviewer". Tone keeps its long-standing default.
@@ -116,9 +120,9 @@ async function loadContext(sessionId: string) {
  * question again without its lead-in. A damaged or absent record reads as
  * neither, which the conversation treats as an ordinary question.
  */
-function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed' | 'libraryEntryId' | 'form' | 'rungIndex'> {
+function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed' | 'libraryEntryId' | 'form' | 'rungIndex' | 'rungMove'> {
   try {
-    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown; libraryEntryId?: unknown; form?: unknown; rungIndex?: unknown };
+    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown; libraryEntryId?: unknown; form?: unknown; rungIndex?: unknown; rungMove?: unknown };
     return {
       ...(typeof meta.kind === 'string' ? { kind: meta.kind } : {}),
       ...(typeof meta.question === 'string' ? { question: meta.question } : {}),
@@ -127,6 +131,7 @@ function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question'
       ...(typeof meta.libraryEntryId === 'string' ? { libraryEntryId: meta.libraryEntryId } : {}),
       ...(typeof meta.form === 'string' ? { form: meta.form } : {}),
       ...(typeof meta.libraryEntryId === 'string' && Number.isInteger(meta.rungIndex) ? { rungIndex: meta.rungIndex as number } : {}),
+      ...(typeof meta.libraryEntryId === 'string' && (meta.rungMove === 'start' || meta.rungMove === 'up' || meta.rungMove === 'down') ? { rungMove: meta.rungMove } : {}),
     };
   } catch {
     return {};

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FitScore, InterviewPlan, LibraryQuestionSnapshot, PlanBlock } from '../../src/domain/types.js';
 import {
-  applyLadders, CALLBACK_BLOCK_ID, cvSignalsFor, startRungFor, trialPicks, unavailableLibrary, withCallback, type LadderPlanInput,
+  applyLadders, CALLBACK_BLOCK_ID, cvSignalsFor, startRungFor, trialPicks, unavailableLibrary, withCallback, withoutLibrary, type LadderPlanInput,
 } from '../../src/library/planLadders.js';
 import { seededRandom } from '../../src/library/sample.js';
 
@@ -233,5 +233,26 @@ describe('cvSignalsFor', () => {
 
   it('says nothing without a fit score', () => {
     expect(cvSignalsFor(undefined, competencies)).toEqual({});
+  });
+});
+
+describe('withoutLibrary (the kill switch for plans already made)', () => {
+  const planned = applyLadders(planOf(['a', 'b']), input());
+
+  it('drops the plan-level library record', () => {
+    expect(withoutLibrary(planned).library).toBeUndefined();
+  });
+
+  it('drops every block ladder and source', () => {
+    expect(withoutLibrary(planned).blocks.some((b) => b.library !== undefined)).toBe(false);
+  });
+
+  it('keeps the blocks themselves', () => {
+    expect(withoutLibrary(planned).blocks.map((b) => b.competencyId)).toEqual(planned.blocks.map((b) => b.competencyId));
+  });
+
+  it('returns a plan without the library as it is', () => {
+    const plain = planOf(['c-a']);
+    expect(withoutLibrary(plain)).toBe(plain);
   });
 });

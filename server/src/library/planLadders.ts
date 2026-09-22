@@ -176,6 +176,26 @@ export function cvSignalsFor(fit: FitScore | undefined, competencies: readonly P
 }
 
 /**
+ * The plan as the engine runs it while LIBRARY_ENABLED is off: a plan stored
+ * while the library was on loses its library parts, so turning the flag off
+ * stops ladders, the coverage guard, anchors and usage for interviews already
+ * planned too. The callback block stays: it asks from the candidate's own
+ * words, never from the library. A plan without the library is returned as it is.
+ */
+export function withoutLibrary(plan: InterviewPlan): InterviewPlan {
+  if (!plan.library && !plan.blocks.some((b) => b.library)) return plan;
+  const { library: _library, ...rest } = plan;
+  return {
+    ...rest,
+    blocks: plan.blocks.map((block) => {
+      if (!block.library) return block;
+      const { library: _blockLibrary, ...plain } = block;
+      return plain;
+    }),
+  };
+}
+
+/**
  * The plan as the hiring team's screens receive it: where each block's
  * questions come from, but not the library's questions or anchors. Those are
  * shared across organisations and are the evaluator's; showing them before the
