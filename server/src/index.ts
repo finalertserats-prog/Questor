@@ -5,6 +5,7 @@ import { config } from './config.js';
 import { logger } from './logger.js';
 import { prisma } from './db.js';
 import { getLlm } from './providers/llm/index.js';
+import { killInFlightSmtpSends } from './providers/email/smtpSend.js';
 import { preflight } from './preflight.js';
 
 import { startRetentionSweep } from './services/dataRights.js';
@@ -117,6 +118,11 @@ const shutdown = createShutdown({
         setTimeout(() => httpServer.closeAllConnections(), HTTP_CLOSE_GRACE_MS).unref();
       }),
     },
+    // The drain waits for jobs, so a feedback send is normally finished by
+    // now. One that is not would outlive the process that could record its
+    // outcome, and a forked child is not killed by its parent exiting: it
+    // would keep an SMTP conversation open with nobody watching it.
+    { name: 'mail', run: async () => { killInFlightSmtpSends(); } },
     { name: 'leases', run: () => releaseHeldLeases() },
     { name: 'database', run: () => prisma.$disconnect() },
   ],

@@ -5,7 +5,7 @@ import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import type { AssessmentResult } from '../domain/types.js';
 import { getEmail, type EmailMessage, type EmailProvider } from '../providers/email/index.js';
-import { EMAIL_SEND_TIMEOUT_MS } from '../providers/email/timing.js';
+import { EMAIL_SEND_TIMEOUT_MS, EmailSendTimeoutError } from '../providers/email/timing.js';
 import { renderAutoFeedbackEmail } from '../providers/email/autoFeedbackEmail.js';
 import { logAudit } from './audit.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
@@ -85,10 +85,11 @@ export const FEEDBACK_SEND_HEARTBEAT_MS = 60_000;
 
 /**
  * Slack past the provider timeout before a send lock counts as gone. A minute,
- * because a timed-out provider call may still be running: SMTP cannot be
- * aborted, so its transport is configured to give up within the send timeout
- * (providers/email/timing.ts) and this grace puts the lock's expiry strictly
- * after that — tests/emailSmtpTimeouts.test.ts holds the two to it.
+ * because the send itself is ended by force at the timeout — SendGrid's fetch
+ * is aborted, and the child process holding an SMTP socket is killed
+ * (providers/email/smtpSend.ts) — and this grace puts the lock's expiry
+ * strictly after that, so no socket to a mail server can still be open when a
+ * review is admitted. tests/emailSmtpTimeouts.test.ts holds the two to it.
  */
 export const SEND_LOCK_GRACE_MS = 60_000;
 
@@ -114,11 +115,17 @@ class SendTimeoutError extends Error {
 }
 
 /**
- * Send, but never wait for ever — and stop the request where that is possible.
+ * Send, but never wait for ever — and stop the request, which every provider
+ * can now do: SendGrid aborts its fetch, and SMTP kills the child process that
+ * holds the socket (providers/email/smtpSend.ts).
  *
- * A timeout is NOT a failure to retry. The message left our hands; a provider
- * that stopped answering may still deliver it (SMTP cannot be aborted at all).
- * The caller records the outcome as unknown and leaves the send lock to expire.
+ * A timeout is still NOT a failure to retry. Killing the send makes acceptance
+ * after the deadline impossible, but it cannot rule out an acceptance that had
+ * already happened — inside the lock — and whose confirmation never arrived.
+ * So the caller records the outcome as unknown and leaves the lock to expire.
+ *
+ * The provider's own deadline is the same number and may fire first; it means
+ * exactly the same thing, so it is reported the same way.
  */
 async function sendWithinTimeout(email: EmailProvider, message: EmailMessage): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -132,6 +139,9 @@ async function sendWithinTimeout(email: EmailProvider, message: EmailMessage): P
   });
   try {
     await Promise.race([email.send(message, { signal: controller.signal }), expiry]);
+  } catch (err) {
+    if (err instanceof EmailSendTimeoutError) throw new SendTimeoutError(Math.round(err.ms / 1000));
+    throw err;
   } finally {
     clearTimeout(timer);
   }

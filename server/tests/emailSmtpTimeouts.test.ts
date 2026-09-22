@@ -1,14 +1,16 @@
 import { createServer, type Server } from 'node:net';
 import nodemailer from 'nodemailer';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EMAIL_SEND_TIMEOUT_MS, SMTP_TIMEOUTS, smtpMaxLifetimeMs, smtpTransportOptions } from '../src/providers/email/timing.js';
+import { EMAIL_SEND_TIMEOUT_MS, SMTP_TIMEOUTS, smtpIdleBudgetMs, smtpTransportOptions } from '../src/providers/email/timing.js';
 import { FEEDBACK_SEND_TIMEOUT_MS, SEND_LOCK_GRACE_MS } from '../src/services/autoFeedback.js';
 
 /**
- * SMTP cannot be aborted, so the transport's own timeouts are what bound a
- * send. Every phase is derived from one constant, and the feedback send lock
- * is proved to outlive the longest a sendMail can possibly run — so a message
- * can never be delivered after a review has been allowed through.
+ * SMTP cannot be aborted, so two things bound a send, and they bound different
+ * things. The transport's timeouts end an IDLE connection — a relay that has
+ * stopped answering — and nothing more: every byte from the server starts them
+ * again. The hard deadline (providers/email/smtpSend.ts kills the child that
+ * holds the socket) is what bounds the send itself, and it is the one the
+ * feedback send lock has to outlive.
  */
 
 describe('the SMTP transport timeouts', () => {
@@ -17,8 +19,10 @@ describe('the SMTP transport timeouts', () => {
     expect(phases.every((ms) => ms > 0 && ms <= EMAIL_SEND_TIMEOUT_MS)).toBe(true);
   });
 
-  it('add up to no more than the send timeout, so sendMail rejects by then', () => {
-    expect(smtpMaxLifetimeMs()).toBeLessThanOrEqual(EMAIL_SEND_TIMEOUT_MS);
+  it('bound how long one silence may last, not how long a send may run', () => {
+    // The sum is a budget for silence only. A talkative relay never spends it,
+    // which is exactly why the hard deadline below exists.
+    expect(smtpIdleBudgetMs()).toBeLessThanOrEqual(EMAIL_SEND_TIMEOUT_MS);
   });
 
   it('are what the transport is created with', () => {
@@ -34,13 +38,18 @@ describe('the SMTP transport timeouts', () => {
   });
 });
 
-describe('the feedback send lock against the transport', () => {
-  it('uses the same send timeout as the transport', () => {
+describe('the feedback send lock against the hard deadline', () => {
+  it('uses the same send timeout as the provider', () => {
     expect(FEEDBACK_SEND_TIMEOUT_MS).toBe(EMAIL_SEND_TIMEOUT_MS);
   });
 
-  it('expires strictly after the longest a send can run', () => {
-    expect(FEEDBACK_SEND_TIMEOUT_MS + SEND_LOCK_GRACE_MS).toBeGreaterThan(smtpMaxLifetimeMs());
+  /**
+   * The arithmetic the owner's rule rests on: the send is killed at 60s and the
+   * lock stands until 120s, so a review can never be admitted while a socket to
+   * a mail server is still open. Narrow this and the guarantee goes with it.
+   */
+  it('expires strictly after the deadline at which a send is killed', () => {
+    expect(FEEDBACK_SEND_TIMEOUT_MS + SEND_LOCK_GRACE_MS).toBeGreaterThan(EMAIL_SEND_TIMEOUT_MS);
   });
 });
 

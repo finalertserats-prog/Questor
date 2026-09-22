@@ -1,7 +1,8 @@
 import nodemailer from 'nodemailer';
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
-import { smtpTransportOptions } from './timing.js';
+import { sendSmtpInChild } from './smtpSend.js';
+import { EMAIL_SEND_TIMEOUT_MS, smtpTransportOptions, type SmtpConnection } from './timing.js';
 
 export interface EmailMessage {
   to: string;
@@ -24,10 +25,11 @@ export interface EmailProvider {
    */
   delivers: boolean;
   /**
-   * `signal`, where a provider can honour it, stops the request: a caller
-   * that has given up waiting can at least stop what it still holds. SMTP
-   * cannot be aborted mid-conversation and ignores it; the caller must treat
-   * a timed-out send as one that may still have gone.
+   * `signal` stops the request: a caller that has given up waiting can at
+   * least close the socket. SendGrid aborts its fetch; SMTP, which cannot be
+   * aborted mid-conversation, kills the child process holding the connection.
+   * Either way the caller must still treat a timed-out send as one that may
+   * already have been accepted.
    */
   send(msg: EmailMessage, opts?: { readonly signal?: AbortSignal }): Promise<{ status: string; id: string }>;
 }
@@ -70,6 +72,17 @@ class SendgridEmailProvider implements EmailProvider {
   }
 }
 
+export interface SmtpProviderOptions {
+  /** The per-phase transport timeouts are derived from this. */
+  readonly sendTimeoutMs?: number;
+  /**
+   * The hard deadline after which the sending child is killed. One number with
+   * sendTimeoutMs in production; the tests move the two apart so it is clear
+   * which line of defence ended a send.
+   */
+  readonly deadlineMs?: number;
+}
+
 /**
  * SMTP, for teams that already have a mailbox rather than a transactional-email
  * account — which is most small teams. Sending invitations from the company's
@@ -80,26 +93,44 @@ class SmtpEmailProvider implements EmailProvider {
   name = 'smtp';
   configured = true;
   delivers = true;
+  private readonly transportOptions: Record<string, unknown>;
+  private readonly deadlineMs: number;
   // Typed loosely because nodemailer's Transporter generic pulls in its whole
-  // type surface for no benefit here; the two calls used are stable.
-  private transport: { sendMail: (o: Record<string, unknown>) => Promise<{ messageId?: string }>; verify: () => Promise<boolean> };
+  // type surface for no benefit here; the one call used is stable.
+  private readonly transport: { verify: () => Promise<boolean> };
 
-  constructor(o: { host: string; port: number; user: string; pass: string }) {
-    // Every timeout the transport has is set (providers/email/timing.ts): an
-    // SMTP send cannot be aborted, so these are what stop a hung relay from
-    // delivering a message after the sender has given up on it.
-    this.transport = nodemailer.createTransport(smtpTransportOptions(o)) as never;
+  constructor(o: SmtpConnection, opts: SmtpProviderOptions = {}) {
+    const sendTimeoutMs = opts.sendTimeoutMs ?? EMAIL_SEND_TIMEOUT_MS;
+    // Every timeout the transport has is set (providers/email/timing.ts), as a
+    // first line of defence against a relay that simply stops answering.
+    this.transportOptions = smtpTransportOptions(o, sendTimeoutMs);
+    this.deadlineMs = opts.deadlineMs ?? sendTimeoutMs;
+    this.transport = nodemailer.createTransport(this.transportOptions) as never;
   }
 
   /** Prove the credentials work without sending anything to a candidate. */
   async verify(): Promise<void> { await this.transport.verify(); }
 
-  async send(msg: EmailMessage) {
-    const info = await this.transport.sendMail({
-      from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html,
-    });
-    return { status: 'sent', id: info.messageId ?? 'smtp' };
+  /**
+   * The send runs in a child process, which is killed at the deadline
+   * (providers/email/smtpSend.ts). Those timeouts above bound silence only: a
+   * relay that keeps answering slowly is never idle, and only killing the
+   * process that owns the socket can stop it delivering after the feedback
+   * send lock has expired.
+   */
+  async send(msg: EmailMessage, opts: { readonly signal?: AbortSignal } = {}) {
+    const info = await sendSmtpInChild(
+      this.transportOptions,
+      { from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html },
+      { deadlineMs: this.deadlineMs, signal: opts.signal },
+    );
+    return { status: 'sent', id: info.messageId };
   }
+}
+
+/** The SMTP provider on its own, for a caller that has its own connection settings. */
+export function createSmtpProvider(connection: SmtpConnection, opts: SmtpProviderOptions = {}): EmailProvider {
+  return new SmtpEmailProvider(connection, opts);
 }
 
 let cached: EmailProvider | null = null;
