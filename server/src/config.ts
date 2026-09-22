@@ -172,6 +172,16 @@ export function parseBooleanSetting(variable: string, raw: string | undefined, f
   throw new Error(`${variable} must be "true" or "false" (got "${raw}").`);
 }
 
+/** The daily summary's hour, 0-23; 8 when unset. Anything else refuses to start rather than mail at a surprising time. */
+export function parseDigestHour(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return 8;
+  const hour = Number(raw.trim());
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23 || String(hour) !== raw.trim()) {
+    throw new Error(`DIGEST_HOUR must be a whole hour from 0 to 23 (got "${raw}").`);
+  }
+  return hour;
+}
+
 /** Ollama's own default listen address: on the VPS it serves loopback only. */
 export const DEFAULT_LOCAL_LLM_URL = 'http://127.0.0.1:11434';
 export const DEFAULT_LOCAL_LLM_MODEL = 'llama3.2:3b';
@@ -379,6 +389,18 @@ export const config = {
    * route and the worker process exits at start. Caps are what the worker may
    * spend, not what it will: it stops at the cap and resumes the next day.
    */
+  /**
+   * HR-Box's emails (docs/RUNBOOK.md, "HR-Box reminders and daily summary").
+   * Both off until the owner has seen them: candidate reminders at day 3 and
+   * day 10 of the invitation plus the recruiter's expiry warning, and the
+   * daily summary of what needs each HR user.
+   */
+  hrBox: {
+    remindersEnabled: parseBooleanSetting('REMINDERS_ENABLED', process.env.REMINDERS_ENABLED, false),
+    digestEnabled: parseBooleanSetting('DIGEST_ENABLED', process.env.DIGEST_ENABLED, false),
+    /** The hour, on each organisation's own clock, from which that day's summary may go. */
+    digestHour: parseDigestHour(process.env.DIGEST_HOUR),
+  },
   library: {
     /** Tenant-facing read API (select, entries) and the admin screen. */
     enabled: parseBooleanSetting('LIBRARY_ENABLED', process.env.LIBRARY_ENABLED, false),

@@ -4,6 +4,8 @@ import { asyncHandler, authenticate, requireCapability } from '../middleware/ind
 import { getDashboardMetrics } from '../services/dashboardMetrics.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
 import { listHeldFeedback } from '../services/feedbackHold.js';
+import { countNeedsYou, getNeedsYou } from '../services/needsYouFeed.js';
+import { pagingQuerySchema } from '../services/listPaging.js';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(authenticate);
@@ -45,4 +47,21 @@ const heldQuerySchema = z.object({ includeKept: z.enum(['true', 'false']).option
 dashboardRouter.get('/held-feedback', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
   const query = heldQuerySchema.parse(req.query);
   res.json(await listHeldFeedback(req.auth!, { includeKept: query.includeKept === 'true' }));
+}));
+
+// HR-Box (services/needsYouFeed.ts): what needs the caller, what is coming up
+// and what was done. Gated like /metrics, which names candidates the same way;
+// each queue kind is further limited to people who may do its action, and
+// every row is object-scoped. The queue pages on the server.
+const needsYouQuerySchema = pagingQuerySchema.omit({ q: true }).strict();
+
+dashboardRouter.get('/needs-you', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const paging = needsYouQuerySchema.parse(req.query);
+  res.json(await getNeedsYou(req.auth!, paging));
+}));
+
+// The header bell's number. Counts only, so it is cheap to poll.
+dashboardRouter.get('/needs-you/count', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  z.object({}).strict().parse(req.query);
+  res.json(await countNeedsYou(req.auth!));
 }));

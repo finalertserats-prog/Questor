@@ -174,6 +174,27 @@ The benchmark prints, for each model and for each of the three spoken jobs: time
 - **"Interviews are down to the built-in writer":** check Ollama with `systemctl status ollama`, `journalctl -u ollama -n 100` and `curl -s 127.0.0.1:11434/api/ps`. Interviews still run correctly, with plainer wording.
 - **To turn the fallback off:** set `LOCAL_LLM_ENABLED=false` and restart. Ollama can keep running; nothing calls it.
 
+## HR-Box reminders and daily summary
+
+HR-Box is the console's Home tab: what needs each HR user, what is coming up, and what was done. The Home page itself needs no setting. Its two email add-ons are off until the owner has seen them, each behind its own switch.
+
+**Reminders (`REMINDERS_ENABLED=false`).** When on, a candidate who has not started gets a reminder on day 3 and day 10 of the 14-day invitation, and each recruiter who owns the candidate (else the role's owners) gets one warning about 2 days before the link closes. No reminder goes if the link has expired, the candidate has started or finished, the application was decided, the role is archived, the candidate asked to talk to a person, or the invitation was sent again in the last 24 hours. Demo sandboxes get none. A job was down past day 10: only the day-10 note goes, not both. A re-invite sets a new expiry and starts its own reminders.
+
+**Daily summary (`DIGEST_ENABLED=false`).** When on, each HR user who can read candidates gets their "Needs you" rows by email once a day, between `DIGEST_HOUR` (default 8) and six hours later on the organisation's own clock. Nothing waiting, no email; a morning missed because the server was down is skipped, not sent at night. Each user can switch it off in Settings.
+
+**Turning them on:**
+
+1. Check email delivers (`EMAIL_PROVIDER` is `smtp` or `sendgrid`). With a provider that does not deliver, both jobs claim nothing and say so in their job record, so nothing is lost.
+2. In the server `.env`: `REMINDERS_ENABLED=true` and/or `DIGEST_ENABLED=true` (and `DIGEST_HOUR` if 8 is wrong).
+3. Restart: `pm2 restart questor --update-env --kill-timeout 1260000`.
+4. Check: `GET /api/admin/ops` lists `invitation-reminders` and `daily-digest` within 15 minutes, each with a note of what it sent.
+
+**How it stays at most once.** Each reminder is an `InvitationReminder` row, and each summary a `DigestDelivery` row, written before the email goes under a unique key (invitation + expiry + kind + recipient; user + day). A restart or a second instance cannot send one twice. A crash between the row and the send loses that one email rather than repeating it. A failed send is recorded (`status = failed`) and not retried. Every reminder is audited (`invitation.reminder_sent`, `_failed`, `_skipped`) against the interview.
+
+**To turn them off:** set the switch to `false` and restart. Nothing else changes.
+
+**Who else has opened it.** Opening an assessment now writes one `assessment.opened` audit row (user id and assessment id only) per person per hour. HR-Box uses it, with the existing interview-opened events, to show colleagues who have already looked.
+
 ## Known limits
 
 - Single instance today.

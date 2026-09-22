@@ -81,7 +81,7 @@ export type AttentionKind = 'review' | 'accommodation' | 'human_request' | 'feed
  */
 export interface NeedsAttention {
   readonly counts: Readonly<Record<AttentionKind, number>>;
-  /** Newest first, at most ATTENTION_ITEM_LIMIT. */
+  /** Newest first, at most the caller's limit (ATTENTION_ITEM_LIMIT on the dashboard). */
   readonly items: ReadonlyArray<{
     kind: AttentionKind; at: string; sessionId: string; assessmentId: string | null;
     candidate: { id: string; name: string };
@@ -106,7 +106,11 @@ function accommodationRequestedAt(consentJson: string): Date | null {
 /** Nothing marks a human request as handled, so it stops asking after a month. */
 const HUMAN_REQUEST_WINDOW_DAYS = 30;
 
-async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWhereInput, now: Date): Promise<NeedsAttention> {
+/**
+ * The dashboard reads the newest few; HR-Box (services/needsYou.ts) reads the
+ * same rows with a larger `limit`, so the two can never disagree on what waits.
+ */
+export async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWhereInput, now: Date, limit: number = ATTENTION_ITEM_LIMIT): Promise<NeedsAttention> {
   const requestedSince = new Date(now.getTime() - HUMAN_REQUEST_WINDOW_DAYS * DAY_MS);
   const sessionSelect = {
     id: true, state: true, createdAt: true, completedAt: true,
@@ -117,16 +121,16 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
   const requestWhere: Prisma.CandidateHumanRequestWhereInput = { tenantId, candidate, status: 'REQUESTED', requestedAt: { gte: requestedSince } };
   const heldWhere = awaitingDecisionWhere(tenantId, candidate);
   const [reviews, handoffs, requests, held, reviewCount, handoffCount, requestCount, heldCount] = await Promise.all([
-    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: limit, select: sessionSelect }),
     // Wider than the list: the request time lives in consentJson, so a recent
     // request on an old interview is only found by reading past the newest few.
-    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: HANDOFF_SCAN_LIMIT, select: { ...sessionSelect, consentJson: true } }),
+    prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: Math.max(limit, HANDOFF_SCAN_LIMIT), select: { ...sessionSelect, consentJson: true } }),
     prisma.candidateHumanRequest.findMany({
-      where: requestWhere, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
+      where: requestWhere, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: limit,
       select: { requestedAt: true, session: { select: sessionSelect } },
     }),
     prisma.candidateFeedbackEmail.findMany({
-      where: heldWhere, orderBy: [{ heldAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
+      where: heldWhere, orderBy: [{ heldAt: 'desc' }, { id: 'desc' }], take: limit,
       select: { heldAt: true, createdAt: true, assessmentId: true, session: { select: sessionSelect } },
     }),
     prisma.interviewSession.count({ where: { tenantId, candidate, state: 'REVIEW_READY' } }),
@@ -146,7 +150,7 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
     ...requests.map((r) => item('human_request', r.session, r.requestedAt ?? r.session.createdAt)),
     // The held letter's own assessment, which is where the decision is made.
     ...held.map((h) => ({ ...item('feedback_held', h.session, h.heldAt ?? h.createdAt), assessmentId: h.assessmentId })),
-  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ATTENTION_ITEM_LIMIT);
+  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
   return {
     counts: { review: reviewCount, accommodation: handoffCount, human_request: requestCount, feedback_held: heldCount },
     items,

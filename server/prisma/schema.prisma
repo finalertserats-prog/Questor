@@ -57,6 +57,10 @@ model User {
   demoGrants   DemoGrant[]
   catalogRefreshRuns CatalogRefreshRun[] @relation("CatalogRefreshTriggeredBy")
   catalogProposalReviews CatalogProposal[] @relation("CatalogProposalReviewedBy")
+  // The HR-Box daily summary (DIGEST_ENABLED) goes to everyone who can act on
+  // something, until they switch it off in Settings.
+  digestOptOut Boolean  @default(false)
+  digestDeliveries DigestDelivery[]
 }
 
 model CatalogDomain {
@@ -419,6 +423,7 @@ model InterviewSession {
   humanRequest      CandidateHumanRequest?
   feedbackOptInRequest CandidateFeedbackOptInRequest?
   feedbackEmail     CandidateFeedbackEmail?
+  reminders         InvitationReminder[]
 
   // The dashboard counts interviews per tenant by when they were created,
   // scheduled and completed, and groups them by state; the lists read newest
@@ -913,6 +918,54 @@ model JobRun {
   note       String    @default("")
 
   @@index([name, startedAt])
+}
+
+// ---- HR-Box reminders and digest ----
+//
+// One row per reminder an invitation may get: the candidate at day 3 and day
+// 10 of the window, and each owning recruiter about two days before it closes.
+// The row is written BEFORE the email goes, and the unique key is what stops a
+// restart (or a second instance) sending the same reminder twice: at most
+// once, never twice. A re-invite sets a new expiry, which starts a new cycle
+// with reminders of its own. Ids only, no addresses: the recipient is resolved
+// when the reminder is sent.
+model InvitationReminder {
+  id             String    @id @default(cuid())
+  tenantId       String
+  sessionId      String
+  session        InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  invitationId   String
+  // The invitation's expiry when this cycle was reminded; see above.
+  cycleExpiresAt DateTime
+  kind           String    // candidate_day3 | candidate_day10 | recruiter_expiry
+  // "candidate", or the recruiter's user id for recruiter_expiry.
+  recipientKey   String
+  status         String    @default("claimed") // claimed | sent | failed | skipped
+  note           String    @default("")
+  claimedAt      DateTime  @default(now())
+  sentAt         DateTime?
+
+  @@unique([invitationId, cycleExpiresAt, kind, recipientKey])
+  @@index([tenantId, claimedAt])
+  @@index([sessionId])
+}
+
+// One row per user per organisation day the daily summary was considered,
+// claimed before sending so a restart never mails the same summary twice.
+model DigestDelivery {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenantId  String
+  // The organisation's calendar day, YYYY-MM-DD.
+  day       String
+  status    String    @default("claimed") // claimed | sent | failed | empty
+  rowCount  Int       @default(0)
+  claimedAt DateTime  @default(now())
+  sentAt    DateTime?
+
+  @@unique([userId, day])
+  @@index([tenantId, claimedAt])
 }
 
 // ---- Shared rate limits ----

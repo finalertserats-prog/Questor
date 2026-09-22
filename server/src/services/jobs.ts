@@ -98,7 +98,8 @@ export function startJob(opts: {
   intervalMs: number;
   ttlMs?: number;
   delayFirst?: boolean;
-  fn: () => Promise<string | void>;
+  /** Receives the run's lease, for a job whose work can outlast the TTL. */
+  fn: (lease: LeaseHandle) => Promise<string | void>;
 }): () => void {
   const ttlMs = opts.ttlMs ?? Math.max(opts.intervalMs, 60_000);
   const tick = () => {

@@ -50,9 +50,11 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
 }));
 
 /** The fields of a user the signed-in user themselves may see. */
-function publicUser(user: { id: string; name: string; email: string; role: string; tourCompletedAt: Date | null }) {
+function publicUser(user: { id: string; name: string; email: string; role: string; tourCompletedAt: Date | null; digestOptOut?: boolean }) {
   return {
     id: user.id, name: user.name, email: user.email, role: user.role, tourCompletedAt: user.tourCompletedAt?.toISOString() ?? null,
+    // Whether the HR-Box daily summary email is switched off (Settings).
+    digestOptOut: user.digestOptOut ?? false,
     // The same list requireCapability checks, so the web app can hide what
     // would only end in "permission denied" instead of mirroring the map.
     capabilities: [...capabilitiesOf(user.role)],
@@ -117,4 +119,18 @@ authRouter.post('/tour/complete', authenticate, asyncHandler(async (req, res) =>
   const user = await prisma.user.findUnique({ where: { id: req.auth!.userId }, select: { tourCompletedAt: true } });
   if (!user) throw new HttpError(404, 'User not found');
   res.json({ tourCompletedAt: user.tourCompletedAt?.toISOString() ?? null });
+}));
+
+// The caller's own email preferences. Only the HR-Box daily summary for now;
+// strict, so a mistyped field fails instead of silently changing nothing.
+const preferencesSchema = z.object({ digestOptOut: z.boolean() }).strict();
+
+authRouter.patch('/me/preferences', authenticate, asyncHandler(async (req, res) => {
+  const body = preferencesSchema.parse(req.body);
+  const user = await prisma.user.update({ where: { id: req.auth!.userId }, data: { digestOptOut: body.digestOptOut }, select: { digestOptOut: true } });
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId, action: 'user.preferences_changed',
+    entityType: 'User', entityId: req.auth!.userId, after: { digestOptOut: user.digestOptOut },
+  });
+  res.json({ digestOptOut: user.digestOptOut });
 }));

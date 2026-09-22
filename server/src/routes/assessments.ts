@@ -30,6 +30,7 @@ import {
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
 } from '../services/shadowMode.js';
 import { servingModeForSession } from '../services/interviewServing.js';
+import { recordAssessmentOpened } from '../services/assessmentViews.js';
 
 export const assessmentsRouter = Router();
 assessmentsRouter.use(authenticate);
@@ -93,6 +94,8 @@ assessmentsRouter.get('/:id/blind', requireCapability('assessment:review'), asyn
   // the reviewer's working surface, and its whole purpose is to be seen only by
   // someone who is about to file an independent verdict.
   const view = await getBlindView(req.auth!, req.params.id);
+  // After the access check: HR-Box tells colleagues this has been opened.
+  await recordAssessmentOpened(req.auth!, req.params.id);
   res.json(view);
 }));
 
@@ -481,6 +484,7 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     assessmentId: a.id, userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'),
     tenantId: req.auth!.tenantId,
   });
+  await recordAssessmentOpened(req.auth!, a.id);
   const reviews = await prisma.humanReview.findMany({ where: { assessmentId: a.id }, orderBy: { createdAt: 'desc' } });
   const result = readAssessmentResult(a);
   // The three readings the page shows side by side: what the AI produced, what

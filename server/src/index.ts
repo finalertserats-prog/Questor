@@ -20,6 +20,8 @@ import { startRateLimitPurge } from './middleware/rateLimit.js';
 import { releaseHeldLeases, runningJobCount, startJob, stopAllJobs } from './services/jobs.js';
 import { JD_DRAFT_JOB, runJdDraftJob } from './services/jdDrafts.js';
 import { startCatalogRefreshSchedule } from './services/catalogRefresh.js';
+import { startInvitationReminders } from './services/invitationReminders.js';
+import { startDailyDigest } from './services/dailyDigest.js';
 import { reportMissingOperatorAccounts } from './middleware/platformOperator.js';
 import { markDraining } from './services/drainState.js';
 import { countLiveSessions, inFlightRequests } from './realtime/liveSessions.js';
@@ -47,6 +49,10 @@ startFeedbackEmailDelivery();
 startRateLimitPurge();
 startJob({ name: JD_DRAFT_JOB.name, intervalMs: JD_DRAFT_JOB.intervalMs, ttlMs: JD_DRAFT_JOB.ttlMs, fn: runJdDraftJob });
 startCatalogRefreshSchedule();
+// HR-Box emails, each behind its own switch (both off by default): candidate
+// reminders and the recruiter's expiry warning, and the daily summary.
+startInvitationReminders();
+startDailyDigest();
 reportMissingOperatorAccounts().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not check platform operator accounts');
 });
