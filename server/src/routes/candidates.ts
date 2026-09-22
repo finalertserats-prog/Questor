@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import multer from 'multer';
@@ -10,34 +9,22 @@ import { eraseCandidate } from '../services/dataRights.js';
 import { applicationIdsForAddress, eraseAllApplications } from '../services/personErasure.js';
 import { capabilitiesOf } from '../domain/capabilities.js';
 import type { AuthClaims } from '../services/auth.js';
-import {
-  assertCanAccessCandidate,
-  assertCanAccessRole,
-  assignCandidate,
-  candidateScope,
-  roleScope,
-} from '../services/access.js';
-import { MAX_RESUME_TEXT_CHARS, extractResumeText, isResumeMimeType } from '../engines/resumeParser.js';
+import { assertCanAccessCandidate, candidateScope, roleScope } from '../services/access.js';
+import { MAX_RESUME_TEXT_CHARS, isResumeMimeType } from '../engines/resumeParser.js';
+import { RESUME_MAX_BYTES, readResumeFile, sanitizeFilename } from '../services/resumeFile.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { listCandidates } from '../services/candidateList.js';
 import { pagingQuerySchema } from '../services/listPaging.js';
 import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from '../services/audit.js';
-import { assertDemoCreationCap } from '../services/demoAccess.js';
-import { emitEvent } from '../services/webhooks.js';
 import { candidateFeedbackState } from '../services/candidateFeedback.js';
-import { assertRoleOpen } from '../services/roleOpen.js';
-import { notePipelineEvent } from '../services/pipelineAutonomy.js';
-import { normalizeEmail } from '../services/userEmail.js';
-import { resumeScoringFor, storeResumeProfile } from '../services/resumeProfile.js';
 import {
   applyCandidateToRole,
   CANDIDATE_SEARCH_MIN_CHARS,
-  findApplicationOnRole,
-  inApplicationTransaction,
   searchCandidatePeople,
 } from '../services/candidateReuse.js';
+import { attachResume, createApplication } from '../services/candidateCreate.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -47,7 +34,7 @@ const upload = multer({
   // Buffers live in process memory, so the ceiling is deliberately far below
   // anything a genuine resume needs; one file per request keeps a single upload
   // from fanning out into repeated parses.
-  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  limits: { fileSize: RESUME_MAX_BYTES, files: 1 },
   fileFilter: (_req, file, cb) => {
     if (!isResumeMimeType(file.mimetype)) {
       cb(new HttpError(400, 'Only PDF, DOCX, or plain-text resumes are accepted'));
@@ -67,18 +54,6 @@ function uploadResume(req: Request, res: Response, next: NextFunction): void {
     }
     next(err);
   });
-}
-
-// The stored filename is echoed back into the reviewer's browser, so strip any
-// path the client smuggled in and keep only characters that cannot be read as
-// markup or as a traversal segment.
-function sanitizeFilename(original: string): string {
-  const cleaned = path
-    .basename(original)
-    .replace(/[^A-Za-z0-9._-]/g, '_')
-    .replace(/^\.+/, '')
-    .slice(0, 120);
-  return cleaned || 'resume.txt';
 }
 
 // List candidates (optionally by role)
@@ -117,40 +92,16 @@ const createSchema = z.object({
   roleId: z.string().min(1).max(64),
 });
 
-// Create a candidate under a role
+// Create a candidate under a role. The same service adds each person in a
+// bulk import (routes/candidateImports.ts).
 candidatesRouter.post('/', requireCapability('candidate:create'), asyncHandler(async (req, res) => {
   const body = createSchema.parse(req.body);
-  await assertDemoCreationCap(req.auth!.tenantId, 'candidates');
-  // The target role is scoped, not merely tenant-matched: attaching a candidate
-  // to someone else's requisition would otherwise plant a record inside a
-  // pipeline the caller cannot see but the role's owners can.
-  await assertCanAccessRole(req.auth!, body.roleId);
-  await assertRoleOpen(body.roleId);
-  const tenantId = req.auth!.tenantId;
-  const emailNormalized = normalizeEmail(body.email);
-  // One application per person per role, as /:id/apply refuses too. The check
-  // and the row (with its owner) commit together, so two identical adds at
-  // once cannot both pass it.
-  const outcome = await inApplicationTransaction(async (tx) => {
-    const existing = await findApplicationOnRole(tx, { tenantId, roleId: body.roleId, emailNormalized });
-    if (existing) return { kind: 'exists' as const, candidateId: existing.id };
-    const made = await tx.candidate.create({
-      data: { tenantId, roleId: body.roleId, fullName: body.fullName, email: body.email, emailNormalized, phone: body.phone ?? '' },
-    });
-    // Role assignment alone would already cover this candidate, but the explicit
-    // grant survives the creator later being unassigned from the role.
-    await assignCandidate(made.id, req.auth!.userId, 'owner', tx);
-    return { kind: 'created' as const, candidate: made };
-  });
+  const outcome = await createApplication(req.auth!, body);
   if (outcome.kind === 'exists') {
     res.status(409).json({ error: 'This person is already a candidate for that role.', code: 'candidate_exists', candidateId: outcome.candidateId });
     return;
   }
-  const { candidate } = outcome;
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.created', entityType: 'Candidate', entityId: candidate.id });
-  // Onboarding starts the candidate's journey at Participation on its own.
-  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.onboarded', trigger: 'candidate.created' });
-  res.status(201).json({ candidate: shape(candidate) });
+  res.status(201).json({ candidate: shape(outcome.candidate) });
 }));
 
 // Put an existing person forward for another role: a new application with
@@ -183,14 +134,7 @@ candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resu
   let filename = 'pasted.txt';
   if (req.file) {
     filename = sanitizeFilename(req.file.originalname);
-    try {
-      rawText = await extractResumeText(req.file.buffer, req.file.mimetype);
-    } catch (err) {
-      // extractResumeText already reports why it refused the file; only genuinely
-      // unexpected failures fall back to the generic FR-006 message.
-      if (err instanceof HttpError) throw err;
-      throw new HttpError(422, 'Could not read the uploaded file. Please upload a text-based PDF, DOCX, or paste the resume text.');
-    }
+    rawText = await readResumeFile(req.file);
   } else if (typeof req.body.text === 'string') {
     // Pasted text bypasses the parsers but still lands in the same downstream
     // path, so it gets the same ceiling.
@@ -198,14 +142,9 @@ candidatesRouter.post('/:id/resume', requireCapability('candidate:create'), resu
   }
   if (!rawText.trim()) throw new HttpError(400, 'No resume text found');
 
-  const { profile, fit, profileVersionId } = await storeResumeProfile(prisma, {
-    tenantId: req.auth!.tenantId, candidateId: candidate.id, rawText, filename,
-    contentType: req.file?.mimetype ?? 'text/plain', scoring: await resumeScoringFor(candidate.roleId),
+  const { profile, fit, profileVersionId } = await attachResume(req.auth!, candidate, {
+    rawText, filename, contentType: req.file?.mimetype ?? 'text/plain',
   });
-  await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'candidate.parsed', entityType: 'Candidate', entityId: candidate.id });
-  await emitEvent(req.auth!.tenantId, 'candidate.parsed', { candidateId: candidate.id, fit: fit.overall });
-  // An analysed profile is what the Bronze review works from: Participation is over.
-  await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.profiled', trigger: 'candidate.parsed' });
 
   res.status(201).json({ profile, fit, profileVersionId, filename });
 }));
@@ -430,4 +369,4 @@ candidatesRouter.delete('/:id', requireCapability('candidate:erase'), asyncHandl
 // so every route that reached for it inherited the hole. `assertCanAccessCandidate`
 // is now the only lookup path.
 
-function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email, phone: c.phone, roleId: c.roleId, createdAt: c.createdAt }; }
+function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email, phone: c.phone, linkedinUrl: c.linkedinUrl ?? '', roleId: c.roleId, createdAt: c.createdAt }; }

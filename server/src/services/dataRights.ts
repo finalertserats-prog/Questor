@@ -3,6 +3,7 @@ import { clearExpiredMeetingLinks, collectVendorMeetings, removeVendorMeetings }
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
+import { eraseStagedImportRows } from './candidateImport.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredObservations } from './observerRetention.js';
@@ -226,7 +227,7 @@ export async function eraseCandidate(o: {
 }): Promise<ErasureResult> {
   const candidate = await prisma.candidate.findFirst({
     where: { id: o.candidateId, tenantId: o.tenantId },
-    select: { id: true },
+    select: { id: true, emailNormalized: true },
   });
   if (!candidate) throw new Error('Candidate not found in this tenant');
 
@@ -279,6 +280,8 @@ export async function eraseCandidate(o: {
     await count('feedbackEmails', () => tx.candidateFeedbackEmail.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { candidateId: o.candidateId } }));
+    // Staged bulk-import rows (name, address, CV text) for the same person.
+    await count('importRows', () => eraseStagedImportRows(tx, { tenantId: o.tenantId, candidateId: o.candidateId, emailNormalized: candidate.emailNormalized }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
   });
 

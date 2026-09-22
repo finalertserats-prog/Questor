@@ -205,7 +205,7 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
     const existing = await findApplicationOnRole(tx, { tenantId: auth.tenantId, roleId, emailNormalized });
     if (existing) return { kind: 'exists' as const, candidateId: existing.id };
     const candidate = await tx.candidate.create({
-      data: { tenantId: auth.tenantId, roleId, fullName: source.fullName, email: source.email, emailNormalized, phone: source.phone },
+      data: { tenantId: auth.tenantId, roleId, fullName: source.fullName, email: source.email, emailNormalized, phone: source.phone, linkedinUrl: source.linkedinUrl },
     });
     await assignCandidate(candidate.id, auth.userId, 'owner', tx);
     const stored = resume && scoring

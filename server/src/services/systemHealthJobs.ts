@@ -8,6 +8,7 @@ import { FEEDBACK_EMAIL_JOB } from './autoFeedback.js';
 import { JD_DRAFT_JOB } from './jdDrafts.js';
 import { CATALOG_REFRESH_SCHEDULE } from './catalogRefresh.js';
 import { DEMO_PURGE_EVERY_MS } from './demoPurgeJob.js';
+import { IMPORT_PURGE_JOB } from './candidateImportPurgeJob.js';
 import { getWorkerStatus, isFailureReason, type WorkerStatus } from '../library/workerState.js';
 import {
   formatDuration, type CheckContext, type CheckDef, type CheckOutcome, type HealthDeps, type SectionDef,
@@ -49,6 +50,7 @@ export const KNOWN_JOBS: readonly KnownJob[] = [
   { name: JD_DRAFT_JOB.name, label: 'JD drafts', intervalMs: JD_DRAFT_JOB.intervalMs, notScheduled: () => null },
   { name: CATALOG_REFRESH_SCHEDULE.name, label: 'Catalog refresh schedule', intervalMs: CATALOG_REFRESH_SCHEDULE.intervalMs, notScheduled: () => null },
   { name: 'demo-purge', label: 'Demo cleanup', intervalMs: DEMO_PURGE_EVERY_MS, notScheduled: () => null },
+  { name: IMPORT_PURGE_JOB.name, label: 'Unfinished bulk imports cleanup', intervalMs: IMPORT_PURGE_JOB.intervalMs, notScheduled: () => null },
 ];
 
 const ADDRESS = /\b(?:[a-z][a-z0-9+.-]*:\/\/[^\s]+|\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?|[a-z0-9-]+(?:\.[a-z0-9-]+)+:\d+)/gi;

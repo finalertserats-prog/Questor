@@ -438,6 +438,8 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
     await tx.atsRequisitionImport.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.atsConnection.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.interviewSession.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.candidateImportRow.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.candidateImportBatch.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.candidate.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.roleScorecardVersion.deleteMany({ where: { role: { tenantId: { in: tenantIds } } } });
     await tx.role.deleteMany({ where: { tenantId: { in: tenantIds } } });

@@ -115,6 +115,8 @@ export async function wipe(): Promise<void> {
   await prisma.candidateAtsLink.deleteMany();
   await prisma.atsRequisitionImport.deleteMany();
   await prisma.atsConnection.deleteMany();
+  await prisma.candidateImportRow.deleteMany();
+  await prisma.candidateImportBatch.deleteMany();
   await prisma.candidate.deleteMany();
   await prisma.roleScorecardVersion.deleteMany();
   await prisma.role.deleteMany();

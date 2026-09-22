@@ -299,6 +299,8 @@ model Candidate {
   // same-person-same-role check compare. Written by every create path.
   emailNormalized String @default("")
   phone         String   @default("")
+  // An https link on linkedin.com, or "". Set by bulk import; checked before storing.
+  linkedinUrl   String   @default("")
   createdAt     DateTime @default(now())
   profiles      CandidateProfileVersion[]
   interviews    InterviewSession[]
@@ -1459,4 +1461,57 @@ model LibraryWorkerState {
   lastBatchAt DateTime?
   lastError   String    @default("")
   updatedAt   DateTime  @updatedAt
+}
+
+// Bulk import staging: the people read from one CSV or a set of CVs, held
+// only between upload and confirm so the preview can be checked and edited
+// before anything becomes a candidate. Tenant-scoped, visible only to the user
+// who made it, and short-lived: expired batches are purged
+// (services/candidateImport.ts), a person's erasure removes their staged rows,
+// and a demo tenant's purge removes its batches.
+//
+// Deliberately without foreign keys to Tenant, Role or User: a staging row
+// must never be the reason an erasure or purge of those fails.
+model CandidateImportBatch {
+  id          String   @id @default(cuid())
+  tenantId    String
+  roleId      String
+  createdById String
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+  rows        CandidateImportRow[]
+
+  @@index([tenantId, createdById])
+  @@index([expiresAt])
+}
+
+model CandidateImportRow {
+  id              String   @id @default(cuid())
+  batchId         String
+  batch           CandidateImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  tenantId        String
+  // Stable within the batch; the idempotency key for confirm, with batchId.
+  rowKey          String
+  position        Int
+  fullName        String   @default("")
+  email           String   @default("")
+  emailNormalized String   @default("")
+  phone           String   @default("")
+  linkedinUrl     String   @default("")
+  filename        String   @default("")
+  contentType     String   @default("")
+  // Text extracted from the CV; null for a CSV row. Never the file itself.
+  resumeText      String?
+  // Why the CV could not be read, in words for the preview; "" when it could.
+  readError       String   @default("")
+  included        Boolean  @default(true)
+  // pending | working | created | linked | failed
+  outcome         String   @default("pending")
+  candidateId     String?
+  cvAttached      Boolean  @default(false)
+  error           String   @default("")
+  updatedAt       DateTime @updatedAt
+
+  @@unique([batchId, rowKey])
+  @@index([tenantId, emailNormalized])
 }

@@ -21,6 +21,7 @@ import { catalogRouter } from './routes/catalog.js';
 import { catalogReviewRouter } from './routes/catalogReview.js';
 import { jdDraftsRouter } from './routes/jdDrafts.js';
 import { candidatesRouter } from './routes/candidates.js';
+import { candidateImportsRouter } from './routes/candidateImports.js';
 import { interviewsRouter } from './routes/interviews.js';
 import { interviewersRouter } from './routes/interviewers.js';
 import { portalRouter } from './routes/portal.js';
@@ -228,6 +229,7 @@ export function createApp() {
   app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidateAtsRouter);
   app.use('/api/candidates', candidatesRouter);
+  app.use('/api/candidate-imports', candidateImportsRouter);
   app.use('/api/interviews', interviewsRouter);
   app.use('/api/interviewers', interviewersRouter);
   // Before pipelinesRouter, whose GET /:id would otherwise claim /meeting-provider.
