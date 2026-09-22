@@ -135,8 +135,6 @@ export interface RoleCandidatesPage {
   readonly candidates: readonly RoleCandidateRow[];
   readonly meta: PageMeta;
   readonly sort: { readonly key: SortKey; readonly dir: SortDirection };
-  /** How many of this role's candidates this viewer has ticked, across every page. */
-  readonly shortlistedTotal: number;
 }
 
 /** The role's applications this caller may see; AND, so the role can only narrow the scope. */
@@ -334,7 +332,6 @@ export async function listRoleCandidates(
     candidates: page.map((p) => shapeRow(p, pageFacts, shortlisted, notes)),
     meta: pageMeta(ordered.length, query),
     sort: { key: query.sort, dir: query.dir },
-    shortlistedTotal: [...shortlisted].filter((id) => byId.has(id)).length,
   };
 }
 

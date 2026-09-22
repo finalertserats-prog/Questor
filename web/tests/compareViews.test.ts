@@ -154,7 +154,7 @@ describe('the skills grid', () => {
 
 describe('the candidates table', () => {
   function tableWith(candidates: unknown[], shortlist: string[] = []) {
-    stub('/roles/r1/candidates?', { candidates, meta: { total: candidates.length, page: 1, pageSize: 25 }, sort: SORT, shortlistedTotal: 0 });
+    stub('/roles/r1/candidates?', { candidates, meta: { total: candidates.length, page: 1, pageSize: 25 }, sort: SORT });
     return mount(createElement(CandidatesTable, {
       roleId: 'r1', sort: SORT, onSort: () => undefined,
       shortlist: new Set(shortlist), shortlistFull: false, onShortlist: () => undefined,

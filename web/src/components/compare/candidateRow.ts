@@ -52,7 +52,6 @@ export interface RoleCandidatesPayload {
   readonly candidates: readonly RoleCandidateRow[];
   readonly meta?: PageMeta;
   readonly sort?: { readonly key: string; readonly dir: string };
-  readonly shortlistedTotal?: number;
 }
 
 export interface GridCompetency {
