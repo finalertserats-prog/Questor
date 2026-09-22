@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 import { Icon } from './Icon';
 import { useTour } from './tourContext';
+import { DASHBOARD_TAB, onDashboardTab } from './hrbox/landingTabModel';
 import {
   IDLE_TOUR,
   TOUR_STEPS,
@@ -129,10 +130,13 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
     // This tab's flag may be stale — another tab may have finished the tour
     // since this page loaded.
     void refreshTourStatus().then((completedAt) => {
-      if (!cancelled && completedAt === null) begin();
+      if (cancelled || completedAt !== null) return;
+      // Its steps point into the Dashboard tab; Home is the landing default.
+      if (!onDashboardTab(location.search)) navigate(DASHBOARD_TAB);
+      begin();
     });
     return () => { cancelled = true; };
-  }, [user, location.pathname, state.status, begin, refreshTourStatus]);
+  }, [user, location.pathname, location.search, navigate, state.status, begin, refreshTourStatus]);
 
   // "Take the tour" from the profile menu: from anywhere, back to step one on
   // the dashboard, where the steps live. Focus goes back to the menu's trigger
@@ -141,9 +145,9 @@ export function ProductTour({ isNarrow, setDrawerOpen }: ProductTourProps) {
     if (startRequest === handledRequestRef.current) return;
     handledRequestRef.current = startRequest;
     returnFocusRef.current = anchorElement('profile-menu');
-    if (location.pathname !== '/') navigate('/');
+    if (location.pathname !== '/' || !onDashboardTab(location.search)) navigate(DASHBOARD_TAB);
     begin();
-  }, [startRequest, location.pathname, navigate, begin]);
+  }, [startRequest, location.pathname, location.search, navigate, begin]);
 
   // Each step: open or close the phone drawer as the step needs, and bring the
   // element into view. Measuring happens continuously below, so a drawer still

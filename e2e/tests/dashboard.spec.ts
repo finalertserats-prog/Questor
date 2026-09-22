@@ -5,7 +5,8 @@ import { dismissTour } from './helpers';
 const screenshotPath = resolve(import.meta.dirname, '../test-results/dashboard.png');
 
 test('dashboard renders its heading and real numbers', async ({ page }) => {
-  await page.goto('/');
+  // The landing page opens on Home; the metrics are its Dashboard tab.
+  await page.goto('/?tab=dashboard');
   await dismissTour(page);
   await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible();
 

@@ -13,6 +13,8 @@ export interface User {
   platformOperator?: boolean;
   /** What this user may do (server capabilities.ts); read through capabilityModel.can. */
   capabilities?: string[];
+  /** Whether they switched off the HR-Box daily summary email (Settings). */
+  digestOptOut?: boolean;
 }
 /** The organisation the signed-in user belongs to. */
 export interface Tenant {

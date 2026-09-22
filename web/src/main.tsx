@@ -26,6 +26,7 @@ import './styles/room.css';
 import './styles/scorecard.css';
 import './styles/review.css';
 import './styles/lists.css';
+import './styles/hrbox.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -23,6 +23,7 @@ test('organisation picker and UI sign-in reach the dashboard', async ({ page }) 
   await page.getByLabel('Email').fill('demo@questor.local');
   await page.getByLabel('Password').fill(readDemoPassword());
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  // Signed in, on the landing page (Home by default; the first-run tour opens Dashboard).
+  await expect(page.getByRole('tab', { name: 'Home' })).toBeVisible();
   await dismissTour(page);
 });

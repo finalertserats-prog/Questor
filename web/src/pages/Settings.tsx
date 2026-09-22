@@ -4,6 +4,8 @@ import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { AtsConnectionPanel } from '../components/AtsConnectionPanel';
 import { humanise } from '../components/statusModel';
+import { can } from '../components/capabilityModel';
+import { DigestSetting } from '../components/hrbox/DigestSetting';
 
 export function Settings() {
   const { user, tenant } = useAuth();
@@ -31,6 +33,8 @@ export function Settings() {
           <div className="small muted">Theme</div>
           <ThemeToggle />
         </div>
+        {/* Only for someone the summary could be about: it lists candidates. */}
+        {user && can(user, 'candidate:read') && <DigestSetting initialOptOut={user.digestOptOut ?? false} />}
       </div>
       {/* The server refuses everyone else; hiding it just spares them a 403. */}
       {user?.role === 'admin' && <AtsConnectionPanel />}

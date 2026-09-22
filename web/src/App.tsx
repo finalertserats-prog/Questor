@@ -28,7 +28,8 @@ import { DemoRequest } from './pages/DemoRequest';
 import { DemoEnded, DemoRedeem } from './pages/DemoRedeem';
 import { DemoDecision } from './pages/DemoDecision';
 import { SignupQueue } from './pages/SignupQueue';
-import { Dashboard } from './pages/Dashboard';
+import { Landing } from './pages/Landing';
+import { NeedsYouBell, useNeedsYouCount } from './components/hrbox/NeedsYouBell';
 import { RoleCreate } from './pages/RoleCreate';
 import { RoleDetail } from './pages/RoleDetail';
 import { RolesList } from './pages/RolesList';
@@ -240,6 +241,11 @@ function Layout({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(timer);
   }, [railAnimating, mode]);
 
+  // The bell counts what waits on this user; someone who cannot read candidates
+  // (an auditor) has no queue, so no bell.
+  const mayReadCandidates = can(user, 'candidate:read');
+  const needsYouTotal = useNeedsYouCount(mayReadCandidates);
+
   const brand = brandDisplay(railMode);
   const tip = (label: string) => navItemTooltip(railMode, label);
 
@@ -257,6 +263,9 @@ function Layout({ children }: { children: React.ReactNode }) {
         <Icon name="menu" />
         <span>Menu</span>
       </button>
+
+      {/* On a phone the bell sits at the top right, clear of the Menu button. */}
+      {mayReadCandidates && <NeedsYouBell total={needsYouTotal} className="hb-bell--top" />}
 
       {overlayOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
 
@@ -283,6 +292,8 @@ function Layout({ children }: { children: React.ReactNode }) {
                   : <BrandLogo variant="mark" size={30} decorative className="logo-mark" />}
                 {brand.showText && <span className="logo-text">{brand.lead}<span>{brand.tail}</span></span>}
               </div>
+              <div className="hb-head-actions">
+              {mayReadCandidates && <NeedsYouBell total={needsYouTotal} className="hb-bell--side" />}
               <button
                 ref={railToggleRef}
                 type="button"
@@ -298,6 +309,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               >
                 <Icon name="sidebar-collapse" className={`rail-toggle-icon${railToggleTurned(railMode) ? ' is-turned' : ''}`} />
               </button>
+              </div>
             </div>
             {/* The ticked rule is the instrument's edge; it recurs under every
                 page title, which is what ties the console together. */}
@@ -316,7 +328,7 @@ function Layout({ children }: { children: React.ReactNode }) {
               an explicit anchor, so moving the markup cannot silently strand a step. */}
           <nav>
             <div className="nav-group">Review</div>
-            <NavLink to="/" end data-tip={tip('Dashboard')} data-tour="nav-dashboard"><Icon name="dashboard" /><span className="nav-label">Dashboard</span></NavLink>
+            <NavLink to="/" end data-tip={tip('Home')} data-tour="nav-dashboard"><Icon name="dashboard" /><span className="nav-label">Home</span></NavLink>
             {/* Candidates sits above "Add Candidate" because finding an existing
                 one is the far more frequent errand — and for a long time it was
                 the impossible one: creation had a nav entry, retrieval had none. */}
@@ -438,7 +450,8 @@ export function App() {
       {/* Followed from a recruiter's "would you like feedback?" email; answering
           must not require an account. */}
       <Route path="/feedback-consent/:token" element={<FeedbackConsent />} />
-      <Route path="/" element={<Protected><Dashboard /></Protected>} />
+      {/* Home (HR-Box) and Dashboard, as sub-tabs: ?tab=home|dashboard. */}
+      <Route path="/" element={<Protected><Landing /></Protected>} />
       <Route path="/roles" element={<Protected><RolesList /></Protected>} />
       <Route path="/roles/new" element={<Protected><RoleCreate /></Protected>} />
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />

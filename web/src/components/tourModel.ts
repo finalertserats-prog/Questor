@@ -29,8 +29,8 @@ export const TOUR_STEPS: readonly TourStep[] = [
     id: 'nav-dashboard',
     anchor: 'nav-dashboard',
     inSidebar: true,
-    title: 'Dashboard',
-    body: 'Your home page: the hiring workflow, the numbers that matter this week, trends, and the interviews that most recently moved. Start here each morning.',
+    title: 'Home',
+    body: 'Your landing page, in two tabs. Home lists what needs you, most urgent first, with what is coming up and what was done. Dashboard, where this tour continues, has the hiring workflow, the numbers that matter this week, trends and the interviews that most recently moved.',
   },
   {
     id: 'nav-candidates',

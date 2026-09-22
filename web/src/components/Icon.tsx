@@ -59,6 +59,8 @@ const PATHS = {
   recording: <><rect x="9" y="2.5" width="6" height="11" rx="3" /><path d="M6 11a6 6 0 0 0 12 0" /><path d="M12 17v4" /><path d="M8.5 21h7" /><path d="M3 9v4" /><path d="M21 9v4" /></>,
   team: <><circle cx="12" cy="7" r="3" /><path d="M7 19v-1a5 5 0 0 1 10 0v1z" /><circle cx="5.5" cy="9" r="2.25" /><path d="M2 18.5a4 4 0 0 1 4-4" /><circle cx="18.5" cy="9" r="2.25" /><path d="M22 18.5a4 4 0 0 0-4-4" /></>,
   notifications: <><path d="M4.5 18c1-1 1.5-2.5 1.5-4.5V11a6 6 0 0 1 12 0v2.5c0 2 .5 3.5 1.5 4.5z" /><path d="M10.75 5.1v-.6a1.25 1.25 0 0 1 2.5 0v.6" /><path d="M10 18a2 2 0 0 0 4 0" /><circle cx="19.5" cy="4" r="2.5" style={DANGER_FILL} /></>,
+  // The same bell with nothing unread: no dot, so an empty inbox does not look like news.
+  'notifications-none': <><path d="M4.5 18c1-1 1.5-2.5 1.5-4.5V11a6 6 0 0 1 12 0v2.5c0 2 .5 3.5 1.5 4.5z" /><path d="M10.75 5.1v-.6a1.25 1.25 0 0 1 2.5 0v.6" /><path d="M10 18a2 2 0 0 0 4 0" /></>,
   settings: <><path d="M9.87 5.12l.24-2.43h3.78l.24 2.43 1.23.51 1.89-1.55 2.67 2.67-1.55 1.89.51 1.23 2.43.24v3.78l-2.43.24-.51 1.23 1.55 1.89-2.67 2.67-1.89-1.55-1.23.51-.24 2.43h-3.78l-.24-2.43-1.23-.51-1.89 1.55-2.67-2.67 1.55-1.89-.51-1.23-2.43-.24v-3.78l2.43-.24.51-1.23-1.55-1.89 2.67-2.67 1.89 1.55z" /><circle cx="12" cy="12" r="3" /></>,
   integrations: <><path d="M9 8h2a2.5 2.5 0 1 1 4 0h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-3a2.5 2.5 0 1 0-4 0H9a2 2 0 0 1-2-2v-3a2.5 2.5 0 1 1 0-4v-2a2 2 0 0 1 2-2z" /></>,
   tasks: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M7.5 8l1.25 1.25L11 7" /><path d="M13.5 8H17" /><path d="M7.5 12.5l1.25 1.25L11 11.5" /><path d="M13.5 12.5H17" /><path d="M7.5 17l1.25 1.25L11 16" /><path d="M13.5 17H17" /></>,

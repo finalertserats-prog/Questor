@@ -11,6 +11,7 @@ import { chartTone, formatHours, groupSessionStates, recentInterviewDate, trimSp
 import { formatDateTime } from '../components/dateFormat';
 import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import { canReadAudit } from '../components/profileMenuModel';
+import { can } from '../components/capabilityModel';
 import { roleDisplayLabels, type RoleLabelSource } from '../components/roleLabelModel';
 import type { TopRole } from '../components/rolesListModel';
 import { attentionRow, attentionSummary, type NeedsAttention } from '../components/needsAttentionModel';
@@ -116,10 +117,12 @@ export function Dashboard() {
     <div className="dashboard">
       <div className="topbar">
         <h1>Dashboard</h1>
+        {/* Only what this account may do: a hiring manager is not offered
+            "Add candidate", which the server would refuse. */}
         <div className="row">
-          <Link className="btn" to="/roles/new">New role</Link>
-          <Link className="btn secondary" to="/candidates">Candidates</Link>
-          <Link className="btn secondary" to="/candidates/new">Add candidate</Link>
+          {can(user, 'role:create') && <Link className="btn" to="/roles/new">New role</Link>}
+          {can(user, 'candidate:read') && <Link className="btn secondary" to="/candidates">Candidates</Link>}
+          {can(user, 'candidate:create') && <Link className="btn secondary" to="/candidates/new">Add candidate</Link>}
         </div>
       </div>
 
@@ -255,7 +258,7 @@ export function Dashboard() {
                     icon="interviews"
                     title="No interviews yet"
                     message="Set up an interview from a candidate’s page and its progress will show here."
-                    action={<Link className="btn sm" to="/candidates/new">Add candidate</Link>}
+                    action={can(user, 'candidate:create') ? <Link className="btn sm" to="/candidates/new">Add candidate</Link> : undefined}
                   />
                 ) : (
                   <>
@@ -303,7 +306,7 @@ export function Dashboard() {
             </div>
             {metrics.recentInterviews.length === 0 ? (
               <div className="muted small">
-                No interviews yet. <Link to="/candidates/new">Add a candidate</Link> to schedule one.
+                No interviews yet.{can(user, 'candidate:create') && <> <Link to="/candidates/new">Add a candidate</Link> to schedule one.</>}
               </div>
             ) : (
               <div className="dash-table-wrap">

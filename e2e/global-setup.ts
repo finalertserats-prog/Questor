@@ -28,7 +28,7 @@ async function globalSetup(config: FullConfig) {
   await page.getByLabel('Email').fill('demo@questor.local');
   await page.getByLabel('Password').fill(readDemoPassword());
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Home' })).toBeVisible();
   await page.context().storageState({ path: authFile });
   await browser.close();
 }
