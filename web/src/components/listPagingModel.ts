@@ -12,7 +12,7 @@ export type PageSize = (typeof PAGE_SIZES)[number];
 export const DEFAULT_PAGE_SIZE: PageSize = 25;
 
 /** Which list a remembered size belongs to. */
-export type PagedList = 'candidates' | 'interviews';
+export type PagedList = 'candidates' | 'interviews' | 'roleCandidates';
 
 export interface PageMeta {
   readonly total: number;

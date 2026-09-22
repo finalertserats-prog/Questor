@@ -54,6 +54,7 @@ model User {
   approvedFeedbackDeliveries CandidateFeedbackDelivery[]
   roleAssignments      RoleAssignment[]
   candidateAssignments CandidateAssignment[]
+  shortlisted          CandidateShortlist[]
   demoGrants   DemoGrant[]
   catalogRefreshRuns CatalogRefreshRun[] @relation("CatalogRefreshTriggeredBy")
   catalogProposalReviews CatalogProposal[] @relation("CatalogProposalReviewedBy")
@@ -239,6 +240,7 @@ model Role {
   candidates    Candidate[]
   interviews    InterviewSession[]
   assignments   RoleAssignment[]
+  shortlists    CandidateShortlist[]
   // JSON stage plan for new pipelines on this role (see domain/pipelineStages.ts).
   // Empty means the default medallion stages.
   pipelineStagesJson String @default("")
@@ -306,6 +308,7 @@ model Candidate {
   interviews    InterviewSession[]
   artifacts     Artifact[]
   assignments   CandidateAssignment[]
+  shortlistings CandidateShortlist[]
   pipelines     CandidatePipeline[]
   feedbackOptIns   CandidateFeedbackOptIn[]
   humanRequests    CandidateHumanRequest[]
@@ -1531,4 +1534,36 @@ model CandidateImportRow {
 
   @@unique([batchId, rowKey])
   @@index([tenantId, emailNormalized])
+}
+
+// One candidate a reviewer has ticked for comparison on one role.
+//
+// Per role AND per user, not per role alone. A shortlist is a working set — the
+// two or three people this reviewer is holding side by side — not a decision;
+// decisions live on CandidatePipeline. Three reasons it is personal:
+//
+//   1. Anchoring. An organisation using blind review keeps one reviewer's
+//      reading of a candidate away from another's until they have recorded
+//      their own. A shared shortlist would broadcast exactly that reading,
+//      through the side door the blind policy exists to close.
+//   2. Scope. Candidates are object-scoped: the people A may see are not the
+//      people B may see. A shared list would carry ids B must be shown nothing
+//      for, so the same list would read differently to each person, which is
+//      worse than a list that is plainly their own.
+//   3. Nothing is lost. A shortlist that should become a team fact already has
+//      somewhere to go: the pipeline decision, in the one verdict vocabulary.
+model CandidateShortlist {
+  id          String    @id @default(cuid())
+  tenantId    String
+  roleId      String
+  role        Role      @relation(fields: [roleId], references: [id])
+  candidateId String
+  candidate   Candidate @relation(fields: [candidateId], references: [id])
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  createdAt   DateTime  @default(now())
+
+  @@unique([roleId, userId, candidateId])
+  @@index([tenantId, roleId])
+  @@index([candidateId])
 }

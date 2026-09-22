@@ -23,6 +23,7 @@ import { scorecardWarnings } from '../domain/scorecardEdits.js';
 import { competencyIdsWithHistory } from '../services/competencyHistory.js';
 import { latestScorecard, writeScorecardProfile } from '../services/scorecardVersions.js';
 import { roleTechStackRouter, techStackToolsRouter } from './roleTechStack.js';
+import { roleCandidatesRouter, roleShortlistRouter } from './roleCandidates.js';
 import { techStackInputSchema, techStackNames } from '../domain/techStack.js';
 import { syncJdTechStack } from '../domain/jdTechStackSection.js';
 import { roleTechStack } from '../services/roleTechStack.js';
@@ -35,6 +36,9 @@ rolesRouter.use('/:id/scorecard/competencies', roleCompetenciesRouter);
 // The technologies a role is hired around, and the helpers the editor uses.
 rolesRouter.use('/tech-stack', techStackToolsRouter);
 rolesRouter.use('/:id/tech-stack', roleTechStackRouter);
+// The role's own applicants: the table, the skills grid and the side-by-side.
+rolesRouter.use('/:id/candidates', roleCandidatesRouter);
+rolesRouter.use('/:id/shortlist', roleShortlistRouter);
 
 // List roles
 //

@@ -271,6 +271,10 @@ export async function eraseCandidate(o: {
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
+    // Every reviewer's shortlist tick for this person, on any role. It keys on
+    // Candidate, so leaving it would fail the constraint below and abort an
+    // erasure that is a legal obligation.
+    await count('shortlistings', () => tx.candidateShortlist.deleteMany({ where: { candidateId: o.candidateId } }));
     // The link says which ATS record this person is; it goes with them.
     await count('atsLinks', () => tx.candidateAtsLink.deleteMany({ where: { candidateId: o.candidateId } }));
     // Belt and braces alongside the session cascade: these rows also key on the

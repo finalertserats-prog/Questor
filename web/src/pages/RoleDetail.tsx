@@ -28,6 +28,7 @@ import type { EditableCompetency } from '../components/scorecard/competencyEditM
 import { TechStackPanel } from '../components/TechStackPanel';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
 import { useToast } from '../components/Toast';
+import { RoleCandidates } from '../components/compare/RoleCandidates';
 
 type Competency = EditableCompetency;
 interface Profile {
@@ -318,6 +319,13 @@ export function RoleDetail() {
           <ul>{(profile.responsibilities ?? []).map((r, i) => <li key={i}>{r}</li>)}</ul>
         </div>
       </div>
+
+      {/* Hiring is comparative, and this page listed no candidates at all:
+          comparing three people meant three separate pages. The table, the
+          skills grid across them and the side-by-side all sit here, above the
+          scorecard, because who has applied is what a manager opens a role to
+          find out. Only for someone who may read candidates at all. */}
+      {can(user, 'candidate:read') && <RoleCandidates roleId={role.id} />}
 
       <TechStackPanel
         roleId={role.id}
