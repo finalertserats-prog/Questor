@@ -21,6 +21,9 @@ const lazyPreviewDeps: PreviewDeps = {
   speakBrowser: (text, hint, onEnd) => loadedDeps().speakBrowser(text, hint, onEnd),
 };
 
+/** One selector to a page, so a fixed id is enough to point the group at its note. */
+const NOTE_ID = 'interviewer-select-note';
+
 interface InterviewerSelectorProps {
   readonly value: string;
   readonly onChange: (value: string) => void;
@@ -68,9 +71,17 @@ export function InterviewerSelector({ value, onChange, note, compact = false }: 
   }, []);
 
   return (
-    <fieldset className={`interviewer-select${compact ? ' is-compact' : ''}`} data-testid="interviewer-select">
+    <fieldset
+      className={`interviewer-select${compact ? ' is-compact' : ''}`}
+      data-testid="interviewer-select"
+      // Named, not merely nearby: a paragraph inside a fieldset is not
+      // exposed as the group's description, so without this a screen reader
+      // announces "AI interviewer, radio group" and the one sentence that says
+      // the five are interchangeable is left to be stumbled on.
+      aria-describedby={note ? NOTE_ID : undefined}
+    >
       <legend className="field-label">AI interviewer</legend>
-      {note && <p className="interviewer-note">{note}</p>}
+      {note && <p id={NOTE_ID} className="interviewer-note">{note}</p>}
       <ul className="interviewer-options">
         {choices.map((choice) => {
           const inputId = `interviewer-${choice.value}`;

@@ -126,6 +126,21 @@ describe('coveredCompetencyNames', () => {
     expect(coveredCompetencyNames([])).toEqual([]);
     expect(coveredCompetencyNames([{ version: 1, status: 'approved', profile: null } as never])).toEqual([]);
   });
+
+  /**
+   * This runs on the candidate page from whatever /roles/:id sent. A shape
+   * nobody expected must cost the form its competency list, not cost the
+   * recruiter the whole page — which is what a throw here would do, because
+   * the render is what calls it.
+   */
+  it('gives nothing rather than throwing when competencies are not a list', () => {
+    expect(coveredCompetencyNames([{ version: 1, status: 'approved', profile: { competencies: 'SQL' } } as never])).toEqual([]);
+  });
+
+  it('skips a competency whose name is not text', () => {
+    expect(coveredCompetencyNames([card(1, 'approved', [comp('SQL'), { classification: 'essential', name: 7 }])]))
+      .toEqual(['SQL']);
+  });
 });
 
 /**

@@ -226,10 +226,21 @@ describe('the interviewer picker', () => {
     expect(group.compareDocumentPosition(picker!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('says the five differ in name and voice only', async () => {
+  /**
+   * Named as the group's description, not merely placed inside it: a
+   * paragraph in a fieldset is not exposed as the group's description, so
+   * without the wiring a screen reader announces "AI interviewer, radio
+   * group" and the sentence saying the five are interchangeable is left to be
+   * stumbled on.
+   */
+  it('says the five differ in name and voice only, to the group itself', async () => {
     const card = await setupCard();
     const picker = card.querySelector('[data-testid="interviewer-select"]');
     expect(picker?.textContent).toMatch(/name and voice only/i);
+
+    const describedBy = picker?.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(card.querySelector(`#${describedBy}`)?.textContent).toMatch(/name and voice only/i);
   });
 
   /**

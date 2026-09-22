@@ -67,14 +67,26 @@ const NON_SCORING = 'non_scoring';
  * competencies are dropped, matching `isScored` on the server: they stay on
  * the scorecard so old assessments can still resolve their names, but no new
  * plan includes them.
+ *
+ * `'approved'` is compared exactly, because that is the literal the server
+ * both stores and queries with (prisma/schema.prisma: `draft | approved`).
+ * Matching it loosely would accept a status the server would not.
+ *
+ * Every shape is checked rather than trusted. This is called during render,
+ * from whatever /roles/:id sent, so a response nobody anticipated has to cost
+ * the form its list of competencies — not cost the recruiter the page.
  */
 export function coveredCompetencyNames(scorecards: readonly SetupScorecard[]): readonly string[] {
+  // `filter` already returns a new array, so the `sort` never reorders the
+  // caller's list — the page's own copy of the role response.
   const approved = scorecards
-    .filter((card) => card.status === 'approved')
+    .filter((card) => card?.status === 'approved')
     .sort((a, b) => b.version - a.version)[0];
-  return (approved?.profile?.competencies ?? [])
-    .filter((c) => c.classification !== NON_SCORING && c.retired !== true)
-    .map((c) => c.name?.trim() ?? '')
+  const competencies = approved?.profile?.competencies;
+  if (!Array.isArray(competencies)) return [];
+  return competencies
+    .filter((c) => c && c.classification !== NON_SCORING && c.retired !== true)
+    .map((c) => (typeof c.name === 'string' ? c.name.trim() : ''))
     .filter((name) => name.length > 0);
 }
 
