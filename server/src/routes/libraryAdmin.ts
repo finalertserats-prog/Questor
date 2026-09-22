@@ -5,6 +5,7 @@ import { requirePlatformOperator } from '../middleware/platformOperator.js';
 import { approveEntry, editEntry, entryWithHistory, noteEntry, overview, ownerQueue, poolHealthRows, QUEUE_PAGE, ratesByStratum, rejectEntry, retireEntry, sampleEntries, type Owner } from '../library/admin.js';
 import { isReservedEntryId } from '../library/types.js';
 import type { TransitionResult } from '../library/lifecycle.js';
+import { loadTrialReport } from '../library/trialReport.js';
 
 /**
  * The platform owner's library screen: pool health, the owner queue, today's
@@ -59,6 +60,11 @@ libraryAdminRouter.get('/queue', asyncHandler(async (req, res) => {
 
 libraryAdminRouter.get('/sample', asyncHandler(async (_req, res) => {
   res.json({ entries: await sampleEntries() });
+}));
+
+// The interleaved trial's paired report: library blocks against built-in blocks of the same interviews.
+libraryAdminRouter.get('/trial-report', asyncHandler(async (_req, res) => {
+  res.json({ report: await loadTrialReport() });
 }));
 
 libraryAdminRouter.get('/strata', asyncHandler(async (_req, res) => {

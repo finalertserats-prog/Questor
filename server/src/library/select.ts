@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { parseEntryBody, questionFormSchema, type EntrySnapshot } from './types.js';
+import { parseEntryBody, probesOf, questionFormSchema, type EntrySnapshot } from './types.js';
 
 /**
  * A ladder per competency: two or three live entries spanning difficulty,
@@ -23,7 +23,21 @@ export interface LadderOptions {
   readonly recentlyUsedIds: ReadonlySet<string>;
   readonly rng: () => number;
   readonly size?: number;
+  /**
+   * Which end of the pool the ladder leans to when it cannot span all three
+   * difficulties: 'harder' for a competency the CV shows strongly, 'easier'
+   * for one it never mentions. Absent means the easy end first, as before.
+   */
+  readonly lean?: LadderLean;
 }
+
+export type LadderLean = 'harder' | 'easier' | 'even';
+
+const DIFFICULTY_ORDER: Readonly<Record<LadderLean, readonly number[]>> = {
+  even: [1, 2, 3],
+  easier: [1, 2, 3],
+  harder: [3, 2, 1],
+};
 
 export const LADDER_SIZE = 3;
 export const MIN_LADDER = 2;
@@ -68,7 +82,7 @@ export function buildLadder(entries: readonly SelectableEntry[], opts: LadderOpt
   // lacks before one it has, always with a form it has not used (no form may
   // pass half of it). A ladder on one difficulty is no ladder: the director
   // steps up and down it, so it must span at least two.
-  for (const difficulty of [1, 2, 3].slice(0, size)) take((e) => e.difficultyTag === difficulty);
+  for (const difficulty of DIFFICULTY_ORDER[opts.lean ?? 'even'].slice(0, size)) take((e) => e.difficultyTag === difficulty);
   while (chosen.length < size) {
     const before = chosen.length;
     const have = new Set(chosen.map((e) => e.difficultyTag));
@@ -91,7 +105,13 @@ export interface SelectRequest {
   readonly windowDays: number;
   readonly now?: Date;
   readonly rng?: () => number;
+  /** Per competency key: how the CV reads, so a strongly evidenced competency draws a harder ladder. */
+  readonly cvSignals?: Readonly<Record<string, 'strong' | 'thin' | 'neutral'>>;
+  /** Entries this candidate has already been asked (a retake): never asked of them again. */
+  readonly excludeEntryIds?: readonly string[];
 }
+
+const LEAN_BY_SIGNAL = { strong: 'harder', thin: 'easier', neutral: 'even' } as const;
 
 export type Ladders = Readonly<Record<string, readonly EntrySnapshot[]>>;
 
@@ -119,13 +139,15 @@ function chainOf(entry: EntryRow, byId: ReadonlyMap<string, EntryRow>): string[]
 
 export function snapshotOf(entry: EntryRow): EntrySnapshot {
   const form = questionFormSchema.safeParse(entry.form);
+  const body = parseEntryBody(entry.bodyJson);
   return {
     entryId: entry.id,
     standardId: entry.standardId,
     questionText: entry.questionText,
-    anchors: parseEntryBody(entry.bodyJson).anchors,
+    anchors: body.anchors,
     form: form.success ? form.data : 'other',
     difficultyTag: entry.difficultyTag,
+    probes: probesOf(body),
   };
 }
 
@@ -162,16 +184,17 @@ export async function selectLadders(req: SelectRequest): Promise<Ladders> {
     where: { tenantId: req.tenantId, roleSlug: req.roleSlug, askedAt: { gte: since } },
     select: { entryId: true },
   });
-  const recentlyUsedIds = new Set(recent.map((u) => u.entryId));
+  const recentlyUsedIds = new Set([...recent.map((u) => u.entryId).filter((id): id is string => id !== null), ...(req.excludeEntryIds ?? [])]);
   // Least-recently-asked is judged over all time, not only the window.
   const history = await prisma.libraryUsage.groupBy({ by: ['entryId'], where: { tenantId: req.tenantId, roleSlug: req.roleSlug }, _max: { askedAt: true } });
-  const lastAsked = new Map(history.map((h) => [h.entryId, h._max.askedAt]));
+  const lastAsked = new Map(history.flatMap((h) => (h.entryId ? [[h.entryId, h._max.askedAt] as const] : [])));
   const ladders: Record<string, readonly EntrySnapshot[]> = {};
   for (const key of req.competencyKeys) {
     const pool = entries.filter((e) => e.competencyKey === key).map((e) => ({
       id: e.id, difficultyTag: e.difficultyTag, form: e.form, lastAskedAt: lastAsked.get(e.id) ?? null, chainIds: chainOf(e, byId),
     }));
-    const ladder = buildLadder(pool, { recentlyUsedIds, rng });
+    const signal = req.cvSignals?.[key];
+    const ladder = buildLadder(pool, { recentlyUsedIds, rng, ...(signal ? { lean: LEAN_BY_SIGNAL[signal] } : {}) });
     ladders[key] = ladder.map((rung) => snapshotOf(byId.get(rung.id) as EntryRow));
   }
   return ladders;

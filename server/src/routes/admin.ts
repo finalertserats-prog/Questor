@@ -28,6 +28,7 @@ import { webhookUrlProblem } from '../services/webhookUrl.js';
 import { resolveCommit } from '../services/build.js';
 import { INSTANCE_ID, latestJobRuns } from '../services/jobs.js';
 import { legacySignatureStatus, webhookHealth } from '../services/webhooks.js';
+import { LIBRARY_MODES, MAX_WINDOW_DAYS } from '../library/orgSettings.js';
 
 export const adminRouter = Router();
 adminRouter.use(authenticate);
@@ -542,6 +543,11 @@ const policySchema = z.object({
   // IANA zone the organisation works in (e.g. "Asia/Kolkata"); times in
   // scheduling emails are stated in it.
   timeZone: z.string().trim().max(64).refine(isKnownTimeZone, 'Use an IANA time zone such as "Asia/Kolkata".').optional(),
+  // The Q&A library for this organisation (library/orgSettings.ts). Read only
+  // while the deployment's LIBRARY_ENABLED is on; unset means off.
+  questionLibrary: z.enum(LIBRARY_MODES).optional(),
+  questionLibraryTrialPercent: z.number().int().min(0).max(100).optional(),
+  questionLibraryWindowDays: z.number().int().min(1).max(MAX_WINDOW_DAYS).optional(),
 }).strict();
 
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {

@@ -1,6 +1,7 @@
 import type { DirectorSignal, InterviewPlan, PlanBlock, TurnRecord } from '../domain/types.js';
 import { detectCandidateIntent } from './candidateIntent.js';
 import { isAnswerInContext } from './conversationModel.js';
+import { guardedQuota } from './coverageGuard.js';
 
 // Interview Director (BRD 14.2, 16.2). Authoritative controller of time,
 // coverage and depth. It does NOT speak — it emits signals the Conversation
@@ -130,7 +131,9 @@ export function directorDecide(opts: {
     (q.score < WEAK_ANSWER_SCORE || q.score >= STRONG_ANSWER_SCORE)
       ? lastCandidate.competencyId
       : undefined;
-  const quotaFor = (b: PlanBlock): number => answersNeeded(b) + (b.competencyId === bonusBlockId ? 1 : 0);
+  const baseQuota = (b: PlanBlock): number => answersNeeded(b) + (b.competencyId === bonusBlockId ? 1 : 0);
+  // Library-planned interviews only: cap follow-ups and protect later blocks' time (engines/coverageGuard.ts).
+  const quotaFor = (b: PlanBlock): number => guardedQuota({ plan, block: b, quota: baseQuota(b), coverage: cover, turns, elapsedMinutes });
 
   // Find the first block whose answer quota is not yet met.
   const assessableBlocks = plan.blocks.filter((b) => b.competencyId !== '__candidate_questions__');

@@ -33,6 +33,8 @@ const selectSchema = z.object({
   competencyKeys: z.array(slug).min(1).max(40),
   /** Probational entries are returned only to the demo sandbox (L1's interleaved trial). */
   includeProbational: z.boolean().default(false),
+  /** Per competency key, what the candidate's CV shows; a strong signal draws a harder ladder. */
+  cvSignals: z.record(slug, z.enum(['strong', 'thin', 'neutral'])).optional(),
 }).strict();
 
 // Planning an interview calls this once; a script hammering it is not planning interviews.
@@ -49,7 +51,7 @@ libraryRouter.post('/select', selectLimit, asyncHandler(async (req, res) => {
   const policy = await loadPolicy();
   const ladders = await selectLadders({
     tenantId: auth.tenantId, roleSlug: body.roleSlug, band: body.band, competencyKeys: [...new Set(body.competencyKeys)],
-    includeProbational, windowDays: policy.noRepeatWindowDays,
+    includeProbational, windowDays: policy.noRepeatWindowDays, ...(body.cvSignals ? { cvSignals: body.cvSignals } : {}),
   });
   res.json({ ladders, includeProbational });
 }));

@@ -3,7 +3,7 @@ import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import type { InterviewPlan, RoleSuccessProfile, TurnRecord } from '../domain/types.js';
 import { assertTransition } from '../domain/stateMachine.js';
 import { directorDecide } from '../engines/interviewDirector.js';
-import { nextUtterance, type Persona } from '../engines/conversationRuntime.js';
+import { nextUtterance, type AgentUtterance, type Persona } from '../engines/conversationRuntime.js';
 import { detectInjection } from '../engines/policyEngine.js';
 import { evaluate } from '../engines/evaluator.js';
 import { roleTechStack } from '../services/roleTechStack.js';
@@ -24,6 +24,7 @@ import { openingQuestion } from '../engines/openingModel.js';
 import { currentSitting } from '../engines/conversationModel.js';
 import { traceServing } from '../providers/llm/servingTrace.js';
 import { servingMeta } from '../services/interviewServing.js';
+import { anchorsFor, recordLibraryUsage } from '../library/usage.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -115,13 +116,16 @@ async function loadContext(sessionId: string) {
  * question again without its lead-in. A damaged or absent record reads as
  * neither, which the conversation treats as an ordinary question.
  */
-function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed'> {
+function storedUtterance(metaJson: string): Pick<TurnRecord, 'kind' | 'question' | 'sittingClosed' | 'libraryEntryId' | 'form'> {
   try {
-    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown };
+    const meta = JSON.parse(metaJson) as { kind?: unknown; question?: unknown; sittingClosed?: unknown; libraryEntryId?: unknown; form?: unknown };
     return {
       ...(typeof meta.kind === 'string' ? { kind: meta.kind } : {}),
       ...(typeof meta.question === 'string' ? { question: meta.question } : {}),
       ...(meta.sittingClosed === true ? { sittingClosed: true } : {}),
+      // A question drawn on a library entry: which one, and the form it was tagged with.
+      ...(typeof meta.libraryEntryId === 'string' ? { libraryEntryId: meta.libraryEntryId } : {}),
+      ...(typeof meta.form === 'string' ? { form: meta.form } : {}),
     };
   } catch {
     return {};
@@ -264,7 +268,10 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.
-  }, { kind: utter.kind, ...(utter.question ? { question: utter.question } : {}), ...servingMeta(served) }, (_tx, tail) => {
+    // Two separate records share the turn's metadata: which model layer wrote
+    // it (degraded mode) and which library rung it drew on. Distinct keys, so
+    // neither overwrites the other.
+  }, { kind: utter.kind, ...(utter.question ? { question: utter.question } : {}), ...libraryMeta(utter), ...servingMeta(served) }, (_tx, tail) => {
     if ((tail?.id ?? null) !== readTailId) throw new TranscriptMovedError();
   });
 
@@ -280,6 +287,21 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   return {
     turnId: agentTurn.id, index: agentTurn.index, text: utter.text, competencyId: utter.competencyId,
     kind: utter.kind, state: session.state, done, withdrawn,
+  };
+}
+
+/**
+ * What a library-drawn turn records about its source: the entry, its form tag
+ * and the rung path (library/usage.ts reads them back). Empty for every other
+ * turn, so an interview planned without the library stores what it always did.
+ */
+function libraryMeta(utter: AgentUtterance): Record<string, unknown> {
+  if (!utter.libraryEntryId) return {};
+  return {
+    libraryEntryId: utter.libraryEntryId,
+    ...(utter.form ? { form: utter.form } : {}),
+    ...(utter.rungIndex !== undefined ? { rungIndex: utter.rungIndex } : {}),
+    ...(utter.rungMove ? { rungMove: utter.rungMove } : {}),
   };
 }
 
@@ -922,6 +944,8 @@ export async function finalizeInterview(
       // The plan knows which competencies it had no room for. Passing that on is
       // what lets the assessment say "not asked" instead of "no evidence".
       notAssessed: plan.notAssessed,
+      // Library-planned interviews only: the anchors of the entries actually asked, from the plan's snapshot.
+      ...(plan.library ? { anchors: anchorsFor(plan, turns) } : {}),
     });
 
     // Version numbering is read and written together: the count taken before
@@ -936,6 +960,15 @@ export async function finalizeInterview(
         },
       });
     });
+
+    // What the library learns from this interview (library/usage.ts). Never
+    // allowed to fail the finalisation: the assessment is already stored.
+    if (plan.library) {
+      await recordLibraryUsage({ sessionId, tenantId: session.tenantId, roleId: session.roleId, plan, turns })
+        .catch((err: unknown) => {
+          logger.error({ sessionId, err: err instanceof Error ? err.message : String(err) }, 'Could not record library usage');
+        });
+    }
 
     // The candidate's feedback email (services/autoFeedback.ts) is queued the
     // moment the assessment exists and BEFORE the assessment is announced as

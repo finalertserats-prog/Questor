@@ -68,4 +68,14 @@ describe('buildLadder', () => {
     const ladder = buildLadder([entry('a', 1, 'star'), entry('b', 1, 'opinion'), entry('c', 3, 'tradeoff')], { recentlyUsedIds: new Set(), rng: rng() });
     expect(ladder.length).toBe(3);
   });
+
+  it('leans to the hard end for a competency the CV shows strongly', () => {
+    const ladder = buildLadder([entry('easy', 1, 'star'), entry('mid', 2, 'star'), entry('hard', 3, 'opinion')], { recentlyUsedIds: new Set(), rng: rng(), lean: 'harder' });
+    expect(ladder.map((e) => e.id)).toEqual(['mid', 'hard']);
+  });
+
+  it('keeps the easy end first without a lean', () => {
+    const ladder = buildLadder([entry('easy', 1, 'star'), entry('mid', 2, 'star'), entry('hard', 3, 'opinion')], { recentlyUsedIds: new Set(), rng: rng() });
+    expect(ladder.map((e) => e.id)).toEqual(['easy', 'hard']);
+  });
 });

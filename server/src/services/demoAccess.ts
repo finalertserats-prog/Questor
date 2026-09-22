@@ -424,6 +424,7 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
     await tx.turn.deleteMany({ where: { sessionId: { in: sessionIds } } });
     await tx.invitation.deleteMany({ where: { sessionId: { in: sessionIds } } });
     await tx.interviewPlanVersion.deleteMany({ where: { sessionId: { in: sessionIds } } });
+    await tx.libraryUsage.deleteMany({ where: { interviewSessionId: { in: sessionIds } } });
     await tx.integrityEvent.deleteMany({ where: { sessionId: { in: sessionIds } } });
     await tx.artifact.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } });

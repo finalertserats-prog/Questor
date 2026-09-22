@@ -153,6 +153,8 @@ async function deleteSessionCascade(
   await count('turns', () => tx.turn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   await count('invitations', () => tx.invitation.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   await count('plans', () => tx.interviewPlanVersion.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+  // Which library questions the interview asked and how they went: keyed to the interview, erased with it.
+  await count('libraryUsage', () => tx.libraryUsage.deleteMany({ where: { interviewSessionId: { in: sessionIds } } }));
   // Model executions record prompts/outputs that can quote the candidate.
   await count('modelExecutions', () => tx.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   await count('artifacts', () => tx.artifact.deleteMany({ where: { sessionId: { in: sessionIds } } }));

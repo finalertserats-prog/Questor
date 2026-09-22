@@ -6,9 +6,11 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope, hasCapability } from '../services/access.js';
 import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
+import { attachLibrary } from '../library/planning.js';
+import { withoutLadders } from '../library/planLadders.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { resolveCandidateBand } from '../engines/bandCalibration.js';
-import type { FitScore, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
+import type { FitScore, InterviewPlan, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { assertTransition, canTransition } from '../domain/stateMachine.js';
 import { humanVerdict } from '../domain/reviewedAssessment.js';
 import { getEmail } from '../providers/email/index.js';
@@ -164,10 +166,16 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   });
 
   const roleRow = await prisma.role.findUniqueOrThrow({ where: { id: candidate.roleId }, select: { id: true, techStackJson: true } });
-  const plan = buildInterviewPlan({
+  const builtPlan = buildInterviewPlan({
     role: profile, fit, durationMinutes: body.durationMinutes, language: body.language, modules: body.modules,
     band: banding.band.id, techStack: roleTechStack(roleRow),
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
+  });
+  // The Q&A library's ladders, when the deployment and this organisation have
+  // it on; otherwise the plan above, untouched.
+  const plan = await attachLibrary(builtPlan, {
+    tenantId: req.auth!.tenantId, roleId: candidate.roleId, candidateId: candidate.id, scorecardId: scorecard.id,
+    competencies: profile.competencies, fit,
   });
 
   // Drawn once, here, and stored: a session's interviewer never changes after
@@ -203,7 +211,7 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   // An interview exists for the candidate: their pipeline reaches Silver on its own.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'interview.scheduled', trigger: 'interview.approved' });
 
-  res.status(201).json({ session: { id: session.id, state: session.state, provider: session.provider }, plan, meetingCapability: meetingCapability(body.provider) });
+  res.status(201).json({ session: { id: session.id, state: session.state, provider: session.provider }, plan: withoutLadders(plan), meetingCapability: meetingCapability(body.provider) });
 }));
 
 // List sessions.
@@ -347,7 +355,8 @@ interviewsRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
     // so the page never offers a button that can only answer 409.
     actions: sessionActions(session, assessment !== null),
     session: { id: session.id, state: session.state, provider: session.provider, language: session.language, durationMinutes: session.durationMinutes, scheduledAt: session.scheduledAt, scheduledTimeZone: session.scheduledTimeZone, startedAt: session.startedAt, completedAt: session.completedAt, persona: parseJsonOptional(session.personaJson, {}, { model: 'InterviewSession', id: session.id, field: 'personaJson' }), consent: parseJsonStrict(session.consentJson, { model: 'InterviewSession', id: session.id, field: 'consentJson' }) },
-    plan: plan ? parseJsonStrict(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' }) : null,
+    // Library questions and anchors are not shown before or after the interview (library/planLadders.ts withoutLadders).
+    plan: plan ? withoutLadders(parseJsonStrict<Partial<InterviewPlan>>(plan.planJson, { model: 'InterviewPlanVersion', id: plan.id, field: 'planJson' })) : null,
     // The plan above is what was built at setup; a newer approved scorecard
     // means the interview will be re-planned from it when it starts.
     replanPending: planPending,
@@ -532,10 +541,15 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   const banding = resolveCandidateBand({ profile: parsed, resumeText: latestProfile?.rawText ?? '', roleSeniority: profile.seniority ?? '' });
 
   const roleRow = await prisma.role.findUniqueOrThrow({ where: { id: original.roleId }, select: { id: true, techStackJson: true } });
-  const plan = buildInterviewPlan({
+  const builtPlan = buildInterviewPlan({
     role: profile, fit, durationMinutes: original.durationMinutes, language: original.language, modules: originalModules,
     band: banding.band.id, techStack: roleTechStack(roleRow),
     bandRationale: `${banding.rationale} (decided from the ${banding.source}, confidence ${banding.confidence.toFixed(2)})`,
+  });
+  // A retake never repeats a library question this candidate was offered before (library/planning.ts).
+  const plan = await attachLibrary(builtPlan, {
+    tenantId: req.auth!.tenantId, roleId: original.roleId, candidateId: candidate.id, scorecardId: scorecard.id,
+    competencies: profile.competencies, fit,
   });
 
   const tenant = await prisma.tenant.findUnique({ where: { id: req.auth!.tenantId } });
@@ -578,7 +592,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   });
   await emitEvent(req.auth!.tenantId, 'interview.retake_created', { originalSessionId: original.id, sessionId: retake.id, candidateId: candidate.id, attemptNumber: retake.attemptNumber });
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: original.roleId, event: 'interview.scheduled', trigger: 'interview.retake_created' });
-  res.status(201).json({ session: { id: retake.id, state: retake.state, attemptNumber: retake.attemptNumber, retakeOfSessionId: original.id }, plan });
+  res.status(201).json({ session: { id: retake.id, state: retake.state, attemptNumber: retake.attemptNumber, retakeOfSessionId: original.id }, plan: withoutLadders(plan) });
 }));
 
 /**

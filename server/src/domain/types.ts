@@ -89,6 +89,77 @@ export interface PlanBlock {
    * Absent on process/close blocks, which are script rather than assessment.
    */
   bandGuidance?: string;
+  /**
+   * Where this block's questions come from when the Q&A library planned it
+   * (library/planLadders.ts). Absent when the library is off, so a plan built
+   * without it is byte-for-byte what it always was.
+   */
+  library?: PlanBlockLibrary;
+}
+
+/**
+ * One library question as it stood when the plan was made. Stored on the plan
+ * so a later edit or retirement of the entry never changes a running or past
+ * interview, and the evaluator grades against these anchors, not live rows.
+ */
+export interface LibraryQuestionSnapshot {
+  readonly entryId: string;
+  readonly standardId: string | null;
+  readonly questionText: string;
+  /** What a strong answer covers; handed to the evaluator, never said aloud. */
+  readonly anchors: readonly string[];
+  /** The engine's QuestionForm; feeds the runtime's no-repeat window. */
+  readonly form: string;
+  readonly difficultyTag: number;
+  /**
+   * Suggested follow-ups (L2 fills them; empty until then). Each is a
+   * suggestion the interviewer may phrase in its own words, offered when its
+   * `when` flags match the engine's answerQuality() reading of the answer.
+   */
+  readonly probes?: readonly LibraryProbeSnapshot[];
+}
+
+/** A suggested follow-up on a library question. Never spoken as written. */
+export interface LibraryProbeSnapshot {
+  readonly text: string;
+  /** answerQuality() flags that make this probe apt, e.g. { hasAction: true, hasResult: false }. */
+  readonly when?: Readonly<Partial<Record<'hasSituation' | 'hasAction' | 'hasResult' | 'specific', boolean>>>;
+}
+
+/** What the CV says about a competency, used only to pitch the ladder, never to score. */
+export type CvSignal = 'strong' | 'thin' | 'neutral';
+
+export type LibraryBlockReason = 'trial_control' | 'no_ladder' | 'select_failed';
+
+export interface PlanBlockLibrary {
+  /** Who supplies the block's questions: a library ladder, or the built-in bank as before. */
+  readonly source: 'library' | 'builtin';
+  /** Why a built-in block is built-in; absent on a library block. */
+  readonly reason?: LibraryBlockReason;
+  /** The pool key this block was selected under. */
+  readonly competencyKey: string;
+  /** Planned under the interleaved trial: the block is one side of a paired comparison. */
+  readonly trial: boolean;
+  /** Easiest to hardest; two or three rungs. Present only on a library block. */
+  readonly ladder?: readonly LibraryQuestionSnapshot[];
+  /** The rung asked first (the middle one unless the CV moved it). */
+  readonly startRung?: number;
+  readonly cvSignal?: CvSignal;
+}
+
+/** The library's part in a plan: stored once, so the interview can be audited later. */
+export interface PlanLibrary {
+  readonly mode: 'on' | 'trial';
+  /** The scorecard version the anchors were chosen against (the evaluator's rubricVersion). */
+  readonly rubricVersion: string;
+  readonly roleSlug: string;
+  readonly band: string;
+  readonly windowDays: number;
+  /** Share of eligible blocks drawn from the library in trial mode, 0-100. */
+  readonly trialPercent?: number;
+  readonly selectedAt: string;
+  /** Set when no ladder could be requested at all; every block is then built-in. */
+  readonly unavailable?: 'role_not_in_catalog' | 'select_failed';
 }
 
 export interface InterviewPlan {
@@ -110,6 +181,8 @@ export interface InterviewPlan {
   band?: BandId;
   /** Why that band was chosen, for the audit trail behind the pitch. */
   bandRationale?: string;
+  /** Present only when the Q&A library planned this interview. */
+  library?: PlanLibrary;
 }
 
 // ---- Turns / evidence ----
@@ -137,6 +210,10 @@ export interface TurnRecord {
   sittingClosed?: boolean;
   /** For an agent turn: the question it asked, without any lead-in, to put again after a pause. */
   question?: string;
+  /** For an agent turn that asked a library question: the entry it came from. */
+  libraryEntryId?: string;
+  /** For an agent turn: the question form it was stored with, when known (a library question's tag). */
+  form?: string;
 }
 
 export interface EvidenceSpan {

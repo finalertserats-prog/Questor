@@ -1,5 +1,6 @@
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
+import { attachLibrary } from '../library/planning.js';
 import { roleTechStack } from './roleTechStack.js';
 import type { FitScore, InterviewPlan, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from './audit.js';
@@ -66,10 +67,13 @@ export async function replanFromLatestScorecard(sessionId: string): Promise<Repl
   const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: session.candidateId }, orderBy: { version: 'desc' } });
   const fit = latestProfile ? parseJsonStrict<FitScore>(latestProfile.fitScoreJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'fitScoreJson' }) : undefined;
   const roleRow = await prisma.role.findUniqueOrThrow({ where: { id: session.roleId }, select: { id: true, techStackJson: true } });
-  const plan = buildInterviewPlan({
+  const plan = await attachLibrary(buildInterviewPlan({
     role: profile, fit, durationMinutes: session.durationMinutes, language: session.language,
     modules: previous.modules ?? [], band: previous.band, bandRationale: previous.bandRationale,
     techStack: roleTechStack(roleRow),
+  }), {
+    tenantId: session.tenantId, roleId: session.roleId, candidateId: session.candidateId, scorecardId: latest.id,
+    competencies: profile.competencies, fit, replanningSessionId: sessionId,
   });
   const nextVersion = session.plan.version + 1;
 

@@ -24,6 +24,7 @@ import { feedbackEmailState, gateReviewCompletion, previewFeedbackEmail, sendFee
 import { keepFeedbackHeld } from '../services/feedbackHold.js';
 import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from '../services/assessmentReview.js';
 import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
+import { questionsAskedFor, type AskedQuestion } from '../library/questionsAsked.js';
 import {
   assertBlindVerdictRecorded, assertUnblindedReadAllowed, getAgreementReport, getBlindView,
   recordBlindVerdict, BLIND_BYPASS_ACTION, DISPOSITIONS, SELF_REVIEW_NOTE,
@@ -39,6 +40,11 @@ assessmentsRouter.use(authenticate);
  * read, override and export any candidate's assessment in the org.
  */
 const getAssessment = assertCanAccessAssessment;
+
+async function questionsAskedField(sessionId: string): Promise<{ questionsAsked?: AskedQuestion[] }> {
+  const asked = await questionsAskedFor(sessionId);
+  return asked ? { questionsAsked: asked } : {};
+}
 
 /**
  * Read a stored assessment result, or refuse to serve the assessment at all.
@@ -503,6 +509,8 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     // writer during a model outage, so a thinner probe is not held against the
     // candidate. Empty unless the local fallback chain (LOCAL_LLM_ENABLED) ran.
     servingMode: await servingModeForSession(a.sessionId),
+    // Only for an interview the Q&A library planned; absent otherwise, as before.
+    ...await questionsAskedField(a.sessionId),
     // What the rest of the product should report: the human verdict once there
     // is one, the AI's until then.
     outcome: reviewedOutcome(result, completed),

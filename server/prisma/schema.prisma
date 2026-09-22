@@ -1292,8 +1292,9 @@ model LibraryStandard {
 
 model LibraryUsage {
   id                 String   @id @default(cuid())
-  entryId            String
-  entry              LibraryEntry @relation(fields: [entryId], references: [id])
+  // Null on a built-in block: the interleaved trial records both sides of the pair.
+  entryId            String?
+  entry              LibraryEntry? @relation(fields: [entryId], references: [id], onDelete: Restrict)
   interviewSessionId String   // no relation: erased with the session, never blocks it
   tenantId           String
   roleId             String   @default("")
@@ -1304,7 +1305,21 @@ model LibraryUsage {
   probeCount         Int      @default(0)
   reviewerDelta      Float?
   blockSource        String   @default("library") // library | builtin
+  // L1: the plan block the row describes, whether it was one side of the
+  // interleaved trial, and how often the candidate asked what was meant.
+  competencyId       String   @default("")
+  competencyKey      String   @default("")
+  trial              Boolean  @default(false)
+  confusionMarkers   Int      @default(0)
+  // The rung path, for calibrating difficulty later: which rung of the ladder
+  // this row asked, and why the interviewer moved to it (start | up | down).
+  rungIndex          Int?
+  rungMove           String   @default("")
+  // One row per block (and per rung) per interview: a second recording of the
+  // same interview finds its rows already written. Null on rows from before L1.
+  blockKey           String?
 
+  @@unique([interviewSessionId, blockKey])
   @@index([entryId, askedAt])
   @@index([tenantId, roleSlug, askedAt])
   @@index([interviewSessionId])

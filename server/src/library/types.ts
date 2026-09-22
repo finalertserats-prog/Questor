@@ -137,4 +137,21 @@ export interface EntrySnapshot {
   readonly anchors: readonly string[];
   readonly form: LibraryForm;
   readonly difficultyTag: number;
+  /** Suggested follow-ups, in the shape the plan stores (domain LibraryProbeSnapshot); empty until L2 writes them. */
+  readonly probes: readonly ProbeSnapshot[];
+}
+
+const probeFlag = z.enum(['hasSituation', 'hasAction', 'hasResult', 'specific']);
+export const probeSnapshotSchema = z.object({
+  text: z.string().trim().min(1).max(300),
+  when: z.record(probeFlag, z.boolean()).optional(),
+});
+export type ProbeSnapshot = z.infer<typeof probeSnapshotSchema>;
+
+/** The probes stored in an entry body that have the snapshot's shape; anything else is dropped. */
+export function probesOf(body: EntryBody): ProbeSnapshot[] {
+  return (body.probes ?? []).flatMap((probe) => {
+    const parsed = probeSnapshotSchema.safeParse(probe);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
