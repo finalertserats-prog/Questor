@@ -1,6 +1,8 @@
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
-import { CatalogAttribution } from '../components/CatalogAttribution';
+import { useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+import { TrustSection } from '../components/TrustSection';
 import { BrandLogo } from '../components/BrandLogo';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { SHOWCASE_FEATURES, SHOWCASE_STEPS } from '../components/landingShowcase';
@@ -35,7 +37,7 @@ const AUDIENCE: ReadonlyArray<{ key: string; icon: IconName; name: string; detai
     key: 'candidate',
     icon: 'contact',
     name: 'Candidates',
-    detail: 'Told before consenting what is transcribed and kept, able to ask for a human instead, and given written feedback a person approved.',
+    detail: 'Told before consenting what is transcribed and kept, able to ask for a human instead, and given written feedback with a way to ask for a person.',
   },
   {
     key: 'admin',
@@ -55,6 +57,15 @@ const LIMITS: readonly string[] = [
 ];
 
 export function About() {
+  const { hash } = useLocation();
+
+  // The sign-in footer links to #trust; the router changes the URL but does
+  // not scroll, so the section is brought into view here.
+  useEffect(() => {
+    if (!hash) return;
+    document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView();
+  }, [hash]);
+
   return (
     <div>
       <PageHeader icon="about" title="About Questor" />
@@ -126,10 +137,7 @@ export function About() {
           </ul>
         </section>
 
-        <section className="about-section">
-          <h2 className="about-heading">Catalog sources</h2>
-          <CatalogAttribution className="muted" />
-        </section>
+        <TrustSection />
       </div>
     </div>
   );
