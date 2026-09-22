@@ -64,7 +64,11 @@ async function pageRows(where: Prisma.InterviewSessionWhereInput, query: Intervi
   });
   const matched = narrow.filter((s) => anyFieldMatches(needle, [s.candidate.fullName, s.role.title]));
   const ids = matched.slice(skip, skip + query.pageSize).map((s) => s.id);
-  const rows = ids.length ? await prisma.interviewSession.findMany({ where: { id: { in: ids } }, orderBy: ORDER, select: ROW_SELECT }) : [];
+  const rows = ids.length
+    // The scope again, not only the ids: the read that returns detail never relies on
+    // the scan before it having been scoped.
+    ? await prisma.interviewSession.findMany({ where: { AND: [where, { id: { in: ids } }] }, orderBy: ORDER, select: ROW_SELECT })
+    : [];
   return { total: matched.length, rows };
 }
 
