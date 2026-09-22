@@ -36,9 +36,9 @@ export const TONE_CHOICES: ReadonlyArray<{
   readonly label: string;
   readonly help: string;
 }> = [
-  { value: 'warm', label: 'Warm', help: 'Friendly and encouraging, with a little small talk.' },
-  { value: 'neutral', label: 'Neutral', help: 'Plain and even, straight from one question to the next.' },
-  { value: 'formal', label: 'Formal', help: 'Businesslike and reserved, closer to a panel interview.' },
+  { value: 'warm', label: 'Warm', help: 'friendly and encouraging, with a little small talk.' },
+  { value: 'neutral', label: 'Neutral', help: 'plain and even, straight from one question to the next.' },
+  { value: 'formal', label: 'Formal', help: 'businesslike and reserved, closer to a panel interview.' },
 ];
 
 /** A competency as the role endpoint sends it. */

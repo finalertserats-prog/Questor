@@ -610,9 +610,24 @@ export function CandidateDetail() {
                   <option key={choice.value} value={choice.value}>{choice.label}</option>
                 ))}
               </select>
+              {/* The chosen tone describes itself, rather than all three
+                  describing themselves at once: three descriptions run together
+                  are a paragraph, and nobody reads a paragraph under a select. */}
               <p id="interview-tone-help" className="setup-help">
-                How the interviewer speaks: {TONE_CHOICES.map((c) => `${c.label.toLowerCase()} — ${c.help.toLowerCase()}`).join(' ')}{' '}
-                The questions and the way answers are judged are the same either way. Default Warm.
+                How the interviewer speaks &mdash; {TONE_CHOICES.find((c) => c.value === tone)?.help}{' '}
+                It never changes which questions are asked, or how the answers are judged. Default Warm.
+              </p>
+            </div>
+
+            <div className="setup-field">
+              {/* A caption, not a form label: there is one language, so there
+                  is no control here to name. Stated rather than hidden, because
+                  "which language is this in" is a fair thing to want to know. */}
+              <div className="field-label">Language</div>
+              <p className="setup-value">English</p>
+              <p className="setup-help">
+                The language the interview is held in. English is the only one whose wording has been reviewed
+                end to end, so it is the only one offered.
               </p>
             </div>
 
@@ -636,18 +651,6 @@ export function CandidateDetail() {
                   : 'The competencies on this role’s approved scorecard, in its own order, plus a warm-up, '
                     + 'one check on a claim from the CV, and time at the end for the candidate’s questions. '
                     + 'Change what is asked on the role, not here.'}
-              </p>
-            </div>
-
-            <div className="setup-field">
-              {/* A caption, not a form label: there is one language, so there
-                  is no control here to name. Stated rather than hidden, because
-                  "which language is this in" is a fair thing to want to know. */}
-              <div className="field-label">Language</div>
-              <p className="setup-value">English</p>
-              <p className="setup-help">
-                The language the interview is held in. English is the only one whose wording has been reviewed
-                end to end, so it is the only one offered.
               </p>
             </div>
           </div>

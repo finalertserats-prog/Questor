@@ -31,9 +31,12 @@
   color: var(--ink);
 }
 
+/* auto-fit rather than a fixed count: three settings across at desk width, two
+   on a narrow window, one on a phone — without a breakpoint per size, and
+   without Language stranded beside an empty cell. */
 .setup-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: 4px 22px;
   align-items: start;
 }

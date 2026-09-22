@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createElement } from 'react';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 /**
@@ -147,7 +147,22 @@ describe('the settings that shape the interview', () => {
 
   it('promises that tone does not change the questions or the marking', async () => {
     const card = await setupCard();
-    expect(card.textContent).toMatch(/questions and the way answers are judged are the same/i);
+    expect(card.textContent).toMatch(/never changes which questions are asked, or how the answers are judged/i);
+  });
+
+  /**
+   * One description, the chosen one. All three at once is a paragraph under a
+   * select, and nobody reads a paragraph under a select.
+   */
+  it('describes the tone that is chosen, and only that one', async () => {
+    const card = await setupCard();
+    expect(card.textContent).toMatch(/friendly and encouraging/i);
+    expect(card.textContent).not.toMatch(/businesslike and reserved/i);
+
+    const select = within(card).getByLabelText('Tone') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'formal' } });
+    await waitFor(() => expect(card.textContent).toMatch(/businesslike and reserved/i));
+    expect(card.textContent).not.toMatch(/friendly and encouraging/i);
   });
 
   it('offers every tone the server accepts', async () => {
