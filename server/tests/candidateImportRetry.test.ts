@@ -7,7 +7,7 @@ import request from 'supertest';
  * did not attach gets just the CV on the retry.
  */
 
-const failures = vi.hoisted(() => ({ create: new Set<string>(), attach: 0 }));
+const failures = vi.hoisted(() => ({ create: new Set<string>(), attach: 0, afterStore: new Set<string>() }));
 
 vi.mock('../src/services/candidateCreate.js', async (importOriginal) => {
   const real = await importOriginal<typeof import('../src/services/candidateCreate.js')>();
@@ -25,7 +25,10 @@ vi.mock('../src/services/candidateCreate.js', async (importOriginal) => {
         failures.attach -= 1;
         throw new Error('disk full');
       }
-      return real.attachResume(...args);
+      const stored = await real.attachResume(...args);
+      // The profile is committed; only what follows it fails.
+      if (failures.afterStore.delete(args[2].filename)) throw new Error('webhook queue down');
+      return stored;
     },
   };
 });
@@ -55,22 +58,28 @@ beforeAll(async () => {
   await request(app).post(`/api/candidate-imports/${batchId}/cvs`).set(auth(token))
     .attach('files', Buffer.from(`Fine Person\nfine@example.com\n\n${DEMO_RESUME}`), { filename: 'fine.txt', contentType: 'text/plain' })
     .attach('files', Buffer.from(`Broken Create\nbroken@example.com\n\n${DEMO_RESUME}`), { filename: 'broken.txt', contentType: 'text/plain' })
-    .attach('files', Buffer.from(`Cv Fails\ncvfails@example.com\n\n${DEMO_RESUME}`), { filename: 'cvfails.txt', contentType: 'text/plain' });
+    .attach('files', Buffer.from(`Cv Fails\ncvfails@example.com\n\n${DEMO_RESUME}`), { filename: 'cvfails.txt', contentType: 'text/plain' })
+    .attach('files', Buffer.from(`After Commit\nafter@example.com\n\n${DEMO_RESUME}`), { filename: 'after.txt', contentType: 'text/plain' });
 
   failures.create.add('broken@example.com');
+  failures.afterStore.add('after.txt');
   // The first CV attach in the batch fails; rows run in order, so it is fine@example.com's.
   failures.attach = 1;
-  first = (await request(app).post(`/api/candidate-imports/${batchId}/confirm`).set(auth(token)).send({ rowKeys: ['r1', 'r2', 'r3'] })).body.results;
-  second = (await request(app).post(`/api/candidate-imports/${batchId}/confirm`).set(auth(token)).send({ rowKeys: ['r1', 'r2', 'r3'] })).body.results;
+  first = (await request(app).post(`/api/candidate-imports/${batchId}/confirm`).set(auth(token)).send({ rowKeys: ['r1', 'r2', 'r3', 'r4'] })).body.results;
+  second = (await request(app).post(`/api/candidate-imports/${batchId}/confirm`).set(auth(token)).send({ rowKeys: ['r1', 'r2', 'r3', 'r4'] })).body.results;
 });
 
 describe('a confirm that fails part-way', () => {
   it('reports each row on its own', () => {
-    expect(first.map((r) => r.outcome)).toEqual(['failed', 'failed', 'created']);
+    expect(first.map((r) => r.outcome)).toEqual(['failed', 'failed', 'created', 'created']);
   });
 
   it('keeps the person whose CV failed, and says so', () => {
     expect(first[0]).toMatchObject({ candidateId: expect.any(String), error: expect.stringMatching(/CV could not be attached/) });
+  });
+
+  it('counts a CV as attached when only what follows its storing failed', async () => {
+    expect(await prisma.candidateProfileVersion.count({ where: { candidateId: first[3].candidateId! } })).toBe(1);
   });
 
   it('does not pass an internal error message to the caller', () => {
@@ -80,7 +89,7 @@ describe('a confirm that fails part-way', () => {
 
 describe('the retry', () => {
   it('finishes every row', () => {
-    expect(second.map((r) => r.outcome)).toEqual(['created', 'created', 'created']);
+    expect(second.map((r) => r.outcome)).toEqual(['created', 'created', 'created', 'created']);
   });
 
   it('keeps the same candidate for the row that was already added', () => {
@@ -92,6 +101,6 @@ describe('the retry', () => {
   });
 
   it('adds nobody twice', async () => {
-    expect(await prisma.candidate.count({ where: { tenantId } })).toBe(3);
+    expect(await prisma.candidate.count({ where: { tenantId } })).toBe(4);
   });
 });

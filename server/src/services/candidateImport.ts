@@ -1,4 +1,4 @@
-import type { CandidateImportRow, Prisma } from '@prisma/client';
+import { Prisma, type CandidateImportRow } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/index.js';
@@ -86,17 +86,24 @@ export async function createImportBatch(auth: AuthClaims, roleId: string) {
   return batch;
 }
 
-/** The caller's own, unexpired batch; anything else is not found, never forbidden. */
-async function ownBatch(auth: AuthClaims, batchId: string) {
+/**
+ * The caller's own, unexpired batch; anything else is not found, never
+ * forbidden. The role is checked again on every step, not only at the start:
+ * someone taken off a role must not keep reading who is already on it
+ * through an import they began earlier. Discarding skips that check, so a
+ * batch left behind can still be thrown away.
+ */
+async function ownBatch(auth: AuthClaims, batchId: string, opts: { readonly roleAccess: boolean } = { roleAccess: true }) {
   const batch = await prisma.candidateImportBatch.findFirst({
     where: { id: batchId, tenantId: auth.tenantId, createdById: auth.userId, expiresAt: { gt: new Date() } },
   });
   if (!batch) throw new HttpError(404, 'This import was not found. It may have expired; start a new one.');
+  if (opts.roleAccess) await assertCanAccessRole(auth, batch.roleId);
   return batch;
 }
 
 export async function discardImportBatch(auth: AuthClaims, batchId: string): Promise<void> {
-  const batch = await ownBatch(auth, batchId);
+  const batch = await ownBatch(auth, batchId, { roleAccess: false });
   await prisma.$transaction([
     prisma.candidateImportRow.deleteMany({ where: { batchId: batch.id } }),
     prisma.candidateImportBatch.delete({ where: { id: batch.id } }),
@@ -116,8 +123,23 @@ interface StagedPerson extends CsvPerson {
 
 const inertName = (value: string): string => value.replace(/^[=+\-@]+/, '').trim().slice(0, 200);
 
+const isUniqueConflict = (err: unknown): boolean =>
+  err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
+
 async function stageRows(auth: AuthClaims, batchId: string, people: readonly StagedPerson[]): Promise<void> {
   const batch = await ownBatch(auth, batchId);
+  try {
+    await insertRows(auth, batch.id, people);
+  } catch (err) {
+    // Two uploads to one batch at once number their rows from the same count;
+    // the loser is refused whole, and nothing of it was stored.
+    if (isUniqueConflict(err)) throw new HttpError(409, 'Another upload to this import was being read at the same moment. Upload these files again.');
+    throw err;
+  }
+}
+
+async function insertRows(auth: AuthClaims, batchId: string, people: readonly StagedPerson[]): Promise<void> {
+  const batch = { id: batchId };
   await prisma.$transaction(async (tx) => {
     const already = await tx.candidateImportRow.count({ where: { batchId: batch.id } });
     if (already + people.length > MAX_IMPORT_ROWS) {
@@ -309,6 +331,13 @@ async function importRow({ auth, roleId, row, verdict }: RowWork): Promise<void>
       });
     } catch (err) {
       if (!(err instanceof HttpError)) logger.error({ err: err instanceof Error ? err.message : String(err), rowId: row.id }, 'bulk import CV could not be attached');
+      // The profile commits before its webhook is queued: a failure after the
+      // commit has still attached the CV, and saying otherwise would be wrong.
+      const stored = await prisma.candidateImportRow.findUnique({ where: { id: row.id }, select: { cvAttached: true } });
+      if (stored?.cvAttached) {
+        await prisma.candidateImportRow.update({ where: { id: row.id }, data: { outcome, candidateId } });
+        return;
+      }
       await prisma.candidateImportRow.update({ where: { id: row.id }, data: { outcome: 'failed', candidateId, error: `Added, but the CV could not be attached: ${callerMessage(err, 'unexpected error')}. Try again to attach it.` } });
       return;
     }

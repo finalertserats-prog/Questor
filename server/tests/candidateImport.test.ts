@@ -195,6 +195,14 @@ describe('batch limits', () => {
     expect((await uploadCsv(recruiterToken, batchId, people(60, 150))).status).toBe(400);
   });
 
+  it('refuses an upload that collides with another one on the same batch, without a 500', async () => {
+    const batchId = (await start(recruiterToken, roleId)).body.batch.id;
+    // What a second upload running at the same moment would have written first.
+    await prisma.candidateImportRow.create({ data: { batchId, tenantId, rowKey: 'r2', position: 2 } });
+
+    expect((await uploadCsv(recruiterToken, batchId, people(1))).status).toBe(409);
+  });
+
   it('refuses more than five CVs in one request', async () => {
     const batchId = (await start(recruiterToken, roleId)).body.batch.id;
     const req = request(app).post(`/api/candidate-imports/${batchId}/cvs`).set(auth(recruiterToken));
@@ -272,6 +280,24 @@ describe('tenant isolation', () => {
 
   it('does not let a colleague confirm it', async () => {
     expect((await confirm(otherRecruiterToken, batchId, ['r1'])).status).toBe(404);
+  });
+
+  it('stops showing an import to someone taken off its role', async () => {
+    const token = await makeUser(tenantId, 'moved@bulk.local', 'recruiter');
+    const role = await makeRole(token, 'Moved Role');
+    const moved = (await start(token, role)).body.batch.id;
+    await prisma.roleAssignment.deleteMany({ where: { roleId: role } });
+
+    expect((await request(app).get(`/api/candidate-imports/${moved}`).set(auth(token))).status).toBe(404);
+  });
+
+  it('still lets someone taken off the role discard their import', async () => {
+    const token = await makeUser(tenantId, 'moved2@bulk.local', 'recruiter');
+    const role = await makeRole(token, 'Moved Role 2');
+    const moved = (await start(token, role)).body.batch.id;
+    await prisma.roleAssignment.deleteMany({ where: { roleId: role } });
+
+    expect((await request(app).delete(`/api/candidate-imports/${moved}`).set(auth(token))).status).toBe(204);
   });
 
   it('does not name a person seen only in a pipeline the recruiter cannot see', async () => {
