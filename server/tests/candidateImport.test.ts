@@ -219,6 +219,19 @@ describe('batch limits', () => {
     expect(res.status).toBe(400);
   });
 
+  it('does not count an import people were added from', async () => {
+    const token = await makeUser(tenantId, 'finished@bulk.local', 'recruiter');
+    const role = await makeRole(token, 'Finished Role');
+    for (let i = 0; i < 10; i++) {
+      const batchId = (await start(token, role)).body.batch.id;
+      await uploadCsv(token, batchId, `name,email
+Done ${i},done${i}@finished.example`);
+      await confirm(token, batchId, ['r1']);
+    }
+
+    expect((await start(token, role)).status).toBe(201);
+  });
+
   it('caps how many imports one person keeps open', async () => {
     const token = await makeUser(tenantId, 'busy@bulk.local', 'recruiter');
     const role = await makeRole(token, 'Busy Role');

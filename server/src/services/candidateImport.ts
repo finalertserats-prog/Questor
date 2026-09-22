@@ -75,9 +75,13 @@ export async function createImportBatch(auth: AuthClaims, roleId: string) {
   await assertCanAccessRole(auth, roleId);
   await assertRoleOpen(roleId);
   const now = new Date();
-  const open = await prisma.candidateImportBatch.count({ where: { tenantId: auth.tenantId, createdById: auth.userId, expiresAt: { gt: now } } });
+  // Only imports nobody has added anyone from: a finished one still sits in
+  // staging until it expires, and must not stop the next import starting.
+  const open = await prisma.candidateImportBatch.count({
+    where: { tenantId: auth.tenantId, createdById: auth.userId, expiresAt: { gt: now }, rows: { none: { outcome: { in: ['created', 'linked'] } } } },
+  });
   if (open >= MAX_OPEN_BATCHES) {
-    throw new HttpError(409, `You have ${open} imports still open. Finish or discard one before starting another.`);
+    throw new HttpError(409, `You have ${open} imports still waiting. Finish or discard one before starting another.`);
   }
   const batch = await prisma.candidateImportBatch.create({
     data: { tenantId: auth.tenantId, roleId, createdById: auth.userId, expiresAt: new Date(now.getTime() + IMPORT_TTL_MS) },
