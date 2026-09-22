@@ -12,6 +12,72 @@ export const MAX_DURATION_MINUTES = 120;
 export const DEFAULT_DURATION_MINUTES = 45;
 export const INTERVIEW_MODULES: readonly string[] = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
+/**
+ * What the form starts on, and what the server would apply for a field the
+ * form left out (server/src/routes/interviews.ts `createSchema`). The form
+ * shows these as the defaults, so they have to be the same number.
+ */
+export const DEFAULT_DURATION_MINUTES = 45;
+export const DEFAULT_TONE = 'warm';
+
+export type InterviewTone = 'warm' | 'neutral' | 'formal';
+
+/**
+ * The tones, each with the one line the form shows under it.
+ *
+ * The help text is held here rather than in the JSX so the rule below it can
+ * be a test: a tone changes how the interviewer speaks and nothing else. It
+ * does not change which questions are asked, how hard they are, or how the
+ * answers are marked — and copy that hints otherwise would have HR choosing
+ * "Formal" to interview someone more harshly.
+ */
+export const TONE_CHOICES: ReadonlyArray<{
+  readonly value: InterviewTone;
+  readonly label: string;
+  readonly help: string;
+}> = [
+  { value: 'warm', label: 'Warm', help: 'Friendly and encouraging, with a little small talk.' },
+  { value: 'neutral', label: 'Neutral', help: 'Plain and even, straight from one question to the next.' },
+  { value: 'formal', label: 'Formal', help: 'Businesslike and reserved, closer to a panel interview.' },
+];
+
+/** A competency as the role endpoint sends it. */
+export interface SetupCompetency {
+  readonly name: string;
+  readonly classification?: string;
+  readonly retired?: boolean;
+}
+
+/** A scorecard version as the role endpoint sends it. */
+export interface SetupScorecard {
+  readonly version: number;
+  readonly status: string;
+  readonly profile: { readonly competencies?: readonly SetupCompetency[] } | null;
+}
+
+/** Competencies with this classification score nothing, so nothing asks about them. */
+const NON_SCORING = 'non_scoring';
+
+/**
+ * What this interview will actually ask about, in the role's own order.
+ *
+ * Taken from the latest APPROVED scorecard, not the latest one — that is the
+ * version POST /interviews plans from, and a draft somebody is midway through
+ * editing is not what the candidate will be asked. Non-scoring and retired
+ * competencies are dropped, matching `isScored` on the server: they stay on
+ * the scorecard so old assessments can still resolve their names, but no new
+ * plan includes them.
+ */
+export function coveredCompetencyNames(scorecards: readonly SetupScorecard[]): readonly string[] {
+  const approved = scorecards
+    .filter((card) => card.status === 'approved')
+    .sort((a, b) => b.version - a.version)[0];
+  return (approved?.profile?.competencies ?? [])
+    .filter((c) => c.classification !== NON_SCORING && c.retired !== true)
+    .map((c) => c.name?.trim() ?? '')
+    .filter((name) => name.length > 0);
+}
+
 export interface InterviewSetup {
   readonly durationMinutes: unknown;
   /** 'random' or an interviewer id. */

@@ -24,6 +24,16 @@ const lazyPreviewDeps: PreviewDeps = {
 interface InterviewerSelectorProps {
   readonly value: string;
   readonly onChange: (value: string) => void;
+  /**
+   * One line under the legend, inside the fieldset so a screen reader reads it
+   * with the group rather than after it.
+   */
+  readonly note?: string;
+  /**
+   * Smaller type and tighter options, for where this is the least consequential
+   * choice on the form rather than the headline one.
+   */
+  readonly compact?: boolean;
 }
 
 /**
@@ -32,7 +42,7 @@ interface InterviewerSelectorProps {
  * are otherwise identical, so there is nothing else to describe. Previews play
  * only on click, one at a time.
  */
-export function InterviewerSelector({ value, onChange }: InterviewerSelectorProps) {
+export function InterviewerSelector({ value, onChange, note, compact = false }: InterviewerSelectorProps) {
   const [list, setList] = useState<readonly PublicInterviewer[]>([]);
   const [loadError, setLoadError] = useState('');
   const [playingId, setPlayingId] = useState<string | null>(null);
@@ -58,8 +68,9 @@ export function InterviewerSelector({ value, onChange }: InterviewerSelectorProp
   }, []);
 
   return (
-    <fieldset className="interviewer-select" data-testid="interviewer-select">
+    <fieldset className={`interviewer-select${compact ? ' is-compact' : ''}`} data-testid="interviewer-select">
       <legend className="field-label">AI interviewer</legend>
+      {note && <p className="interviewer-note">{note}</p>}
       <ul className="interviewer-options">
         {choices.map((choice) => {
           const inputId = `interviewer-${choice.value}`;

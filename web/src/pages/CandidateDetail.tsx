@@ -17,7 +17,9 @@ import { ResumeUploadCard } from '../components/ResumeFields';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
 import {
-  DEFAULT_DURATION_MINUTES, INTERVIEW_MODULES, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, clampDuration, interviewSetupProblem,
+  DEFAULT_DURATION_MINUTES, DEFAULT_TONE, INTERVIEW_MODULES, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, TONE_CHOICES,
+  clampDuration, coveredCompetencyNames, interviewSetupProblem,
+  type InterviewTone, type SetupScorecard,
 } from '../components/interviewSetupModel';
 import { formatDateTime, formatScheduled } from '../components/dateFormat';
 import { useOrgTimeZone } from '../components/useOrgTimeZone';
@@ -76,10 +78,11 @@ interface SessionSummary {
 /** The role and its latest scorecard: between them, the job description. */
 interface RoleResp {
   role: { id: string; title: string; level: string | null };
-  scorecards: Array<{
-    version: number;
-    status: string;
-    profile: { roleContext?: string; outcomes?: string[]; responsibilities?: string[] } | null;
+  scorecards: Array<SetupScorecard & {
+    profile: {
+      roleContext?: string; outcomes?: string[]; responsibilities?: string[];
+      competencies?: Array<{ name: string; classification?: string; retired?: boolean }>;
+    } | null;
   }>;
 }
 
@@ -210,11 +213,18 @@ export function CandidateDetail() {
   }, [refresh]);
 
   // interview setup form
-  const [durationMinutes, setDurationMinutes] = useState(DEFAULT_DURATION_MINUTES);
+  const [durationMinutes, setDurationMinutes] = useState<number>(DEFAULT_DURATION_MINUTES);
   // Random is the recommended default. Tone below is a separate setting and is
   // never set or changed by the interviewer choice.
   const [interviewer, setInterviewer] = useState(DEFAULT_INTERVIEWER_CHOICE);
-  const [tone, setTone] = useState<'warm' | 'neutral' | 'formal'>('warm');
+  const [tone, setTone] = useState<InterviewTone>(DEFAULT_TONE);
+  /**
+   * What this interview will ask about, named on the form rather than left to
+   * be discovered afterwards. Null until the role's scorecards have loaded —
+   * which is not the same as a role with none approved yet, and the form says
+   * something different for each.
+   */
+  const [covers, setCovers] = useState<readonly string[] | null>(null);
 
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -234,6 +244,7 @@ export function CandidateDetail() {
       setData(null);
       setError('');
       setRole(null);
+      setCovers(null);
       setProfileAnalysis(null);
       setProfileAnalysisError('');
       setSessions({});
@@ -255,12 +266,16 @@ export function CandidateDetail() {
         // Everything below only enriches the journey. Each failure is kept on
         // its own: losing the role, the pipeline or the assessment must not
         // cost the operator the candidate's profile, and it is reported inline.
-        if (!candidateResp.candidate.roleId) setRole(null);
+        if (!candidateResp.candidate.roleId) { setRole(null); setCovers(null); }
         if (candidateResp.candidate.roleId) {
           api.get<RoleResp>(`/roles/${candidateResp.candidate.roleId}`)
             .then((r) => {
               if (cancelled) return;
               const scorecard = r.scorecards?.[0];
+              // The journey shows the newest scorecard; the setup form has to
+              // show the newest APPROVED one, because that is the version the
+              // interview will be planned from.
+              setCovers(coveredCompetencyNames(r.scorecards ?? []));
               setRole({
                 title: r.role.title,
                 level: r.role.level,
@@ -549,36 +564,104 @@ export function CandidateDetail() {
         {/* A form, so Enter works and the browser checks the field bounds it is
             given — the button used to be a plain onClick, which meant neither. */}
         <form onSubmit={createInterview}>
-        <div className="grid cols-3">
-          <div>
-            <label htmlFor="interview-duration">Duration (minutes)</label>
-            <input
-              id="interview-duration"
-              type="number"
-              min={MIN_DURATION_MINUTES}
-              max={MAX_DURATION_MINUTES}
-              value={durationMinutes}
-              onChange={(e) => setDurationMinutes(Number(e.target.value))}
-              onBlur={() => setDurationMinutes(clampDuration(durationMinutes))}
-              required
-            />
+        {/* The settings that decide what the conversation is, grouped and
+            explained, and placed above the one that decides a name.
+
+            The name picker used to lead this form. It is the least consequential
+            choice on it: the five interviewers differ in name and voice and in
+            nothing else. Meanwhile length, what gets asked, tone and language
+            shape the whole interview, and three of the four were either an
+            unexplained field or not on the page at all. */}
+        <fieldset className="setup-shape">
+          <legend className="setup-shape-legend">What shapes this interview</legend>
+          <div className="setup-fields">
+            <div className="setup-field">
+              <label htmlFor="interview-duration">Length</label>
+              <div className="setup-control">
+                <input
+                  id="interview-duration"
+                  type="number"
+                  min={MIN_DURATION_MINUTES}
+                  max={MAX_DURATION_MINUTES}
+                  value={durationMinutes}
+                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                  onBlur={() => setDurationMinutes(clampDuration(durationMinutes))}
+                  aria-describedby="interview-duration-help"
+                  required
+                />
+                <span className="setup-unit">minutes</span>
+              </div>
+              <p id="interview-duration-help" className="setup-help">
+                How much time the conversation has. A longer interview gives more of the competencies below their
+                own question &mdash; it does not make the questions harder.
+                Default {DEFAULT_DURATION_MINUTES}, anywhere from {MIN_DURATION_MINUTES} to {MAX_DURATION_MINUTES}.
+              </p>
+            </div>
+
+            <div className="setup-field">
+              <label htmlFor="interview-tone">Tone</label>
+              <select
+                id="interview-tone"
+                value={tone}
+                onChange={(e) => setTone(e.target.value as InterviewTone)}
+                aria-describedby="interview-tone-help"
+              >
+                {TONE_CHOICES.map((choice) => (
+                  <option key={choice.value} value={choice.value}>{choice.label}</option>
+                ))}
+              </select>
+              <p id="interview-tone-help" className="setup-help">
+                How the interviewer speaks: {TONE_CHOICES.map((c) => `${c.label.toLowerCase()} — ${c.help.toLowerCase()}`).join(' ')}{' '}
+                The questions and the way answers are judged are the same either way. Default Warm.
+              </p>
+            </div>
+
+            <div className="setup-field setup-field-wide">
+              {/* A caption, not a form label: the competencies are chosen on
+                  the role, so there is no control here to name. Naming them is
+                  still the highest-signal thing on this form. */}
+              <div className="field-label" id="interview-covers-label">What it asks about</div>
+              {covers === null ? (
+                <p className="setup-value">&hellip;</p>
+              ) : covers.length > 0 ? (
+                <ul className="setup-covers" aria-labelledby="interview-covers-label">
+                  {covers.map((name) => <li key={name}>{name}</li>)}
+                </ul>
+              ) : (
+                <p className="setup-value">Not set yet</p>
+              )}
+              <p className="setup-help">
+                {covers !== null && covers.length === 0
+                  ? 'This role has no approved scorecard, so there is nothing to ask about yet. Approve one on the role first.'
+                  : 'The competencies on this role’s approved scorecard, in its own order, plus a warm-up, '
+                    + 'one check on a claim from the CV, and time at the end for the candidate’s questions. '
+                    + 'Change what is asked on the role, not here.'}
+              </p>
+            </div>
+
+            <div className="setup-field">
+              {/* A caption, not a form label: there is one language, so there
+                  is no control here to name. Stated rather than hidden, because
+                  "which language is this in" is a fair thing to want to know. */}
+              <div className="field-label">Language</div>
+              <p className="setup-value">English</p>
+              <p className="setup-help">
+                The language the interview is held in. English is the only one whose wording has been reviewed
+                end to end, so it is the only one offered.
+              </p>
+            </div>
           </div>
-          <div>
-            <label htmlFor="interview-tone">Tone</label>
-            <select id="interview-tone" value={tone} onChange={(e) => setTone(e.target.value as typeof tone)}>
-              <option value="warm">Warm</option>
-              <option value="neutral">Neutral</option>
-              <option value="formal">Formal</option>
-            </select>
-          </div>
-          <div>
+        </fieldset>
+
+        <div className="setup-standing">
+          <div className="setup-field">
             {/* A caption, not a form label: there is no choice to make. The
                 old provider picker stored a label and changed nothing — every
                 AI interview ran in the hosted room whatever was picked. */}
             <div className="field-label">Where it happens</div>
-            <div className="muted small" style={{ marginTop: 5 }}>
+            <p className="setup-help">
               In Questor&rsquo;s own browser room. Teams, Zoom or Meet links are for human rounds, set up in the pipeline.
-            </div>
+            </p>
           </div>
           {/* The "Request recording" checkbox is gone. It set a flag that
               produced no audio anywhere in the system, so a recruiter ticking it
@@ -586,16 +669,25 @@ export function CandidateDetail() {
               receive — and the candidate was shown a consent notice implying the
               same. Stating what the product actually does is the honest control
               here; a toggle for a capability that does not exist is not. */}
-          <div>
+          <div className="setup-field">
             {/* A caption, not a form label: there is no control here to name. */}
             <div className="field-label">Record of the interview</div>
-            <div className="muted small" style={{ marginTop: 5 }}>
+            <p className="setup-help">
               A written transcript, kept and reviewed by a person. No audio is stored.
-            </div>
+            </p>
           </div>
         </div>
-        <div style={{ marginTop: 14 }}>
-          <InterviewerSelector value={interviewer} onChange={setInterviewer} />
+
+        <div className="setup-interviewer">
+          <InterviewerSelector
+            value={interviewer}
+            onChange={setInterviewer}
+            compact
+            // Never a hint that one of them is warmer, tougher or better at
+            // anything: they are the same interview in a different voice, and
+            // implying otherwise would have HR picking a name to pick a style.
+            note="Who the candidate is introduced to. The five differ in name and voice only — the questions, the tone and the marking are set above and are the same whoever asks them."
+          />
         </div>
         {setupProblem &&<p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
         <div className="row" style={{ marginTop: 16 }}>
