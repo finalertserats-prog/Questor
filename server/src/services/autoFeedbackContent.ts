@@ -5,16 +5,26 @@ import {
   type FeedbackContent, type FeedbackContentSource, type FeedbackInput, type ModelFeedback,
 } from './feedbackContentModel.js';
 
-export const FEEDBACK_PROMPT_VERSION = 'candidate-feedback-v2';
+// v3: the four-box headings the candidate reads are named to the model. The
+// label travels with the prompt, so it has to move when the instruction does.
+export const FEEDBACK_PROMPT_VERSION = 'candidate-feedback-v3';
 
 // The model is told the rules, but the rules are not trusted to the model:
 // whatever it returns goes through the same guardrails as every other wording
 // (feedbackContentModel.ts), and fails over to wording built from the evidence.
 const SYSTEM = [
   'You write warm, specific interview feedback addressed directly to a job candidate ("you"), for a letter that has',
-  'a SWOT, a section per competency, and three next steps.',
+  'a four-box summary, a section per competency, and three next steps.',
   'Return JSON {"swot":{"strengths":[2-3],"weaknesses":[2-3],"opportunities":[2-3],"watchOuts":[2-3]},',
   '"notes":[{"competencyId","whatWeHeard","toGoFurther"}],"nextSteps":[3 strings]}.',
+  // The JSON keys are the old SWOT ones; the headings the candidate reads are
+  // not. Told the headings, the model writes bullets that sit under them —
+  // told only the keys, it writes an accusation for "weaknesses" and a warning
+  // for "watchOuts", and the softened headings then read as a euphemism.
+  'The candidate never sees those key names. The four boxes are headed "Strengths", "Worth working on",',
+  '"Opportunities" and "Worth being aware of": write each bullet so it reads naturally under its own heading.',
+  '"weaknesses" is what would be worth practising before the next interview, never a verdict on the person;',
+  '"watchOuts" is friendly advice about how they came across, never a risk they pose.',
   'Use only the competencies, coverage words and quoted answers you are given. Never invent an example or a quote.',
   'Coverage "Not covered" means the subject never came up: say so kindly and never treat it as a failing.',
   '"whatWeHeard" describes what the candidate actually said; "toGoFurther" is one concrete, practical improvement.',

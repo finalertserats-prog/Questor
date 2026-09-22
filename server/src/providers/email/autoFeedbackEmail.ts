@@ -81,12 +81,33 @@ const MARKER_BORDER: Readonly<Record<CoverageMarker, string>> = {
 
 const SECTION_LABEL = `font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:${MUTED};margin-bottom:12px`;
 
+/**
+ * The four boxes, and the words the candidate reads on them.
+ *
+ * The keys are the textbook SWOT ones and stay that way: they are the shape
+ * every model prompt, schema and stored letter already speaks. The HEADINGS are
+ * not, and deliberately. "Weaknesses" tells someone the interview found them
+ * deficient, and "Threats" tells them they are a danger — both name the person
+ * rather than the hour we spent with them, and in hiring both are the sentence
+ * that gets read back in a complaint. The softer headings say the same thing
+ * about the same evidence without making it a verdict on the candidate, and
+ * they match the human-written letter in services/candidateFeedbackDraft.ts,
+ * which has always used them.
+ */
 const SWOT_QUARTERS = [
   { key: 'strengths', heading: 'Strengths', background: '#f4fbf7', border: '#cfe9dc', colour: '#1f6f4c' },
-  { key: 'weaknesses', heading: 'Weaknesses', background: '#fdf8f2', border: '#f0dfc4', colour: '#8a5c14' },
+  { key: 'weaknesses', heading: 'Worth working on', background: '#fdf8f2', border: '#f0dfc4', colour: '#8a5c14' },
   { key: 'opportunities', heading: 'Opportunities', background: '#f4f6fd', border: '#d3d9f2', colour: '#3f3a97' },
-  { key: 'watchOuts', heading: 'Watch-outs', background: '#fbf5f6', border: '#eed3d7', colour: '#93384a' },
+  { key: 'watchOuts', heading: 'Worth being aware of', background: '#fbf5f6', border: '#eed3d7', colour: '#93384a' },
 ] as const;
+
+/**
+ * The heading over the four boxes. Not "Your SWOT from this interview" any
+ * more: with two of the quarters renamed the acronym no longer spells what is
+ * on screen, and spelling it out would hand the candidate back the two words
+ * the headings were changed to avoid.
+ */
+const FOUR_BOX_HEADING = 'Your interview in four parts';
 
 function glanceNote(durationMinutes: number): string {
   return `Based on what the conversation covered in ${durationMinutes} minutes. ${NOT_COVERED_NOTE}`;
@@ -109,9 +130,9 @@ const NOT_COVERED_NOTE = '"Not covered" means the subject did not come up, not t
 
 export const FIXED_COPY: readonly string[] = [
   INTRO, WHAT_NEXT, TALK_PROMPT, TALK_HELP, SIGN_OFF, NOT_COVERED_NOTE,
-  'Interview feedback', 'At a glance', 'Your SWOT from this interview', 'What the role asks, and what we heard',
+  'Interview feedback', 'At a glance', FOUR_BOX_HEADING, 'What the role asks, and what we heard',
   'Your next three steps', 'What happens next.', 'The role asks for', 'What we heard', 'Your words', 'To go further',
-  'Ask to speak to someone', 'Strengths', 'Weaknesses', 'Opportunities', 'Watch-outs',
+  'Ask to speak to someone', ...SWOT_QUARTERS.map((q) => q.heading),
 ];
 
 function whoLine(companyName: string, signOff: FeedbackSignOff): string {
@@ -145,7 +166,7 @@ function textBody(input: AutoFeedbackEmailInput, first: string, talkLine: string
     ...c.competencies.map((comp) => `- ${comp.name}: ${MARKER_LABEL[comp.marker]}`),
     glanceNote(input.durationMinutes),
     '',
-    'YOUR SWOT FROM THIS INTERVIEW',
+    FOUR_BOX_HEADING.toUpperCase(),
     ...SWOT_QUARTERS.flatMap((q) => [q.heading, ...c.swot[q.key].map((b) => `- ${b}`), '']),
     'WHAT THE ROLE ASKS, AND WHAT WE HEARD',
     ...c.competencies.flatMap((comp) => [
@@ -262,7 +283,7 @@ ${c.competencies.map(glanceRow).join('\n')}
 </td></tr>
 
 <tr><td style="padding:26px 32px 0">
-<div style="${SECTION_LABEL}">Your SWOT from this interview</div>
+<div style="${SECTION_LABEL}">${FOUR_BOX_HEADING}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:separate;border-spacing:10px">
 <tr>${swotCell(SWOT_QUARTERS[0], c.swot.strengths)}${swotCell(SWOT_QUARTERS[1], c.swot.weaknesses)}</tr>
 <tr>${swotCell(SWOT_QUARTERS[2], c.swot.opportunities)}${swotCell(SWOT_QUARTERS[3], c.swot.watchOuts)}</tr>

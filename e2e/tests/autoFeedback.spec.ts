@@ -146,7 +146,10 @@ test('a completed typed interview shows its assessment at once and records the f
   const panel = page.getByTestId('feedback-email');
   await panel.getByText('View', { exact: true }).click();
   await expect(panel.getByText(/AT A GLANCE/)).toBeVisible();
-  await expect(panel.getByText(/YOUR SWOT FROM THIS INTERVIEW/)).toBeVisible();
+  await expect(panel.getByText(/YOUR INTERVIEW IN FOUR PARTS/)).toBeVisible();
+  // The four boxes are still four boxes; only the two tone-deaf headings went.
+  await expect(panel.getByText(/Worth working on/)).toBeVisible();
+  await expect(panel.getByText(/Worth being aware of/)).toBeVisible();
   await expect(panel.getByRole('button', { name: 'Send feedback now' })).toHaveCount(0);
 
   // And it lays out on a phone without pushing the page sideways.

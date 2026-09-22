@@ -118,9 +118,23 @@ describe('at a glance', () => {
   });
 });
 
-describe('the SWOT', () => {
-  it.each(['Strengths', 'Weaknesses', 'Opportunities', 'Watch-outs'])('has a %s quarter', (heading) => {
+describe('the four-box summary', () => {
+  it.each(['Strengths', 'Worth working on', 'Opportunities', 'Worth being aware of'])('has a %s quarter', (heading) => {
     expect(render().message.html).toContain(heading);
+  });
+
+  /**
+   * "Weaknesses" and "Threats" are the textbook SWOT words, and they are the
+   * wrong words to send a person who has just been interviewed: one names the
+   * candidate as deficient, the other names them as a danger. Both read as a
+   * finding about the person rather than about one conversation, which is also
+   * how they become evidence in a discrimination claim. The quarters keep their
+   * places and their data keys; only what the candidate reads changes.
+   */
+  it.each(['Weakness', 'Threat', 'Watch-out', 'SWOT'])('never shows the candidate the word %s', (word) => {
+    const { message } = render();
+    expect(message.html).not.toMatch(new RegExp(word, 'i'));
+    expect(message.text).not.toMatch(new RegExp(word, 'i'));
   });
 
   it('carries every bullet in the text body too', () => {
