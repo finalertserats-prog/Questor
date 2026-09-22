@@ -8,14 +8,13 @@ import { hasScore } from './scoreFormat';
 /** The shortest and longest interview the product will set up. */
 export const MIN_DURATION_MINUTES = 15;
 export const MAX_DURATION_MINUTES = 120;
-/** What Set up interview starts from, and what inviting a bulk import uses for everyone. */
-export const DEFAULT_DURATION_MINUTES = 45;
 export const INTERVIEW_MODULES: readonly string[] = ['warmup', 'technical', 'behavioral', 'wrapup'];
 
 /**
- * What the form starts on, and what the server would apply for a field the
- * form left out (server/src/routes/interviews.ts `createSchema`). The form
- * shows these as the defaults, so they have to be the same number.
+ * What the form starts on, what inviting a bulk import uses for everyone, and
+ * what the server would apply for a field the form left out
+ * (server/src/routes/interviews.ts `createSchema`). The form shows these as
+ * the defaults, so they have to be the same number.
  */
 export const DEFAULT_DURATION_MINUTES = 45;
 export const DEFAULT_TONE = 'warm';
