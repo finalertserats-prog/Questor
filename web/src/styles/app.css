@@ -256,6 +256,24 @@
    Base
    ========================================================================== */
 
+/* For a label or a live region that a screen reader must read and a sighted
+   reader does not need. The class was already being used in three places —
+   a table's column labels, a combobox's live region — and defined in none of
+   them, so every one of those was simply visible on the page. Absolute, so it
+   is also out of any grid or flex flow it sits in rather than taking a cell. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 *,
 *::before,
 *::after {

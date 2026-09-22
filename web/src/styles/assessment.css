@@ -210,6 +210,13 @@
   border-bottom: var(--hair) solid var(--rule);
   min-width: 0;
 }
+/* A grid item's minimum size is its CONTENT by default, so one long quote
+   pushed its cell out over the transcript beside it and every neighbour's
+   text with it. Each row of a skill is allowed to be narrower than its
+   content; the quote then ellipsises, which is what it was built to do. */
+.skill > * {
+  min-width: 0;
+}
 .skill-h {
   display: flex;
   align-items: baseline;
@@ -243,6 +250,7 @@
   margin: 0;
   font-size: 12.5px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .skill-thin {
   display: flex;
@@ -259,12 +267,16 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
 }
 .ev-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* Both halves of the pair: max-width caps it against the column, min-width
+     lets it actually shrink to that cap rather than to its text. */
   max-width: 100%;
+  min-width: 0;
   padding: 3px 10px 3px 4px;
   font: inherit;
   font-size: 12.5px;
@@ -286,6 +298,10 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+/* The button is the control; its own text is not a second thing to hit. Without
+   this the stamp and the quote are separate pointer targets inside it, which
+   makes the chip's hit area depend on where in the label the pointer lands. */
+.ev-chip > span { pointer-events: none; }
 .ev-at {
   padding: 0 6px;
   font-family: var(--font-data);
@@ -295,6 +311,7 @@
   font-variant-numeric: tabular-nums;
 }
 .ev-quote {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
