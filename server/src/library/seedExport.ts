@@ -4,6 +4,7 @@ import { slugifyCatalogName } from '../domain/catalogText.js';
 import { BANDS } from '../engines/experienceBands.js';
 import { platformCompetencyCatalog, type PlatformCompetency } from '../engines/roleIntelligence.js';
 import { loadDemandQueue } from './demand.js';
+import { SEED_SOURCE } from './seedFormat.js';
 
 /**
  * The pools an offline seed run should fill, as a file the laptop generator
@@ -17,7 +18,10 @@ import { loadDemandQueue } from './demand.js';
  *     (platformCompetencyCatalog), worded as the platform words it, never
  *     with the organisation's scorecard definition or indicators; a pool for
  *     an organisation's own competency stays on the server for the worker;
- *   - the family standard if one is live, and the pool's global questions.
+ *   - the live family standard and the pool's questions only when the seed
+ *     run itself wrote them (from text exported here). The server worker
+ *     writes from the organisation's own scorecard wording, so its questions
+ *     and standards stay on the server; only their forms are counted.
  *
  * Run it where the demand lives (production, read-only), copy the file to the
  * laptop, generate, copy the JSONL back, import (seedImport.ts).
@@ -72,11 +76,12 @@ async function globalPoolContent(pool: { readonly roleSlug: string; readonly com
   const rows = await prisma.libraryEntry.findMany({
     where: { scope: 'global', tenantId: null, roleSlug: pool.roleSlug, competencyKey: pool.competencyKey, band: pool.band, status: { notIn: ['rejected', 'retired'] } },
     orderBy: { createdAt: 'desc' },
-    select: { questionText: true, form: true },
+    select: { questionText: true, form: true, createdBy: true },
   });
   const formCounts: Record<string, number> = {};
   for (const row of rows) formCounts[row.form] = (formCounts[row.form] ?? 0) + 1;
-  return { texts: rows.slice(0, MAX_EXISTING).map((r) => r.questionText), formCounts };
+  const seeded = rows.filter((r) => r.createdBy === SEED_SOURCE);
+  return { texts: seeded.slice(0, MAX_EXISTING).map((r) => r.questionText), formCounts };
 }
 
 function strings(value: unknown): string[] {
@@ -85,7 +90,7 @@ function strings(value: unknown): string[] {
 
 async function liveStandardFor(pool: { readonly familySlug: string; readonly competencyKey: string; readonly band: string }): Promise<SeedPool['standard']> {
   const row = await prisma.libraryStandard.findFirst({ where: { familySlug: pool.familySlug, competencyKey: pool.competencyKey, band: pool.band, status: 'live' }, orderBy: { version: 'desc' } });
-  if (!row) return null;
+  if (!row || !row.generatorModel.startsWith(`${SEED_SOURCE}:`)) return null;
   try {
     const parsed: unknown = JSON.parse(row.anchorsJson);
     if (Array.isArray(parsed)) return { anchors: strings(parsed), weakSigns: [] };

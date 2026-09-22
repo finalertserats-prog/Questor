@@ -32,6 +32,12 @@ async function mixedScorecard(): Promise<void> {
   await prisma.roleScorecardVersion.updateMany({ where: { roleId: world.roleId }, data: { profileJson: JSON.stringify(profile) } });
 }
 
+/** An entry the offline seed wrote from exported (global) text. */
+async function seededEntry(overrides: { readonly status?: string; readonly form?: string } = {}) {
+  const row = await entry(world, { competencyKey: 'communication', ...overrides });
+  return prisma.libraryEntry.update({ where: { id: row.id }, data: { createdBy: 'brahmastra' } });
+}
+
 beforeEach(async () => {
   world = await seedLibraryWorld();
   await mixedScorecard();
@@ -81,10 +87,16 @@ describe('exportSeedPools', () => {
     expect((await exportSeedPools({ bands: ['senior'] })).pools).toEqual([]);
   });
 
-  it('carries the questions already in the pool so the generator avoids them', async () => {
-    const existing = await entry(world, { competencyKey: 'communication' });
+  it('carries the seeded questions already in the pool so the generator avoids them', async () => {
+    const existing = await seededEntry();
     const pool = (await exportSeedPools()).pools.find((p) => p.competencyKey === 'communication');
     expect(pool?.existingQuestions).toContain(existing.questionText);
+  });
+
+  it("never carries a question the server's worker wrote, which may echo an organisation's scorecard wording", async () => {
+    await entry(world, { competencyKey: 'communication', questionText: 'How would you present the ledger dashboard to the CFO at our Thursday huddle?' });
+    const pool = (await exportSeedPools()).pools.find((p) => p.competencyKey === 'communication');
+    expect(pool?.existingQuestions).toEqual([]);
   });
 
   it("never carries an organisation's private questions", async () => {
@@ -95,12 +107,19 @@ describe('exportSeedPools', () => {
 
   it('counts forms of entries still waiting for the owner, so the next batch asks for other forms', async () => {
     await entry(world, { competencyKey: 'communication', status: 'draft', form: 'star' });
+    await seededEntry({ status: 'probational', form: 'opinion' });
     const pool = (await exportSeedPools()).pools.find((p) => p.competencyKey === 'communication');
-    expect(pool?.formCounts).toEqual({ star: 1 });
+    expect(pool?.formCounts).toEqual({ star: 1, opinion: 1 });
   });
 
-  it('carries the live family standard when there is one', async () => {
-    await prisma.libraryStandard.create({ data: { familySlug: world.familySlug, competencyKey: 'communication', band: BAND, anchorsJson: JSON.stringify({ anchors: ['First anchor here', 'Second anchor here'], weakSigns: [] }) } });
+  it("never carries a standard the server's worker wrote", async () => {
+    await prisma.libraryStandard.create({ data: { familySlug: world.familySlug, competencyKey: 'communication', band: BAND, generatorModel: 'gpt-5', anchorsJson: JSON.stringify({ anchors: ['Presents the Acme ledger dashboard', 'Second anchor here'], weakSigns: [] }) } });
+    const pool = (await exportSeedPools()).pools.find((p) => p.competencyKey === 'communication');
+    expect(pool?.standard).toBeNull();
+  });
+
+  it('carries the live family standard when the seed run wrote it', async () => {
+    await prisma.libraryStandard.create({ data: { familySlug: world.familySlug, competencyKey: 'communication', band: BAND, generatorModel: 'brahmastra:codex', anchorsJson: JSON.stringify({ anchors: ['First anchor here', 'Second anchor here'], weakSigns: [] }) } });
     const pool = (await exportSeedPools()).pools.find((p) => p.competencyKey === 'communication');
     expect(pool?.standard?.anchors).toEqual(['First anchor here', 'Second anchor here']);
   });

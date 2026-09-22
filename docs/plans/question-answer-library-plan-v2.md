@@ -77,7 +77,7 @@ flowchart TD
 
 **Budgets and resumability.** Daily cap in calls, rolling 30-day cap in tokens, progress saved per batch, lease so two workers never overlap, clean stop and resume across deploys. When the primary model is unavailable the worker pauses; it never fills from a weaker source.
 
-**Prompt and model versions** are stamped on every entry; a new generator prompt version puts its first pools back through the owner queue until a clean stratified sample.
+**Prompt and model versions** are stamped on every entry; a new generator prompt version forms new strata, which the stratified daily sample weights while they fill.
 
 ## Approval v2: staged promotion
 
@@ -86,9 +86,11 @@ flowchart TD
 | **draft** | generated | nowhere | critic + linter + dedupe run |
 | **probational** | passes the policy gate under a recorded policy version | demo sandbox; interleaved-trial blocks; never a live-only interview | N clean uses (default 5) with evidence yield within the pool band and no non-answer spike → live; or owner/critic rejection → rejected |
 | **live** | promoted by usage | any interview for that role/band | quality loop, owner sample, complaint, supersession → retired |
-| **owner queue** | policy gate returns *unsure*; every entry of a **new pool** or a **new generator prompt version** until that stratum has a clean sample of 20 | nowhere | owner approve (→ probational) / edit (→ new draft) / reject |
+| **owner queue** | the policy gate returns *unsure* (critic confidence in the grey band, wrong band/form/answerability, lint warning, near-duplicate), a seeded entry was tie-broken, or its stratum was tightened by a rejection in the daily sample | nowhere | owner approve (→ probational) / edit (→ new draft) / reject |
 
-**Stratified daily sample.** The admin screen shows 20 entries a day chosen across strata (pool, band, form, generator version, scope), weighted to strata filled since yesterday, never purely random. A rejection in the sample pulls the entry immediately, lowers that stratum’s gate for the next 200 entries, and enqueues the reason for the generator.
+**Approval by policy (owner decision 2026-09-22).** An entry that passes the generator, a critic of a different model family, the linter and the injection screen goes to `probational` by policy. It is never made live by the gate: only clean uses in interviews promote it. There is no per-stratum approval count to earn first; the daily sample below is how the owner watches every stratum, new ones included.
+
+**Stratified daily sample.** The admin screen shows 20 entries a day (`LIBRARY_DAILY_SAMPLE_SIZE`) chosen across strata (pool, band, form, generator version, scope), weighted to strata filled since yesterday, never purely random. A rejection in the sample pulls the entry immediately, lowers that stratum’s gate for the next 200 entries, and enqueues the reason for the generator.
 
 **Owner admin screen** (platform operator only): pool health by role (depth vs target, form mix, status counts), owner queue, today’s sample, promotion and rejection rates by stratum, budget burn, worker state (running / paused / waiting for credits), and a per-entry view with the critic’s verdict, usage stats and history. Organisation screen: their private entries on the role page, with lint results and the share tick.
 
@@ -243,6 +245,7 @@ The library is dark until its switches are on. Everything below reads `server/.e
 | `LIBRARY_CRITIC_MODEL` | `claude-sonnet-5` | The critic's model. |
 | `ANTHROPIC_API_KEY` | — | Required for the Anthropic critic. Missing: the worker pauses as `critic_unavailable: no_key` and the owner's screen says so. Nothing is spent. |
 | `LIBRARY_WORKER_CONCURRENCY` | `4` | Batches run side by side. |
+| `LIBRARY_DAILY_SAMPLE_SIZE` | `20` | Entries in the owner's stratified daily sample (probational and live, never sampled before). |
 
 **The process.** `npm run library:worker` locally (`tsx src/library/workerMain.ts`); in production `node dist/library/workerMain.js` under pm2 as `questor-library`, registered by `scripts/deploy.sh` on first sight in fork mode with `--kill-timeout 300000` (SIGTERM finishes the batch in flight, then it stops), `--restart-delay 60000`, and `renice 10`. The deploy script stops it before migrations and restarts it only after the API's health check passes, and only if it was online before the deploy. By hand: `pm2 stop questor-library`, `pm2 restart questor-library --update-env`, `pm2 logs questor-library`.
 
@@ -265,7 +268,7 @@ The library is dark until its switches are on. Everything below reads `server/.e
 
 **Smoke test.** `cd server && npm run library:smoke` (`node scripts/library-smoke.mjs`) runs one batch for the thinnest pool against the configured providers and prints counts only; exit 1 on failure; exit 0 without spending when `LIBRARY_WORKER_ENABLED` is not true or no pool is below target.
 
-**Gate and lifecycle as built.** Generator → within-batch dedupe → critic (one call for the batch, verdicts matched by number) → linter and injection screen → lexical near-duplicate check against the pool and its family (2-token shingles, Jaccard; near ≥ 0.5 → owner queue, ≥ 0.8 → rejected) → policy gate. Pass → `probational`; unsure (lint warning, near-duplicate, critic confidence in [0.55, 0.8), wrong band/form/answerability) → owner queue; fail (not a question, generic, anchors leaked, confidence < 0.55, lint error, duplicate) → `rejected` with reasons. Every entry of a stratum (scope × role × band × form × generator version) goes to the owner queue until twenty of that stratum are approved untouched (`LibraryStratum.cleanApprovals`); a rejection in the daily sample tightens the stratum for its next 200 entries. Owner approve → `probational`; edit → new draft superseding the old, which is retired; reject → `rejected` (live entries retire). `probational → live` after 5 clean uses with no non-answer spike (`promoteIfEligible`; no usage rows are produced until L1). Every change writes a `LibraryReview` row and an `AuditEvent` (global entries under the platform operator's organisation).
+**Gate and lifecycle as built.** Generator → within-batch dedupe → critic (one call for the batch, verdicts matched by number) → linter and injection screen → lexical near-duplicate check against the pool and its family (2-token shingles, Jaccard; near ≥ 0.5 → owner queue, ≥ 0.8 → rejected) → policy gate. Pass → `probational`; unsure (lint warning, near-duplicate, critic confidence in [0.55, 0.8), wrong band/form/answerability) → owner queue; fail (not a question, generic, anchors leaked, confidence < 0.55, lint error, duplicate) → `rejected` with reasons. Approval is by policy (2026-09-22): a clean pass goes to `probational` straight away, in any stratum. A rejection in the daily sample tightens its stratum (scope × role × band × form × generator version) so its next 200 entries go to the owner queue. `LibraryStratum.cleanApprovals` is still counted for the rates by stratum but no longer gates. The critic prompt is `library-critic-v2`: "anchors leaked" means the question gives the answer away, not that it names the competency's topic. Owner approve → `probational`; edit → new draft superseding the old, which is retired; reject → `rejected` (live entries retire). `probational → live` after 5 clean uses with no non-answer spike (`promoteIfEligible`; no usage rows are produced until L1). Every change writes a `LibraryReview` row and an `AuditEvent` (global entries under the platform operator's organisation).
 
 **Select ladder.** Live entries only (probational too for the demo sandbox when asked); no entry or supersession ancestor asked for that role in that organisation inside the no-repeat window (30 days); never-asked entries first, shuffled among the top five, then least recently asked; one rung per difficulty 1–3, gaps filled from what is left; no form used twice in a ladder; fewer than two usable rungs → empty ladder, never an error.
 
