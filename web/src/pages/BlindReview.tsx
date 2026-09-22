@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { Badge, recBadge, Banner, Stat } from '../components/ui';
-import { ValidationStatus } from './AssessmentView';
+import { ValidationStatus } from '../components/assessment/ValidationStatus';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { PageSkeleton } from '../components/Skeleton';
@@ -268,7 +268,9 @@ export default function BlindReview() {
     setError('');
     try {
       const res = await api.post<{ selfReview: boolean }>(`/assessments/${id}/blind-verdict`, {
-        disposition,
+        // One vocabulary: the blind read records the same verdict, in the same
+        // word, as the open one (components/assessment/verdictVocabulary.ts).
+        verdict: disposition,
         reason: reason.trim(),
         // Only levels the reviewer actually scored. Leaving one unscored is a
         // real answer — "the transcript does not support a judgement" — and

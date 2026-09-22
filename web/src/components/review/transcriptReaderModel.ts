@@ -14,6 +14,12 @@ import { NO_SCORE } from '../scoreFormat';
  */
 
 export interface TranscriptTurnInput {
+  /**
+   * The stored turn. The assessment's evidence spans name it (EvidenceSpan.turnId),
+   * so a quote can be found in the transcript without matching its text — which
+   * a truncated quote never did. Absent on an older server.
+   */
+  readonly id?: string | null;
   readonly index: number;
   readonly speaker: string;
   readonly text: string;
@@ -27,6 +33,8 @@ export type TranscriptVoice = 'interviewer' | 'candidate' | 'system';
 
 export interface TranscriptRow {
   readonly key: string;
+  /** The stored turn id an evidence chip points at, or null on an older server. */
+  readonly turnId: string | null;
   readonly voice: TranscriptVoice;
   readonly label: string;
   readonly text: string;
@@ -49,7 +57,8 @@ function voiceOf(speaker: string): TranscriptVoice {
   return speaker === 'candidate' ? 'candidate' : 'system';
 }
 
-function stampOf(ms: number | null | undefined): string | null {
+/** mm:ss into the interview, or null when the source did not record a time. */
+export function stampOf(ms: number | null | undefined): string | null {
   if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return null;
   const seconds = Math.floor(ms / 1000);
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
@@ -77,6 +86,7 @@ export function transcriptRows(
       const competency = voice === 'interviewer' && turn.competencyId ? competencyNames[turn.competencyId] ?? null : null;
       return {
         key: String(turn.index),
+        turnId: turn.id ?? null,
         voice,
         label: labels[voice],
         text: turn.text,

@@ -95,45 +95,37 @@ test('a completed typed interview shows its assessment at once and records the f
   // asks for it to be read first, and the sticky control offers the review.
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.evaluate(() => window.scrollTo(0, 0));
-  const readNote = page.getByTestId('transcript-read-note');
-  await expect(readNote).toContainText('Read the transcript before recording your review');
-  await expect(page.getByTestId('transcript-progress')).toContainText(/Read \d+%/);
-  await page.getByTestId('jump-to-review').click();
-  await expect(page.getByRole('tablist', { name: 'Assessment readings' })).toBeInViewport();
+  // The decision leads the page; the transcript is the column beside it, and
+  // the note asks for it to be read before a verdict is recorded.
+  await expect(page.getByTestId('verdict-panel')).toBeVisible();
+  await expect(page.getByTestId('transcript-read-note')).toContainText('Read the transcript before recording your review');
+  await expect(page.getByTestId('assessment-transcript')).toBeVisible();
 
-  // Scrolling through to the end of the transcript is what turns the note.
-  await page.getByTestId('transcript-end').scrollIntoViewIfNeeded();
-  await expect(readNote).toContainText('Transcript read');
-  await expect(page.getByTestId('transcript-progress')).toContainText('Transcript read');
-
-  // Three readings, and nobody has reviewed this one yet.
-  await expect(page.getByRole('tab', { name: 'Human review' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'AI assessment' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText('Overall score')).toBeVisible();
-  await page.getByRole('tab', { name: 'Human review' }).click();
-  await expect(page.getByText(/No review has been recorded/)).toBeVisible();
-  await page.getByRole('tab', { name: 'Key differences' }).click();
-  await expect(page.getByText(/Nothing to compare yet/)).toBeVisible();
-  await expect(page).toHaveURL(/\/differences$/);
+  // The AI's reading, with its confidence and the one thing it is unsure of.
+  await expect(page.getByTestId('verdict-ai')).toBeVisible();
+  // Nobody has recorded a verdict yet, so no choice is marked.
+  await expect(page.getByTestId('verdict-consequence')).toHaveCount(0);
 
   // The feedback email is prepared but waiting for the hiring team.
   await page.goto(assessmentUrl);
   await expect(page.getByTestId('feedback-email-status')).toContainText(/on its way|has been sent|No feedback/);
 
-  // A reviewer records their verdict, changing one level along the way.
-  await page.getByRole('tab', { name: 'Human review' }).click();
-  await page.getByLabel('Disposition').selectOption('CONSIDER');
+  // A reviewer records their verdict, changing one level along the way. The
+  // consequence is on screen before the button is pressed.
+  await page.getByTestId('verdict-CONSIDER').click();
+  await expect(page.getByTestId('verdict-consequence')).toContainText(/Consider/);
+  await page.getByTestId('levels-fold').getByText('Change a level where you read it differently').click();
   const firstLevel = page.locator('select[id^="level-"]').first();
   await firstLevel.selectOption('2');
   await page.locator('input[id^="level-reason-"]').first().fill('Read the transcript differently.');
-  await page.getByLabel('Reason (required)').fill('I read the evidence on this one differently from the AI.');
-  await page.getByRole('button', { name: 'Submit review' }).click();
-  await expect(page.getByText('Review submitted.')).toBeVisible({ timeout: 20_000 });
+  await page.getByLabel('Why (required)').fill('I read the evidence on this one differently from the AI.');
+  await page.getByTestId('verdict-act').click();
+  await expect(page.getByTestId('verdict-recorded')).toBeVisible({ timeout: 20_000 });
 
-  // The human reading is now the one the page leads with.
-  await expect(page.getByRole('tab', { name: 'Human review' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText("The reviewer's verdict")).toBeVisible();
-  await page.getByRole('tab', { name: 'Key differences' }).click();
+  // The reviewer's verdict is now what the page leads with, and the comparison
+  // with the AI is kept in its fold.
+  await expect(page.getByText("reviewer's verdict")).toBeVisible();
+  await page.getByText('Where the reviewer and the AI differ').click();
   await expect(page.getByText(/The reviewer changed 1 of/)).toBeVisible();
   await expect(page.getByText('Read the transcript differently.')).toBeVisible();
 

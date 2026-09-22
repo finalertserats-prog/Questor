@@ -1,35 +1,54 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
-import { Badge, recBadge, Banner, Stat, Markdown } from '../components/ui';
-import { Icon, type IconName } from '../components/Icon';
+import { Banner, Markdown, recBadge } from '../components/ui';
+import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { CandidateFeedbackPanel } from '../components/CandidateFeedbackPanel';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
-import {
-  DISPOSITIONS, canSubmitVerdict, exportStatusSentence, isBlindReviewGate, isDisposition, isScored, reviewRefusal,
-  type Disposition,
-} from '../components/assessmentModel';
+import { isBlindReviewGate, isScored, reviewRefusal } from '../components/assessmentModel';
 import { FeedbackEmailPanel } from '../components/FeedbackEmailPanel';
-import { AssessmentTabList, DifferencesPanel, HumanReviewPanel, type DifferencesView } from '../components/AssessmentTabs';
+import { DifferencesPanel, type DifferencesView } from '../components/AssessmentTabs';
 import { TechStackCoverage, type TechStackCoverageItem } from '../components/TechStackCoverage';
-import {
-  assessmentPanelId, assessmentTabFromParam, assessmentTabId, assessmentTabPath, landingTab, levelText,
-  nextAssessmentTab, type AssessmentTabKey,
-} from '../components/assessmentTabsModel';
-import { humanise, recommendationStatus } from '../components/statusModel';
+import { humanise } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
 import { useAuth } from '../auth';
 import { can, onlyWhoCan } from '../components/capabilityModel';
 import { formatPercent, formatScoreOutOf100 } from '../components/scoreFormat';
-import { ReviewFactsStrip, TranscriptReader, TranscriptReadNote } from '../components/review/TranscriptReader';
-import { useReadProgress, useReviewTranscript, type TranscriptSource } from '../components/review/useTranscriptReader';
 import { REVIEW_SECTION_ID } from '../components/review/transcriptReaderModel';
+import { useReviewTranscript, type TranscriptSource } from '../components/review/useTranscriptReader';
 import { formatDateTime } from '../components/dateFormat';
 import { servingModeSentence, type ServingModeView } from '../components/servingModeModel';
 import { QuestionsAskedCard } from '../components/QuestionsAskedCard';
 import type { AskedQuestion } from '../components/questionsAskedModel';
+import { useToast } from '../components/Toast';
+import { VerdictPanel } from '../components/assessment/VerdictPanel';
+import { SkillsGrid, type SkillView } from '../components/assessment/SkillsGrid';
+import { AssessmentTranscript } from '../components/assessment/AssessmentTranscript';
+import { outcomeLabel, type Verdict } from '../components/assessment/verdictVocabulary';
+import {
+  caveatSentence, consequenceCopy, consequenceFor, exportRefusalSentence, levelText, outcomeSentence,
+  type ExportOffer, type JourneyMove, type JourneyView,
+} from '../components/assessment/verdictFlowModel';
+import { ValidationStatus } from '../components/assessment/ValidationStatus';
+import { Fold, SwotFold } from '../components/assessment/AssessmentFolds';
+
+/**
+ * The assessment, in the order a reviewer actually works.
+ *
+ * The decision is at the top — the AI's reading beside the reviewer's own, and
+ * each choice saying what it will do before it does it. The skills are below
+ * with their evidence, and pressing a quote marks that turn in the transcript
+ * alongside. Everything else — the strengths and concerns, the identity
+ * checks, the questions asked, the candidate's letter — folds underneath,
+ * because it is reference, not the work.
+ *
+ * Two rules the layout must not break. Where the organisation requires blind
+ * review, the AI's recommendation stays withheld until the reviewer has
+ * recorded their own; and the transcript is never withheld, because the
+ * reviewer judges from it.
+ */
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
 interface Competency {
@@ -47,176 +66,82 @@ interface AssessmentResult {
   techStackCoverage?: TechStackCoverageItem[];
 }
 interface Review { id: string; status: string; disposition: string; reason: string; overrides: unknown[]; completedAt: string | null; }
-interface ReviewedView {
-  result: AssessmentResult;
-  review: { id: string; reviewerId: string; disposition: string; reason: string; comments: string; completedAt: string | null };
-}
 interface AssessmentResp {
   id: string; sessionId: string;
   candidate: { id: string; name: string }; role: { id: string; title: string };
   result: AssessmentResult; reviews: Review[];
-  /** The reviewed reading, the comparison and the outcome. Absent on an older server. */
-  reviewed?: ReviewedView | null;
+  reviewed?: { review: { id: string; reviewerId: string; disposition: string; reason: string; comments: string; completedAt: string | null } } | null;
   differences?: DifferencesView | null;
   outcome?: { source: 'human' | 'ai'; recommendation: string; reviewedAt: string | null };
   /** Turns written by a fallback during an AI provider outage. Absent on an older server. */
   servingMode?: ServingModeView;
   /** What the interviewer asked, for interviews the question library planned; absent otherwise. */
   questionsAsked?: AskedQuestion[];
+  /** Where the candidate stands and what each verdict would do. Absent on an older server. */
+  journey?: JourneyView | null;
+  export?: ExportOffer;
 }
 
-// ---------------------------------------------------------------------------
-// Scoring-validity status
-// ---------------------------------------------------------------------------
-
-/** The fields of GET /api/assessments/shadow-metrics this UI reads. */
-interface ShadowMetrics {
-  sampleSize: { blindVerdicts: number; assessmentsTotal: number; coverage: number };
-  sufficiency: { sufficient: boolean; minimumN: number; statement: string };
-  gate: { source: string; threshold: number; statistic: string; met: boolean | null; statement: string };
+interface SubmitResult {
+  review: { id: string; verdict: string; selfReview: boolean };
+  replayed: boolean;
+  feedbackReleased: boolean;
+  journey: JourneyMove | null;
+  export: ExportOffer;
 }
 
-/**
- * States, wherever an AI recommendation or score is on screen, that the scoring
- * has never been checked against human judgement.
- *
- * WHY: "advisory" on its own does not carry this. A reviewer reads it as a
- * liability disclaimer on a number that was nonetheless measured — and then
- * weighs the number accordingly. The thing they actually need to know is that
- * no agreement study has ever been run, which is a fact about the data, not a
- * caveat about liability.
- *
- * Every sentence of substance below is the SERVER'S wording, from
- * services/shadowMode.ts. That is deliberate: this component must not be able
- * to describe a state the harness would describe differently, and it must not
- * do its own arithmetic on the sample — a number computed here could flatter
- * the system without anyone noticing the divergence.
- *
- * It is not collapsible and has no dismiss control. The failure being designed
- * against is a caveat the reviewer learns to close.
- */
-export function ValidationStatus() {
-  const [metrics, setMetrics] = useState<ShadowMetrics | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    api.get<ShadowMetrics>('/assessments/shadow-metrics')
-      .then(setMetrics)
-      .catch(() => setFailed(true));
-  }, []);
-
-  // Never render nothing. An absent notice reads as "no caveat applies", which
-  // is the single message this component exists to prevent — so the unvalidated
-  // headline is shown while loading and stays shown if the fetch fails.
-  if (!metrics) {
-    return (
-      <Banner kind="error">
-        <strong>This score has not been validated against human judgement.</strong>{' '}
-        {failed
-          ? 'The live agreement statistics could not be loaded, so nothing here has been confirmed either way.'
-          : 'Loading the current agreement statistics…'}
-      </Banner>
-    );
-  }
-
-  const { sufficiency, gate } = metrics;
-  // A met gate is still not validation: it is one measurement, against one
-  // conservative reading of a launch gate, on a sample that may not be
-  // representative. Only the headline softens — nothing else changes.
-  const validated = gate.met === true;
-
-  return (
-    <Banner kind={validated ? 'info' : 'error'}>
-      <strong>
-        {validated
-          ? 'The agreement gate condition is currently met — but this score is still not a validated measure.'
-          : 'This score has not been validated against human judgement.'}
-      </strong>
-      <div style={{ marginTop: 6 }}>{sufficiency.statement}</div>
-      <div style={{ marginTop: 6 }}>{gate.statement}</div>
-      <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>
-        Nothing here becomes validated by accumulating verdicts. {sufficiency.minimumN} paired blind
-        verdicts is only the point at which the confidence interval starts to mean anything — a floor for
-        reading the statistic, not a pass mark. Clearing the gate additionally requires the LOWER bound of
-        {/* Named, because every other number on this page is out of 100 or a
-            percentage, and a bare "0.75" beside them reads as one of those. */}
-        that interval to reach a kappa of {gate.threshold}, which a larger sample does not bring about on its own.
-        Treat the recommendation and score as one opinion to argue with, not as a measurement.
-      </div>
-      <details style={{ marginTop: 8 }}>
-        <summary className="small">How this is measured</summary>
-        <p className="small" style={{ marginBottom: 4 }}>{gate.statistic}</p>
-        <p className="small muted" style={{ margin: 0 }}>{gate.source}</p>
-      </details>
-    </Banner>
-  );
-}
-
-const STRING_CARD_ICONS: Readonly<Record<string, IconName>> = {
-  Strengths: 'check-circle',
-  Concerns: 'alert',
-  Contradictions: 'x-circle',
-  'Open questions': 'question',
-  Limitations: 'about',
-};
-
-function StringCard({ title, items }: { title: string; items: string[] }) {
-  if (!items || items.length === 0) return null;
-  return (
-    <div className="card">
-      <h3 className="card-title"><Icon name={STRING_CARD_ICONS[title] ?? 'list'} size={16} />{title}</h3>
-      <ul style={{ margin: 0 }}>{items.map((s, i) => <li key={i}>{s}</li>)}</ul>
-    </div>
-  );
+/** A submit id per attempt, so a retry of the same press records one review. */
+function newSubmissionId(): string {
+  const bytes = new Uint8Array(12);
+  globalThis.crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export function AssessmentView() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
-  // The tab is the last segment of the address (/assessments/:id/ai), so a
-  // link to one reading stays a link to that reading. Kept as explicit routes
-  // rather than a wildcard, which would also swallow /review.
-  const lastSegment = useLocation().pathname.split('/').filter(Boolean).pop();
-  const tab = lastSegment === 'human' || lastSegment === 'ai' || lastSegment === 'differences' ? lastSegment : undefined;
+  const toast = useToast();
+  const { user } = useAuth();
+
   const [data, setData] = useState<AssessmentResp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
+  const [blocked, setBlocked] = useState(false);
+  const [skipReason, setSkipReason] = useState('');
 
   // Empty until the reviewer chooses. Pre-filling it — from the AI's own
   // recommendation, of all things — meant a verdict could be recorded that
   // nobody had made, including against an assessment that failed to load.
-  const [disposition, setDisposition] = useState<Disposition | ''>('');
+  const [verdict, setVerdict] = useState<Verdict | ''>('');
   const [reason, setReason] = useState('');
-  const [comments, setComments] = useState('');
-  // Per-competency levels the reviewer disagrees with. Empty means "the AI's
-  // level stands", which is a verdict in itself and is recorded as agreement.
-  const [levels, setLevels] = useState<Record<string, string>>({});
-  const [levelReasons, setLevelReasons] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   // The candidate's letter is being sent and the review has to wait a minute:
   // shown as information with a retry, not as a red error.
   const [reviewWait, setReviewWait] = useState('');
+  // Held for the life of one attempt, so every retry of THIS press carries the
+  // same id and the server records one review however many arrive.
+  const submissionRef = useRef('');
 
-  const { user } = useAuth();
-  // Reviewing, and the candidate feedback that follows it, need
-  // assessment:review, which a recruiter does not hold.
-  const mayReview = can(user, 'assessment:review');
-  const [exportStatus, setExportStatus] = useState('');
+  // Per-competency levels the reviewer disagrees with. Empty means "the AI's
+  // level stands", which is a verdict in itself and is recorded as agreement.
+  // Folded rather than dropped: it is what the "where the reviewer and the AI
+  // differ" record is made of, so a page without it would quietly retire that.
+  const [levels, setLevels] = useState<Record<string, string>>({});
+  const [levelReasons, setLevelReasons] = useState<Record<string, string>>({});
+
+  const [activeChip, setActiveChip] = useState('');
+  const [quotedTurnId, setQuotedTurnId] = useState('');
+  const [quotedAt, setQuotedAt] = useState(0);
+  const [transcriptRead, setTranscriptRead] = useState(false);
+
   const [exporting, setExporting] = useState(false);
-  const [showReport, setShowReport] = useState(false);
   const [report, setReport] = useState('');
   const [reportLoading, setReportLoading] = useState(false);
-  const [blocked, setBlocked] = useState(false);
-  const [skipReason, setSkipReason] = useState('');
 
   // `cancelled` so a response for an assessment the reviewer has already left
   // cannot overwrite the one in front of them.
   const cancelledRef = useRef(false);
 
-  // Returns its promise so callers can wait for fresh data before re-enabling
-  // the button that asked for it.
-  const load = () =>
+  const load = useCallback(() =>
     api.get<AssessmentResp>(`/assessments/${id}`)
       .then((d) => { if (cancelledRef.current) return; setData(d); setBlocked(false); })
       .catch((err: unknown) => {
@@ -224,27 +149,23 @@ export function AssessmentView() {
         // Where the organisation requires it, the server withholds this page
         // from a reviewer who has not yet recorded their own verdict. That is a
         // workflow state, not a failure, so it gets a route forward rather than
-        // a red error box. Read from the status and code, not from the prose:
-        // rewording the server's sentence used to turn this gate into a red
-        // error nobody could get past. Everywhere else the page opens at once.
+        // a red error box. Read from the status and code, not from the prose.
         if (err instanceof ApiError && isBlindReviewGate(err)) setBlocked(true);
         else setError(err instanceof Error ? err.message : 'Could not load this assessment.');
       })
-      .finally(() => { if (!cancelledRef.current) setLoading(false); });
+      .finally(() => { if (!cancelledRef.current) setLoading(false); }), [id]);
 
   useEffect(() => {
     cancelledRef.current = false;
     setLoading(true);
     void load();
     return () => { cancelledRef.current = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, load]);
 
-  // The transcript, before anything else on the page. Once the assessment is
-  // open it comes from the interview's own transcript endpoint; while the
-  // organisation's blind-review policy is still withholding the assessment,
-  // it comes from the blind view — the reviewer judges from the transcript,
-  // so the gate must never hide it. Hooks, so they sit above the early returns.
+  // The transcript. Once the assessment is open it comes from the interview's
+  // own endpoint; while the blind-review policy is still withholding the
+  // assessment it comes from the blind view — the reviewer judges from the
+  // transcript, so the gate must never hide it.
   const transcriptSource: TranscriptSource | null = blocked && id
     ? { kind: 'blind', assessmentId: id }
     : data
@@ -254,22 +175,24 @@ export function AssessmentView() {
       }
       : null;
   const transcript = useReviewTranscript(transcriptSource);
-  const reading = useReadProgress(transcript.status === 'ready', transcript.key);
+
+  const onChip = useCallback((chip: { key: string; turnId: string }) => {
+    setActiveChip(chip.key);
+    setQuotedTurnId(chip.turnId);
+    setQuotedAt((n) => n + 1);
+  }, []);
+
   const transcriptBlock = (
-    <>
-      {transcript.view && <ReviewFactsStrip facts={transcript.view.facts} />}
-      <TranscriptReader
-        ref={reading.blockRef}
-        status={transcript.status}
-        rows={transcript.view?.rows ?? []}
-        fraction={reading.fraction}
-        read={reading.read}
-        showJump={reading.showJump}
-        onJump={reading.jumpToReview}
-        onRetry={transcript.retry}
-        error={transcript.error}
-      />
-    </>
+    <AssessmentTranscript
+      status={transcript.status}
+      rows={transcript.view?.rows ?? []}
+      error={transcript.error}
+      onRetry={transcript.retry}
+      quotedTurnId={quotedTurnId}
+      quotedAt={quotedAt}
+      transcriptKey={transcript.key}
+      onRead={setTranscriptRead}
+    />
   );
 
   const skipBlind = async () => {
@@ -284,11 +207,11 @@ export function AssessmentView() {
 
   if (loading) return <PageSkeleton label="Loading assessment…" cards={3} />;
 
+  // The blind-review gate. Unchanged in substance: the transcript is shown,
+  // the AI's reading is not, and the way forward is an independent review.
   if (blocked) {
     return (
       <div className="stack">
-        {transcriptBlock}
-        <TranscriptReadNote read={reading.read} />
         <h2 id={REVIEW_SECTION_ID} className="card-title review-section" tabIndex={-1}>
           <Icon name="lock" />Independent review required
         </h2>
@@ -300,6 +223,7 @@ export function AssessmentView() {
         <div className="card">
           <Link className="btn" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review the evidence blind</Link>
         </div>
+        {transcriptBlock}
         <details className="card">
           <summary>I need to open it without reviewing</summary>
           <p className="muted">
@@ -332,16 +256,36 @@ export function AssessmentView() {
 
   const { candidate, role, result, reviews } = data;
   const scored = isScored(result);
+  const mayReview = can(user, 'assessment:review');
+  const journey = data.journey ?? null;
+  const reviewed = data.reviewed ?? null;
+  const offer = data.export ?? { available: can(user, 'assessment:export'), because: null };
 
-  const submitReview = async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    // The browser's own disabled button is not the only route here (Enter in a
-    // field submits too), so the rule is checked rather than assumed.
-    if (!canSubmitVerdict({ disposition, reason, scored, submitting })) return;
+  const consequence = verdict === '' ? null : consequenceFor(journey, verdict);
+  const copy = verdict === ''
+    ? null
+    : consequenceCopy({ verdict, consequence, candidate: candidate.name, letterWaiting: journey?.letterWaiting ?? false });
+
+  const canSubmit = verdict !== '' && reason.trim().length >= 3 && scored && !submitting;
+
+  const refusal = !mayReview
+    ? onlyWhoCan('assessment:review', 'record a review')
+    : !scored
+      ? 'Grading did not complete, so there is nothing to record a verdict against. Decide from the candidate\'s page instead.'
+      : reviewed
+        ? `Reviewed already: ${outcomeLabel(reviewed.review.disposition)}, ${formatDateTime(reviewed.review.completedAt)}. Replacing a completed review is done from the candidate's page, with a reason.`
+        : '';
+
+  const submit = async (applyToJourney: boolean) => {
+    // canSubmit already carries "a verdict was chosen", which is what narrows
+    // `verdict` from the empty string below.
+    if (!canSubmit) return;
     setError('');
-    setNotice('');
     setReviewWait('');
     setSubmitting(true);
+    // One id per attempt: a retry of this press carries the same one, so the
+    // server records a single review however many copies arrive.
+    if (!submissionRef.current) submissionRef.current = newSubmissionId();
     try {
       // Only the levels the reviewer actually changed travel: an untouched
       // competency is agreement, and sending it as an "override" to the same
@@ -349,22 +293,22 @@ export function AssessmentView() {
       const overrides = (result.competencies ?? [])
         .filter((c) => levels[c.id] && Number(levels[c.id]) !== c.level)
         .map((c) => ({ competencyId: c.id, from: c.level, to: Number(levels[c.id]), reason: levelReasons[c.id] ?? '' }));
-      await api.post(`/assessments/${id}/review`, {
-        disposition, reason, comments: comments || undefined, overrides,
+      const res = await api.post<SubmitResult>(`/assessments/${id}/review`, {
+        verdict, reason: reason.trim(), overrides, applyToJourney, submissionId: submissionRef.current,
       });
-      setNotice('Review submitted.');
-      setDisposition('');
+      toast.show(outcomeSentence({ verdict, move: res.journey, candidate: candidate.name }), { testId: 'verdict-recorded' });
+      submissionRef.current = '';
+      setVerdict('');
       setReason('');
-      setComments('');
       setLevels({});
       setLevelReasons({});
-      // Awaited: the button used to re-enable over a page still showing the
+      // Awaited: the panel used to re-enable over a page still showing the
       // state from before the review landed.
       await load();
     } catch (err: unknown) {
-      const refusal = reviewRefusal(err instanceof ApiError ? err : { message: err instanceof Error ? err.message : '' });
-      if (refusal.kind === 'wait') setReviewWait(refusal.message);
-      else setError(refusal.message);
+      const refused = reviewRefusal(err instanceof ApiError ? err : { message: err instanceof Error ? err.message : '' });
+      if (refused.kind === 'wait') setReviewWait(refused.message);
+      else { setError(refused.message); submissionRef.current = ''; }
     } finally {
       setSubmitting(false);
     }
@@ -372,13 +316,11 @@ export function AssessmentView() {
 
   const doExport = async () => {
     if (exporting) return;
-    setExportStatus('');
     setExporting(true);
     try {
       const r = await api.post<{ status: string }>(`/assessments/${id}/export`, {});
-      setExportStatus(r.status);
+      toast.show(`Sent to your ATS (${humanise(r.status)}).`, { testId: 'export-done' });
     } catch (err: unknown) {
-      // A missing ATS or candidate link is fixable, and the message says by whom.
       if (err instanceof ApiError) setError(atsErrorMessage(err, user?.role === 'admin'));
       else setError(err instanceof Error ? err.message : 'Could not export this assessment.');
     } finally {
@@ -386,343 +328,243 @@ export function AssessmentView() {
     }
   };
 
-  const toggleReport = async () => {
-    if (showReport) { setShowReport(false); return; }
-    if (reportLoading) return;
-    if (!report) {
-      setReportLoading(true);
-      try {
-        const r = await api.get<{ report: string; result: AssessmentResult }>(`/assessments/${id}/report?format=json`);
-        setReport(r.report);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Could not load the full report.');
-        setReportLoading(false);
-        return;
-      }
+  const loadReport = async () => {
+    if (report || reportLoading) return;
+    setReportLoading(true);
+    try {
+      const r = await api.get<{ report: string }>(`/assessments/${id}/report?format=json`);
+      setReport(r.report);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not load the full report.');
+    } finally {
       setReportLoading(false);
     }
-    setShowReport(true);
   };
 
-  // Recording a verdict belongs with the human reading, so the form lives on
-  // that tab — including the levels the reviewer wants to change.
-  const reviewForm = (
-    <div className="card">
-      <h2 className="card-title"><Icon name="human-review" />Record your review</h2>
-        <form onSubmit={submitReview}>
-          <div className="grid cols-2">
-            <div>
-              <label htmlFor="disposition">Disposition</label>
-              <select
-                id="disposition"
-                value={disposition}
-                disabled={!scored}
-                onChange={(e) => setDisposition(isDisposition(e.target.value) ? e.target.value : '')}
-              >
-                <option value="">Choose a disposition…</option>
-                {DISPOSITIONS.map((d) => (
-                  <option key={d} value={d}>{recommendationStatus(d).label}</option>
-                ))}
-              </select>
-              {!scored && (
-                <p className="muted small" style={{ marginTop: 6 }}>
-                  There is no assessment to judge, so no verdict can be recorded here. Record your
-                  decision from the candidate's page instead.
-                </p>
-              )}
-            </div>
-          </div>
-          {/* minWidth: 0 because a fieldset sizes to its content by default,
-              so the scrolling table inside it would push the whole page
-              sideways on a phone instead of scrolling within its card. */}
-          <fieldset
-            style={{ border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginTop: 12, minWidth: 0 }}
-            disabled={!scored}
-          >
-            <legend className="small muted">Levels (optional)</legend>
-            <p className="muted small" style={{ marginTop: 0 }}>
-              Change a level only where you read the evidence differently. What you leave alone counts as agreeing
-              with the AI, and both are kept on the "Key differences" tab.
-            </p>
-            <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency levels">
-              <table>
-                <thead><tr><th>Competency</th><th>AI</th><th>Your level</th><th>Why</th></tr></thead>
-                <tbody>
-                  {(result.competencies ?? []).map((c) => (
-                    <tr key={c.id}>
-                      <td>{c.name}</td>
-                      <td className="muted">{c.notEnoughEvidence ? 'Not graded' : levelText(c.level)}</td>
-                      <td>
-                        <label className="sr-only" htmlFor={`level-${c.id}`}>Your level for {c.name}</label>
-                        <select
-                          id={`level-${c.id}`}
-                          value={levels[c.id] ?? ''}
-                          onChange={(e) => setLevels((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                        >
-                          <option value="">Agree with the AI</option>
-                          {[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>{levelText(level)}</option>)}
-                        </select>
-                      </td>
-                      <td>
-                        <label className="sr-only" htmlFor={`level-reason-${c.id}`}>Why you changed {c.name}</label>
-                        <input
-                          id={`level-reason-${c.id}`}
-                          value={levelReasons[c.id] ?? ''}
-                          onChange={(e) => setLevelReasons((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                          placeholder="Optional"
-                        />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </fieldset>
-          <label htmlFor="review-reason">Reason (required)</label>
-          <textarea id="review-reason" value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3}
-            disabled={!scored}
-            placeholder="Explain your decision…" style={{ minHeight: 90 }} />
-          <label htmlFor="review-comments">Comments (optional)</label>
-          <textarea id="review-comments" value={comments} onChange={(e) => setComments(e.target.value)} disabled={!scored}
-            style={{ minHeight: 60 }} />
-          {reviewWait && (
-            <Banner kind="info">
-              {reviewWait}{' '}
-              <button type="button" className="btn secondary sm" onClick={() => void submitReview()} disabled={submitting}>
-                Try again
-              </button>
-            </Banner>
-          )}
-          <div className="row" style={{ marginTop: 12 }}>
-            <button className="btn" type="submit" disabled={!canSubmitVerdict({ disposition, reason, scored, submitting })}>
-              <Icon name={submitting ? 'hourglass' : 'send'} size={16} />
-              {submitting ? 'Submitting…' : 'Submit review'}
-            </button>
-          </div>
-        </form>
+  const skills: SkillView[] = (result.competencies ?? []).map((c) => ({
+    id: c.id, name: c.name, level: c.level, requiredLevel: c.requiredLevel,
+    notEnoughEvidence: c.notEnoughEvidence, rationale: c.rationale, evidence: c.evidence ?? [],
+  }));
 
-        {(reviews ?? []).length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <h3>Previous reviews</h3>
-            <div className="table-scroll" tabIndex={0} role="region" aria-label="Previous reviews">
-            <table>
-              <thead><tr><th>Disposition</th><th>Reason</th><th>Status</th><th>Completed</th></tr></thead>
-              <tbody>
-                {reviews.map((r) => (
-                  <tr key={r.id}>
-                    <td>{recBadge(r.disposition)}</td>
-                    <td className="muted small">{r.reason}</td>
-                    <td>{humanise(r.status)}</td>
-                    <td className="muted small">{formatDateTime(r.completedAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        )}
-      </div>
-  );
-
-  // Addressable tabs, like the admin console's: a link to "the differences"
-  // stays a link to the differences.
-  // Only an address that names a tab counts as a request; the plain address
-  // lets landingTab choose, which is how a reviewed assessment opens on the
-  // human reading and an unreviewed one on the AI's.
-  const requested = tab ? assessmentTabFromParam(tab) ?? undefined : undefined;
-  const reviewed = data.reviewed ?? null;
-  const differences = data.differences ?? null;
-  const outcome = data.outcome ?? { source: 'ai' as const, recommendation: result.recommendation, reviewedAt: null };
-  const activeTab = landingTab({ reviewed: Boolean(reviewed), requested });
-  const selectTab = (key: AssessmentTabKey) => navigate(assessmentTabPath(id ?? '', key));
-  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, current: AssessmentTabKey) => {
-    const next = nextAssessmentTab(current, event.key);
-    if (next === current) return;
-    event.preventDefault();
-    selectTab(next);
-    window.requestAnimationFrame(() => document.getElementById(assessmentTabId(next))?.focus());
-  };
-  const panel = (key: AssessmentTabKey, content: React.ReactNode) => activeTab === key && (
-    <section id={assessmentPanelId(key)} role="tabpanel" aria-labelledby={assessmentTabId(key)} tabIndex={0} className="admin-panel">
-      {content}
-    </section>
-  );
-  const changedIds = new Set((differences?.competencies ?? []).filter((c) => c.changed).map((c) => c.competencyId));
+  const exportRefusal = exportRefusalSentence(offer);
 
   return (
     <div>
       <PageHeader
         icon="evidence"
         title="Assessment"
-        // The reviewer's verdict may lead the page; the AI's may not. Until a
-        // person has reviewed, the recommendation waits on the AI tab, below
-        // the transcript — otherwise the header hands over the conclusion
-        // before the reviewer has read a word of the record.
-        badge={outcome.source === 'human' ? recBadge(outcome.recommendation) : undefined}
+        badge={reviewed ? recBadge(reviewed.review.disposition) : undefined}
         subtitle={(
           <>
             <Link to={`/candidates/${candidate.id}`}>{candidate.name}</Link> · {role.title}
+            {journey && <> · <span className="muted">{journey.currentStageLabel}</span></>}
             {' · '}
-            <span className="muted">{outcome.source === 'human' ? "reviewer's verdict" : 'AI assessment, not yet reviewed'}</span>
+            <span className="muted">{reviewed ? "reviewer's verdict" : 'not yet reviewed'}</span>
           </>
         )}
         actions={
           <>
-            {/* Offered here because this page shows the recommendation on sight —
-                once a reviewer has read it they cannot un-read it, so the blind
-                route has to be reachable before they form a view, not after. */}
-            {mayReview && <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>}
-            {can(user, 'assessment:export') && (
-              <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
-                <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
-                {exporting ? 'Exporting…' : 'Export to ATS'}
-              </button>
+            {mayReview && !reviewed && (
+              <Link className="btn secondary" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review this blind</Link>
             )}
-            <button type="button" className="btn ghost" onClick={toggleReport} disabled={reportLoading}>
-              <Icon name={showReport ? 'eye-off' : 'eye'} size={16} />
-              {reportLoading ? 'Loading…' : showReport ? 'Hide full report' : 'View full report'}
-            </button>
           </>
         }
       />
 
       {error && <Banner kind="error">{error}</Banner>}
-      {notice && <Banner kind="ok">{notice}</Banner>}
-      {exportStatus && <Banner kind="info">{exportStatusSentence(exportStatus)}</Banner>}
+      {reviewWait && (
+        <Banner kind="info">
+          {reviewWait}{' '}
+          <button type="button" className="btn secondary sm" onClick={() => void submit(true)} disabled={submitting}>
+            Try again
+          </button>
+        </Banner>
+      )}
 
-      {/* The transcript before the readings: the reviewer meets the record
-          of the interview before any account of it, the AI's included. */}
-      {transcriptBlock}
-
-      {/* Everything from here on is the review. The section is the target of
-          the transcript's "Jump to review", and focusable so the landing is
-          announced. Reaching it early is allowed — the note says what the page
-          would rather the reviewer did, and the page does not enforce it. */}
-      <section id={REVIEW_SECTION_ID} className="review-section" tabIndex={-1} aria-label="Review">
-      <TranscriptReadNote read={reading.read} />
-
-      {/* Above the score, not below it. A reviewer who has already read
+      {/* Above the score, not below it: a reviewer who has already read
           "76/100" has formed the impression the notice is meant to qualify. */}
       <ValidationStatus />
 
-      {/* Beside the validation note, for the same reason: it qualifies the
-          readings below, so it is read before them. */}
       {servingModeSentence(data.servingMode) && (
         <p className="muted small" role="note" data-testid="serving-mode-note">{servingModeSentence(data.servingMode)}</p>
       )}
 
-      <AssessmentTabList active={activeTab} onSelect={selectTab} onKeyDown={handleTabKeyDown} />
+      <div className="as">
+        <div className="as-main">
+          <section id={REVIEW_SECTION_ID} className="review-section" tabIndex={-1} aria-label="The verdict">
+            <VerdictPanel
+              ai={scored ? {
+                recommendation: result.recommendation,
+                confidence: result.confidence,
+                caveat: caveatSentence(result),
+              } : null}
+              candidate={candidate.name}
+              verdict={verdict}
+              onVerdict={setVerdict}
+              reason={reason}
+              onReason={setReason}
+              copy={copy}
+              canSubmit={canSubmit}
+              submitting={submitting}
+              onSubmit={(apply) => void submit(apply)}
+              refusal={refusal}
+            />
+          </section>
 
-      {panel('human', (
-        <HumanReviewPanel
-          review={reviewed ? { ...reviewed.review, completedAt: reviewed.review.completedAt } : null}
-          competencies={(reviewed?.result.competencies ?? []).map((c) => ({
-            id: c.id, name: c.name, level: c.level, requiredLevel: c.requiredLevel, notEnoughEvidence: c.notEnoughEvidence,
-          }))}
-          changedIds={changedIds}
-        >
-          {mayReview ? reviewForm : (
-            <p className="muted small" data-testid="review-not-allowed">{onlyWhoCan('assessment:review', 'record a review')}</p>
+          {!scored && (
+            <Banner kind="error">
+              <strong>This assessment has no score.</strong>
+              <div style={{ marginTop: 6 }}>
+                Grading did not complete, so there is no overall score, no confidence and no usable
+                recommendation. The transcript and whatever evidence was captured are still here —
+                read those, and re-run the assessment from the interview if you need a score.
+              </div>
+            </Banner>
           )}
-        </HumanReviewPanel>
-      ))}
 
-      {panel('differences', <DifferencesPanel differences={differences} />)}
+          {/* Offered where the verdict is recorded, not behind another screen.
+              When it is not on offer, the page says who can rather than
+              showing nothing at all. */}
+          <p className="row" data-testid="export-offer">
+            {offer.available
+              ? (
+                <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
+                  <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
+                  {exporting ? 'Exporting…' : 'Export to ATS'}
+                </button>
+              )
+              : <span className="muted small">{exportRefusal}</span>}
+          </p>
 
-      {panel('ai', (
-      <div className="stack">
-      {scored ? (
-        <div className="grid cols-4" style={{ marginBottom: 16 }}>
-          <Stat label="AI recommendation" value={recBadge(result.recommendation)} />
-          <Stat label="Overall score" value={formatScoreOutOf100(result.overallScore)} />
-          <Stat label="Confidence" value={formatPercent(result.confidence)} />
-          <Stat label="Evidence coverage" value={formatPercent(result.evidenceCoverage)} />
-        </div>
-      ) : (
-        /* Rounding a score that is not there rendered "NaN/100" and "NaN%",
-           which reads as a real, very bad result. Say what actually happened. */
-        <Banner kind="error">
-          <strong>This assessment has no score.</strong>
-          <div style={{ marginTop: 6 }}>
-            Grading did not complete, so there is no overall score, no confidence and no usable
-            recommendation. The transcript and whatever evidence was captured are still below —
-            read those, and re-run the assessment from the interview if you need a score.
-          </div>
-        </Banner>
-      )}
+          <SkillsGrid skills={skills} activeChip={activeChip} onChip={onChip} />
 
-      <div className="card">
-        <h2 className="card-title"><Icon name="about" />Summary</h2>
-        <p style={{ marginBottom: 0 }}>{result.summary}</p>
-      </div>
+          {mayReview && scored && !reviewed && skills.length > 0 && (
+            <Fold
+              title="Change a level where you read it differently"
+              count="optional"
+              testId="levels-fold"
+            >
+              <p className="muted small">
+                What you leave alone counts as agreeing with the AI. Both are kept, and the
+                comparison is what "where the reviewer and the AI differ" is made of.
+              </p>
+              <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency levels">
+                <table>
+                  <thead><tr><th>Competency</th><th>AI</th><th>Your level</th><th>Why</th></tr></thead>
+                  <tbody>
+                    {skills.map((c) => (
+                      <tr key={c.id}>
+                        <td>{c.name}</td>
+                        <td className="muted">{levelText(c.level, c.notEnoughEvidence)}</td>
+                        <td>
+                          <label className="sr-only" htmlFor={`level-${c.id}`}>Your level for {c.name}</label>
+                          <select
+                            id={`level-${c.id}`}
+                            value={levels[c.id] ?? ''}
+                            onChange={(e) => setLevels((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                          >
+                            <option value="">Agree with the AI</option>
+                            {[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>{level}/5</option>)}
+                          </select>
+                        </td>
+                        <td>
+                          <label className="sr-only" htmlFor={`level-reason-${c.id}`}>Why you changed {c.name}</label>
+                          <input
+                            id={`level-reason-${c.id}`}
+                            value={levelReasons[c.id] ?? ''}
+                            onChange={(e) => setLevelReasons((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                            placeholder="Optional"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Fold>
+          )}
 
-      {showReport && (
-        <div className="card">
-          <h2 className="card-title"><Icon name="reports" />Full report</h2>
-          <Markdown text={report} />
-        </div>
-      )}
+          {result.summary && (
+            <section aria-labelledby="summary-heading">
+              <div className="block-h"><h2 id="summary-heading">Summary</h2></div>
+              <p>{result.summary}</p>
+            </section>
+          )}
 
-      <TechStackCoverage coverage={result.techStackCoverage} />
-      <div className="card">
-        <h2 className="card-title"><Icon name="scorecard" />Competency scorecard</h2>
-        <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency scorecard">
-        <table>
-          <thead>
-            <tr><th>Competency</th><th>Level</th><th>Required</th><th>Confidence</th><th>Evidence</th></tr>
-          </thead>
-          <tbody>
-            {(result.competencies ?? []).map((c) => (
-              <tr key={c.id}>
-                <td>
-                  {c.name}
-                  {c.rationale && <div className="muted small" style={{ marginTop: 4 }}>{c.rationale}</div>}
-                  {(c.evidence ?? []).length > 0 && (
-                    <div style={{ marginTop: 6 }}>
-                      {c.evidence.map((e, i) => (
-                        <div key={i} className="muted small" style={{ borderLeft: '3px solid var(--border)', paddingLeft: 8, margin: '4px 0' }}>
-                          “{e.quote}”
-                        </div>
+          <div className="as-folds">
+            <SwotFold result={result} />
+
+            {/* Identity & integrity belongs here, with the other reference
+                readings. The panel that fills it ships with identity 5b.1 and
+                slots in as another <Fold>. */}
+
+            {data.questionsAsked && (
+              <Fold title="Questions asked" count={`${data.questionsAsked.length}, in order`}>
+                <QuestionsAskedCard questions={data.questionsAsked} />
+              </Fold>
+            )}
+
+            {scored && (
+              <Fold title="Scores and coverage" count={`${formatScoreOutOf100(result.overallScore)} overall`}>
+                <dl className="review-facts">
+                  <div className="review-fact"><dt>Overall</dt><dd>{formatScoreOutOf100(result.overallScore)}</dd></div>
+                  <div className="review-fact"><dt>Confidence</dt><dd>{formatPercent(result.confidence)}</dd></div>
+                  <div className="review-fact"><dt>Evidence coverage</dt><dd>{formatPercent(result.evidenceCoverage)}</dd></div>
+                </dl>
+                <TechStackCoverage coverage={result.techStackCoverage} />
+              </Fold>
+            )}
+
+            {data.differences && (
+              <Fold title="Where the reviewer and the AI differ">
+                <DifferencesPanel differences={data.differences} />
+              </Fold>
+            )}
+
+            {(reviews ?? []).length > 0 && (
+              <Fold title="Reviews recorded" count={`${reviews.length}`}>
+                <div className="table-scroll" tabIndex={0} role="region" aria-label="Reviews recorded">
+                  <table>
+                    <thead><tr><th>Verdict</th><th>Why</th><th>Status</th><th>Completed</th></tr></thead>
+                    <tbody>
+                      {reviews.map((r) => (
+                        <tr key={r.id}>
+                          <td>{recBadge(r.disposition)}</td>
+                          <td className="muted small">{r.reason}</td>
+                          <td>{humanise(r.status)}</td>
+                          <td className="muted small">{formatDateTime(r.completedAt)}</td>
+                        </tr>
                       ))}
-                    </div>
-                  )}
-                </td>
-                <td>
-                  {c.notEnoughEvidence
-                    ? <Badge kind="amber">Not Enough Evidence</Badge>
-                    : <b>{c.level ?? '—'}/5</b>}
-                </td>
-                <td className="muted">{c.requiredLevel}/5</td>
-                <td>{formatPercent(c.confidence)}</td>
-                <td>{(c.evidence ?? []).length}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                    </tbody>
+                  </table>
+                </div>
+              </Fold>
+            )}
+
+            {id && (
+              <Fold title="The candidate's feedback letter">
+                <FeedbackEmailPanel key={`email-${id}`} assessmentId={id} />
+                {mayReview && <CandidateFeedbackPanel key={id} assessmentId={id} />}
+              </Fold>
+            )}
+
+            <Fold title="The full report" onOpen={loadReport}>
+              {reportLoading && <p className="muted">Loading the full report…</p>}
+              {report && <Markdown text={report} />}
+            </Fold>
+          </div>
         </div>
+
+        {transcriptBlock}
       </div>
 
-      {data.questionsAsked && <QuestionsAskedCard questions={data.questionsAsked} />}
-
-      <div className="grid cols-2">
-        <StringCard title="Strengths" items={result.strengths} />
-        <StringCard title="Concerns" items={result.concerns} />
-        <StringCard title="Contradictions" items={result.contradictions} />
-        <StringCard title="Open questions" items={result.openQuestions} />
-        <StringCard title="Limitations" items={result.limitations} />
-      </div>
-      </div>
-      ))}
-      </section>
-
-      {/* What the candidate was emailed automatically after the interview, and
-          "Send feedback now" when nothing went. Keyed so a different
-          assessment starts clean. */}
-      {id && <FeedbackEmailPanel key={`email-${id}`} assessmentId={id} />}
-
-      {/* After the review on purpose: feedback can only be drafted once a
-          person has completed one. Keyed so a different assessment starts clean. */}
-      {id && mayReview && <CandidateFeedbackPanel key={id} assessmentId={id} />}
+      {/* Not a gate, and never was: a note about what the page would rather
+          the reviewer did. */}
+      {!transcriptRead && (
+        <p className="reader-note" data-testid="transcript-read-note" role="status">
+          <Icon name="evidence" size={16} />Read the transcript before recording your review.
+        </p>
+      )}
     </div>
   );
 }

@@ -19,7 +19,7 @@ function sourceFiles(dir: string): string[] {
 }
 
 // Pages another piece of work is redesigning; they convert with that work.
-const REDESIGNED_ELSEWHERE = ['Dashboard.tsx', 'AssessmentView.tsx', 'InterviewRoom.tsx', 'Portal.tsx', 'About.tsx', 'Login.tsx'];
+const REDESIGNED_ELSEWHERE = ['Dashboard.tsx', 'InterviewRoom.tsx', 'Portal.tsx', 'About.tsx', 'Login.tsx'];
 
 describe('success confirmations', () => {
   it('are not shown as success banners fed from a transient notice', () => {

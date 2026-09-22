@@ -112,19 +112,25 @@ async function assessedInterview(page: Page, browser: Browser, id: string) {
   return { candidateUrl };
 }
 
-async function submitReview(page: Page, disposition: 'PROCEED' | 'DO_NOT_PROGRESS', reason: string) {
-  await page.getByRole('tab', { name: 'Human review' }).click();
-  await page.getByLabel('Disposition').selectOption(disposition);
-  await page.getByLabel('Reason (required)').fill(reason);
-  await page.getByRole('button', { name: 'Submit review' }).click();
-  await expect(page.getByText('Review submitted.')).toBeVisible({ timeout: 20_000 });
+/**
+ * The verdict, as a reviewer records it on the redesigned page: choose, read
+ * what it will do, then do it. The consequence is asserted here because the
+ * promise and the act being the same thing is the point of the flow, not a
+ * detail of it.
+ */
+async function submitReview(page: Page, verdict: 'PROCEED' | 'DO_NOT_PROGRESS', reason: string, consequence: RegExp) {
+  await page.getByTestId(`verdict-${verdict}`).click();
+  await expect(page.getByTestId('verdict-consequence')).toContainText(consequence);
+  await page.getByLabel('Why (required)').fill(reason);
+  await page.getByTestId('verdict-act').click();
+  await expect(page.getByTestId('verdict-recorded')).toBeVisible({ timeout: 20_000 });
 }
 
 test('a review that says proceed leaves the candidate at Gold, progressing to the human rounds', async ({ browser, page }) => {
   test.setTimeout(180_000);
   const { candidateUrl } = await assessedInterview(page, browser, runId());
 
-  await submitReview(page, 'PROCEED', 'Clear ownership of a production pipeline, with outcomes.');
+  await submitReview(page, 'PROCEED', 'Clear ownership of a production pipeline, with outcomes.', /stays at Gold|move .* to Gold/);
 
   await page.goto(candidateUrl);
   const track = await openJourney(page);
@@ -137,7 +143,7 @@ test('a review that says do not progress ends the journey, and the candidate pag
   test.setTimeout(180_000);
   const { candidateUrl } = await assessedInterview(page, browser, runId());
 
-  await submitReview(page, 'DO_NOT_PROGRESS', 'The answers did not show the depth the role needs.');
+  await submitReview(page, 'DO_NOT_PROGRESS', 'The answers did not show the depth the role needs.', /end .*journey at Gold/);
 
   await page.goto(candidateUrl);
   const track = await openJourney(page);

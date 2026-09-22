@@ -1,0 +1,533 @@
+/* ==========================================================================
+   The assessment page (pages/AssessmentView → components/assessment/*)
+
+   The decision sits at the top, where the reviewer ends up anyway; the skills
+   are below it with their evidence; the record of the interview is alongside.
+   Everything else folds underneath.
+
+   State is marked with rules, brackets, weight and icons — never a tinted
+   fill. A verdict that is only a colour is a verdict some readers cannot see.
+   ========================================================================== */
+
+.as {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 0;
+  align-items: start;
+}
+.as-main {
+  display: grid;
+  gap: var(--space-6);
+  align-content: start;
+  min-width: 0;
+  padding-right: var(--space-6);
+}
+
+/* --- the verdict panel --------------------------------------------------- */
+
+.verdict {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid var(--rule-strong);
+  border-radius: 0 var(--radius-sheet) var(--radius-sheet) 0;
+  background: var(--sheet);
+}
+.v-ai,
+.v-you {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+  padding: var(--space-4) var(--space-5);
+  min-width: 0;
+}
+.v-you {
+  border-left: var(--hair) solid var(--rule);
+}
+.v-micro {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.v-word {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 27px;
+  line-height: 1.12;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.v-word.is-pass { color: var(--pass); }
+.v-word.is-hold { color: var(--hold); }
+.v-word.is-stop { color: var(--stop); }
+.v-word.is-withheld { color: var(--ink-3); font-size: 22px; }
+
+.v-conf {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.v-ticks {
+  display: inline-flex;
+  gap: 3px;
+}
+.v-ticks i {
+  width: 14px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--rule-strong);
+}
+.v-ticks i.is-on { background: var(--ink-2); }
+
+.v-caveat {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  font-style: italic;
+}
+
+/* The three choices. The chosen one is named by weight, an icon and a rule
+   under it, so colour is the last thing carrying the answer, not the only. */
+.v-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.v-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-2);
+  background: var(--sheet);
+  border: var(--hair) solid var(--field-edge);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.v-choice .icon { opacity: 0; }
+.v-choice:hover { color: var(--ink); border-color: var(--ink-3); }
+.v-choice[aria-checked='true'] {
+  font-weight: 700;
+  color: var(--vc);
+  border-color: var(--vc);
+  box-shadow: inset 0 -3px 0 var(--vc);
+}
+.v-choice[aria-checked='true'] .icon { opacity: 1; }
+.v-choice.is-pass { --vc: var(--pass); }
+.v-choice.is-hold { --vc: var(--hold); }
+.v-choice.is-stop { --vc: var(--stop); }
+.v-choice:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.v-hint { margin: 0; font-size: 13.5px; }
+
+/* What the choice will do, before it does it. */
+.v-conseq {
+  display: grid;
+  gap: var(--space-2);
+  padding: 2px 0 2px var(--space-3);
+  border-left: var(--rail) solid var(--vc, var(--rule-strong));
+}
+.v-conseq.is-pass { --vc: var(--pass); }
+.v-conseq.is-hold { --vc: var(--hold); }
+.v-conseq.is-stop { --vc: var(--stop); }
+.v-conseq-line {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.v-conseq label {
+  margin: 0;
+}
+.v-conseq textarea {
+  min-height: 74px;
+  width: 100%;
+}
+.v-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.v-conseq-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* --- the skills ---------------------------------------------------------- */
+
+.block-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-3);
+}
+.block-h h2 {
+  margin: 0;
+  font-size: var(--type-section-size);
+  line-height: var(--type-section-line);
+  font-weight: var(--type-section-weight);
+}
+
+.skills {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: var(--hair) solid var(--rule);
+  border-left: var(--hair) solid var(--rule);
+}
+.skill {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: var(--space-3) var(--space-4);
+  border-right: var(--hair) solid var(--rule);
+  border-bottom: var(--hair) solid var(--rule);
+  min-width: 0;
+}
+.skill-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0;
+}
+.skill-h b { font-size: 14px; font-weight: 650; }
+.skill-level {
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.skill-meter {
+  display: flex;
+  gap: 3px;
+}
+.skill-meter i {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--rule-strong);
+}
+.skill-meter i.is-full { background: var(--ink-2); }
+.skill-meter i.is-half { background: linear-gradient(90deg, var(--ink-2) 50%, var(--rule-strong) 50%); }
+.skill-need,
+.skill-why {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.skill-thin {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--hold);
+}
+
+/* A quote, with the moment it was said. Bracketed by a rule on the left of
+   its time, never a filled pill of colour. */
+.ev-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ev-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px 3px 4px;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  color: var(--ink-2);
+  background: var(--sheet);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.ev-chip:hover { color: var(--ink); border-color: var(--accent); }
+.ev-chip[aria-pressed='true'] {
+  font-weight: 650;
+  color: var(--ink);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ev-chip:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.ev-at {
+  padding: 0 6px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--accent);
+  border-right: var(--hair) solid var(--rule);
+  font-variant-numeric: tabular-nums;
+}
+.ev-quote {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- the transcript column ----------------------------------------------- */
+
+.tx {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: var(--hair) solid var(--rule);
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  min-width: 0;
+}
+.tx-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-2) var(--space-4);
+  border-bottom: var(--hair) solid var(--rule);
+}
+.tx-h h2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+.tx-progress {
+  font-family: var(--font-data);
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  padding-left: 8px;
+  border-left: var(--rail) solid var(--rule-strong);
+}
+.tx-progress[data-read='true'] {
+  color: var(--pass);
+  border-left-color: var(--pass);
+}
+.tx-body {
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  min-height: 0;
+}
+.tx-turns {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tx-turn {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 var(--space-3);
+  padding: 4px 0 4px var(--space-3);
+  border-left: var(--rail) solid transparent;
+}
+.tx-turn.is-interviewer { border-left-color: var(--accent-edge); }
+.tx-turn.is-candidate { border-left-color: var(--ink); }
+.tx-turn.is-system {
+  border-left-style: dashed;
+  border-left-color: var(--rule-strong);
+  color: var(--ink-3);
+}
+/* The quoted turn: a rule and a bracketed word, so the mark survives being
+   read aloud and does not depend on seeing a colour. */
+.tx-turn.is-quoted { border-left-color: var(--accent); }
+.tx-quoted-tag {
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.tx-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 0;
+}
+.tx-who {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.tx-turn.is-candidate .tx-who { color: var(--ink); }
+.tx-at {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.tx-tag {
+  font-size: 11.5px;
+  color: var(--accent);
+  padding: 0 6px;
+  border-left: var(--hair) solid var(--accent-edge);
+  border-right: var(--hair) solid var(--accent-edge);
+}
+.tx-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tx-turn.is-candidate .tx-text { color: var(--ink); }
+
+/* --- what folds underneath ----------------------------------------------- */
+
+.as-folds {
+  display: grid;
+  margin-top: var(--space-6);
+}
+details.fold {
+  border-top: var(--hair) solid var(--rule);
+}
+details.fold:last-of-type {
+  border-bottom: var(--hair) solid var(--rule);
+}
+details.fold > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 2px;
+  cursor: pointer;
+  list-style: none;
+}
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary b { font-size: 15px; font-weight: 650; }
+details.fold > summary .fold-count { font-size: 13px; color: var(--ink-3); }
+.fold-in {
+  padding: 0 2px var(--space-4);
+  display: grid;
+  gap: var(--space-4);
+}
+.fold-in > .card {
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+  background: none;
+}
+
+/* Strengths, concerns and the rest: each hangs from its own rule. */
+.swot {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4) var(--space-6);
+}
+.swot-part {
+  border-left: var(--rail) solid var(--swot-c, var(--rule-strong));
+  padding-left: var(--space-3);
+}
+.swot-part h3 {
+  margin: 0 0 4px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--swot-c, var(--ink));
+}
+.swot-part ul {
+  margin: 0;
+  padding-left: var(--space-4);
+  display: grid;
+  gap: 3px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.swot-part.is-pass { --swot-c: var(--pass); }
+.swot-part.is-hold { --swot-c: var(--hold); }
+.swot-part.is-stop { --swot-c: var(--stop); }
+.swot-part.is-info { --swot-c: var(--accent); }
+.swot-part.is-note { --swot-c: var(--spark); }
+
+/* --- the phone ----------------------------------------------------------- */
+
+@media (max-width: 1023.98px) {
+  .as {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .as-main {
+    padding-right: 0;
+  }
+  /* Below the decision and the skills on a phone, as the design asks — and no
+     longer sticky, because a column pinned to the viewport on a small screen
+     leaves nowhere to read the thing it is evidence for. */
+  .tx {
+    border-left: 0;
+    border-top: var(--hair) solid var(--rule);
+    position: static;
+    max-height: none;
+    margin-top: var(--space-6);
+  }
+  .tx-body {
+    max-height: 60vh;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .verdict {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .v-you {
+    border-left: 0;
+    border-top: var(--hair) solid var(--rule);
+  }
+  .v-ai,
+  .v-you {
+    padding: var(--space-3) var(--space-4);
+  }
+}
+
+@media (max-width: 480px) {
+  .skills {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .v-seg {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .v-choice {
+    justify-content: flex-start;
+  }
+  .ev-quote {
+    max-width: 62vw;
+  }
+}

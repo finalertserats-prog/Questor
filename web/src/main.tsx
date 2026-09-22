@@ -29,6 +29,7 @@ import './styles/review.css';
 import './styles/lists.css';
 import './styles/hrbox.css';
 import './styles/import.css';
+import './styles/assessment.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

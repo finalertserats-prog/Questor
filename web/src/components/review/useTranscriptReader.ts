@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { api } from '../../api/client';
 import {
   needsJumpControl, nextReadState, readFraction, REVIEW_SECTION_ID, transcriptViewFromBlind, transcriptViewFromInterview,
@@ -120,9 +120,56 @@ export function useReadProgress(ready: boolean, transcriptKey: string) {
     const target = document.getElementById(REVIEW_SECTION_ID);
     if (!target) return;
     target.scrollIntoView({ block: 'start' });
-    // Focus follows the jump so a keyboard user lands where they asked to go.
     target.focus({ preventScroll: true });
   };
 
   return { blockRef, fraction, read, showJump, jumpToReview };
 }
+
+/**
+ * The same reading, for the transcript when it sits in its own scrolling
+ * column beside the decision rather than in the page's flow.
+ *
+ * The redesigned assessment page puts the decision at the top and the record
+ * alongside it, so "how far down the page you are" stopped being "how far you
+ * have read". What is measured is the column's own scroll instead — through
+ * the same pure arithmetic (readFraction), so the label cannot come to mean
+ * one thing in one layout and something else in the other.
+ */
+export function useColumnReadProgress(
+  ref: RefObject<HTMLElement>, ready: boolean, transcriptKey: string,
+) {
+  const [fraction, setFraction] = useState(0);
+  const [read, setRead] = useState(false);
+
+  useEffect(() => {
+    // Per transcript, not per visit: the next assessment starts unread.
+    setFraction(0);
+    setRead(false);
+    if (!ready) return;
+    const column = ref.current;
+    if (!column) return;
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const el = ref.current;
+      if (!el) return;
+      // A column that does not scroll has been read the moment it is on screen.
+      const next = readFraction({ top: -el.scrollTop, height: el.scrollHeight, viewportHeight: el.clientHeight });
+      setFraction(next);
+      setRead((previous) => nextReadState(previous, next));
+    };
+    const schedule = () => { if (!frame) frame = window.requestAnimationFrame(measure); };
+    measure();
+    column.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    return () => {
+      column.removeEventListener('scroll', schedule);
+      window.removeEventListener('resize', schedule);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [ref, ready, transcriptKey]);
+
+  return { fraction, read };
+}
+
