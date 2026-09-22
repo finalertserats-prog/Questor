@@ -152,7 +152,8 @@ function parseAnchors(json: string): string[] {
   return [];
 }
 
-async function existingQuestions(pool: DemandPool): Promise<{ readonly id: string; readonly text: string }[]> {
+/** Questions a new one is compared with for duplicates: the pool and its family. Shared with the seed import. */
+export async function existingQuestions(pool: Pick<DemandPool, 'roleSlug' | 'familySlug' | 'competencyKey' | 'band'>): Promise<{ readonly id: string; readonly text: string }[]> {
   const rows = await prisma.libraryEntry.findMany({
     where: {
       competencyKey: pool.competencyKey, band: pool.band, status: { not: 'rejected' },

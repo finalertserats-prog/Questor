@@ -45,7 +45,8 @@ function isBandId(value: string): value is BandId {
   return BAND_IDS.has(value);
 }
 
-function competenciesOf(profileJson: string): PoolCompetency[] {
+/** The scored competencies of an approved scorecard. Shared with the seed import, which only accepts pools this demand could produce. */
+export function competenciesOf(profileJson: string): PoolCompetency[] {
   try {
     const parsed = roleSuccessProfileSchema.safeParse(JSON.parse(profileJson));
     if (!parsed.success) return [];

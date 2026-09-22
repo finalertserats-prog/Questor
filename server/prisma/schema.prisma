@@ -1313,7 +1313,12 @@ model LibraryEntry {
   criticVerdictJson      String   @default("{}")
   policyVersion          Int      @default(1)
   rubricVersion          String   @default("")
-  createdBy              String   @default("worker") // worker | user id
+  createdBy              String   @default("worker") // worker | brahmastra | user id
+  // Offline seed imports (library/seedImport.ts): sha256 of the pool and the
+  // normalised question, so re-importing a file writes nothing twice; and where
+  // the entry came from (lanes, prompt versions, run). Null / {} for the worker.
+  contentHash            String?  @unique
+  provenanceJson         String   @default("{}")
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
   usages                 LibraryUsage[]

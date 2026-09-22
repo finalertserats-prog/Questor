@@ -60,7 +60,7 @@ const OPERATOR_TENANT_TTL_MS = 5 * 60_000;
  * operator's organisation. AuditEvent requires a tenant, and the shared
  * library belongs to the owner, so that is where its history goes.
  */
-async function operatorTenantId(): Promise<string | null> {
+export async function operatorTenantId(): Promise<string | null> {
   if (operatorTenantCache && Date.now() - operatorTenantCache.at < OPERATOR_TENANT_TTL_MS) return operatorTenantCache.id;
   const emails = config.platformOperatorEmails;
   const user = emails.length === 0 ? null : await prisma.user.findFirst({ where: { email: { in: emails } }, select: { tenantId: true } });

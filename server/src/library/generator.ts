@@ -150,18 +150,21 @@ export function buildQuestionsPrompt(ctx: PoolContext, forms: readonly LibraryFo
 
 // --- Provider-backed generator ----------------------------------------------------
 
-const standardSchema = z.object({
+/** Exported so the offline seed run (scripts/library-seed) parses replies to the same bounds. */
+export const standardSchema = z.object({
   anchors: z.array(z.string().trim().min(3).max(300)).min(2).max(12),
   weakSigns: z.array(z.string().trim().min(3).max(300)).max(10).default([]),
 }).strict();
 
+export const generatedQuestionSchema = z.object({
+  questionText: z.string().trim().min(10).max(700),
+  form: questionFormSchema,
+  difficultyTag: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  rationale: z.string().trim().max(400).catch(''),
+});
+
 const questionsSchema = z.object({
-  questions: z.array(z.object({
-    questionText: z.string().trim().min(10).max(700),
-    form: questionFormSchema,
-    difficultyTag: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-    rationale: z.string().trim().max(400).catch(''),
-  })).min(1).max(BATCH_SIZE * 2),
+  questions: z.array(generatedQuestionSchema).min(1).max(BATCH_SIZE * 2),
 });
 
 const STANDARD_MAX_TOKENS = 1200;
