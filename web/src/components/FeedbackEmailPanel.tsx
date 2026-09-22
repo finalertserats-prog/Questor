@@ -10,11 +10,15 @@ import { feedbackEmailSummary, type FeedbackEmailState } from './feedbackEmailMo
  * went and when, the exact text behind "View", and "Send feedback now" for a
  * completed interview whose feedback has not gone. The send asks first,
  * showing the email as the candidate will receive it.
+ *
+ * A HELD email (the interview could not be relied on) lists why, and offers
+ * whoever may decide "Send it anyway" — through the same preview — or "Keep
+ * holding".
  */
 
 interface Preview { to: string; subject: string; text: string }
 
-type Busy = 'preview' | 'send' | null;
+type Busy = 'preview' | 'send' | 'hold' | null;
 
 export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
   const [state, setState] = useState<FeedbackEmailState | null>(null);
@@ -75,6 +79,21 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
     }
   };
 
+  const keepHolding = async () => {
+    setBusy('hold');
+    setError('');
+    setNotice('');
+    try {
+      setState(await api.post<FeedbackEmailState>(`/assessments/${assessmentId}/feedback-email/hold`, {}));
+      setNotice('The feedback email will stay on hold. You can still send it later.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not keep the email on hold.');
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (hidden) return null;
   if (!state) return error ? <div className="card"><Banner kind="error">{error}</Banner></div> : null;
 
@@ -86,6 +105,11 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
       <h2 className="card-title"><Icon name="mail" />Feedback email to the candidate</h2>
       <p data-testid="feedback-email-status" style={{ marginBottom: 4 }}><strong>{summary.headline}</strong></p>
       {summary.detail && <p className="muted small">{summary.detail}</p>}
+      {summary.holdReasons.length > 0 && (
+        <ul className="small" data-testid="feedback-email-hold-reasons" style={{ marginTop: 4 }}>
+          {summary.holdReasons.map((reason) => <li key={reason}>{reason}</li>)}
+        </ul>
+      )}
 
       {summary.showText && email && (
         <details style={{ marginTop: 8 }}>
@@ -110,6 +134,18 @@ export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
             </button>
             <button type="button" className="btn secondary" onClick={() => setPreview(null)} disabled={busy !== null}>Cancel</button>
           </div>
+        </div>
+      ) : summary.canRelease ? (
+        <div className="row" style={{ gap: 8, marginTop: 8 }} data-testid="feedback-email-hold-actions">
+          <button type="button" className="btn secondary" onClick={() => void askToSend()} disabled={busy !== null}>
+            <Icon name={busy === 'preview' ? 'hourglass' : 'send'} size={16} />
+            {busy === 'preview' ? 'Preparing…' : 'Send it anyway'}
+          </button>
+          {summary.canKeepHolding && (
+            <button type="button" className="btn ghost" onClick={() => void keepHolding()} disabled={busy !== null}>
+              {busy === 'hold' ? 'Saving…' : 'Keep holding'}
+            </button>
+          )}
         </div>
       ) : summary.canSendNow ? (
         <button type="button" className="btn secondary" style={{ marginTop: 8 }} onClick={() => void askToSend()} disabled={busy !== null}>

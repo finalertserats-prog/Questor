@@ -96,7 +96,7 @@ describe('dashboard needs attention', () => {
     const ben = await s.candidateFor('Ben Handoff', s.me.id);
     await s.session(ben.id, 'MANUAL_HANDOFF');
     const res = await metrics(s.me.token);
-    expect(res.body.needsAttention.counts).toEqual({ review: 0, accommodation: 1, human_request: 0 });
+    expect(res.body.needsAttention.counts).toEqual({ review: 0, accommodation: 1, human_request: 0, feedback_held: 0 });
   });
 
   it('leaves out candidates the caller cannot see', async () => {

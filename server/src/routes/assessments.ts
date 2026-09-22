@@ -21,6 +21,7 @@ import { renderCandidateFeedbackEmail } from '../providers/email/candidateFeedba
 import { assertCanAccessAssessment, hasCapability, ranTheInterview } from '../services/access.js';
 import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { feedbackEmailState, gateReviewCompletion, previewFeedbackEmail, sendFeedbackNow } from '../services/autoFeedback.js';
+import { keepFeedbackHeld } from '../services/feedbackHold.js';
 import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from '../services/assessmentReview.js';
 import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import {
@@ -423,9 +424,12 @@ assessmentsRouter.post('/:id/feedback/opt-in-request', requireCapability('assess
 // wording — is taken from the request.
 // ---------------------------------------------------------------------------
 
+// A held letter (services/feedbackHold.ts) is shown to everyone who can read
+// the assessment, but only someone who may send feedback — assessment:review —
+// is offered the decision; the page needs to know which of the two it is.
 assessmentsRouter.get('/:id/feedback-email', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
-  res.json(await feedbackEmailState(a.sessionId));
+  res.json({ ...await feedbackEmailState(a.sessionId), canDecideHold: hasCapability(req.auth!, 'assessment:review') });
 }));
 
 assessmentsRouter.post('/:id/feedback-email/preview', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
@@ -442,10 +446,23 @@ const sendFeedbackEmailSchema = z.object({ confirmPossibleDuplicate: z.boolean()
 assessmentsRouter.post('/:id/feedback-email/send', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const body = sendFeedbackEmailSchema.parse(req.body ?? {});
   const a = await getAssessment(req.auth!, req.params.id);
-  res.json(await sendFeedbackNow({
-    sessionId: a.sessionId, assessmentId: a.id, userId: req.auth!.userId, tenantId: req.auth!.tenantId,
-    confirmPossibleDuplicate: body.confirmPossibleDuplicate,
-  }));
+  res.json({
+    ...await sendFeedbackNow({
+      sessionId: a.sessionId, assessmentId: a.id, userId: req.auth!.userId, tenantId: req.auth!.tenantId,
+      confirmPossibleDuplicate: body.confirmPossibleDuplicate,
+    }),
+    canDecideHold: true,
+  });
+}));
+
+// "Keep holding": the letter stays unsent and stops asking for attention.
+// Releasing it is /send above. Closed body, like send: who decided comes from
+// the session, never the request.
+assessmentsRouter.post('/:id/feedback-email/hold', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  z.object({}).strict().parse(req.body ?? {});
+  const a = await getAssessment(req.auth!, req.params.id);
+  await keepFeedbackHeld({ sessionId: a.sessionId, userId: req.auth!.userId, tenantId: req.auth!.tenantId });
+  res.json({ ...await feedbackEmailState(a.sessionId), canDecideHold: true });
 }));
 
 assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler(async (req, res) => {

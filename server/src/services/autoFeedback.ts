@@ -23,6 +23,7 @@ import {
   RELEASE_TEXT, SENT_UNVERIFIED_REASON, SKIP_REASON_TEXT, afterFailedAttempt, feedbackDueAt,
   feedbackEligibility, manualSendAllowed, type FeedbackRelease, type FeedbackSkipReason,
 } from './autoFeedbackModel.js';
+import { holdFor, holdJsonOf, holdView, type HoldView } from './feedbackHold.js';
 
 /**
  * The candidate's feedback email: prepared when their interview is assessed,
@@ -193,19 +194,25 @@ export async function enqueueAutoFeedback(opts: {
   if (opts.partial) skip = 'PARTIAL_INTERVIEW';
   else if (!await autoCandidateFeedbackEnabledForTenant(session.tenantId)) skip = 'POLICY_OFF';
 
+  // An interview that cannot be relied on (feedbackHoldModel.ts) is not
+  // written up for the candidate on its own: the letter is HELD, with no due
+  // time, until a person sends it or keeps it held. Not even a completed
+  // review releases it — releasing is its own, audited decision.
+  const hold = skip ? null : await holdFor(opts.sessionId, opts.assessmentId);
   const windowHours = await feedbackReviewWindowHoursForTenant(session.tenantId);
   // A reviewer can be quicker than the finalisation's own bookkeeping. A
   // review already on file means the wait is over before it began.
-  const alreadyReviewed = !skip && (await completedReviewFor(opts.assessmentId)) !== null;
+  const alreadyReviewed = !skip && !hold && (await completedReviewFor(opts.assessmentId)) !== null;
   let id: string;
   try {
     const row = await prisma.candidateFeedbackEmail.create({
       data: {
         sessionId: opts.sessionId, assessmentId: opts.assessmentId,
         candidateId: session.candidateId, tenantId: session.tenantId, trigger: 'auto',
-        status: skip ? 'SKIPPED' : 'QUEUED', skipReason: skip ?? '',
-        nextAttemptAt: skip ? null : alreadyReviewed ? now : feedbackDueAt(now, windowHours),
+        status: skip ? 'SKIPPED' : hold ? 'HELD' : 'QUEUED', skipReason: skip ?? '',
+        nextAttemptAt: skip || hold ? null : alreadyReviewed ? now : feedbackDueAt(now, windowHours),
         releaseReason: alreadyReviewed ? 'review' : '',
+        ...(hold ? { holdJson: holdJsonOf(hold), heldAt: now } : {}),
       },
     });
     id = row.id;
@@ -219,6 +226,13 @@ export async function enqueueAutoFeedback(opts: {
     await logAudit({
       tenantId: session.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
       action: 'feedback.email.skipped', entityType: 'InterviewSession', entityId: opts.sessionId, after: { reason: skip },
+    });
+  }
+  if (hold) {
+    await logAudit({
+      tenantId: session.tenantId, actorType: 'system', actorId: 'candidate-feedback-email',
+      action: 'feedback.email.held', entityType: 'InterviewSession', entityId: opts.sessionId,
+      after: { assessmentId: opts.assessmentId, reasons: hold.reasons, signals: hold.signals },
     });
   }
   return { id, created: true };
@@ -725,6 +739,8 @@ export interface FeedbackEmailView {
     sentAt: Date | null;
     nextAttemptAt: Date | null;
     createdAt: Date;
+    /** Why it was held, while HELD and afterwards as the record; null if it never was. */
+    hold: HoldView | null;
   } | null;
   canSendNow: boolean;
   /** Why "Send feedback now" is not offered, in words for the hiring team. */
@@ -771,6 +787,7 @@ export async function feedbackEmailState(
         attempts: row.attempts, lastError: row.lastError, subject: row.subject, bodyText: row.bodyText,
         contentSource: row.contentSource, delivered: row.delivered, sentAt: row.sentAt,
         nextAttemptAt: row.nextAttemptAt, createdAt: row.createdAt,
+        hold: holdView(row),
       }
       : null,
     canSendNow: blockedReason === null,
@@ -869,11 +886,13 @@ export async function sendFeedbackNow(opts: {
   await assertManualSendAllowed(opts.sessionId, { confirmDuplicate });
   const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: opts.sessionId }, select: { candidateId: true } });
   const now = new Date();
+  const existing = await prisma.candidateFeedbackEmail.findUnique({ where: { sessionId: opts.sessionId } });
+  // Releasing a held letter is this same send; the hold's record stays on the row.
+  const releasingHold = existing?.status === 'HELD';
   const queued = {
     status: 'QUEUED', trigger: 'manual', requestedByUserId: opts.userId, nextAttemptAt: now,
-    releaseReason: 'manual', attempts: 0, skipReason: '', lastError: '', claimedAt: null,
+    releaseReason: releasingHold ? 'hold_released' : 'manual', attempts: 0, skipReason: '', lastError: '', claimedAt: null,
   };
-  const existing = await prisma.candidateFeedbackEmail.findUnique({ where: { sessionId: opts.sessionId } });
   let id: string;
   if (!existing) {
     try {
@@ -905,6 +924,13 @@ export async function sendFeedbackNow(opts: {
     action: 'feedback.email.requested', entityType: 'InterviewSession', entityId: opts.sessionId,
     after: { assessmentId: opts.assessmentId, previousStatus: existing?.status ?? null, confirmedPossibleDuplicate: confirmDuplicate },
   });
+  if (releasingHold) {
+    await logAudit({
+      tenantId: opts.tenantId, actorType: 'user', actorId: opts.userId,
+      action: 'feedback.email.hold_released', entityType: 'InterviewSession', entityId: opts.sessionId,
+      after: { assessmentId: opts.assessmentId, reasons: holdView(existing)?.reasons ?? [] },
+    });
+  }
   await attemptFeedbackEmail(id, now);
   return feedbackEmailState(opts.sessionId);
 }

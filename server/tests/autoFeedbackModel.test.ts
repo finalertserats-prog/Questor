@@ -140,7 +140,7 @@ describe('when "Send feedback now" is offered', () => {
     expect(manualSendAllowed(null)).toEqual({ allowed: true });
   });
 
-  it.each(['FAILED', 'DRAFT'])('is offered for a %s email', (status) => {
+  it.each(['FAILED', 'DRAFT', 'HELD'])('is offered for a %s email', (status) => {
     expect(manualSendAllowed({ status, skipReason: '' })).toEqual({ allowed: true });
   });
 

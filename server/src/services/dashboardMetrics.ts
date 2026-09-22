@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { candidateScope, roleScope } from './access.js';
+import { awaitingDecisionWhere } from './feedbackHold.js';
 import type { AuthClaims } from './auth.js';
 import type { RoleTopItem } from './roleMetrics.js';
 import { DEFAULT_STAGES } from '../domain/pipelineStages.js';
@@ -69,12 +70,14 @@ export interface DashboardMetrics {
   };
 }
 
-export type AttentionKind = 'review' | 'accommodation' | 'human_request';
+export type AttentionKind = 'review' | 'accommodation' | 'human_request' | 'feedback_held';
 
 /**
  * The things waiting on a person: an assessment to review, an interview paused
- * on an accommodation request, a candidate who asked to talk to someone. Each
- * of these used to be visible only on that candidate's own page.
+ * on an accommodation request, a candidate who asked to talk to someone, a
+ * feedback email held because the interview could not be relied on
+ * (services/feedbackHold.ts). Each of these used to be visible only on that
+ * candidate's own page.
  */
 export interface NeedsAttention {
   readonly counts: Readonly<Record<AttentionKind, number>>;
@@ -112,7 +115,8 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
     assessments: { orderBy: { version: 'desc' as const }, take: 1, select: { id: true, createdAt: true } },
   };
   const requestWhere: Prisma.CandidateHumanRequestWhereInput = { tenantId, candidate, status: 'REQUESTED', requestedAt: { gte: requestedSince } };
-  const [reviews, handoffs, requests, reviewCount, handoffCount, requestCount] = await Promise.all([
+  const heldWhere = awaitingDecisionWhere(tenantId, candidate);
+  const [reviews, handoffs, requests, held, reviewCount, handoffCount, requestCount, heldCount] = await Promise.all([
     prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT, select: sessionSelect }),
     // Wider than the list: the request time lives in consentJson, so a recent
     // request on an old interview is only found by reading past the newest few.
@@ -121,9 +125,14 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
       where: requestWhere, orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
       select: { requestedAt: true, session: { select: sessionSelect } },
     }),
+    prisma.candidateFeedbackEmail.findMany({
+      where: heldWhere, orderBy: [{ heldAt: 'desc' }, { id: 'desc' }], take: ATTENTION_ITEM_LIMIT,
+      select: { heldAt: true, createdAt: true, assessmentId: true, session: { select: sessionSelect } },
+    }),
     prisma.interviewSession.count({ where: { tenantId, candidate, state: 'REVIEW_READY' } }),
     prisma.interviewSession.count({ where: { tenantId, candidate, state: 'MANUAL_HANDOFF' } }),
     prisma.candidateHumanRequest.count({ where: requestWhere }),
+    prisma.candidateFeedbackEmail.count({ where: heldWhere }),
   ]);
   type Row = (typeof reviews)[number];
   const item = (kind: AttentionKind, s: Row, at: Date) => ({
@@ -135,8 +144,13 @@ async function getNeedsAttention(tenantId: string, candidate: Prisma.CandidateWh
     ...reviews.map((s) => item('review', s, s.assessments[0]?.createdAt ?? s.completedAt ?? s.createdAt)),
     ...handoffs.map((s) => item('accommodation', s, accommodationRequestedAt(s.consentJson) ?? s.createdAt)),
     ...requests.map((r) => item('human_request', r.session, r.requestedAt ?? r.session.createdAt)),
+    // The held letter's own assessment, which is where the decision is made.
+    ...held.map((h) => ({ ...item('feedback_held', h.session, h.heldAt ?? h.createdAt), assessmentId: h.assessmentId })),
   ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, ATTENTION_ITEM_LIMIT);
-  return { counts: { review: reviewCount, accommodation: handoffCount, human_request: requestCount }, items };
+  return {
+    counts: { review: reviewCount, accommodation: handoffCount, human_request: requestCount, feedback_held: heldCount },
+    items,
+  };
 }
 
 /** Index of the rolling 7-day bucket a time falls in, newest = weeks - 1; -1 when outside. */

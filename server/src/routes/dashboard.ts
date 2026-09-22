@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
 import { getDashboardMetrics } from '../services/dashboardMetrics.js';
 import { getRoleMetrics } from '../services/roleMetrics.js';
+import { listHeldFeedback } from '../services/feedbackHold.js';
 
 export const dashboardRouter = Router();
 dashboardRouter.use(authenticate);
@@ -33,4 +34,15 @@ dashboardRouter.get('/metrics', requireCapability('candidate:read'), asyncHandle
       minSample: roleMetrics.minSample,
     },
   });
+}));
+
+// Feedback emails held because the interview could not be relied on
+// (services/feedbackHold.ts): the query a hiring-team inbox reads. Awaiting a
+// decision by default; includeKept adds the ones someone chose to keep held.
+// Gated like the assessment page that shows them, and object-scoped.
+const heldQuerySchema = z.object({ includeKept: z.enum(['true', 'false']).optional() }).strict();
+
+dashboardRouter.get('/held-feedback', requireCapability('assessment:read'), asyncHandler(async (req, res) => {
+  const query = heldQuerySchema.parse(req.query);
+  res.json(await listHeldFeedback(req.auth!, { includeKept: query.includeKept === 'true' }));
 }));

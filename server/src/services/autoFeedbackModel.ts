@@ -4,7 +4,7 @@
  * services/autoFeedback.ts applies them.
  */
 
-export type AutoFeedbackStatus = 'DRAFT' | 'QUEUED' | 'SENDING' | 'SENT' | 'SENT_UNVERIFIED' | 'FAILED' | 'SKIPPED';
+export type AutoFeedbackStatus = 'DRAFT' | 'QUEUED' | 'SENDING' | 'SENT' | 'SENT_UNVERIFIED' | 'FAILED' | 'SKIPPED' | 'HELD';
 
 /**
  * The mail provider accepted the message (or never answered) but the row's
@@ -71,13 +71,17 @@ export function feedbackDueAt(assessmentStoredAt: Date, hours: number): Date {
   return new Date(assessmentStoredAt.getTime() + hours * 60 * 60_000);
 }
 
-/** Why an email left the waiting room: the window ran out, a review landed, or a person sent it. */
-export type FeedbackRelease = 'window' | 'review' | 'manual';
+/**
+ * Why an email left the waiting room: the window ran out, a review landed, a
+ * person sent it, or a person released it from a hold (feedbackHoldModel.ts).
+ */
+export type FeedbackRelease = 'window' | 'review' | 'manual' | 'hold_released';
 
 export const RELEASE_TEXT: Readonly<Record<FeedbackRelease, string>> = {
   window: 'Sent automatically once the review window passed.',
   review: 'Sent as soon as a reviewer completed their review.',
   manual: 'Sent from this page by a member of the hiring team.',
+  hold_released: 'Held because the interview could not be relied on, then released and sent by a member of the hiring team.',
 };
 
 /**
@@ -167,7 +171,8 @@ export function manualSendAllowed(
   row: { readonly status: string; readonly skipReason: string; readonly nextAttemptAt?: Date | null; readonly sendLockUntil?: Date | null } | null,
   opts: { readonly confirmDuplicate?: boolean; readonly now?: Date } = {},
 ): { allowed: true } | { allowed: false; reason: string; requiresConfirmation?: boolean } {
-  if (!row || row.status === 'FAILED' || row.status === 'DRAFT') return { allowed: true };
+  // A held letter is waiting for exactly this decision (feedbackHoldModel.ts).
+  if (!row || row.status === 'FAILED' || row.status === 'DRAFT' || row.status === 'HELD') return { allowed: true };
   // A timed-out send whose provider call may still be running: not even an
   // accepted risk buys a second copy until that call can no longer deliver.
   const lockStands = row.sendLockUntil !== null && row.sendLockUntil !== undefined

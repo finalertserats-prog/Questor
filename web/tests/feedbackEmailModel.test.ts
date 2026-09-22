@@ -138,3 +138,56 @@ describe('no email', () => {
       .toBe('No feedback email has been sent to the candidate yet');
   });
 });
+
+// Held because the interview could not be relied on (owner, 2026-09-22): the
+// page says why in plain words and offers the decision only to someone who
+// may make it.
+describe('a held email', () => {
+  const REASONS = ['The AI was only 25% confident in its assessment (the email is held below 35%).'];
+  const held = (over: Partial<FeedbackEmailState> = {}, keptAt: string | null = null) => state({
+    email: record({
+      status: 'HELD', sentAt: null,
+      hold: { reasons: ['LOW_AI_CONFIDENCE'], reasonTexts: REASONS, heldAt: '2026-09-22T09:00:00.000Z', keptAt, keptByUserId: keptAt ? 'u1' : null },
+    }),
+    canSendNow: true, blockedReason: null, canDecideHold: true, ...over,
+  });
+
+  it('says it is waiting for a decision', () => {
+    expect(feedbackEmailSummary(held(), DATE).headline).toBe('Feedback email held for your decision');
+  });
+
+  it('lists the reasons in plain words', () => {
+    expect(feedbackEmailSummary(held(), DATE).holdReasons).toEqual(REASONS);
+  });
+
+  it('explains why it was not sent on its own', () => {
+    expect(feedbackEmailSummary(held(), DATE).detail).toContain('was not sent automatically');
+  });
+
+  it('offers release and keep-holding to someone who may decide', () => {
+    const s = feedbackEmailSummary(held(), DATE);
+    expect([s.canRelease, s.canKeepHolding]).toEqual([true, true]);
+  });
+
+  it('offers neither to someone who may not decide', () => {
+    const s = feedbackEmailSummary(held({ canDecideHold: false }), DATE);
+    expect([s.canRelease, s.canKeepHolding]).toEqual([false, false]);
+  });
+
+  it('does not show the ordinary send button beside the hold controls', () => {
+    expect(feedbackEmailSummary(held(), DATE).canSendNow).toBe(false);
+  });
+
+  it('says when someone has chosen to keep it held', () => {
+    expect(feedbackEmailSummary(held({}, '2026-09-22T10:00:00.000Z'), DATE).headline).toBe('Feedback email kept on hold on 2026-09-22');
+  });
+
+  it('still offers release after it was kept, but not keeping it again', () => {
+    const s = feedbackEmailSummary(held({}, '2026-09-22T10:00:00.000Z'), DATE);
+    expect([s.canRelease, s.canKeepHolding]).toEqual([true, false]);
+  });
+
+  it('has no reasons to list for an email that was never held', () => {
+    expect(feedbackEmailSummary(state(), DATE).holdReasons).toEqual([]);
+  });
+});

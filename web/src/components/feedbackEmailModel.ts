@@ -6,6 +6,17 @@
  * detail line and which controls to show.
  */
 
+/** Why the email was held rather than sent on its own (server: services/feedbackHold.ts). */
+export interface FeedbackEmailHold {
+  readonly reasons: readonly string[];
+  /** One plain sentence per reason, worded by the server. */
+  readonly reasonTexts: readonly string[];
+  readonly heldAt: string | null;
+  /** Someone chose to keep it held. */
+  readonly keptAt: string | null;
+  readonly keptByUserId: string | null;
+}
+
 /** As GET /api/assessments/:id/feedback-email reports the row. */
 export interface FeedbackEmailRecord {
   readonly status: string;
@@ -21,6 +32,8 @@ export interface FeedbackEmailRecord {
   readonly sentAt: string | null;
   readonly nextAttemptAt: string | null;
   readonly createdAt: string;
+  /** Absent on an older server; null when it was never held. */
+  readonly hold?: FeedbackEmailHold | null;
 }
 
 export interface FeedbackEmailState {
@@ -29,9 +42,11 @@ export interface FeedbackEmailState {
   readonly blockedReason: string | null;
   /** The server will send again only if someone accepts the risk of a duplicate. */
   readonly needsDuplicateConfirmation?: boolean;
+  /** This user may release a held email or keep it held (assessment:review). */
+  readonly canDecideHold?: boolean;
 }
 
-export type FeedbackEmailTone = 'sent' | 'unverified' | 'pending' | 'failed' | 'none';
+export type FeedbackEmailTone = 'sent' | 'unverified' | 'pending' | 'failed' | 'held' | 'none';
 
 export interface FeedbackEmailSummary {
   readonly tone: FeedbackEmailTone;
@@ -42,6 +57,12 @@ export interface FeedbackEmailSummary {
   readonly canSendNow: boolean;
   /** Sending again is possible, but only after the duplicate risk is accepted. */
   readonly needsDuplicateConfirmation: boolean;
+  /** Why a held email is waiting, one sentence each; empty otherwise. */
+  readonly holdReasons: readonly string[];
+  /** Send a held email now. */
+  readonly canRelease: boolean;
+  /** Record that it should stay held. */
+  readonly canKeepHolding: boolean;
 }
 
 const NOT_SENT = 'No feedback email has been sent to the candidate yet';
@@ -52,6 +73,9 @@ export function feedbackEmailSummary(state: FeedbackEmailState, formatDate: (iso
     canSendNow: state.canSendNow,
     showText: false,
     needsDuplicateConfirmation: state.needsDuplicateConfirmation === true,
+    holdReasons: [] as readonly string[],
+    canRelease: false,
+    canKeepHolding: false,
   };
   if (!email || email.status === 'DRAFT') {
     return { ...base, tone: 'none', headline: NOT_SENT, detail: state.canSendNow ? null : state.blockedReason };
@@ -87,6 +111,21 @@ export function feedbackEmailSummary(state: FeedbackEmailState, formatDate: (iso
       };
     case 'FAILED':
       return { ...base, tone: 'failed', headline: 'The feedback email could not be sent', detail: email.lastError || null };
+    case 'HELD': {
+      const kept = email.hold?.keptAt ?? null;
+      const canDecide = state.canDecideHold === true;
+      return {
+        ...base,
+        tone: 'held',
+        // The hold's own controls replace the ordinary send button.
+        canSendNow: false,
+        headline: kept ? `Feedback email kept on hold on ${formatDate(kept)}` : 'Feedback email held for your decision',
+        detail: 'It was not sent automatically because this interview may not give a reliable picture of the candidate:',
+        holdReasons: email.hold?.reasonTexts ?? [],
+        canRelease: canDecide,
+        canKeepHolding: canDecide && !kept,
+      };
+    }
     case 'SKIPPED':
       return { ...base, tone: 'none', headline: 'No feedback email was sent', detail: email.skipReasonText ?? state.blockedReason };
     default:

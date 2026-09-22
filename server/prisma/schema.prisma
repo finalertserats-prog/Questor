@@ -618,8 +618,18 @@ model CandidateFeedbackEmail {
   // so the candidate never receives feedback a human had already corrected.
   contentBasis      String   @default("")
   // DRAFT (previewed, not sent) | QUEUED | SENDING | SENT | FAILED | SKIPPED
+  // | HELD (not trustworthy enough to go on its own; waits for a person)
   status            String   @default("QUEUED")
   skipReason        String   @default("")
+  // Why a HELD letter is waiting (services/feedbackHoldModel.ts): the reason
+  // codes and the signals they were decided on, as JSON. Kept after release
+  // as the record of why a person had to decide.
+  holdJson          String   @default("")
+  heldAt            DateTime?
+  // A person chose to keep it held: it stays unsent and stops asking for
+  // attention. Release is still possible afterwards.
+  holdKeptByUserId  String?
+  holdKeptAt        DateTime?
   attempts          Int      @default(0)
   nextAttemptAt     DateTime?
   claimedAt         DateTime?
