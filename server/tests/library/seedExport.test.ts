@@ -73,6 +73,12 @@ describe('what leaves the server', () => {
     expect(JSON.stringify(await exportSeedPools())).not.toContain('marketplaces');
   });
 
+  it('never carries a catalog role an organisation typed in', async () => {
+    const role = await prisma.role.findUniqueOrThrow({ where: { id: world.roleId }, select: { catalogRoleId: true } });
+    await prisma.catalogRole.update({ where: { id: role.catalogRoleId! }, data: { createdByTenantId: world.admin.tenantId, source: 'org' } });
+    expect((await exportSeedPools()).pools).toEqual([]);
+  });
+
   it('counts the pools it left behind, without naming them', async () => {
     expect((await exportSeedPools()).skippedOrgCompetencyPools).toBe(1);
   });

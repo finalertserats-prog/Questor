@@ -77,7 +77,8 @@ export async function seedLibraryWorld(): Promise<LibraryWorld> {
   const catalogRole = await prisma.catalogRole.upsert({
     where: { domainId_normalizedTitle: { domainId: domain.id, normalizedTitle: ROLE_TITLE.toLowerCase() } },
     create: { domainId: domain.id, familyId: family.id, title: ROLE_TITLE, normalizedTitle: ROLE_TITLE.toLowerCase(), source: 'seed' },
-    update: { familyId: family.id },
+    // Reset every field a test may change: the row survives between tests in a file.
+    update: { familyId: family.id, status: 'active', createdByTenantId: null, source: 'seed' },
   });
   const role = await prisma.role.create({
     data: {

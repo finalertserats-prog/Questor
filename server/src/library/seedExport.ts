@@ -13,7 +13,9 @@ import { SEED_SOURCE } from './seedFormat.js';
  * server (owner decision 2026-09-22):
  *
  *   - the catalog role's title, family and shared JD draft or summary, never
- *     an organisation's own job description;
+ *     an organisation's own job description, and only for roles the platform
+ *     itself carries (a title an organisation typed into the catalog is that
+ *     organisation's wording, so its pools stay on the server);
  *   - only pools whose competency is one of the platform's own
  *     (platformCompetencyCatalog), worded as the platform words it, never
  *     with the organisation's scorecard definition or indicators; a pool for
@@ -88,6 +90,12 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
 }
 
+/** Catalog role slugs the platform itself carries; a title only an organisation added is not exported. */
+async function platformRoleSlugs(): Promise<Set<string>> {
+  const rows = await prisma.catalogRole.findMany({ where: { status: 'active', createdByTenantId: null }, select: { title: true } });
+  return new Set(rows.map((r) => slugifyCatalogName(r.title)));
+}
+
 async function liveStandardFor(pool: { readonly familySlug: string; readonly competencyKey: string; readonly band: string }): Promise<SeedPool['standard']> {
   const row = await prisma.libraryStandard.findFirst({ where: { familySlug: pool.familySlug, competencyKey: pool.competencyKey, band: pool.band, status: 'live' }, orderBy: { version: 'desc' } });
   if (!row || !row.generatorModel.startsWith(`${SEED_SOURCE}:`)) return null;
@@ -106,8 +114,9 @@ export async function exportSeedPools(opts: ExportOptions = {}): Promise<SeedPoo
   const roles = opts.roles && opts.roles.length > 0 ? new Set(opts.roles) : null;
   const bands = opts.bands && opts.bands.length > 0 ? new Set(opts.bands) : null;
   const platform = new Map<string, PlatformCompetency>(platformCompetencyCatalog().map((c) => [slugifyCatalogName(c.name), c]));
+  const platformRoles = await platformRoleSlugs();
   const wanted = (await loadDemandQueue(now))
-    .filter((p) => p.scope === 'global' && (!roles || roles.has(p.roleSlug)) && (!bands || bands.has(p.band)));
+    .filter((p) => p.scope === 'global' && platformRoles.has(p.roleSlug) && (!roles || roles.has(p.roleSlug)) && (!bands || bands.has(p.band)));
   const queue = wanted.filter((p) => platform.has(p.competencyKey)).slice(0, opts.limit ?? Number.MAX_SAFE_INTEGER);
   const pools: SeedPool[] = [];
   for (const p of queue) {
