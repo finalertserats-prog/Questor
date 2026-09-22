@@ -637,7 +637,10 @@ export function CandidateDetail() {
                   still the highest-signal thing on this form. */}
               <div className="field-label" id="interview-covers-label">What it asks about</div>
               {covers === null ? (
-                <p className="setup-value">&hellip;</p>
+                // Said, not drawn as a bare ellipsis: "…" is nothing at all to
+                // a screen reader, and the difference between "still reading"
+                // and "there is nothing" is the whole point of this field.
+                <p className="setup-value">Loading&hellip;</p>
               ) : covers.length > 0 ? (
                 <ul className="setup-covers" aria-labelledby="interview-covers-label">
                   {covers.map((name) => <li key={name}>{name}</li>)}
