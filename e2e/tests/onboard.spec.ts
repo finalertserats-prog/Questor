@@ -38,7 +38,10 @@ test('an organisation onboards itself, the owner approves it, and its catalog fo
   const id = runId();
   const orgName = `E2E Onboard ${id}`;
   const orgSlug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
-  const adminEmail = `onboard-${id}@example.test`;
+  // Its own email domain per run. The onboarding form limits requests per
+  // email domain per day, and this suite runs against a database that keeps
+  // yesterday's rows: a shared domain means run eleven is refused by run one.
+  const adminEmail = `founder@e2e-onboard-${id}.test`;
   const adminSecret = `e2e-onboard-${id}-passphrase`;
 
   const csrf = (await context.cookies()).find((c) => c.name === 'questor_csrf')?.value ?? '';

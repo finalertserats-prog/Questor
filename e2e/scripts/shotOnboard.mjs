@@ -17,7 +17,8 @@ const browser = await chromium.launch();
 const id = `${Date.now()}`.slice(-8);
 const orgName = `Shot Onboard ${id}`;
 const orgSlug = orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-const adminEmail = `shot-${id}@example.test`;
+// Its own domain per run, for the same reason the specs use one.
+const adminEmail = `founder@shot-onboard-${id}.test`;
 const adminSecret = `shot-onboard-${id}-passphrase`;
 
 async function signIn(page, email, secret, orgPath) {
