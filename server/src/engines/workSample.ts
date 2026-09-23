@@ -156,7 +156,22 @@ export function workSampleFormsForBand(bandId: BandId): WorkSampleForm[] {
  * preference visible where the two agree — a situational competency still leads
  * with `diagnostic` at every band that allows one.
  */
-export function workSampleFormFor(c: Competency, module?: PlanBlock['module'], bandId?: BandId): WorkSampleForm {
+export function workSampleFormFor(
+  c: Competency,
+  module?: PlanBlock['module'],
+  bandId?: BandId,
+  /**
+   * Shapes this interview has already used. Deterministic-per-competency is
+   * not enough on its own: two competencies whose ids happen to hash the same
+   * way both got `diagnostic`, and the diagnostic body is one sentence with
+   * the competency name substituted into it. The transcript then reads
+   * "Something in your SQL & Data Warehousing area worked yesterday and is
+   * failing today…" and, three turns later, the identical sentence with "Data
+   * Engineering & Pipelines" in the slot. Both judges named it unprompted as
+   * the single largest contributor to "this is a script".
+   */
+  used: readonly WorkSampleForm[] = [],
+): WorkSampleForm {
   // Only an explicit operator decision can produce a code artefact — and that
   // decision is about the job, not the candidate, so the band scopes the code
   // exercise rather than cancelling it.
@@ -168,9 +183,38 @@ export function workSampleFormFor(c: Competency, module?: PlanBlock['module'], b
       : ['artifact_review', 'diagnostic', 'design_sketch', 'critique'];
 
   const rotation = bandId ? narrowToBand(byCategory, bandId) : byCategory;
+  // A shape used already gives way to one that has not been, and only falls
+  // back to the full rotation when the band leaves nothing else — better a
+  // repeated shape than no exercise at all, but never by default.
+  const unused = rotation.filter((f) => !used.includes(f));
+  const pool = unused.length ? unused : rotation;
   let hash = 0;
   for (const ch of c.id || c.name) hash = (hash * 31 + ch.charCodeAt(0)) % 100_000;
-  return rotation[hash % rotation.length];
+  return pool[hash % pool.length];
+}
+
+/**
+ * The artefact shapes this interview has already put to the candidate.
+ *
+ * Recomputed from the transcript rather than stored: a turn record carries
+ * text and a competency id and nowhere to keep a form tag, and the form is a
+ * pure function of the competency, the band and what came before it. A prior
+ * work sample whose competency is no longer on the scorecard is skipped rather
+ * than guessed at.
+ */
+export function workSampleFormsUsed(
+  turns: readonly TurnRecord[],
+  competencies: readonly Competency[],
+  bandId?: BandId,
+): WorkSampleForm[] {
+  const used: WorkSampleForm[] = [];
+  for (const t of turns) {
+    if (t.speaker !== 'agent' || !t.text.includes(WORK_SAMPLE_LEAD_IN)) continue;
+    const competency = competencies.find((c) => c.id === t.competencyId);
+    if (!competency) continue;
+    used.push(workSampleFormFor(competency, undefined, bandId, used));
+  }
+  return used;
 }
 
 /**
@@ -275,9 +319,17 @@ export async function buildWorkSample(opts: {
   sessionId?: string;
   /** The band the rest of the interview is pitched at (`InterviewPlan.band`). */
   band?: BandId;
+  /** Shapes already used in this interview; the next one avoids them. */
+  usedForms?: readonly WorkSampleForm[];
+  /**
+   * False once the candidate has already been told they can type. The hint is
+   * genuinely useful the first time and reads as a recital every time after —
+   * it was spoken in full on every practical turn of every run.
+   */
+  sayAnswerModeHint?: boolean;
 }): Promise<WorkSample> {
   const { competency, block, role, sessionId, band } = opts;
-  const form = workSampleFormFor(competency, block?.module, band);
+  const form = workSampleFormFor(competency, block?.module, band, opts.usedForms ?? []);
   const scope = band ? workSampleScopeForBand(band) : DEFAULT_SCOPE;
   const calibrated = heuristicBody(competency.name, form, scope);
 
@@ -296,7 +348,7 @@ export async function buildWorkSample(opts: {
     band,
     scope,
     blockedReason: refusal,
-    prompt: `${WORK_SAMPLE_LEAD_IN} ${body}${ANSWER_MODE_HINT}`,
+    prompt: `${WORK_SAMPLE_LEAD_IN} ${body}${opts.sayAnswerModeHint === false ? '' : ANSWER_MODE_HINT}`,
   };
 }
 
