@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, HttpError } from '../middleware/index.js';
+import { passwordSchema } from '../domain/passwordPolicy.js';
 import { createSignupRequest, decideSignupRequest, resolveSignupDecision, signupApplicant } from '../services/signup.js';
 import { listBusinessAreas } from '../services/businessAreas.js';
 import { prisma } from '../db.js';
@@ -29,7 +30,7 @@ const signupSchema = z.discriminatedUnion('mode', [
   z.object({
     name: z.string().min(1).max(200),
     email: z.string().email(),
-    password: z.string().min(12, 'Password must be at least 12 characters'),
+    password: passwordSchema,
     mode: z.literal('new-org'),
     organisationName: organisationText(200),
     orgCode: z.string().optional(),
@@ -45,7 +46,7 @@ const signupSchema = z.discriminatedUnion('mode', [
   z.object({
     name: z.string().min(1).max(200),
     email: z.string().email(),
-    password: z.string().min(12, 'Password must be at least 12 characters'),
+    password: passwordSchema,
     mode: z.literal('join'),
     orgCode: z.string().min(1).max(64),
     organisationName: z.string().optional(),

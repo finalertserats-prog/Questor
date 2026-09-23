@@ -1,6 +1,5 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { prisma } from '../db.js';
-import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import { getEmail } from '../providers/email/index.js';
@@ -9,6 +8,7 @@ import { classifyEmailFailure } from '../providers/email/failure.js';
 import { firstName } from '../engines/openingModel.js';
 import { logAudit } from './audit.js';
 import { lockSession, type TransactionClient } from './sessionLock.js';
+import { serverPepper } from './pepper.js';
 import { demoRecipientBlocked } from './demoPolicy.js';
 
 // Identity assurance L1: a one-time code emailed to the applicant just before
@@ -37,18 +37,12 @@ export const MAX_CODES_PER_HOUR = 6;
 const HOUR_MS = 60 * 60_000;
 const CODE_PATTERN = /^\d{6}$/;
 
-// Outside production only, so the zero-setup build still works. Production
-// refuses to hash without a configured pepper (and preflight refuses to boot).
-const DEV_PEPPER = 'questor-development-identity-code-pepper';
-
-export function identityCodePepper(env: { nodeEnv: string; pepper: string } = { nodeEnv: config.nodeEnv, pepper: config.identityCodePepper }): string {
-  const pepper = env.pepper.trim();
-  if (pepper) return pepper;
-  if (env.nodeEnv === 'production') {
-    throw new Error('IDENTITY_CODE_PEPPER is not set; refusing to issue or check identity codes.');
-  }
-  return DEV_PEPPER;
-}
+/**
+ * The server pepper these codes are stored under. Moved to services/pepper.ts
+ * when password-reset links needed the same construction; re-exported here
+ * under its original name so nothing that already imports it has to move.
+ */
+export const identityCodePepper = serverPepper;
 
 export function generateCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0');
