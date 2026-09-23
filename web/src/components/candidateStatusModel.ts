@@ -386,9 +386,21 @@ export function feedbackNote(v: StatusView, stillLoading = false): string {
     + 'If there is anything you would like to ask, speak to someone below.';
 }
 
-/** The one thing the candidate must know about who wrote it. */
-export const FEEDBACK_PROVENANCE = 'Drafted by AI from your conversation and checked by the hiring team. '
-  + 'Decisions are always made by people.';
+/**
+ * The one thing the candidate must know about who wrote it — and it has to be
+ * true of the letter they are actually reading. The automatic letter leaves 12
+ * hours after the interview whether or not anyone has read it, so only a
+ * reviewer-released letter may say the team checked it.
+ */
+export type LetterSource = 'reviewer' | 'automatic';
+
+export function feedbackProvenance(source: LetterSource): string {
+  return source === 'reviewer'
+    ? 'Drafted by AI from your conversation, then read and released by the hiring team. '
+      + 'Decisions are always made by people.'
+    : 'Drafted by AI from your conversation and sent automatically. '
+      + 'Decisions are always made by people, and you can ask to speak to someone below.';
+}
 
 // ---------------------------------------------------------------------------
 // Talking to a person, and what is kept

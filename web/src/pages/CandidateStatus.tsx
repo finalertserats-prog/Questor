@@ -7,7 +7,7 @@ import { hasPrivacyPage } from '../components/privacyRoute';
 import {
   conversationLine, feedbackHeading, feedbackNote, firstName, privacyNoticeHref, retentionLine,
   statusHeading, statusSteps, whatHappensNext,
-  FEEDBACK_PROVENANCE, LINK_IS_SPENT, NEXT_HEADING, PRIVACY_LINK_TEXT, TALK_BUTTON, TALK_FAILED,
+  feedbackProvenance, type LetterSource, LINK_IS_SPENT, NEXT_HEADING, PRIVACY_LINK_TEXT, TALK_BUTTON, TALK_FAILED,
   TALK_HEADING, TALK_INVITE, TALK_RECORDED, TALK_SENDING, WHERE_YOU_ARE,
   type StatusView,
 } from '../components/candidateStatusModel';
@@ -35,6 +35,7 @@ import {
 
 interface LetterResponse {
   approvedText: string;
+  source?: LetterSource;
   sentAt: string;
 }
 
@@ -170,7 +171,7 @@ export function CandidateStatus({ token, takeFocus = false }: { token: string; t
             ? (
               <>
                 <p className="cstatus-letter" data-testid="cstatus-letter">{letter.approvedText}</p>
-                <p className="cstatus-provenance">{FEEDBACK_PROVENANCE}</p>
+                <p className="cstatus-provenance">{feedbackProvenance(letter.source ?? 'automatic')}</p>
               </>
             )
             : <p data-testid="cstatus-feedback-note">{feedbackNote(view, letterState === 'loading')}</p>}

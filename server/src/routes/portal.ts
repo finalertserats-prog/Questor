@@ -196,10 +196,13 @@ portalRouter.get('/:token/feedback', asyncHandler(async (req, res) => {
   ]);
   const feedback = assessment?.candidateFeedback;
   if (feedback && feedback.status === 'SENT' && feedback.approvedText && feedback.sentAt) {
-    return res.json({ approvedText: feedback.approvedText, sentAt: feedback.sentAt });
+    // A reviewer read this letter and released it: the page may say so.
+    return res.json({ approvedText: feedback.approvedText, sentAt: feedback.sentAt, source: 'reviewer' });
   }
   if (auto && SENT_FEEDBACK_STATUSES.includes(auto.status) && auto.sentAt && auto.bodyText.trim()) {
-    return res.json({ approvedText: readableLetter(auto.bodyText), sentAt: auto.sentAt });
+    // The automatic letter goes 12 hours after the interview whether or not a
+    // person has read it, so the page must not claim the team checked it.
+    return res.json({ approvedText: readableLetter(auto.bodyText), sentAt: auto.sentAt, source: 'automatic' });
   }
   return res.status(404).json({ feedback: null });
 }));
