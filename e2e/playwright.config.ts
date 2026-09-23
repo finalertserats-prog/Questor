@@ -26,9 +26,7 @@ export default defineConfig({
     // global setup's sign-in then met "We can't reach Questor right now".
     url: `${process.env.QUESTOR_BASE_URL ?? 'http://localhost:5173'}/api/health`,
     cwd: '..',
-    // Never silently adopt whatever is already on the port when this run named
-    // its own address: that server belongs to another checkout.
-    reuseExistingServer: !process.env.CI && !process.env.QUESTOR_BASE_URL,
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },
 });
