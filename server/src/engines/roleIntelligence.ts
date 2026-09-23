@@ -6,6 +6,7 @@ import { stackCompetencies } from './techStackCompetencies.js';
 import { bandForRoleSeniority } from './bandCalibration.js';
 import type { BandId } from './experienceBands.js';
 import { PROTECTED_TOPICS } from './policyEngine.js';
+import { jurisdictionFor, jurisdictionForRegion, jurisdictionNotices } from '../domain/roleJurisdiction.js';
 
 // Skill taxonomy: keyword -> canonical skill + category. Covers the knowledge-
 // worker role families the MVP targets (BRD 4.2).
@@ -127,16 +128,17 @@ export interface ExtractOptions {
   readonly band?: BandId;
   /** The role's catalog region; its jurisdiction follows it. */
   readonly regionCode?: string | null;
+  /**
+   * The finer place inside that region, where the customer named one —
+   * "US-IL", "US-NY-NYC". Optional: without it the jurisdiction is the region
+   * code exactly as before (domain/roleJurisdiction.ts).
+   */
+  readonly jurisdictionCode?: string | null;
 }
 
-/**
- * The jurisdiction a role is under is its region's code. GLOBAL is its own
- * value, meaning no single jurisdiction; a role without a region is blank
- * rather than defaulting to one country's rules.
- */
-export function jurisdictionForRegion(regionCode: string | null | undefined): string {
-  return regionCode?.trim().toUpperCase() ?? '';
-}
+// The rule itself now lives in domain/roleJurisdiction.ts, beside the places it
+// knows about. Re-exported because this is where callers have always found it.
+export { jurisdictionForRegion };
 
 export interface RoleExtraction {
   title: string;
@@ -198,6 +200,7 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
     term: text.match(e.re)?.[0] ?? '', suggestion: e.suggestion,
   }));
 
+  const jurisdiction = jurisdictionFor({ regionCode: opts.regionCode, jurisdictionCode: opts.jurisdictionCode });
   const profile: RoleSuccessProfile = {
     roleContext: firstLine,
     outcomes: outcomes.length ? outcomes : ['Deliver on core role responsibilities to the expected standard.'],
@@ -210,9 +213,14 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
     },
     policyRules: {
       prohibitedTopics: [...PROTECTED_TOPICS],
-      requiredDisclosures: ['AI interviewer', 'recording/transcription (if enabled)', 'human review of results'],
+      // The three every role carries, plus whatever the role's own place asks
+      // for. A role with no finer jurisdiction gets exactly the three.
+      requiredDisclosures: [
+        'AI interviewer', 'recording/transcription (if enabled)', 'human review of results',
+        ...jurisdictionNotices(jurisdiction),
+      ],
       accommodationsEnabled: true,
-      jurisdiction: jurisdictionForRegion(opts.regionCode),
+      jurisdiction,
     },
     redFlags: ['Unable to give any specific example', 'Contradicts resume claims without explanation'],
     seniority: level,

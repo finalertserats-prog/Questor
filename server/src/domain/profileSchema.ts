@@ -59,7 +59,9 @@ export const roleSuccessProfileSchema = z.object({
     requiredDisclosures: shortList(20, 500).default([]),
     accommodationsEnabled: z.boolean().default(true),
     proctoringEnabled: z.boolean().optional(),
-    jurisdiction: shortText(8).default(''),
+    // 16, not 8: a jurisdiction may now name a US state or New York City
+    // ("US-NY-NYC"), not only a region code (domain/roleJurisdiction.ts).
+    jurisdiction: shortText(16).default(''),
   }),
   redFlags: z.array(z.string().trim().min(1).max(RED_FLAG_MAX_LENGTH)).max(RED_FLAG_MAX_COUNT).default([]),
   seniority: shortText(60).default(''),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canCreateRoleFromCatalog, catalogLinkFields, isCurrentQuery, newRoleLabel, parseTechStackInput, shouldOfferNewRole } from '../src/components/catalogModel';
+import { canCreateRoleFromCatalog, catalogLinkFields, isCurrentQuery, jurisdictionAfterRegionChange, jurisdictionHint, jurisdictionsForRegion, newRoleLabel, parseTechStackInput, shouldOfferNewRole, type JurisdictionOption } from '../src/components/catalogModel';
 
 describe('catalogModel', () => {
   it('offers new role creation only for useful non-exact queries', () => {
@@ -46,5 +46,45 @@ describe('catalogModel', () => {
     expect(isCurrentQuery({ domainId: 'd1', value: 'eng' }, { domainId: 'd1', value: 'eng' })).toBe(true);
     expect(isCurrentQuery({ domainId: 'd1', value: 'eng' }, { domainId: 'd1', value: '' })).toBe(false);
     expect(isCurrentQuery({ domainId: 'd1', value: 'eng' }, { domainId: 'd2', value: 'eng' })).toBe(false);
+  });
+});
+
+/**
+ * The state or city field on the role form. Offered only where naming a place
+ * changes what a candidate must be told; leaving it unset keeps the role under
+ * its region, exactly as every role behaved before the field existed.
+ */
+describe('choosing a state or city', () => {
+  const OPTIONS: readonly JurisdictionOption[] = [
+    { code: 'US-IL', regionCode: 'NA', name: 'United States — Illinois', why: 'Illinois has its own rules about AI in interviews.' },
+    { code: 'US-NY-NYC', regionCode: 'NA', name: 'United States — New York City', why: 'New York City requires notice before the tool is used.' },
+  ];
+
+  it('offers the places inside the chosen region', () => {
+    expect(jurisdictionsForRegion(OPTIONS, 'NA').map((j) => j.code)).toEqual(['US-IL', 'US-NY-NYC']);
+  });
+
+  it('offers nothing for a region with no finer places', () => {
+    expect(jurisdictionsForRegion(OPTIONS, 'EU')).toEqual([]);
+  });
+
+  it('offers nothing before a region is chosen', () => {
+    expect(jurisdictionsForRegion(OPTIONS, '')).toEqual([]);
+  });
+
+  it('says why a chosen place is offered', () => {
+    expect(jurisdictionHint(OPTIONS, 'US-IL')).toMatch(/Illinois/);
+  });
+
+  it('says plainly what leaving it unset means', () => {
+    expect(jurisdictionHint(OPTIONS, '')).toMatch(/Leave this unset/);
+  });
+
+  it('drops a state left over from another region rather than submitting it', () => {
+    expect(jurisdictionAfterRegionChange(jurisdictionsForRegion(OPTIONS, 'EU'), 'US-IL')).toBe('');
+  });
+
+  it('keeps a state that the newly chosen region still offers', () => {
+    expect(jurisdictionAfterRegionChange(jurisdictionsForRegion(OPTIONS, 'NA'), 'US-IL')).toBe('US-IL');
   });
 });

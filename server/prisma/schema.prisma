@@ -358,6 +358,10 @@ model Role {
   catalogRole   CatalogRole? @relation(fields: [catalogRoleId], references: [id])
   experienceBand String?
   regionCode    String?
+  // The finer place inside the region, where the customer named one:
+  // "US-IL", "US-NY-NYC". Null means the region itself, which is how every
+  // role behaved before this existed (domain/roleJurisdiction.ts).
+  jurisdictionCode String?
   techStackJson String @default("[]")
   title         String
   level         String   @default("")

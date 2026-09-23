@@ -11,6 +11,7 @@ import { assertNotDemoTenant } from '../services/demoAccess.js';
 import { CATALOG_ATTRIBUTIONS } from '../domain/catalogAttribution.js';
 import { getTenantBusinessAreas, scopedDomainIds } from '../services/businessAreas.js';
 import { shouldScopeCatalog } from '../domain/orgOnboarding.js';
+import { JURISDICTION_SUBDIVISIONS } from '../domain/roleJurisdiction.js';
 
 export const catalogRouter = Router();
 
@@ -168,6 +169,16 @@ catalogRouter.get('/regions', asyncHandler(async (_req, res) => {
   const regions = await prisma.catalogRegion.findMany({ where: { status: 'active' }, orderBy: { sortOrder: 'asc' } });
   res.json(regions.map((r) => ({ code: r.code, name: r.name })));
 }));
+
+/**
+ * The finer places a role may be put in, inside a region — US states and New
+ * York City. Static, so it is served from code rather than a table: these exist
+ * because each has its own rule about AI in hiring, and adding one means adding
+ * the notices that go with it (domain/roleJurisdiction.ts).
+ */
+catalogRouter.get('/jurisdictions', (_req, res) => {
+  res.json(JURISDICTION_SUBDIVISIONS.map((s) => ({ code: s.code, regionCode: s.regionCode, name: s.name, why: s.why })));
+});
 
 catalogRouter.get('/experience-bands', (_req, res) => {
   res.json(BANDS.map((b) => ({ id: b.id, label: b.label, minYears: b.yearsPrior.min, maxYears: Number.isFinite(b.yearsPrior.max) ? b.yearsPrior.max : null, display: displayBand(b.id, b.label, b.yearsPrior) })));

@@ -27,6 +27,7 @@ import { roleCandidatesRouter, roleShortlistRouter } from './roleCandidates.js';
 import { techStackInputSchema, techStackNames } from '../domain/techStack.js';
 import { syncJdTechStack } from '../domain/jdTechStackSection.js';
 import { roleTechStack } from '../services/roleTechStack.js';
+import { subdivisionBelongsToRegion } from '../domain/roleJurisdiction.js';
 import type { BandId } from '../engines/experienceBands.js';
 
 export const rolesRouter = Router();
@@ -54,7 +55,7 @@ rolesRouter.get('/', requireCapability('role:read'), asyncHandler(async (req, re
   res.json({ roles: roles.map((r) => ({
     id: r.id, title: r.title, level: r.level, status: r.status,
     latestScorecard: r.scorecards[0] ? { id: r.scorecards[0].id, version: r.scorecards[0].version, status: r.scorecards[0].status } : null,
-    candidates: r._count.candidates, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: roleTechStack(r),
+    candidates: r._count.candidates, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, jurisdictionCode: r.jurisdictionCode, techStack: roleTechStack(r),
   })) });
 }));
 
@@ -94,6 +95,10 @@ const createSchema = z.object({
   addToCatalog: z.boolean().optional(),
   experienceBand: z.enum(BANDS.map((b) => b.id) as [BandId, ...BandId[]]).optional(),
   regionCode: z.string().optional(),
+  // The finer place inside the region, where the customer names one
+  // ("US-IL", "US-NY-NYC"). Optional; without it the role's jurisdiction is
+  // its region, exactly as before (domain/roleJurisdiction.ts).
+  jurisdictionCode: z.string().max(16).optional(),
   // Full items, or the bare names older pages still send.
   techStack: techStackInputSchema.default([]),
   jdDraftId: z.string().cuid().optional(),
@@ -126,6 +131,12 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
     const region = await prisma.catalogRegion.findFirst({ where: { code: body.regionCode, status: 'active' }, select: { code: true } });
     if (!region) throw new HttpError(400, 'Unknown or inactive catalog region.');
   }
+  // Refused rather than quietly dropped: a customer who chose Illinois and
+  // silently got "North America" would believe the Illinois notices are being
+  // given when they are not.
+  if (body.jurisdictionCode && !subdivisionBelongsToRegion(body.jurisdictionCode, body.regionCode)) {
+    throw new HttpError(400, 'That state or city is not one Questor offers for the chosen region.');
+  }
   if (body.jdDraftId) {
     const draft = await prisma.catalogJdDraft.findUnique({ where: { id: body.jdDraftId }, select: { id: true, catalogRoleId: true } });
     if (!draft) throw new HttpError(400, 'Unknown JD draft.');
@@ -149,7 +160,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   // The JD carries the stack HR confirmed, in the one section the stack owns.
   if (body.techStack.length) sourceText = syncJdTechStack(sourceText, body.techStack).text;
 
-  const extractOpts = { techStack: body.techStack, band: body.experienceBand, regionCode: body.regionCode };
+  const extractOpts = { techStack: body.techStack, band: body.experienceBand, regionCode: body.regionCode, jurisdictionCode: body.jurisdictionCode };
   const extraction = body.useLlm ? await extractRole(sourceText, titleHint, extractOpts) : extractRoleHeuristic(sourceText, titleHint, extractOpts);
   const ats = lookup?.kind === 'new' ? lookup.ats : null;
   const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(body.domainId, extraction.title) : undefined);
@@ -169,7 +180,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
           tenantId: auth.tenantId, title: extraction.title, level: extraction.level,
           location: extraction.location, employmentType: extraction.employmentType,
           sourceType: body.sourceType, sourceText, status: 'draft', createdById: auth.userId,
-          catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, techStackJson: JSON.stringify(body.techStack), jdDraftId: body.jdDraftId, jdOrigin: body.jdOrigin,
+          catalogRoleId, experienceBand: body.experienceBand, regionCode: body.regionCode, jurisdictionCode: body.jurisdictionCode, techStackJson: JSON.stringify(body.techStack), jdDraftId: body.jdDraftId, jdOrigin: body.jdOrigin,
         },
       });
       // With scoping in force an unassigned role is admin-only, so without this
@@ -371,7 +382,7 @@ const roleShapeInclude = { catalogRole: { include: { domain: true } } } as const
 type ShapedRole = {
   readonly id: string; readonly title: string; readonly level: string; readonly location: string; readonly employmentType: string;
   readonly status: string; readonly sourceType: string; readonly updatedAt: Date; readonly experienceBand: string | null;
-  readonly regionCode: string | null; readonly techStackJson: string; readonly jdDraftId: string | null; readonly jdOrigin: string;
+  readonly regionCode: string | null; readonly jurisdictionCode: string | null; readonly techStackJson: string; readonly jdDraftId: string | null; readonly jdOrigin: string;
   readonly catalogRole: { readonly id: string; readonly title: string; readonly domain: { readonly id: string; readonly name: string } } | null;
 };
 
@@ -380,7 +391,7 @@ function shapeCatalogRole(role: ShapedRole['catalogRole']) {
 }
 
 function shapeRole(r: ShapedRole) {
-  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, techStack: roleTechStack(r), jdDraftId: r.jdDraftId, jdOrigin: r.jdOrigin }; 
+  return { id: r.id, title: r.title, level: r.level, location: r.location, employmentType: r.employmentType, status: r.status, sourceType: r.sourceType, updatedAt: r.updatedAt, catalogRole: shapeCatalogRole(r.catalogRole), experienceBand: r.experienceBand, regionCode: r.regionCode, jurisdictionCode: r.jurisdictionCode, techStack: roleTechStack(r), jdDraftId: r.jdDraftId, jdOrigin: r.jdOrigin }; 
 }
 function shapeScorecard(s: { readonly id: string; readonly version: number; readonly status: string; readonly profileJson: string; readonly approvedAt: Date | null }) {
   const profile = parseJsonStrict<RoleSuccessProfile>(s.profileJson, { model: 'RoleScorecardVersion', id: s.id, field: 'profileJson' });

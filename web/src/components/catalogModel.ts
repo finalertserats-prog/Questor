@@ -32,6 +32,45 @@ export function regionHint(regionCode: string): string {
     : '';
 }
 
+/** A finer place inside a region, as GET /api/catalog/jurisdictions returns it. */
+export interface JurisdictionOption {
+  readonly code: string;
+  readonly regionCode: string;
+  readonly name: string;
+  readonly why: string;
+}
+
+/**
+ * The finer places offered for a region. Empty for every region we have done
+ * no analysis of, and the field is not shown at all in that case — an empty
+ * dropdown says "we have nothing for you here" less clearly than no dropdown.
+ */
+export function jurisdictionsForRegion(all: readonly JurisdictionOption[], regionCode: string): readonly JurisdictionOption[] {
+  const region = regionCode.trim().toUpperCase();
+  return region ? all.filter((j) => j.regionCode === region) : [];
+}
+
+/**
+ * What choosing a state or city means. Naming one says why it is offered;
+ * leaving it unset says plainly that the role is treated as the region, which
+ * is what happens and what someone hurrying past the field should know.
+ */
+export function jurisdictionHint(options: readonly JurisdictionOption[], code: string): string {
+  const chosen = options.find((j) => j.code === code);
+  if (chosen) return chosen.why;
+  return 'Leave this unset unless the role is in one of these places. '
+    + 'Setting it adds the notices that place asks a candidate to be given before an AI interview.';
+}
+
+/**
+ * The state or city to submit once a region is chosen. A value left over from
+ * another region belongs to no place the new region offers, and submitting it
+ * is refused by the server — so it is dropped here instead.
+ */
+export function jurisdictionAfterRegionChange(options: readonly JurisdictionOption[], code: string): string {
+  return options.some((j) => j.code === code) ? code : '';
+}
+
 export interface RoleCreateReadiness {
   readonly domainId: string;
   readonly experienceBand?: string;

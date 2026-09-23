@@ -5,7 +5,7 @@ import { useAuth } from '../auth';
 import { Banner } from '../components/ui';
 import { StatusBadge } from '../components/StatusBadge';
 import { can, onlyWhoCan } from '../components/capabilityModel';
-import { regionLabel } from '../components/roleLabelModel';
+import { jurisdictionLabel, regionLabel } from '../components/roleLabelModel';
 import { approvePayload, archiveAction, isCurrentResponse, isRoleOpen, type LoadTicket } from '../components/roleDetailModel';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
@@ -39,7 +39,7 @@ interface Profile {
 }
 interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; warnings?: string[] }
 interface RoleResp {
-  role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; techStack: readonly TechStackItem[] };
+  role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; jurisdictionCode: string | null; techStack: readonly TechStackItem[] };
   scorecards: Scorecard[];
   /** Competency ids an interview has used; removing one of these retires it. */
   competencyHistory?: string[];
@@ -308,6 +308,7 @@ export function RoleDetail() {
           {role.catalogRole ? `Domain: ${role.catalogRole.domain.name}` : 'Not linked to catalog'}
           {role.experienceBand ? ` · Experience: ${role.experienceBand}` : ''}
           {role.regionCode ? ` · Region: ${regionLabel(role.regionCode)}` : ''}
+          {role.jurisdictionCode ? ` · ${jurisdictionLabel(role.jurisdictionCode)}` : ''}
           {role.techStack.length ? ` · Tech: ${stackNames(role.techStack).join(', ')}` : ''}
         </div>
         <p style={{ marginBottom: 0 }}>{profile.roleContext}</p>

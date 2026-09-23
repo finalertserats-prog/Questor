@@ -8,7 +8,7 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { canLoadSample, sampleDraft } from '../components/roleCreateModel';
 import { RoleTitleCombobox, type CatalogRoleOption } from '../components/RoleTitleCombobox';
-import { catalogLinkFields, missingRoleFields, regionHint, shouldOfferCatalogAdd } from '../components/catalogModel';
+import { catalogLinkFields, jurisdictionAfterRegionChange, jurisdictionHint, jurisdictionsForRegion, missingRoleFields, regionHint, shouldOfferCatalogAdd } from '../components/catalogModel';
 import { appendTechStack, jdOriginForSubmit, nextDraftState, previewLines, shouldPollDraft, type DraftPanelState, type LintHit } from '../components/jdDraftModel';
 import { TechStackEditor } from '../components/TechStackEditor';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
@@ -27,6 +27,8 @@ interface CatalogScope {
   readonly totalDomains: number;
 }
 interface Region { readonly code: string; readonly name: string }
+/** A finer place inside a region — a US state, or New York City. Optional. */
+interface Jurisdiction { readonly code: string; readonly regionCode: string; readonly name: string; readonly why: string }
 interface Band { readonly id: string; readonly display: string }
 
 interface CreateResp {
@@ -53,10 +55,12 @@ export function RoleCreate() {
   const [scope, setScope] = useState<CatalogScope | null>(null);
   const [showAllDomains, setShowAllDomains] = useState(false);
   const [regions, setRegions] = useState<readonly Region[]>([]);
+  const [jurisdictions, setJurisdictions] = useState<readonly Jurisdiction[]>([]);
   const [bands, setBands] = useState<readonly Band[]>([]);
   const [domainId, setDomainId] = useState('');
   const [experienceBand, setExperienceBand] = useState('');
   const [regionCode, setRegionCode] = useState('');
+  const [jurisdictionCode, setJurisdictionCode] = useState('');
   const [catalogRoleId, setCatalogRoleId] = useState('');
   // A typed title only reaches the catalog every organisation shares if the
   // person says so. Checked by default: most typed titles are real job titles.
@@ -103,8 +107,9 @@ export function RoleCreate() {
       api.get<readonly Region[]>('/catalog/regions'),
       api.get<readonly Band[]>('/catalog/experience-bands'),
       api.get<CatalogScope>('/catalog/scope'),
+      api.get<readonly Jurisdiction[]>('/catalog/jurisdictions'),
     ])
-      .then(([d, r, b, s]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); setScope(s); setCatalogError(''); } })
+      .then(([d, r, b, s, j]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); setScope(s); setJurisdictions(j); setCatalogError(''); } })
       .catch((err: unknown) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Could not load catalog fields.'); });
     return () => { cancelled = true; };
   }, [catalogAttempt, showAllDomains]);
@@ -140,6 +145,13 @@ export function RoleCreate() {
     return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
   }, [source, catalogRoleId, experienceBand, regionCode, catalogAttempt]);
 
+  const regionJurisdictions = jurisdictionsForRegion(jurisdictions, regionCode);
+  // A state left over from another region is not offered by the new one, and
+  // submitting it would be refused; it is dropped as the region changes.
+  const chooseRegion = (code: string) => {
+    setRegionCode(code);
+    setJurisdictionCode(jurisdictionAfterRegionChange(jurisdictionsForRegion(jurisdictions, code), jurisdictionCode));
+  };
   const selectedDomain = domains.find((d) => d.id === domainId);
   const sourceReady = source === 'ats' ? isAtsId(requisitionId.trim()) : Boolean(sourceText.trim());
   const missing = missingRoleFields({ source, sourceReady, domainId, experienceBand, regionCode });
@@ -169,6 +181,7 @@ export function RoleCreate() {
         ...catalogLinkFields({ catalogRoleId, domainId }),
         experienceBand: experienceBand || undefined,
         regionCode: regionCode || undefined,
+        jurisdictionCode: jurisdictionCode || undefined,
         techStack: [...techStack],
         addToCatalog: offerCatalogAdd ? addToCatalog : false,
         jdDraftId: usedDraftId || undefined,
@@ -321,12 +334,25 @@ export function RoleCreate() {
           </div>
           <div>
             <label htmlFor={`${fieldId}-region`}>Region</label>
-            <select id={`${fieldId}-region`} required value={regionCode} onChange={(e) => setRegionCode(e.target.value)}>
+            <select id={`${fieldId}-region`} required value={regionCode} onChange={(e) => chooseRegion(e.target.value)}>
               <option value="">Choose a region</option>
               {regions.map((r) => <option key={r.code} value={r.code}>{r.name}</option>)}
             </select>
             {regionHint(regionCode) && <span className="muted small">{regionHint(regionCode)}</span>}
           </div>
+          {/* Offered only where a finer place changes what the candidate must
+              be told. Leaving it unset keeps the role under its region, which
+              is how every role behaved before this existed. */}
+          {regionJurisdictions.length > 0 && (
+            <div>
+              <label htmlFor={`${fieldId}-jurisdiction`}>State or city (optional)</label>
+              <select id={`${fieldId}-jurisdiction`} value={jurisdictionCode} onChange={(e) => setJurisdictionCode(e.target.value)}>
+                <option value="">Anywhere in this region</option>
+                {regionJurisdictions.map((j) => <option key={j.code} value={j.code}>{j.name}</option>)}
+              </select>
+              <span className="muted small">{jurisdictionHint(regionJurisdictions, jurisdictionCode)}</span>
+            </div>
+          )}
         </div>
 
         <label htmlFor={`${fieldId}-title`}>Role title (optional)</label>

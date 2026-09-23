@@ -113,6 +113,21 @@ export function regionLabel(code: string): string {
 }
 
 /**
+ * The finer places a role may sit in, by name (server:
+ * domain/roleJurisdiction.ts). Short forms here because they are shown beside
+ * the region, which already says the country.
+ */
+const JURISDICTION_NAMES: Readonly<Record<string, string>> = {
+  'US-IL': 'Illinois', 'US-NY-NYC': 'New York City', 'US-NY': 'New York State',
+  'US-MD': 'Maryland', 'US-CO': 'Colorado',
+};
+
+/** A state or city code by name; an unknown code is shown as is. */
+export function jurisdictionLabel(code: string): string {
+  return JURISDICTION_NAMES[code] ?? code;
+}
+
+/**
  * The line under a role's title in the roles list. A role linked to the
  * catalog shows its chosen experience level, domain and region by name; the
  * level read from the JD is shown only when no level was chosen, so the line
