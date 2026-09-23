@@ -242,6 +242,25 @@ describe('a connection that comes and goes', () => {
     expect(urgently()).toBe(once);
   });
 
+  it('warns once per drop, even with an answer sent in between', async () => {
+    await openRoom();
+    await join();
+    await act(async () => { window.dispatchEvent(new Event('offline')); });
+    const first = screen.queryAllByRole('alert').map((n) => n.textContent);
+    http.post.mockResolvedValue({ turn: { turnId: 't2', text: 'And after that?', done: false } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Your answer' }), { target: { value: 'Still here.' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
+    await act(async () => { window.dispatchEvent(new Event('offline')); });
+    expect(screen.queryAllByRole('alert').map((n) => n.textContent)).toEqual(first);
+  });
+
+  it('says nothing when the browser reports a connection that was never lost', async () => {
+    await openRoom();
+    await join();
+    await act(async () => { window.dispatchEvent(new Event('online')); });
+    expect(politely()).not.toContain('back online');
+  });
+
   it('is not wiped off the page by the next ordinary announcement', async () => {
     await openRoom();
     await join();

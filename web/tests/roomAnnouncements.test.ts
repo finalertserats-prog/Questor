@@ -103,12 +103,13 @@ describe('not saying the same thing twice', () => {
     expect(assertiveText(then)).toContain('offline');
   });
 
-  it('says the urgent thing again after something polite came between', () => {
-    const urgent = say(EMPTY_ANNOUNCER, { kind: 'offline' });
-    const between = say(urgent, heard('t1'));
-    const again = say(between, { kind: 'offline' });
-    // A different slot, so the identical words are a real change and are read.
-    expect(again.assertive).not.toEqual(urgent.assertive);
+  it('warns again on a later turn, in the other slot so it is read again', () => {
+    const first = say(EMPTY_ANNOUNCER, { kind: 'mic-silent', turn: 't1' });
+    const between = say(first, heard('t1'));
+    const second = say(between, { kind: 'mic-silent', turn: 't2' });
+    // Identical words, so it only speaks because it moved to the other slot.
+    expect(assertiveText(second)).toBe(assertiveText(first));
+    expect(second.assertive).not.toEqual(first.assertive);
   });
 
   it('takes the reconnect warning down once the connection is back', () => {

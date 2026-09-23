@@ -93,6 +93,8 @@ export function InterviewRoom() {
   const [micOpen, setMicOpen] = useState(false);
   // The browser says the network has gone. Shown in the bar and announced.
   const [offline, setOffline] = useState(false);
+  // Whether the room is inside a drop, read by the listeners themselves.
+  const offlineRef = useRef(false);
   const [err, setErr] = useState('');
 
   // What the room says to a screen reader. The rule, and the whole permitted
@@ -454,8 +456,21 @@ export function InterviewRoom() {
   // neither kind of candidate is the one left guessing.
   useEffect(() => {
     if (!live) return undefined;
-    const down = () => { setOffline(true); announce({ kind: 'offline' }); };
-    const up = () => { setOffline(false); announce({ kind: 'online' }); };
+    // One announcement per incident. The browser can fire `offline` more than
+    // once for the same drop, and `online` when nothing was ever down; saying
+    // either twice is noise in the middle of an interview.
+    const down = () => {
+      if (offlineRef.current) return;
+      offlineRef.current = true;
+      setOffline(true);
+      announce({ kind: 'offline' });
+    };
+    const up = () => {
+      if (!offlineRef.current) return;
+      offlineRef.current = false;
+      setOffline(false);
+      announce({ kind: 'online' });
+    };
     // Already offline when the room went live (a rejoin on a dead connection):
     // the events only fire on a CHANGE, so nothing would ever have said so.
     if (navigator.onLine === false) down();
