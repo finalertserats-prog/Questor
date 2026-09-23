@@ -318,7 +318,16 @@ export function Composer(props: ComposerProps) {
         >
           <Icon name="mic" size={20} />
         </button>
-        <button type="button" className="room-round room-send" aria-label="Send" title="Send answer (Ctrl+Enter)" disabled={!props.canSend} onClick={props.onSend}>
+        <button
+          type="button"
+          className="room-round room-send"
+          aria-label="Send"
+          title="Send answer (Ctrl+Enter)"
+          disabled={!props.canSend}
+          // Sending empties the box, which disables Send and would drop focus
+          // to the page. It stays where the candidate is working instead.
+          onClick={() => { props.onSend(); (typing ? textRef.current : heardRef.current)?.focus(); }}
+        >
           <Icon name="arrow-right" size={20} />
         </button>
       </div>

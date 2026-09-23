@@ -103,6 +103,14 @@ export function InterviewRoom() {
   // Nobody is watching until the server says so. Presence is not wired for the
   // AI room yet; when it is, an observer arriving is announced (it is silent).
   const observers: readonly RoomObserver[] = useMemo(() => [], []);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Once, when the room first has something to show.
+  const openedRef = useRef(false);
+  useEffect(() => {
+    if (!info || openedRef.current) return;
+    openedRef.current = true;
+    headingRef.current?.focus();
+  }, [info]);
 
   // Whether this interview may listen at all. A candidate who declined voice
   // capture is interviewed by typing: the microphone is never requested, and the
@@ -484,7 +492,11 @@ export function InterviewRoom() {
 
   return (
     <div className="room">
-      <h1 className="visually-hidden">Your interview</h1>
+      {/* The room is reached by navigation from the invitation page, which
+          leaves focus on the page body with nothing said. Focus lands here, so
+          a screen reader opens on "Your interview" and the tab order starts at
+          the top of the room rather than wherever the last page left it. */}
+      <h1 className="visually-hidden" ref={headingRef} tabIndex={-1}>Your interview</h1>
       <RoomAnnouncer state={announcerState} />
       <RoomTopBar
         roleTitle={info.roleTitle}

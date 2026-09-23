@@ -111,6 +111,16 @@ describe('not saying the same thing twice', () => {
     expect(again.assertive).not.toEqual(urgent.assertive);
   });
 
+  it('takes the reconnect warning down once the connection is back', () => {
+    const down = say(EMPTY_ANNOUNCER, { kind: 'offline' });
+    expect(assertiveText(say(down, { kind: 'online' }))).toBe('');
+  });
+
+  it('leaves no stale warning behind at the end of the interview', () => {
+    const down = say(EMPTY_ANNOUNCER, { kind: 'offline' });
+    expect(assertiveText(say(down, { kind: 'ended', withdrawn: false }))).toBe('');
+  });
+
   it('says it again when the connection drops a second time', () => {
     const down = say(EMPTY_ANNOUNCER, { kind: 'offline' });
     const up = say(down, { kind: 'online' });

@@ -99,6 +99,12 @@ describe('where the keyboard lands', () => {
     expect(document.activeElement).toBe(heard());
   });
 
+  it('keeps focus in the composer after Send empties the box and disables it', () => {
+    render(createElement(Composer, props({ mode: 'type', typed: 'That covers it.', canSend: true })));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Your answer' }));
+  });
+
   it('moves focus to the resume button when the pause button disappears', () => {
     const { rerender } = render(createElement(Composer, props()));
     rerender(createElement(Composer, props({ paused: true })));

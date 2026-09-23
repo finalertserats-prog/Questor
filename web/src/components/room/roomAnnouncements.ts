@@ -67,6 +67,12 @@ export interface Announcement {
    * Everything else waits for a gap, so it never talks over the interviewer.
    */
   readonly assertive: boolean;
+  /**
+   * This event ends the situation an interrupting message was about, so that
+   * message comes down with it. Only for events that genuinely resolve one —
+   * otherwise a polite line could wipe a warning nobody had read yet.
+   */
+  readonly clearsUrgent?: boolean;
 }
 
 const TIME_WORDS: Record<TimeStage, string> = {
@@ -103,7 +109,7 @@ export function announcementFor(event: RoomEvent): Announcement {
         assertive: true,
       };
     case 'online':
-      return { key: 'online', message: "You're back online. Carry on where you left off.", assertive: false };
+      return { key: 'online', message: "You're back online. Carry on where you left off.", assertive: false, clearsUrgent: true };
     case 'observer-joined':
       return {
         key: `observer-joined:${event.name}`,
@@ -121,6 +127,8 @@ export function announcementFor(event: RoomEvent): Announcement {
           ? 'The interview has ended at your request. Your microphone is off, and what happens now is on the screen below.'
           : 'The interview has ended. Your microphone is off, and what happens now is on the screen below.',
         assertive: false,
+        // Nothing urgent applies to a room that is over.
+        clearsUrgent: true,
       };
     case 'unspoken-turn':
       // Nothing was heard for this turn, so its text is the only signal there
@@ -161,12 +169,15 @@ function fill(text: string, slot: 0 | 1): readonly [string, string] {
  * Add an event to what is being announced, dropping one that is already being
  * said.
  *
- * The two channels are kept independently, and a write never clears the other
- * one. Clearing looked tidy and was a bug: "we're sending your answer" landing
- * a moment after "you've gone offline" wiped the urgent line off the page
- * before a screen reader had finished with it. Leaving it costs nothing —
- * a live region only speaks when its text CHANGES — and each channel takes
- * its own slot so a repeat within a channel is still a change.
+ * The two channels are kept independently, and an ordinary message never
+ * clears the interrupting one. Clearing looked tidy and was a bug: "we're
+ * sending your answer" landing a moment after "you've gone offline" wiped the
+ * urgent line off the page before a screen reader had finished with it.
+ * Leaving it costs nothing — a live region only speaks when its text CHANGES
+ * — and each channel takes its own slot so a repeat within a channel is still
+ * a change. The exception is an event that ENDS the urgent situation (the
+ * connection is back, the interview is over): it takes the warning down, so a
+ * screen reader browsing the page later does not find a stale one.
  */
 export function say(state: AnnouncerState, event: RoomEvent | null): AnnouncerState {
   if (!event) return state;
@@ -177,7 +188,8 @@ export function say(state: AnnouncerState, event: RoomEvent | null): AnnouncerSt
     return { ...state, lastKey: next.key, assertive: fill(next.message, slot), assertiveSlot: slot };
   }
   const slot: 0 | 1 = state.politeSlot === 0 ? 1 : 0;
-  return { ...state, lastKey: next.key, polite: fill(next.message, slot), politeSlot: slot };
+  const assertive = next.clearsUrgent ? (['', ''] as const) : state.assertive;
+  return { ...state, lastKey: next.key, polite: fill(next.message, slot), politeSlot: slot, assertive };
 }
 
 export function politeText(state: AnnouncerState): string {
