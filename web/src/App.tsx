@@ -56,7 +56,8 @@ import { ObserverConsent } from './pages/ObserverConsent';
 import { FeedbackConsent } from './pages/FeedbackConsent';
 import { CatalogReview } from './pages/CatalogReview';
 import { LibraryAdmin } from './pages/LibraryAdmin';
-import { can } from './components/capabilityModel';
+import { can, onlyWhoCan } from './components/capabilityModel';
+import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { isPublicPath } from './components/errorBoundaryModel';
 
@@ -453,6 +454,34 @@ function CandidatePage({ children }: { children: React.ReactNode }) {
   return <main>{children}</main>;
 }
 
+/**
+ * The admin console, refused at the door.
+ *
+ * The /admin addresses were not gated here at all: any signed-in user could
+ * open one, and the console asked for connectors, model executions and
+ * webhooks before its own role check could send them away -- so the sweep
+ * watched a recruiter's page fire three requests it knew would be refused and
+ * counted the 403s. The server held, which is the part that matters, but
+ * asking a question whose answer is "no" is not a way to find out.
+ *
+ * Now the route decides, before the console mounts: one sentence saying who
+ * this is for, and no request at all.
+ */
+function AdminOnly({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return null;
+  if (can(user, 'admin:manage')) return <>{children}</>;
+  return (
+    <EmptyState
+      heading="page"
+      icon="lock"
+      title="Admin console"
+      message={onlyWhoCan('admin:manage', 'open the admin console')}
+      action={<Link className="btn secondary" to="/"><Icon name="arrow-left" size={16} />Back to Home</Link>}
+    />
+  );
+}
+
 function RouteBoundary({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   return <ErrorBoundary scope="page" resetKey={pathname} homeHref={isPublicPath(pathname) ? null : '/'}>{children}</ErrorBoundary>;
@@ -510,10 +539,10 @@ export function App() {
       {/* The platform owner's queue; the page itself refuses anyone else, as the API does. */}
       <Route path="/catalog-review" element={<Protected><CatalogReview /></Protected>} />
       <Route path="/library-admin" element={<Protected><LibraryAdmin /></Protected>} />
-      <Route path="/admin" element={<Protected><Admin /></Protected>} />
-      <Route path="/admin/signups" element={<Protected><SignupQueue /></Protected>} />
+      <Route path="/admin" element={<Protected><AdminOnly><Admin /></AdminOnly></Protected>} />
+      <Route path="/admin/signups" element={<Protected><AdminOnly><SignupQueue /></AdminOnly></Protected>} />
       {/* The console's sub-tabs; /admin itself is the System health tab. */}
-      <Route path="/admin/:tab" element={<Protected><Admin /></Protected>} />
+      <Route path="/admin/:tab" element={<Protected><AdminOnly><Admin /></AdminOnly></Protected>} />
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="/about" element={<PublicOrApp><About /></PublicOrApp>} />

@@ -24,3 +24,17 @@ describe('onlyWhoCan', () => {
     expect(onlyWhoCan('role:approve_scorecard', 'approve the scorecard')).toBe('Only a hiring manager or an admin can approve the scorecard.');
   });
 });
+
+/**
+ * The refusal the /admin routes show. It used to say "someone with
+ * permission", which tells a recruiter nothing about whom to ask.
+ */
+describe('the admin console refusal', () => {
+  it('names who may open it', () => {
+    expect(onlyWhoCan('admin:manage', 'open the admin console')).toBe('Only an admin can open the admin console.');
+  });
+
+  it('names who may read the audit log', () => {
+    expect(onlyWhoCan('audit:read', 'read the audit log')).toBe('Only an admin or an auditor can read the audit log.');
+  });
+});

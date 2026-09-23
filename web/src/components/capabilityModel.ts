@@ -49,6 +49,8 @@ const WHO_CAN: Partial<Record<Capability, string>> = {
   'interview:schedule': 'a recruiter, a hiring manager or an admin',
   'interview:invite': 'a recruiter, a hiring manager or an admin',
   'interview:drive': 'a recruiter or an admin',
+  'admin:manage': 'an admin',
+  'audit:read': 'an admin or an auditor',
 };
 
 /** "Only a hiring manager or an admin can approve the scorecard." */
