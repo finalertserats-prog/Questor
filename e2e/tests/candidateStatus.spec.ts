@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createRoleAndCandidate, instrumentCandidateBrowser, runId } from './helpers';
+import { assessmentIdFromUrl, readTranscriptForReview } from './transcriptRead';
 
 /**
  * The walk the whole feature exists for: an interview is finished, the
@@ -108,6 +109,9 @@ test('a finished interview turns its invitation link into the candidate status p
   await page.getByRole('link', { name: 'Open the assessment' }).click();
   await expect(page).toHaveURL(/\/assessments\//, { timeout: 30_000 });
   await expect(page.getByRole('heading', { name: 'Assessment', exact: true })).toBeVisible({ timeout: 20_000 });
+  // The server refuses a verdict from a reviewer who has not read the
+  // interview; see tests/transcriptRead.ts.
+  await readTranscriptForReview(page, assessmentIdFromUrl(page.url()));
   await page.getByTestId('verdict-CONSIDER').click();
   await page.getByLabel('Why (required)').fill('Read the evidence the same way; recording it so the letter goes.');
   await page.getByTestId('verdict-act').click();
