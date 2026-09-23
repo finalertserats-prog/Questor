@@ -1,5 +1,6 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useId, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useMeasuredWidth } from './useMeasuredWidth';
 import {
   axisLabelStride,
   BAR_LAYOUT,
@@ -28,29 +29,6 @@ import {
  * including the type. That is what turned an 11px axis label into 23px of
  * shouting date and stretched a 220px chart into a screen of whitespace.
  */
-
-/**
- * The rendered width of `ref`, in CSS pixels. Falls back to `fallback` before
- * the first measurement and anywhere ResizeObserver is missing (jsdom in the
- * unit tests), so a chart always has sane geometry to draw with.
- */
-function useMeasuredWidth(fallback: number) {
-  const ref = useRef<HTMLElement | null>(null);
-  const [width, setWidth] = useState(fallback);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver((entries) => {
-      const measured = Math.round(entries[0]?.contentRect.width ?? 0);
-      if (measured > 0) setWidth(measured);
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  return { ref, width };
-}
 
 let measureCanvas: HTMLCanvasElement | null = null;
 
