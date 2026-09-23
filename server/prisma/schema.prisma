@@ -36,6 +36,27 @@ model Tenant {
   demoGrants     DemoGrant[]
   competencies   OrgCompetency[]
   outcomeSnapshots OutcomeSnapshot[]
+  // The business areas this organisation hires in, and how many it may hold.
+  // No rows means "no choice made" — the whole shared catalog, which is what
+  // every organisation created before onboarding existed still sees.
+  businessAreas     TenantBusinessArea[]
+  businessAreaLimit Int      @default(5)
+}
+
+// One business area an organisation hires in: a row of the shared role
+// catalog's own domain table, not a second taxonomy. Used to narrow the
+// catalog this organisation browses by default. It is a view, not a boundary:
+// the catalog is global and asking for everything still returns everything.
+model TenantBusinessArea {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domainId  String
+  domain    CatalogDomain @relation(fields: [domainId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, domainId])
+  @@index([tenantId])
 }
 
 model User {
@@ -77,6 +98,7 @@ model CatalogDomain {
   updatedAt DateTime @updatedAt
   roles     CatalogRole[]
   proposals CatalogProposal[]
+  tenants   TenantBusinessArea[]
 }
 
 model CatalogJobFamily {
@@ -906,10 +928,26 @@ model SignupRequest {
   createdUserId     String?
   createdAt         DateTime @default(now())
 
+  // What a self-serve organisation asked for. Null on a join request and on
+  // every request made before organisation onboarding existed.
+  regionCode        String?
+  orgSize           String?
+  // Catalog domain slugs, in the order chosen. JSON because SQLite has no
+  // array type, matching every other list in this schema.
+  businessAreasJson String   @default("[]")
+  // Normalised comparison keys, written at request time so the abuse checks
+  // are one indexed read rather than a scan that normalises every row.
+  orgNameKey        String?
+  emailDomain       String?
+
   // Re-applications are allowed, but operators still need to find the history
   // for one address without scanning every pending request.
   @@index([email])
   @@index([status, createdAt])
+  // The cooldown on re-asking for one organisation name, and the per-domain
+  // flood check. Both read "recent rows for this key", so both are indexed.
+  @@index([orgNameKey, createdAt])
+  @@index([emailDomain, createdAt])
 }
 
 

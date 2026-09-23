@@ -25,6 +25,9 @@ import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
 import { getPipelineSummary } from '../services/pipeline.js';
 import { ORG_SLUG } from './orgs.js';
 import { decideSignupRequest, signupApplicant } from '../services/signup.js';
+import { existingOrganisationMatch } from '../services/signupAbuse.js';
+import { getTenantBusinessAreas, listBusinessAreas, setBusinessAreaLimit, setTenantBusinessAreas, MAX_BUSINESS_AREA_LIMIT } from '../services/businessAreas.js';
+import { orgSizeLabel } from '../domain/orgOnboarding.js';
 import { webhookUrlProblem } from '../services/webhookUrl.js';
 import { resolveCommit } from '../services/build.js';
 import { INSTANCE_ID, latestJobRuns } from '../services/jobs.js';
@@ -131,9 +134,91 @@ adminRouter.get('/signups', requireCapability('admin:manage'), requireOperator, 
     select: {
       id: true, name: true, email: true, mode: true, organisationName: true, orgSlug: true,
       status: true, expiresAt: true, decidedAt: true, decidedBy: true, createdTenantId: true, createdUserId: true, createdAt: true,
+      regionCode: true, orgSize: true, businessAreasJson: true,
     },
   });
-  res.json({ signups: rows.map((row) => ({ ...row, applicant: signupApplicant(row) })) });
+
+  // The request's own details, in front of the person deciding it. Approving
+  // "an organisation" without seeing which areas of the shared catalog it
+  // asked for is approving a blank.
+  const areaSlugs = new Set(rows.flatMap((row) => parseJsonOptional<string[]>(row.businessAreasJson, [], { model: 'SignupRequest', id: row.id, field: 'businessAreasJson' })));
+  const [areaNames, regionNames] = await Promise.all([
+    areaSlugs.size === 0 ? [] : prisma.catalogDomain.findMany({ where: { slug: { in: [...areaSlugs] } }, select: { slug: true, name: true } }),
+    prisma.catalogRegion.findMany({ select: { code: true, name: true } }),
+  ]);
+  const areaName = new Map(areaNames.map((a) => [a.slug, a.name]));
+  const regionName = new Map(regionNames.map((r) => [r.code, r.name]));
+
+  const signups = await Promise.all(rows.map(async (row) => {
+    const slugs = parseJsonOptional<string[]>(row.businessAreasJson, [], { model: 'SignupRequest', id: row.id, field: 'businessAreasJson' });
+    return {
+      ...row,
+      applicant: signupApplicant(row),
+      region: row.regionCode ? { code: row.regionCode, name: regionName.get(row.regionCode) ?? row.regionCode } : null,
+      orgSizeLabel: row.orgSize ? orgSizeLabel(row.orgSize) : null,
+      businessAreas: slugs.map((slug) => ({ slug, name: areaName.get(slug) ?? slug })),
+      // The one fact the public form must never confirm, shown to the only
+      // person entitled to know it: an organisation of this name is already
+      // here, so this may be a duplicate — or someone reaching for the name.
+      existingOrganisation: row.organisationName ? await existingOrganisationMatch(row.organisationName) : null,
+    };
+  }));
+  res.json({ signups });
+}));
+
+// --- business areas ---------------------------------------------------------
+//
+// An organisation's areas are its own to change, within a limit only the
+// platform owner may raise. Both sides audited: "who narrowed our catalog"
+// and "who let them have eight" are the same question asked from two ends.
+
+const businessAreasSchema = z.object({
+  areas: z.array(z.string().trim().min(1).max(80)).max(MAX_BUSINESS_AREA_LIMIT),
+}).strict();
+
+adminRouter.get('/business-areas', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const [chosen, all] = await Promise.all([getTenantBusinessAreas(req.auth!.tenantId), listBusinessAreas()]);
+  res.json({
+    limit: chosen.limit,
+    chosen: chosen.areas.map(({ slug, name }) => ({ slug, name })),
+    available: all.map(({ slug, name, summary }) => ({ slug, name, summary })),
+  });
+}));
+
+adminRouter.put('/business-areas', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const { areas } = businessAreasSchema.parse(req.body);
+  const saved = await setTenantBusinessAreas({ tenantId: req.auth!.tenantId, slugs: areas, actorId: req.auth!.userId });
+  res.json({ limit: saved.limit, chosen: saved.areas.map(({ slug, name }) => ({ slug, name })) });
+}));
+
+const businessAreaLimitSchema = z.object({
+  limit: z.number().int().min(1).max(MAX_BUSINESS_AREA_LIMIT),
+}).strict();
+
+const requireLimitOperator = operatorOnly({
+  forbidden: 'Only the deployment operator can change an organisation\'s business-area limit.',
+  unconfigured: 'This is temporarily unavailable.',
+});
+
+/** Every organisation and where it stands against its limit, for the owner. */
+adminRouter.get('/organisations', requireCapability('admin:manage'), requireLimitOperator, asyncHandler(async (_req, res) => {
+  const tenants = await prisma.tenant.findMany({
+    where: { isDemo: false },
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true, slug: true, region: true, businessAreaLimit: true, _count: { select: { businessAreas: true } } },
+  });
+  res.json({
+    organisations: tenants.map((t) => ({
+      id: t.id, name: t.name, slug: t.slug, region: t.region,
+      businessAreaLimit: t.businessAreaLimit, businessAreaCount: t._count.businessAreas,
+    })),
+  });
+}));
+
+adminRouter.put('/organisations/:id/business-area-limit', requireCapability('admin:manage'), requireLimitOperator, asyncHandler(async (req, res) => {
+  const { limit } = businessAreaLimitSchema.parse(req.body);
+  const saved = await setBusinessAreaLimit({ tenantId: req.params.id, limit, actorId: req.auth!.userId });
+  res.json({ limit: saved.limit });
 }));
 
 adminRouter.post('/signups/:id/approve', requireCapability('admin:manage'), requireOperator, asyncHandler(async (req, res) => {

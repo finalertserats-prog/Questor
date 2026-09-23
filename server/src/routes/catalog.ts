@@ -9,6 +9,8 @@ import { normalizeTitle } from '../domain/catalogText.js';
 import { addCatalogRole, catalogTitleProblem } from '../services/catalogRoles.js';
 import { assertNotDemoTenant } from '../services/demoAccess.js';
 import { CATALOG_ATTRIBUTIONS } from '../domain/catalogAttribution.js';
+import { getTenantBusinessAreas, scopedDomainIds } from '../services/businessAreas.js';
+import { shouldScopeCatalog } from '../domain/orgOnboarding.js';
 
 export const catalogRouter = Router();
 
@@ -20,10 +22,24 @@ catalogRouter.get('/sources', (_req, res) => {
 
 catalogRouter.use(authenticate);
 
+/**
+ * `scope` narrows the catalog to the organisation's own business areas, which
+ * is the point of choosing them: a search across 35 domains and every title in
+ * them is slower and noisier than a search across the four the organisation
+ * hires in.
+ *
+ * `mine` is the default and `all` is always available to anyone signed in.
+ * This is a view, never a boundary — the catalog is global and shared, and an
+ * organisation that has chosen no areas (every organisation that existed
+ * before onboarding) gets the unscoped result either way.
+ */
+const scopeSchema = z.enum(['mine', 'all']).default('mine');
+
 const roleQuerySchema = z.object({
   domainId: z.string().cuid().optional(),
   q: z.string().max(100).default(''),
   limit: z.coerce.number().int().min(1).max(25).default(10),
+  scope: scopeSchema,
 }).strict();
 
 const techStackSchema = z.array(z.string().trim().min(1).max(40)).max(15).default([]);
@@ -82,8 +98,13 @@ const CANDIDATES_PER_TIER = 100;
  * bounded query: one query capped at N rows would let a short query such as
  * "qa" fill the cap with substring hits ("Aqa…") and drop the exact "QA".
  */
-async function findActiveRoles(domainId: string | undefined, normalizedQuery: string) {
-  const base: Prisma.CatalogRoleWhereInput = { status: 'active', ...(domainId ? { domainId } : {}) };
+async function findActiveRoles(domainId: string | undefined, normalizedQuery: string, scopeDomainIds: readonly string[] = []) {
+  const base: Prisma.CatalogRoleWhereInput = {
+    status: 'active',
+    // An explicit domain wins over the organisation's scope: the caller named
+    // one area, and narrowing that further would silently return nothing.
+    ...(domainId ? { domainId } : scopeDomainIds.length > 0 ? { domainId: { in: [...scopeDomainIds] } } : {}),
+  };
   if (!normalizedQuery) {
     return prisma.catalogRole.findMany({ where: base, include: ROLE_INCLUDE, orderBy: { title: 'asc' }, take: CANDIDATES_PER_TIER });
   }
@@ -108,13 +129,39 @@ function duplicateResponse(existing: { readonly id: string; readonly title: stri
     : { error: 'This title was retired from the catalog. Choose a current role or ask the platform owner to restore it.', retired: true };
 }
 
-catalogRouter.get('/domains', asyncHandler(async (_req, res) => {
+catalogRouter.get('/domains', asyncHandler(async (req, res) => {
+  const { scope } = z.object({ scope: scopeSchema }).strict().parse(req.query);
+  const scopeDomainIds = await scopedDomainIds(req.auth!.tenantId);
+  const scoped = shouldScopeCatalog(scopeDomainIds, scope);
   const domains = await prisma.catalogDomain.findMany({
-    where: { status: 'active' },
+    where: { status: 'active', ...(scoped ? { id: { in: scopeDomainIds } } : {}) },
     orderBy: { sortOrder: 'asc' },
     include: { _count: { select: { roles: { where: { status: 'active' } } } } },
   });
+  // Still a bare array: every existing caller reads it that way, and turning
+  // it into an envelope to carry one boolean would have been a migration for
+  // nothing. Whether the list was narrowed is answered by /catalog/scope.
   res.json(domains.map((d) => ({ id: d.id, slug: d.slug, name: d.name, summary: d.summary, roleCount: d._count.roles })));
+}));
+
+/**
+ * Whether this organisation's catalog view is narrowed, and to what.
+ *
+ * Its own endpoint rather than an envelope around /domains, so nothing that
+ * already reads that array has to change. A page uses this to say "showing
+ * your 4 business areas" and to offer the whole catalog.
+ */
+catalogRouter.get('/scope', asyncHandler(async (req, res) => {
+  const [{ limit, areas }, totalDomains] = await Promise.all([
+    getTenantBusinessAreas(req.auth!.tenantId),
+    prisma.catalogDomain.count({ where: { status: 'active' } }),
+  ]);
+  res.json({
+    scoped: areas.length > 0,
+    areas: areas.map(({ id, slug, name }) => ({ id, slug, name })),
+    limit,
+    totalDomains,
+  });
 }));
 
 catalogRouter.get('/regions', asyncHandler(async (_req, res) => {
@@ -129,7 +176,12 @@ catalogRouter.get('/experience-bands', (_req, res) => {
 catalogRouter.get('/roles', asyncHandler(async (req, res) => {
   const query = roleQuerySchema.parse(req.query);
   const normalizedQuery = normalizeTitle(query.q);
-  const rows = await findActiveRoles(query.domainId, normalizedQuery);
+  const scopeDomainIds = await scopedDomainIds(req.auth!.tenantId);
+  const rows = await findActiveRoles(
+    query.domainId,
+    normalizedQuery,
+    shouldScopeCatalog(scopeDomainIds, query.scope) ? scopeDomainIds : [],
+  );
   const ranked = rows
     .map((role) => ({ role, score: rankRole(role, normalizedQuery) }))
     .filter((r) => !normalizedQuery || r.score.rank < 4)

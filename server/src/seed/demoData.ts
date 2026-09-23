@@ -134,6 +134,10 @@ export async function wipe(): Promise<void> {
   await prisma.auditEvent.deleteMany();
   await prisma.outcomeSnapshot.deleteMany();
   await prisma.signupRequest.deleteMany();
+  // Holds a foreign key onto CatalogDomain, which a wipe deliberately leaves
+  // standing: the shared catalog is not any tenant's data. Named explicitly
+  // rather than relying on the tenant cascade, so the order stays readable.
+  await prisma.tenantBusinessArea.deleteMany();
   await prisma.user.deleteMany();
   await prisma.tenant.deleteMany();
 }

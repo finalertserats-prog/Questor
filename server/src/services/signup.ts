@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { PrismaClient, SignupRequest } from '@prisma/client';
-import { prisma } from '../db.js';
+import { prisma, parseJsonOptional } from '../db.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
@@ -9,6 +9,8 @@ import { logAudit } from './audit.js';
 import { getEmail } from '../providers/email/index.js';
 import { isReservedOperatorEmail } from '../middleware/platformOperator.js';
 import { renderSignupAcknowledgementEmail, renderSignupOperatorEmail, renderSignupWelcomeEmail } from '../providers/email/signupEmail.js';
+import { guardSignupRequest } from './signupAbuse.js';
+import { emailDomainOf, orgNameKey } from '../domain/orgOnboarding.js';
 
 export const SIGNUP_DECISION_TTL_DAYS = 14;
 const DAY_MS = 24 * 60 * 60_000;
@@ -58,6 +60,11 @@ export interface CreateSignupInput {
   mode: SignupMode;
   organisationName?: string;
   orgCode?: string;
+  /** Where the organisation hires from, reusing the catalog's own regions. */
+  regionCode?: string;
+  orgSize?: string;
+  /** Catalog domain slugs — the business areas this organisation hires for. */
+  businessAreas?: readonly string[];
   now?: Date;
 }
 
@@ -68,18 +75,35 @@ export async function createSignupRequest(input: CreateSignupInput): Promise<voi
   }
 
   const now = input.now ?? new Date();
+  const email = input.email.toLowerCase();
+
+  // Before anything is written or emailed. A refusal here costs one count
+  // query; letting it through costs a row in a person's queue.
+  const verdict = await guardSignupRequest({
+    email, mode: input.mode, organisationName: input.organisationName, now,
+  });
+  if (verdict.kind === 'refuse') throw new HttpError(verdict.status, verdict.message);
+  // Answered exactly as success is answered, with nothing created: see
+  // services/signupAbuse.ts for why saying anything else would be an answer.
+  if (verdict.kind === 'silently-drop') return;
+
   const token = mintSignupDecisionToken();
   const organisation = input.mode === 'new-org' ? input.organisationName! : input.orgCode!;
   const created = await prisma.signupRequest.create({
     data: {
       name: input.name,
-      email: input.email.toLowerCase(),
+      email,
       mode: input.mode,
       organisationName: input.mode === 'new-org' ? input.organisationName! : null,
       orgSlug: input.mode === 'join' ? input.orgCode!.toLowerCase() : null,
       passwordHash: hashPassword(input.password),
       decisionTokenHash: hashSignupDecisionToken(token),
       expiresAt: new Date(now.getTime() + SIGNUP_DECISION_TTL_DAYS * DAY_MS),
+      regionCode: input.mode === 'new-org' ? input.regionCode ?? null : null,
+      orgSize: input.mode === 'new-org' ? input.orgSize ?? null : null,
+      businessAreasJson: JSON.stringify(input.mode === 'new-org' ? input.businessAreas ?? [] : []),
+      orgNameKey: input.mode === 'new-org' && input.organisationName ? orgNameKey(input.organisationName) : null,
+      emailDomain: emailDomainOf(email) || null,
     },
   });
 
@@ -108,6 +132,18 @@ export async function createSignupRequest(input: CreateSignupInput): Promise<voi
     // The request stands; only the courtesy note failed.
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Signup acknowledgement email could not be sent');
   }
+
+  // The request itself, not only the decision on it. Without this the trail
+  // started at "an account appeared": what was asked for, and when, had no
+  // record, so an approval could not be checked against it afterwards.
+  await auditSignupEvent(created, 'signup.requested', 'signup-form', {
+    mode: input.mode,
+    organisation,
+    regionCode: input.mode === 'new-org' ? input.regionCode ?? null : null,
+    orgSize: input.mode === 'new-org' ? input.orgSize ?? null : null,
+    businessAreas: input.mode === 'new-org' ? input.businessAreas ?? [] : [],
+    requestedAt: now,
+  });
 }
 
 export async function resolveSignupDecision(token: string, now = new Date()): Promise<SignupRequest> {
@@ -147,7 +183,13 @@ export function signupApplicant(row: Pick<SignupRequest, 'name' | 'email' | 'mod
   };
 }
 
-async function auditSignupDecision(row: SignupRequest, action: string, actorId: string, after: unknown) {
+/**
+ * A signup request has no tenant of its own until it is approved, and the
+ * audit log is per-tenant. Recorded against whatever organisation the request
+ * touches, falling back to the operator's own: "nowhere" is not an option for
+ * a decision a person made.
+ */
+async function auditSignupEvent(row: SignupRequest, action: string, actorId: string, after: unknown) {
   const tenantId = row.createdTenantId
     ?? (row.orgSlug ? (await prisma.tenant.findUnique({ where: { slug: row.orgSlug }, select: { id: true } }))?.id : null)
     // A declined new-organisation request created nothing and joins nothing,
@@ -161,7 +203,7 @@ async function auditSignupDecision(row: SignupRequest, action: string, actorId: 
   }
   await logAudit({
     tenantId,
-    actorType: actorId === 'signup-link' ? 'system' : 'user',
+    actorType: actorId === 'signup-link' || actorId === 'signup-form' ? 'system' : 'user',
     actorId,
     action,
     entityType: 'SignupRequest',
@@ -195,13 +237,14 @@ export async function decideSignupRequest(opts: {
       data: { status: 'DECLINED', decidedAt: now, decidedBy: opts.actorId },
     });
     if (count === 0) return { transitioned: false };
-    await auditSignupDecision(row, 'signup.declined', opts.actorId, { reason: 'operator_declined', decidedAt: now });
+    await auditSignupEvent(row, 'signup.declined', opts.actorId, { reason: 'operator_declined', decidedAt: now });
     return { transitioned: true };
   }
 
   let createdUserId: string | undefined;
   let createdTenantId: string | undefined;
   let declinedReason: string | null = null;
+  let grantedAreaSlugs: readonly string[] = [];
 
   const transitioned = await prisma.$transaction(async (tx) => {
     const claimed = await tx.signupRequest.updateMany({
@@ -237,11 +280,34 @@ export async function decideSignupRequest(opts: {
       createdUserId = user.id;
     } else {
       const tenant = await tx.tenant.create({
-        data: { name: row.organisationName ?? `${row.name}'s Org`, slug: await uniqueTenantSlug(tx as PrismaClient, row.organisationName ?? row.name) },
+        data: {
+          name: row.organisationName ?? `${row.name}'s Org`,
+          slug: await uniqueTenantSlug(tx as PrismaClient, row.organisationName ?? row.name),
+          // What they said on the form, not a default nobody chose. Left at
+          // the schema default when the request predates onboarding.
+          ...(row.regionCode ? { region: row.regionCode } : {}),
+        },
       });
       const user = await tx.user.create({
         data: { tenantId: tenant.id, email: row.email, name: row.name, passwordHash: row.passwordHash, role: 'admin' },
       });
+      // The areas they asked for become the areas they browse. Resolved against
+      // the live catalog inside the same transaction, so a domain retired
+      // between request and approval is dropped rather than failing the
+      // approval — the organisation is then simply unscoped, which is the same
+      // view every older organisation has.
+      const slugs = parseJsonOptional<string[]>(row.businessAreasJson, [], {
+        model: 'SignupRequest', id: row.id, field: 'businessAreasJson',
+      });
+      if (Array.isArray(slugs) && slugs.length > 0) {
+        const domains = await tx.catalogDomain.findMany({ where: { slug: { in: slugs }, status: 'active' }, select: { id: true } });
+        if (domains.length > 0) {
+          await tx.tenantBusinessArea.createMany({
+            data: domains.map((d) => ({ tenantId: tenant.id, domainId: d.id })),
+          });
+        }
+        grantedAreaSlugs = slugs;
+      }
       createdTenantId = tenant.id;
       createdUserId = user.id;
     }
@@ -252,11 +318,15 @@ export async function decideSignupRequest(opts: {
 
   if (!transitioned) return { transitioned: false };
   const finalRow = { ...row, createdTenantId: createdTenantId ?? row.createdTenantId, createdUserId: createdUserId ?? row.createdUserId };
-  await auditSignupDecision(finalRow, declinedReason ? 'signup.approval_declined' : 'signup.approved', opts.actorId, {
+  await auditSignupEvent(finalRow, declinedReason ? 'signup.approval_declined' : 'signup.approved', opts.actorId, {
     decidedAt: now,
     createdTenantId,
     createdUserId,
     reason: declinedReason ?? undefined,
+    // What the organisation was set up with, so "who gave them these areas"
+    // has an answer from the moment the account exists.
+    regionCode: row.regionCode ?? undefined,
+    businessAreas: grantedAreaSlugs.length > 0 ? grantedAreaSlugs : undefined,
   });
   // The account exists once the transaction above committed. A welcome mail
   // that bounces must not turn that into a 500, which then reads as "already
