@@ -127,10 +127,22 @@ async function loadInvitation(token: string) {
 async function currentStaffClaims(token: string): Promise<AuthClaims | null> {
   const claims = verifyToken(token);
   if (!claims) return null;
-  const user = await prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true } });
+  // The same two refusals the HTTP middleware makes, and for the same reasons.
+  // This door was open while that one was shut: the half-signed-in ticket
+  // handed out between a correct password and a correct code is signed with
+  // the same secret, so without the first check it would have opened an
+  // interview socket and walked past the code step entirely. And without the
+  // second, a session from before a password change would keep driving a live
+  // interview after every HTTP request it made had started being refused.
+  if (claims.purpose !== undefined) return null;
+  const user = await prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true, sessionsEpoch: true } });
   if (!user || user.tenantId !== claims.tenantId) return null;
-  return { ...claims, userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
+  if ((claims.pv ?? 0) !== user.sessionsEpoch) return null;
+  return { ...claims, userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, pv: user.sessionsEpoch };
 }
+
+/** Test seam: the staff-token check above, without a running socket server. */
+export const _currentStaffClaims = currentStaffClaims;
 
 async function resolveHandshakeAuth(raw: Record<string, unknown>): Promise<SocketAuth | null> {
   // Handshake auth payload only — never the query string, which leaks live

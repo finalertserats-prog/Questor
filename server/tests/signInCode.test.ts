@@ -210,6 +210,15 @@ describe('the half-signed-in ticket', () => {
     expect(claims.purpose).toBe('signin-code');
   });
 
+  it('does not open an interview socket either', async () => {
+    // The socket verifies the same token with the same secret, so it needs the
+    // same refusal. Checked at the seam the socket actually uses rather than
+    // through a real connection, which needs a running server.
+    const started = await signIn(fx.adminEmail);
+    const { _currentStaffClaims } = await import('../src/realtime/socket.js');
+    expect(await _currentStaffClaims(started.body.pending)).toBeNull();
+  });
+
   it('will not let a real session stand in for it', async () => {
     const session = signToken({ userId: fx.adminId, tenantId: fx.tenantId, role: 'admin', email: fx.adminEmail, pv: 0 });
     const res = await enterCode(session, '123456');
@@ -412,6 +421,17 @@ describe('break-glass', () => {
   it('runs out', async () => {
     await prisma.user.update({ where: { id: fx.adminId }, data: { mfaBypassUntil: new Date(Date.now() - 1000) } });
     expect((await signIn(fx.adminEmail)).body.mfa).toBe('code_sent');
+  });
+});
+
+describe('a session from before a password change', () => {
+  it('cannot drive a live interview either', async () => {
+    const stale = signToken({ userId: fx.adminId, tenantId: fx.tenantId, role: 'admin', email: fx.adminEmail, pv: 0 });
+    const { _currentStaffClaims } = await import('../src/realtime/socket.js');
+    expect(await _currentStaffClaims(stale)).not.toBeNull();
+
+    await prisma.user.update({ where: { id: fx.adminId }, data: { sessionsEpoch: { increment: 1 } } });
+    expect(await _currentStaffClaims(stale)).toBeNull();
   });
 });
 

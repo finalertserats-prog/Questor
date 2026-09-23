@@ -27,7 +27,7 @@ export function mfaPolicyOf(policy: Record<string, unknown> | null | undefined):
 export interface CodeRequirement {
   readonly required: boolean;
   /** Why, for the audit trail and for what the page says. */
-  readonly reason: 'policy' | 'role' | 'platform_operator' | 'escalation' | 'not_required';
+  readonly reason: 'policy' | 'role' | 'platform_operator' | 'not_required';
 }
 
 /**
@@ -52,14 +52,16 @@ export function codeRequired(input: {
 /**
  * Whether a trusted device may stand in for the code.
  *
- * Never for a role the code step exists to protect but the grant was not made
- * under: a recruiter who asked to be trusted and is later made an admin has a
- * grant that was agreed to by a less powerful account, so it does not carry.
- * The grant's own `role` is compared in services/trustedDevice.ts; this states
- * the one case where a live, matching grant is still not enough.
+ * The platform owner is asked every time. That account reaches every
+ * organisation's shared catalog and the question library, and a browser
+ * remembered a week ago says nothing about who is sitting at it now.
+ *
+ * Escalation is not listed here because it is handled a layer down and more
+ * exactly: a grant records the role it was made under, so a recruiter who asked
+ * to be remembered and is later made an admin holds a grant that a less
+ * powerful account agreed to — and services/trustedDevice.ts refuses it. A rule
+ * here would only be able to guess at that.
  */
 export function deviceMayStandIn(reason: CodeRequirement['reason']): boolean {
-  // An escalation is the moment the second factor is worth most, and a device
-  // remembered a week ago says nothing about who is sitting at it now.
-  return reason !== 'escalation' && reason !== 'platform_operator';
+  return reason !== 'platform_operator';
 }
