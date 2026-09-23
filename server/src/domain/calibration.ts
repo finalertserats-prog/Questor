@@ -348,6 +348,16 @@ export interface CalibrationAggregate {
   readonly latestAt: Date | null;
   /** The reviewers' own words, kept for clustering. Never scored, never judged. */
   readonly reasons: readonly string[];
+  /**
+   * How many DIFFERENT reviewers wrote any of those words.
+   *
+   * Not the same as `reviewers`, and the difference matters: three reviewers
+   * can disagree with the model while only one of them writes down why. Group
+   * that one person's notes into "themes" and you have republished their
+   * writing under a heading, attributable by anyone who knows how they write.
+   * The clustering floor counts THIS.
+   */
+  readonly reasonAuthors: number;
 }
 
 export interface AggregateInput {
@@ -408,6 +418,7 @@ export function aggregate(input: AggregateInput): CalibrationAggregate {
   const agreeing = withDirection.filter((c) => Math.sign(c.median) === direction).length;
   const reviewerAgreement = withDirection.length === 0 ? 0 : agreeing / withDirection.length;
 
+  const withReasons = inWindow.filter((o) => o.reasonText.trim().length > 0);
   const times = inWindow.map((o) => o.observedAt.getTime());
   return {
     roleKey: input.roleKey,
@@ -425,7 +436,8 @@ export function aggregate(input: AggregateInput): CalibrationAggregate {
     blindObservations: inWindow.filter((o) => o.blindReview).length,
     earliestAt: times.length ? new Date(Math.min(...times)) : null,
     latestAt: times.length ? new Date(Math.max(...times)) : null,
-    reasons: inWindow.map((o) => o.reasonText).filter((r) => r.trim().length > 0),
+    reasons: withReasons.map((o) => o.reasonText),
+    reasonAuthors: new Set(withReasons.map((o) => o.reviewerId)).size,
   };
 }
 
@@ -579,6 +591,24 @@ export function evaluateFairness(opts: {
   const { projection, thresholds: t } = opts;
   const shift = projection.shift;
   const movesTooMuch = shift !== null && Math.abs(shift) > t.maxPassRateShift;
+
+  // The replayed projection is checked FIRST, and is checked in every mode.
+  //
+  // It used to sit below the two branches, so switching the statistics
+  // requirement off skipped it as well — and that switch is documented as
+  // "check the projection alone", not "check nothing". A projected movement
+  // past the limit now holds the adjustment whatever the statistics say or
+  // fail to say, which is the only reading of this gate that is always safe.
+  if (movesTooMuch) {
+    return {
+      source: opts.statisticsAvailable ? (opts.statisticsReadable ? 'checked' : 'insufficient_sample') : 'unavailable',
+      projection,
+      observedPassRate: opts.observedPassRate,
+      observedSample: opts.observedSample,
+      flagged: true,
+      statement: `Held: replayed over the same interviews, this adjustment would move the share reaching the pass threshold by ${formatShift(shift as number)} — more than the ${Math.round(t.maxPassRateShift * 100)}% this check allows without a person looking first.`,
+    };
+  }
 
   if (!opts.statisticsAvailable) {
     return {

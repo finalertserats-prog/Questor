@@ -12,9 +12,18 @@
 //   * It is NOT a finding. A pattern is a question ("worth a look"), never an
 //     answer. Nothing here may conclude that a reviewer is biased, unfair or
 //     wrong, and the vocabulary is tested (`NEVER_SAY`) so it cannot drift.
-//   * It is NOT automatic. Nothing acts on a pattern. The only consequences are
-//     that a person is shown it, and that the reviewer is held out of
-//     calibration until that person has looked.
+//   * NOTHING IS DONE TO THE REVIEWER automatically. No status changes, no
+//     access is removed, no decision of theirs is reversed, and nobody is told
+//     anything about them except their own organisation's admin.
+//
+//     There IS one automatic effect, and being precise about it matters more
+//     than sounding reassuring: while an alert is open, that reviewer's
+//     observations stop feeding calibration. That is a brake on what the MODEL
+//     learns, not a sanction on the person — it stops one unusual pattern
+//     teaching the scoring something before anybody has looked at it. It
+//     applies only to the kinds that rest on a proportion with a confidence
+//     interval (see HOLDS_OUT), and it ends when an admin closes the alert,
+//     whichever way they close it.
 //   * It is NOT a performance record. These numbers must never reach anyone's
 //     appraisal, rating or standing inside Questor. There is no code path from
 //     here to any such thing and there must never be one.
@@ -369,9 +378,16 @@ export function patternAlerts(
   }
 
   const skew = opts.passRateSkew;
-  if (skew && skew.n >= stats.minimumReviews && Math.abs(skew.observed - skew.baseline) >= MATERIAL_GAP) {
-    say('pass_rate_skew', skew.n, skew.observed, skew.baseline,
-      `candidates reviewed here reach the next stage ${pct(skew.observed)} of the time, against ${pct(skew.baseline)} for the same roles across the organisation.`);
+  if (skew && skew.n >= stats.minimumReviews) {
+    // A rate supplied as a bare number is still a proportion over a sample, so
+    // it gets the same interval as every other proportion here. Without it, a
+    // noisy raw gap could open an alert AND hold a reviewer out of
+    // calibration — a consequence on the thinnest possible evidence.
+    const observed = proportion(Math.round(skew.observed * skew.n), skew.n);
+    if (excludesBaseline(observed, skew.baseline) && Math.abs(observed.value - skew.baseline) >= MATERIAL_GAP) {
+      say('pass_rate_skew', skew.n, observed.value, skew.baseline,
+        `candidates reviewed here reach the next stage ${pct(observed.value)} of the time, against ${pct(skew.baseline)} for the same roles across the organisation.`);
+    }
   }
 
   return alerts;
@@ -384,12 +400,22 @@ function pct(value: number): string {
 /**
  * Reviewers held out of calibration while an admin looks.
  *
- * Only the kinds that would actually skew what the model learns hold someone
- * out. How quickly a person records a verdict, or how much they write down, is
- * worth a look and is not a reason to discard their judgement.
+ * TWO conditions, and both are deliberate.
+ *
+ * First, the pattern must be one that would actually skew what the model
+ * learns. How quickly a person records a verdict, or how much they write down,
+ * is worth a look and is not a reason to discard their judgement.
+ *
+ * Second — and this is the one that is easy to get wrong — the pattern must
+ * rest on a proportion with a confidence interval that excluded the
+ * organisation's baseline. `divergence_from_peers` is a mean distance in
+ * levels, not a proportion; there is no interval behind it, so it is raised
+ * for a person to look at and has NO consequence of its own. A consequence on
+ * evidence we cannot put an interval around is exactly the kind of quiet
+ * unfairness this whole feature is supposed to be careful about.
  */
 const HOLDS_OUT: ReadonlySet<PatternKind> = new Set<PatternKind>([
-  'divergence_from_ai', 'divergence_from_peers', 'verdict_mix', 'override_direction', 'pass_rate_skew',
+  'divergence_from_ai', 'verdict_mix', 'override_direction', 'pass_rate_skew',
 ]);
 
 export function heldOutReviewers(openAlerts: ReadonlyArray<{ reviewerId: string; kind: PatternKind }>): string[] {

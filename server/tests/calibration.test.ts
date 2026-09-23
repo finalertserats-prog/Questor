@@ -285,6 +285,30 @@ describe('aggregate', () => {
     expect(a.reasons).toEqual(['They named the trade-off; the AI missed it.']);
   });
 
+  it('counts the reviewers who WROTE, not the reviewers who disagreed', () => {
+    // Three reviewers disagree; only one of them writes anything down.
+    // Clustering one person's notes into "themes" republishes their words.
+    const a = agg([
+      obs({ reviewerId: 'a', delta: -1, reviewId: '1', reasonText: 'A strong answer names the outcome.' }),
+      obs({ reviewerId: 'a', delta: -1, reviewId: '2', reasonText: 'Again, no outcome given.' }),
+      obs({ reviewerId: 'a', delta: -1, reviewId: '3', reasonText: 'No measurable result anywhere.' }),
+      obs({ reviewerId: 'b', delta: -1, reviewId: '4' }),
+      obs({ reviewerId: 'c', delta: -1, reviewId: '5' }),
+    ]);
+    expect(a.reviewers).toBe(3);
+    expect(a.reasonAuthors).toBe(1);
+    expect(a.reasons).toHaveLength(3);
+  });
+
+  it('counts each writer once however much they wrote', () => {
+    const a = agg([
+      obs({ reviewerId: 'a', delta: -1, reviewId: '1', reasonText: 'One.' }),
+      obs({ reviewerId: 'b', delta: -1, reviewId: '2', reasonText: 'Two.' }),
+      obs({ reviewerId: 'b', delta: -1, reviewId: '3', reasonText: 'Three.' }),
+    ]);
+    expect(a.reasonAuthors).toBe(2);
+  });
+
   it('counts major disagreements apart from minor ones', () => {
     const a = agg([
       obs({ reviewerId: 'a', delta: -2, reviewId: '1' }),
@@ -477,6 +501,24 @@ describe('evaluateFairness', () => {
   it('can be told not to require the statistics, and then says so', () => {
     const check = evaluateFairness({ ...base, statisticsAvailable: false, statisticsReadable: false, requireStatistics: false });
     expect(check.flagged).toBe(false);
+  });
+
+  it('still checks the replayed projection when the statistics are not required', () => {
+    // The switch means "check the projection alone", not "check nothing".
+    const check = evaluateFairness({
+      ...base, projection: { n: 20, before: 0.5, after: 0.2, shift: -0.3 },
+      statisticsAvailable: false, statisticsReadable: false, requireStatistics: false,
+    });
+    expect(check.flagged).toBe(true);
+    expect(check.statement).toContain('percentage points');
+  });
+
+  it('still checks the replayed projection when the sample is too small to read', () => {
+    const check = evaluateFairness({
+      ...base, projection: { n: 20, before: 0.5, after: 0.9, shift: 0.4 }, observedSample: 3,
+      statisticsAvailable: true, statisticsReadable: false, requireStatistics: false,
+    });
+    expect(check.flagged).toBe(true);
   });
 
   it('holds when the role has too few outcomes for the statistics to mean anything', () => {

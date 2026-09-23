@@ -51,7 +51,16 @@ export async function runCalibrationSweep(lease: LeaseHandle | null = null, now:
     if (lease && !(await lease.renew(CALIBRATION_JOB.ttlMs))) break;
     try {
       const settings = await calibrationSettingsFor(tenant.id);
-      if (!settings.organisationEnabled) continue;
+      if (!settings.organisationEnabled) {
+        // Deliberately NOT a `continue`. An organisation that switched
+        // calibration off still has rows marked active, and `runCalibration`
+        // is what withdraws them. Skipping it left those rows sitting there:
+        // nothing applied them while the switch was off, but switching back on
+        // would have applied stale adjustments immediately, before anything
+        // recomputed them against current evidence.
+        withdrawn += (await runCalibration(tenant.id, now)).withdrawn;
+        continue;
+      }
 
       // Patterns first: a reviewer held out of calibration must be held out of
       // THIS run, not the next one.

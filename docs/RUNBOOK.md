@@ -228,7 +228,7 @@ What counts as "sent" is the invitation's `sentAt` (its creation, for one create
 
 **The shared calibration** (`CALIBRATION_GLOBAL_ENABLED`, plus the organisation's own `calibrationGlobalContribution` opt-in) shares role, competency name, band, both levels, the month and a one-way reviewer code. It never shares the organisation, the candidate, the reviewer's identity or anything a reviewer wrote. Turning the opt-in off stops further sharing; what has already been contributed cannot be traced back, which is also why it cannot be picked out and withdrawn.
 
-**Reviewer statistics are employee data.** Every admin view of them is audited (`reviewer.pattern.viewed`). Every reviewer can read their own at `/api/admin/calibration/reviewers/me`. Nothing acts on a pattern automatically; the only effect is that a flagged reviewer stops feeding calibration until an admin closes the alert. The legal questions this raises are listed in the plan for the solicitor's pack.
+**Reviewer statistics are employee data.** Every admin view of them is audited (`reviewer.pattern.viewed`). Every reviewer can read their own at `/api/admin/calibration/reviewers/me`. Nothing is done to a reviewer automatically -- no status change, no access removed, nobody told but your own admin. The one automatic effect is that a flagged reviewer's observations stop feeding calibration until an admin closes the alert: a brake on what the model learns, not a sanction on the person. The legal questions this raises are listed in the plan for the solicitor's pack.
 
 ## Known limits
 

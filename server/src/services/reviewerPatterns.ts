@@ -7,9 +7,10 @@
 //      (`admin:manage`), and every such read is audited.
 //   2. Every reviewer may read their own, with no capability at all, and they
 //      are the SAME numbers the admin sees — not a softened version.
-//   3. Nothing acts on a pattern. The only consequence is that a reviewer is
-//      held out of calibration until an admin has closed the alert, and even
-//      that holds only for the kinds that would skew what the model learns.
+//   3. Nothing is DONE TO a reviewer automatically. The one automatic effect
+//      is that their observations stop feeding calibration while an alert is
+//      open — a brake on what the model learns, not a sanction on the person,
+//      and only for the kinds that rest on a confidence interval.
 //
 // There is no code path from here to anyone's performance record, and adding
 // one would be a change to what this product does, not a feature.

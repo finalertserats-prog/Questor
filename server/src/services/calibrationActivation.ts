@@ -238,7 +238,10 @@ async function themesFor(aggregate: CalibrationAggregate, competencyName: string
   try {
     return await clusterReasons({
       reasons: aggregate.reasons,
-      distinctReviewers: aggregate.reviewers,
+      // The reviewers who WROTE, not the reviewers who disagreed. Three people
+      // can disagree while only one of them writes down why, and themes drawn
+      // from one person's notes are that person's words.
+      distinctReviewers: aggregate.reasonAuthors,
       competencyName,
     });
   } catch (err) {

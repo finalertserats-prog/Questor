@@ -315,6 +315,58 @@ describe('forward only', () => {
     expect(map.sql).toBeUndefined();
   });
 
+  it('clamps a stored adjustment that is outside the bound, whatever put it there', async () => {
+    const ids = await seed();
+    await buildEvidence(ids, 22);
+    await runCalibration(ids.tenantId);
+    const stake = await prisma.calibrationAdjustment.findFirst({ where: { tenantId: ids.tenantId, competencyId: 'stake' } });
+    // Nothing in the product writes this. A migration, a restore or a hand
+    // edit could, and the promise is "at most one level" either way.
+    await prisma.calibrationAdjustment.update({ where: { id: stake!.id }, data: { delta: -4, status: 'active' } });
+
+    const role = await prisma.role.findUnique({ where: { id: ids.roleId } });
+    const map = await calibrationFor({
+      tenantId: ids.tenantId, roleId: ids.roleId, catalogRoleId: role!.catalogRoleId,
+      band: role!.experienceBand ?? '', competencies: [{ id: 'stake', name: 'Stakeholder management' }],
+    });
+    expect(map.stake!.delta).toBe(-1);
+    expect(map.stake!.provenance.delta).toBe(-1);
+  });
+
+  it('stops applying an adjustment nothing has recomputed for a month', async () => {
+    const ids = await seed();
+    await buildEvidence(ids, 22);
+    await runCalibration(ids.tenantId);
+    const stake = await prisma.calibrationAdjustment.findFirst({ where: { tenantId: ids.tenantId, competencyId: 'stake' } });
+    expect(stake!.status).toBe('active');
+    // The daily job has not run for two months: the switch was off, or it died.
+    await prisma.calibrationAdjustment.update({
+      where: { id: stake!.id },
+      data: { computedAt: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000) },
+    });
+
+    const role = await prisma.role.findUnique({ where: { id: ids.roleId } });
+    const map = await calibrationFor({
+      tenantId: ids.tenantId, roleId: ids.roleId, catalogRoleId: role!.catalogRoleId,
+      band: role!.experienceBand ?? '', competencies: [{ id: 'stake', name: 'Stakeholder management' }],
+    });
+    expect(map).toEqual({});
+  });
+
+  it('withdraws an organisation\'s stale rows on the sweep rather than leaving them armed', async () => {
+    const ids = await seed();
+    await buildEvidence(ids, 22);
+    await runCalibration(ids.tenantId);
+    expect(await prisma.calibrationAdjustment.count({ where: { tenantId: ids.tenantId, status: 'active' } })).toBeGreaterThan(0);
+
+    await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: '{}' } });
+    const { runCalibrationSweep } = await import('../src/services/calibrationJob.js');
+    await runCalibrationSweep();
+    // Switching back on must not re-arm yesterday's adjustment before anything
+    // has looked at today's evidence.
+    expect(await prisma.calibrationAdjustment.count({ where: { tenantId: ids.tenantId, status: 'active' } })).toBe(0);
+  });
+
   it('hands nothing over once calibration is switched off', async () => {
     const ids = await seed();
     await buildEvidence(ids, 22);

@@ -13,13 +13,28 @@
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import {
-  competencyKeyOf, describeProvenance, roleKeyOf,
+  DEFAULT_CALIBRATION_THRESHOLDS, boundDelta, competencyKeyOf, describeProvenance, roleKeyOf,
   type CalibrationMap, type CalibrationProvenance, type CompetencyCalibration,
 } from '../domain/calibration.js';
 import type { Competency } from '../domain/types.js';
 import { calibrationSettingsFor } from './calibrationSettings.js';
 
 const ACTIVE = 'active';
+
+/**
+ * How stale an adjustment may be before it stops applying.
+ *
+ * The recompute runs daily, so anything this old means the job has not run:
+ * the deployment switch was off for a month, the job died, or the database was
+ * restored from a backup. In each case the adjustment describes evidence
+ * nobody has checked recently, and it would start applying again the moment
+ * the switch came back on, before anything re-examined it.
+ *
+ * Generous on purpose. It is a guard against a stopped world, not a second
+ * freshness policy — thirty days of a daily job failing is an outage, and an
+ * outage should not quietly keep moving candidates' scores.
+ */
+const MAX_AGE_DAYS = 30;
 
 export interface CalibrationLookup {
   readonly tenantId: string;
@@ -52,9 +67,11 @@ async function load(lookup: CalibrationLookup, mayUseGlobal: boolean): Promise<C
   const keys = lookup.competencies.map((c) => competencyKeyOf(c.name));
   if (keys.length === 0) return {};
 
+  const freshSince = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
   const rows = await prisma.calibrationAdjustment.findMany({
     where: {
       status: ACTIVE,
+      computedAt: { gte: freshSince },
       roleKey,
       band: lookup.band,
       competencyKey: { in: keys },
@@ -75,10 +92,23 @@ async function load(lookup: CalibrationLookup, mayUseGlobal: boolean): Promise<C
     const own = rows.find((r) => r.scope === 'org' && r.competencyKey === key);
     const shared = rows.find((r) => r.scope === 'global' && r.competencyKey === key);
     const row = own ?? shared;
-    if (!row || row.delta === 0) continue;
+    if (!row) continue;
+    // The bound is enforced AGAIN here, at the last point before a stored
+    // number becomes a score. Every writer already bounds it; this is the one
+    // that holds if a writer is wrong, a migration is wrong, or somebody edits
+    // the row by hand. The promise is "at most one level" — not "at most one
+    // level as long as every other file is correct".
+    const delta = boundDelta(row.delta, DEFAULT_CALIBRATION_THRESHOLDS);
+    if (delta === 0) continue;
+    if (delta !== row.delta) {
+      logger.error(
+        { adjustmentId: row.id, stored: row.delta, applied: delta },
+        'A stored calibration was outside the permitted bound and was clamped before it reached a score',
+      );
+    }
     map[competency.id] = {
-      delta: row.delta,
-      provenance: provenanceOf(row),
+      delta,
+      provenance: { ...provenanceOf(row), delta },
     };
   }
   return map;

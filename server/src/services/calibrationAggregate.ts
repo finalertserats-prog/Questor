@@ -173,7 +173,9 @@ const THEME_SYSTEM = [
  *
  * The distinct-reviewer floor is a privacy rule as much as a statistical one:
  * a theme drawn from one person's notes is that person's words, attributable by
- * anyone who knows how they write.
+ * anyone who knows how they write. `distinctReviewers` must therefore be the
+ * number of people who WROTE something, never the number who disagreed —
+ * three reviewers can disagree while only one of them explains why.
  */
 export async function clusterReasons(opts: {
   readonly reasons: readonly string[];

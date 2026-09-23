@@ -227,10 +227,20 @@ Calibration learns from humans, so it inherits whatever they brought. The other
 half of that, at the owner's request: if there is a pattern in how a person
 reviews, a person should look at it.
 
-**What this is not, and must never become.** Not a finding. Not automatic. Not
-a performance record — there is no code path from these statistics to anyone's
-standing in Questor, and adding one would be a change to what this product
-does, not a feature. Not secret from the reviewer.
+**What this is not, and must never become.** Not a finding. Not a performance
+record — there is no code path from these statistics to anyone's standing in
+Questor, and adding one would be a change to what this product does, not a
+feature. Not secret from the reviewer.
+
+**What is automatic, stated precisely.** Nothing is done *to* a reviewer: no
+status changes, no access is removed, no decision of theirs is reversed, and
+nobody is told anything about them except their own organisation's admin. There
+is one automatic effect: while an alert is open, that reviewer's observations
+stop feeding calibration. That is a brake on the model, not a sanction on the
+person — it stops one unusual pattern teaching the scoring something before
+anybody has looked — and it applies only to the alert kinds that rest on a
+proportion with a confidence interval. It ends when an admin closes the alert,
+whichever way they close it.
 
 Measured per reviewer over the window: divergence from the model, divergence
 from colleagues on the same role competencies (their own level excluded from
@@ -253,8 +263,10 @@ needs to look at it and decide whether there is anything to it." A vocabulary
 list (`NEVER_SAY`) is enforced by test.
 
 Only the kinds that would skew what the model learns hold a reviewer out of
-calibration; recording verdicts quickly, or writing less down, is worth a look
-and is not a reason to discard someone's judgement.
+calibration, and only those whose evidence carries a confidence interval.
+Recording verdicts quickly, writing less down, or sitting further from
+colleagues on a mean distance with no interval behind it, are all worth a look
+and are none of them a reason to discard someone's judgement.
 
 **Transparency.** Every reviewer can read their own figures at
 `GET /api/admin/calibration/reviewers/me` with no capability required — the

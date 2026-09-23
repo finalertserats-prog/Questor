@@ -183,6 +183,16 @@ describe('patternAlerts', () => {
     expect(withSkew.map((a) => a.kind)).toContain('pass_rate_skew');
   });
 
+  it('does not raise pass-rate skew on a gap the sample cannot support', () => {
+    const reviews = [...orgReviews, ...many(20, { reviewerId: 'x', overridesUp: 1, overridesWithReason: 1 })];
+    const gaps = peerGaps([]);
+    const stats = reviewerStatistics('x', reviews, gaps.get('x'), T);
+    const base = organisationBaseline(reviews, gaps);
+    // 6 of 12 against a 40% baseline: a 10-point gap whose interval spans it.
+    const noisy = patternAlerts(stats, base, { passRateSkew: { observed: 0.5, baseline: 0.4, n: 12 } });
+    expect(noisy.map((a) => a.kind)).not.toContain('pass_rate_skew');
+  });
+
   it('never uses accusing words, and always asks a person to look', () => {
     const reviews = [
       ...orgReviews,
@@ -212,6 +222,12 @@ describe('heldOutReviewers', () => {
 
   it('does not hold out someone for writing less down', () => {
     expect(heldOutReviewers([{ reviewerId: 'x', kind: 'evidence_cited' }])).toEqual([]);
+  });
+
+  it('does not hold out someone on evidence that has no confidence interval', () => {
+    // Distance from colleagues is a mean in levels, not a proportion: there is
+    // no interval behind it, so it is worth a look and carries no consequence.
+    expect(heldOutReviewers([{ reviewerId: 'x', kind: 'divergence_from_peers' }])).toEqual([]);
   });
 
   it('lists each reviewer once however many alerts they carry', () => {
