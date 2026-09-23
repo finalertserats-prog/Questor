@@ -6,6 +6,7 @@ import { AtsConnectionPanel } from '../components/AtsConnectionPanel';
 import { humanise } from '../components/statusModel';
 import { can } from '../components/capabilityModel';
 import { DigestSetting } from '../components/hrbox/DigestSetting';
+import { BusinessAreasPanel } from '../components/BusinessAreasPanel';
 
 export function Settings() {
   const { user, tenant } = useAuth();
@@ -38,6 +39,9 @@ export function Settings() {
       </div>
       {/* The server refuses everyone else; hiding it just spares them a 403. */}
       {user?.role === 'admin' && <AtsConnectionPanel />}
+      {/* Which part of the shared role catalog this organisation searches by
+          default. Its own admin's to change, within a limit only Questor raises. */}
+      {user?.role === 'admin' && <BusinessAreasPanel />}
     </div>
   );
 }

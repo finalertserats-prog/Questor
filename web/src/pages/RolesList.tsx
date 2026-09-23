@@ -118,7 +118,9 @@ export function RolesList() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      api.get<readonly CatalogDomain[]>('/catalog/domains'),
+      // Unscoped on purpose: this filters the organisation's OWN roles, and a
+      // role created before the areas were chosen must not lose its filter.
+      api.get<readonly CatalogDomain[]>('/catalog/domains?scope=all'),
       api.get<readonly CatalogBand[]>('/catalog/experience-bands'),
       api.get<readonly CatalogRegion[]>('/catalog/regions'),
     ])

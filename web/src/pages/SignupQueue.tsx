@@ -15,6 +15,9 @@ import {
 } from '../components/signupModel';
 import { formatDate } from '../components/dateFormat';
 import { useToast } from '../components/Toast';
+import { OnboardingRequestDetails, type OnboardingRequestFacts } from '../components/OnboardingRequestDetails';
+import { OrganisationLimits } from '../components/OrganisationLimits';
+import '../styles/onboard.css';
 
 /**
  * The requests waiting on a person.
@@ -127,7 +130,10 @@ export function SignupQueue() {
                             </div>
                           )}
                         </td>
-                        <td>{applicantIntent(signup.mode, signup.organisation)}</td>
+                        <td>
+                          {applicantIntent(signup.mode, signup.organisation)}
+                          <OnboardingRequestDetails request={signup} />
+                        </td>
                         <td className="muted small">{formatDate(signup.createdAt)}</td>
                         <td>
                           <span className="row" style={{ gap: 6 }}>
@@ -167,6 +173,10 @@ export function SignupQueue() {
           </>
         )}
       </div>
+
+      {/* The owner's other standing decision about an organisation: how much of
+          the shared catalog it may narrow itself to. */}
+      <OrganisationLimits />
     </div>
   );
 }

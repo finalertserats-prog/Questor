@@ -204,6 +204,30 @@ export interface QueuedSignup {
   readonly mode: SignupMode | null;
   readonly organisation: string;
   readonly createdAt: string;
+  /* What a self-serve organisation said on the onboarding form. Absent on a
+     join request and on every request made before onboarding existed, so all
+     four are optional and a row missing them simply says less. */
+  readonly region: { readonly code: string; readonly name: string } | null;
+  readonly orgSizeLabel: string;
+  readonly businessAreas: readonly { readonly slug: string; readonly name: string }[];
+  /** An organisation of this name is already here. The owner's to know, nobody else's. */
+  readonly existingOrganisation: string;
+}
+
+/** A {slug, name} list, keeping only the entries that have both. */
+function namedList(value: unknown): readonly { readonly slug: string; readonly name: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (item && typeof item === 'object' ? item as Record<string, unknown> : {}))
+    .map((item) => ({ slug: textOf(item.slug), name: textOf(item.name) || textOf(item.slug) }))
+    .filter((item) => item.slug !== '');
+}
+
+function regionOf(value: unknown): { readonly code: string; readonly name: string } | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const code = textOf(row.code);
+  return code ? { code, name: textOf(row.name) || code } : null;
 }
 
 function textOf(value: unknown): string {
@@ -241,6 +265,10 @@ export function queuedSignup(raw: unknown): QueuedSignup | null {
     mode: signupMode(applicant.mode ?? row.mode),
     organisation: textOf(applicant.organisation),
     createdAt: textOf(row.createdAt),
+    region: regionOf(row.region),
+    orgSizeLabel: textOf(row.orgSizeLabel),
+    businessAreas: namedList(row.businessAreas),
+    existingOrganisation: textOf(row.existingOrganisation),
   };
 }
 

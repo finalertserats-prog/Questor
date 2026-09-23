@@ -19,6 +19,13 @@ import { useFieldDraft } from '../components/drafts/useFieldDraft';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
+/** What the shared catalog is showing this organisation, and what is behind it. */
+interface CatalogScope {
+  readonly scoped: boolean;
+  readonly areas: readonly { readonly id: string; readonly slug: string; readonly name: string }[];
+  readonly limit: number;
+  readonly totalDomains: number;
+}
 interface Region { readonly code: string; readonly name: string }
 interface Band { readonly id: string; readonly display: string }
 
@@ -41,6 +48,10 @@ export function RoleCreate() {
   const [title, setTitle] = useState('');
   const [useLlm, setUseLlm] = useState(true);
   const [domains, setDomains] = useState<readonly Domain[]>([]);
+  // Whether this organisation's catalog view is narrowed to its business
+  // areas, and whether the person has asked to see past it for this role.
+  const [scope, setScope] = useState<CatalogScope | null>(null);
+  const [showAllDomains, setShowAllDomains] = useState(false);
   const [regions, setRegions] = useState<readonly Region[]>([]);
   const [bands, setBands] = useState<readonly Band[]>([]);
   const [domainId, setDomainId] = useState('');
@@ -87,11 +98,16 @@ export function RoleCreate() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.get<readonly Domain[]>('/catalog/domains'), api.get<readonly Region[]>('/catalog/regions'), api.get<readonly Band[]>('/catalog/experience-bands')])
-      .then(([d, r, b]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); setCatalogError(''); } })
+    Promise.all([
+      api.get<readonly Domain[]>(`/catalog/domains?scope=${showAllDomains ? 'all' : 'mine'}`),
+      api.get<readonly Region[]>('/catalog/regions'),
+      api.get<readonly Band[]>('/catalog/experience-bands'),
+      api.get<CatalogScope>('/catalog/scope'),
+    ])
+      .then(([d, r, b, s]) => { if (!cancelled) { setDomains(d); setRegions(r); setBands(b); setScope(s); setCatalogError(''); } })
       .catch((err: unknown) => { if (!cancelled) setCatalogError(err instanceof Error ? err.message : 'Could not load catalog fields.'); });
     return () => { cancelled = true; };
-  }, [catalogAttempt]);
+  }, [catalogAttempt, showAllDomains]);
 
 
 
@@ -280,6 +296,21 @@ export function RoleCreate() {
               <option value="">Choose a domain</option>
               {domains.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
+            {/* The narrowing is a default view, never a wall: it says what it
+                is showing and offers the rest of the catalog in one click. */}
+            {scope?.scoped && (
+              <p className="muted small">
+                {showAllDomains
+                  ? `Showing all ${scope.totalDomains} domains. `
+                  : `Showing your ${scope.areas.length} business ${scope.areas.length === 1 ? 'area' : 'areas'}. `}
+                <button
+                  type="button" className="btn ghost sm"
+                  onClick={() => { setShowAllDomains((v) => !v); setDomainId(''); setCatalogRoleId(''); }}
+                >
+                  {showAllDomains ? 'Show only your business areas' : `Show all ${scope.totalDomains} domains`}
+                </button>
+              </p>
+            )}
           </div>
           <div>
             <label htmlFor={`${fieldId}-experience`}>Experience</label>

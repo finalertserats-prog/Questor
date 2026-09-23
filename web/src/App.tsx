@@ -29,6 +29,7 @@ import { DemoRequest } from './pages/DemoRequest';
 import { DemoEnded, DemoRedeem } from './pages/DemoRedeem';
 import { DemoDecision } from './pages/DemoDecision';
 import { SignupQueue } from './pages/SignupQueue';
+import { Onboard } from './pages/Onboard';
 import { Landing } from './pages/Landing';
 import { NeedsYouBell, useNeedsYouCount } from './components/hrbox/NeedsYouBell';
 import { RoleCreate } from './pages/RoleCreate';
@@ -505,6 +506,7 @@ export function App() {
           emailed link carries its own credential in the token — putting the
           decision behind a session would gate granting access on having it. */}
       <Route path="/signup" element={<CandidatePage><Signup /></CandidatePage>} />
+      <Route path="/onboard" element={<CandidatePage><Onboard /></CandidatePage>} />
       <Route path="/signup/decision/:token" element={<CandidatePage><SignupDecision /></CandidatePage>} />
       <Route path="/demo" element={<DemoRequest />} />
       <Route path="/demo/ended" element={<DemoEnded />} />
