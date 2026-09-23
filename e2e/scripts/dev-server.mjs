@@ -15,6 +15,12 @@ const child = spawn('npm', ['run', 'dev'], {
     ...process.env,
     ...builtInProviders,
     DATABASE_URL: process.env.DATABASE_URL ?? 'file:./data/questor.db',
+    // The candidate's portal link is minted from the server's WEB_ORIGIN, not from
+    // the suite's baseURL, and server/.env is gitignored so no worktree has one. A
+    // run that names its own address must mint links on that address, or the
+    // candidate browser is sent to whatever checkout owns 5173 and its token is a
+    // stranger to that database — which reads as "This link is no longer active".
+    WEB_ORIGIN: process.env.WEB_ORIGIN ?? process.env.QUESTOR_BASE_URL ?? 'http://localhost:5173',
     // Signup fails closed without someone to approve it. The console email
     // provider only logs the notice, so a placeholder address is enough here.
     SIGNUP_APPROVER_EMAIL: process.env.SIGNUP_APPROVER_EMAIL ?? 'approver@questor.local',
