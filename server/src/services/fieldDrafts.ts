@@ -23,7 +23,15 @@ import { aiFieldDraftsEnabledForTenant } from './fieldDraftPolicy.js';
  * upstream. See domain/fieldDrafts.ts for why that boundary exists.
  */
 
-/** One call must not outlive a person's patience in a text box. */
+/**
+ * One call must not outlive a person's patience in a text box.
+ *
+ * Tighter than the `authoring` budget on purpose. That budget is sized for a
+ * person watching a spinner having asked for a whole job description; this is
+ * a suggestion nobody asked for, under a field they are already typing in, and
+ * a draft that arrives after they have written their own sentence is worse
+ * than no draft at all.
+ */
 const DRAFT_TIMEOUT_MS = 12_000;
 
 /** What the caller may send as context. Bounded because it is model input. */
@@ -101,6 +109,8 @@ export async function suggestFieldDraft(input: SuggestInput): Promise<DraftResul
 
   const reply = await generateJson<Reply>({
     fn: 'field_draft',
+    // Someone is waiting at a text box on an HR screen, like a JD draft.
+    purpose: 'authoring',
     system: SUGGEST_SYSTEM,
     user: JSON.stringify({
       field: spec.label,
@@ -138,6 +148,7 @@ export async function tidyFieldText(input: TidyInput): Promise<DraftResult> {
 
   const reply = await generateJson<Reply>({
     fn: 'field_tidy',
+    purpose: 'authoring',
     system: TIDY_SYSTEM,
     user: JSON.stringify({
       field: spec.label,
