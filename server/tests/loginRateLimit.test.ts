@@ -197,3 +197,65 @@ describe('the test opt-in itself', () => {
     expect(new Set(statuses)).toEqual(new Set([401]));
   });
 });
+
+// ---------------------------------------------------------------------------
+// The masking itself, raised by Codex on the second pass: the subject bucket
+// lets the handler run and corrects the answer on its way out, so it must
+// cover EVERY way a handler can write one. Covering only res.json would leave
+// a credential oracle open on any path that answered another way.
+// ---------------------------------------------------------------------------
+
+describe('a refusal past the account ceiling, however it is written', () => {
+  const overTheCeiling = async (app: ReturnType<typeof createApp>, email: string) => {
+    for (let i = 0; i < LOGIN_FAILURES_PER_ACCOUNT; i++) await signIn(app, email, 'wrong-password-entirely');
+  };
+
+  it('is masked when the handler answers with res.json', async () => {
+    const app = createApp();
+    await overTheCeiling(app, staff[0]);
+    expect((await signIn(app, staff[0], 'wrong-password-entirely')).status).toBe(429);
+  }, 60_000);
+
+  it('is masked when a route answers with res.status().send()', async () => {
+    const app = createApp();
+    app.post('/api/auth/login', (_req, res) => { res.status(401).send('Invalid credentials'); });
+    await overTheCeiling(app, staff[1]);
+    const res = await signIn(app, staff[1], 'wrong-password-entirely');
+    expect([res.status, res.body.error]).toEqual([429, 'Too many requests. Please wait a moment and try again.']);
+  }, 60_000);
+
+  it('is masked when a route answers with res.sendStatus()', async () => {
+    const app = createApp();
+    app.post('/api/auth/login', (_req, res) => { res.sendStatus(403); });
+    await overTheCeiling(app, staff[2]);
+    expect((await signIn(app, staff[2], 'wrong-password-entirely')).status).toBe(429);
+  }, 60_000);
+
+  it('is masked when a route answers with res.end()', async () => {
+    const app = createApp();
+    app.post('/api/auth/login', (_req, res) => { res.status(401).end(); });
+    await overTheCeiling(app, staff[3]);
+    expect((await signIn(app, staff[3], 'wrong-password-entirely')).status).toBe(429);
+  }, 60_000);
+
+  it('leaves a success alone whichever way it is written', async () => {
+    const app = createApp();
+    app.post('/api/auth/login', (_req, res) => { res.status(200).send('fine'); });
+    await overTheCeiling(app, staff[4]);
+    expect((await signIn(app, staff[4], PASSWORD)).status).toBe(200);
+  }, 60_000);
+});
+
+describe('one limiter does not shrink another', () => {
+  it('keeps in-flight attempts on separate limiters apart', async () => {
+    // Raised by Codex on the second pass: keyed on the bucket alone, a burst
+    // on one limiter would shrink another limiter's ceiling for the same
+    // address — a refusal on an empty bucket.
+    const app = createApp();
+    const registrations = Array.from({ length: 40 }, () =>
+      request(app).post('/api/auth/register').set('X-Forwarded-For', OFFICE).send({}));
+    const signedIn = signIn(app, staff[6], PASSWORD);
+    const [res] = await Promise.all([signedIn, Promise.all(registrations)]);
+    expect(res.status).toBe(200);
+  }, 60_000);
+});

@@ -284,6 +284,22 @@ async function recordCandidateAnswer(
   throw lastErr;
 }
 
+/**
+ * How many submissions' own words are kept on one turn, and how much of each.
+ *
+ * `text` is capped at MAX_ANSWER_CHARS, and this must be too: several tabs
+ * each sending a long answer before the agent turn lands would otherwise grow
+ * metaJson without a bound of its own.
+ */
+const MAX_FOLDED_SUBMISSIONS = 5;
+const MAX_FOLDED_CHARS = 1_000;
+
+function boundedSubmissions(texts: readonly string[]): string[] {
+  // The newest are the ones a reviewer is asking about; the combined answer
+  // itself is on `text` either way.
+  return texts.filter(Boolean).slice(-MAX_FOLDED_SUBMISSIONS).map((s) => s.slice(0, MAX_FOLDED_CHARS));
+}
+
 /** The distinct texts already folded into this turn, from its own record. */
 function submissionTexts(answered: { id: string; metaJson: string }): string[] {
   const meta = parseJsonOptional<Record<string, unknown>>(answered.metaJson, {}, { model: 'Turn', id: answered.id, field: 'metaJson' });
@@ -322,7 +338,7 @@ function foldedAnswer(
       // said, so a reviewer (and evidence attribution) can tell "said twice in
       // two tabs" from "said once" and see which words came from which.
       submissions,
-      submissionTexts: repeat ? [...already].filter(Boolean) : [...already, addition].filter(Boolean),
+      submissionTexts: boundedSubmissions(repeat ? [...already] : [...already, addition]),
       ...(flags.size ? { flags: [...flags] } : {}),
     }),
   };

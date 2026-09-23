@@ -107,10 +107,11 @@ describe('both flags off', () => {
     expect(served).toEqual([{ fn: 'live_interviewer', layer: 'built-in', provider: 'built-in', failure: 'quota' }]);
   });
 
-  // The one that matters most here: with LIBRARY_ENABLED off, no stored
-  // question may reach a candidate, whatever the model is doing. That used to
-  // hold by accident — nothing recorded an outage, so the "ask the rung as
-  // planned" branch was unreachable. conversationRuntime.ts now says so.
+  // Asking a stored rung as planned belongs to the failover chain, and with
+  // LOCAL_LLM_ENABLED off there is no chain. That used to hold by accident —
+  // nothing recorded an outage, so the branch was unreachable — and recording
+  // one (R2) would have changed this path's behaviour along with its
+  // instrumentation. conversationRuntime.ts writes the condition out instead.
   it('asks the built-in bank, not a stored rung, when the primary fails on a plan that still carries a ladder', async () => {
     const { result } = await ask(true);
     expect({ rung: result.question === RUNG, entry: result.libraryEntryId }).toEqual({ rung: false, entry: undefined });

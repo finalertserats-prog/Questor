@@ -215,6 +215,31 @@ function release(key: string): void {
 }
 
 /**
+ * Turn any refusal this response is about to send into the rate limit instead.
+ *
+ * The subject bucket deliberately lets the handler run, so the only place the
+ * answer can be corrected is on its way out. Every way Express can write one
+ * is covered — `json`, `send` (which `sendStatus` and `status().send()` both
+ * use) and `end` — because covering only `json` would leave a credential
+ * oracle open on any path that answered another way.
+ */
+function maskRefusalAsLimit(res: Response, retryAfter: number): void {
+  const body = { error: 'Too many requests. Please wait a moment and try again.', retryAfterSeconds: retryAfter };
+  const json = res.json.bind(res);
+  const send = res.send.bind(res);
+  const end = res.end.bind(res);
+  const overtake = (): boolean => {
+    if (res.headersSent || !SUBJECT_FAILURE(res.statusCode)) return false;
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429);
+    return true;
+  };
+  res.json = ((value: unknown) => json(overtake() ? body : value)) as typeof res.json;
+  res.send = ((value?: unknown) => (overtake() ? json(body) : send(value))) as typeof res.send;
+  res.end = ((...args: unknown[]) => (overtake() ? json(body) : (end as (...a: unknown[]) => Response)(...args))) as typeof res.end;
+}
+
+/**
  * A limiter that charges for FAILURES rather than for requests.
  *
  * The login limiter used to consume a unit before the handler ran, so ten
@@ -248,18 +273,23 @@ export function failureRateLimit(opts: FailureRateLimitOptions) {
     // Claimed BEFORE the first await, or the reservation buys nothing: every
     // request in a burst reaches its check before any of them has claimed, and
     // they all see an empty bucket. Released on every exit below.
-    for (const bucket of buckets) claim(bucket.key);
+    //
+    // Namespaced by limiter name, exactly as the stored counters are. Keyed on
+    // the bucket alone, a burst on one limiter would shrink another limiter's
+    // ceiling for the same address — a refusal on an empty bucket, which is a
+    // cross-endpoint denial of service rather than a limit.
+    for (const bucket of buckets) claim(`${opts.name}:${bucket.key}`);
     let released = false;
     const releaseAll = () => {
       if (released) return;
       released = true;
-      for (const bucket of buckets) release(bucket.key);
+      for (const bucket of buckets) release(`${opts.name}:${bucket.key}`);
     };
 
     const verdictFor = async (bucket: { key: string; max: number }): Promise<RateVerdict> => {
       // Everyone else in flight counts against the ceiling; this request's own
       // claim does not, because `inspect` refuses at `count >= max` already.
-      const others = Math.max(0, (inFlight.get(bucket.key) ?? 1) - 1);
+      const others = Math.max(0, (inFlight.get(`${opts.name}:${bucket.key}`) ?? 1) - 1);
       // Not clamped at 1. `inspect` refuses at `count >= effective`, and what
       // has to be true is `count + others >= max`; flooring the effective
       // ceiling would let a burst of 40 through against a limit of 10 with an
@@ -298,14 +328,7 @@ export function failureRateLimit(opts: FailureRateLimitOptions) {
       // but a refusal is answered as the limit rather than as a credential,
       // so a guess past the ceiling learns nothing and gains nothing.
       logger.warn({ limiter: opts.name, key: fingerprint(subjectBucket!.key), max: subjectBucket!.max }, 'Rate limit exceeded');
-      const retryAfter = subjectVerdict.retryAfter;
-      const send = res.json.bind(res);
-      res.json = (body: unknown) => {
-        if (!SUBJECT_FAILURE(res.statusCode)) return send(body);
-        res.setHeader('Retry-After', String(retryAfter));
-        res.status(429);
-        return send({ error: 'Too many requests. Please wait a moment and try again.', retryAfterSeconds: retryAfter });
-      };
+      maskRefusalAsLimit(res, subjectVerdict.retryAfter);
     }
 
     // Charged once the answer is known. 'finish' fires for every response the

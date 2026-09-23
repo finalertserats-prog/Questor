@@ -30,8 +30,17 @@ export const WAIT_FOR_MS = 2_000;
 export const ROWS_AT_ONCE = 4;
 /** How long a finished job can still be collected. */
 export const JOB_RETENTION_MS = 30 * 60_000;
-/** A ceiling, so a busy afternoon cannot grow this without limit. */
-const MAX_JOBS = 200;
+/**
+ * How many FINISHED jobs are kept beyond their retention, so a busy afternoon
+ * cannot grow the map without limit.
+ *
+ * Not a cap on live jobs, deliberately: evicting one that is still sending
+ * would leave it running while the recruiter got 404 for the one thing they
+ * needed. Live jobs are bounded by the bulk-invite limiter instead — 10 runs
+ * per person per 15 minutes, at most 200 rows each, and a row's result is a
+ * handful of small fields.
+ */
+const MAX_RETAINED_JOBS = 200;
 
 export interface BulkInviteRowResult {
   readonly index: number;
@@ -71,7 +80,7 @@ function sweep(now: number): void {
   // running while GET /bulk-invite/:jobId answered 404 — the recruiter would
   // not know which rows went, which is the whole thing this exists to fix.
   for (const [id, job] of jobs) {
-    if (jobs.size <= MAX_JOBS) break;
+    if (jobs.size <= MAX_RETAINED_JOBS) break;
     if (job.finished) jobs.delete(id);
   }
 }

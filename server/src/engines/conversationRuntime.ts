@@ -919,16 +919,20 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   if (rungChoice) {
     const drawn = await drawOnRung(opts, competency?.name ?? block?.competencyName ?? 'the role', block, rungChoice, { lastText, turns, correction, movedOn, lead });
     if (drawn.utterance) return drawn.utterance;
-    // Asking the stored rung word for word is the RIGHT answer when a model
-    // outage means nobody can put it in the interviewer's own voice — but only
-    // while the library is switched on. With LIBRARY_ENABLED off, a plan built
-    // when it was on must never surface a stored question to a candidate.
+    // Asking the stored rung word for word is the right answer when a model
+    // outage means nobody can put it in the interviewer's own voice
+    // (tests/fallbackInterviewer.test.ts pins it) — but it belongs to the
+    // FAILOVER CHAIN, which is what LOCAL_LLM_ENABLED switches on.
     //
-    // That property used to hold by accident: with the local fallback off
-    // nothing recorded a serving layer, so `degraded` was never true and this
-    // line never ran. Recording the outage (R2) made it reachable, which is
-    // how the accident showed up. The guard is explicit now.
-    if (drawn.degraded && config.library.enabled) rungAsPlanned = rungChoice;
+    // That used to hold by accident: with the chain off nothing recorded a
+    // serving layer, so `degraded` was never true and this line never ran.
+    // Recording the outage on that path too (R2) made it reachable, and a
+    // plan built while the library was on would suddenly have started asking
+    // its stored questions on a deployment that has the chain switched off —
+    // a behaviour change smuggled in by an instrumentation change. The
+    // condition is written out now, so the flag-off path stays exactly as it
+    // was until the chain itself is turned on.
+    if (drawn.degraded && config.llm.local.enabled) rungAsPlanned = rungChoice;
   }
 
   // The built-in writer's question for this turn, decided before any model is
