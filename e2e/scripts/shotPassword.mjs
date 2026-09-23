@@ -26,6 +26,14 @@ const seeded = JSON.parse(
   }).toString().trim().split('\n').pop(),
 );
 
+// An organisation whose policy asks for a code, so the code step can be
+// photographed. Never completed, so nothing is left signed in.
+const signin = JSON.parse(
+  execFileSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'e2e/scripts/seedSignInCode.ts', 'setup', `shot${Date.now()}`], {
+    cwd: root, env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL ?? 'file:./data/questor.db' },
+  }).toString().trim().split(/\r?\n/).pop(),
+);
+
 const browser = await chromium.launch();
 
 /** One page, every size and theme. `prepare` runs once the page has loaded. */
@@ -66,6 +74,25 @@ await shoot('reset', `/reset-password#${seeded.token}`, {
 });
 await shoot('reset-dead', '/reset-password#a-link-that-was-never-issued-at-all', {
   prepare: async (page) => { await page.getByText(/This link is no longer valid/).waitFor({ timeout: 10_000 }); },
+});
+await shoot('signin-code', `/o/${signin.slug}`, {
+  prepare: async (page) => {
+    await page.getByLabel('Email').fill(signin.email);
+    await page.getByLabel('Password').fill(signin.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await page.getByLabel('Sign-in code').waitFor({ timeout: 15_000 });
+  },
+});
+await shoot('signin-password', `/o/${signin.slug}`, {
+  prepare: async (page) => { await page.getByLabel(/Keep me signed in on this device/).waitFor({ timeout: 10_000 }); },
+});
+await shoot('settings-devices', '/settings', {
+  signedIn: true,
+  prepare: async (page) => { await page.getByTestId('trusted-devices-panel').waitFor({ timeout: 15_000 }); },
+});
+await shoot('admin-signin-policy', '/admin/organisation', {
+  signedIn: true,
+  prepare: async (page) => { await page.getByTestId('signin-policy').waitFor({ timeout: 15_000 }); },
 });
 await shoot('settings-change', '/settings', {
   signedIn: true,

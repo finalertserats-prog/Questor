@@ -34,12 +34,26 @@ export interface RegisterInput {
   tenantName?: string;
 }
 
+/**
+ * What the password step answered.
+ *
+ * `signed_in` means there was no code to enter — the organisation does not ask
+ * this person for one, or this browser holds a live trusted-device grant.
+ * `code_sent` carries the ticket for the second step; it is not a session, and
+ * the app stays signed out until the code is accepted.
+ */
+export type SignInStep =
+  | { kind: 'signed_in' }
+  | { kind: 'code_sent'; pending: string; destination: string; resendAfterSeconds: number };
+
 interface AuthCtx { user: User | null; tenant: Tenant | null; loading: boolean;
   /** Set when the session check failed for a reason that is not "signed out" — see retrySession. */
   loadError: string | null;
   /** Runs the session check again, for the banner shown when loadError is set. */
   retrySession: () => void;
-  login: (email: string, password: string, orgSlug?: string) => Promise<void>;
+  login: (email: string, password: string, opts?: { orgSlug?: string; rememberDevice?: boolean }) => Promise<SignInStep>;
+  /** The second step: the six digits emailed after the password was accepted. */
+  submitCode: (pending: string, code: string) => Promise<void>;
   register: (b: RegisterInput) => Promise<void>;
   logout: () => void;
   /** Records on the server that the guided tour is done, so it never auto-runs again on any browser. */
@@ -79,16 +93,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { checkSession(); }, [checkSession]);
 
-  const login = async (email: string, password: string, orgSlug?: string) => {
-    const d = await api.post<{ token: string; user: User }>('/auth/login', orgSlug ? { email, password, orgSlug } : { email, password });
+  /** Shared by both ways in: adopt the session the server just handed back. */
+  const adopt = async (d: { token: string; user: User }) => {
     setLoadError(null);
     setToken(d.token); setUser(d.user);
     const me = await api.get<{ tenant: Tenant | null }>('/auth/me'); setTenant(me.tenant);
   };
+
+  const login = async (email: string, password: string, opts: { orgSlug?: string; rememberDevice?: boolean } = {}): Promise<SignInStep> => {
+    const d = await api.post<{
+      token?: string; user?: User; mfa?: string; pending?: string; destination?: string; resendAfterSeconds?: number;
+    }>('/auth/login', {
+      email, password,
+      ...(opts.orgSlug ? { orgSlug: opts.orgSlug } : {}),
+      ...(opts.rememberDevice ? { rememberDevice: true } : {}),
+    });
+    if (d.mfa === 'code_sent' && d.pending) {
+      // Deliberately not stored anywhere: the ticket lives in the component
+      // that is showing the code field and dies with it. A ticket in
+      // localStorage would outlive the page that earned it.
+      return { kind: 'code_sent', pending: d.pending, destination: d.destination ?? '', resendAfterSeconds: d.resendAfterSeconds ?? 60 };
+    }
+    if (!d.token || !d.user) throw new Error('Sign-in failed');
+    await adopt({ token: d.token, user: d.user });
+    return { kind: 'signed_in' };
+  };
+
+  const submitCode = async (pending: string, code: string) => {
+    const d = await api.post<{ token: string; user: User }>('/auth/code', { pending, code });
+    await adopt(d);
+  };
   const register = async (b: RegisterInput) => {
     const d = await api.post<{ token: string; user: User }>('/auth/register', b);
-    setToken(d.token); setUser(d.user);
-    const me = await api.get<{ tenant: Tenant | null }>('/auth/me'); setTenant(me.tenant);
+    await adopt(d);
   };
   const logout = () => { setToken(null); setUser(null); setTenant(null); setLoadError(null); };
   // Stable, since the tour keeps it in an effect's dependencies.
@@ -111,5 +148,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  return <Ctx.Provider value={{ user, tenant, loading, loadError, retrySession: checkSession, login, register, logout, markTourComplete, refreshTourStatus }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ user, tenant, loading, loadError, retrySession: checkSession, login, submitCode, register, logout, markTourComplete, refreshTourStatus }}>{children}</Ctx.Provider>;
 }

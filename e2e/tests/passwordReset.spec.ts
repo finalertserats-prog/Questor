@@ -64,12 +64,12 @@ test('a reset link sets a new password, the old one stops working, and the link 
   await expect(page).toHaveURL(/\/login$/);
 
   // The old password is refused.
+  // Through the organisation's own door, which is the only door now.
   const signIn = async (password: string) => {
-    await page.goto('/login');
-    await page.getByRole('button', { name: 'Sign in with email' }).click();
+    await page.goto(`/o/${seeded.slug}`);
     await page.getByLabel('Email').fill(seeded.email);
-    await page.getByLabel('Password', { exact: true }).fill(password);
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await page.getByLabel('Password').fill(password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
   };
 
   await signIn(seeded.oldPassword);
@@ -95,8 +95,11 @@ test('an invented link is refused with the same wording as a spent one', async (
 });
 
 test('the sign-in page offers a way out to someone who cannot sign in', async ({ page }) => {
-  await page.goto('/login');
-  await page.getByRole('button', { name: 'Sign in with email' }).click();
+  const seeded = seedReset();
+  await page.goto(`/o/${seeded.slug}`);
   await page.getByRole('link', { name: 'Forgot your password?' }).click();
-  await expect(page).toHaveURL(/\/forgot-password$/);
+  // The organisation is carried through, so "back to sign in" returns to the
+  // door they came in by.
+  await expect.poll(() => new URL(page.url()).pathname + new URL(page.url()).search)
+    .toBe(`/forgot-password?org=${seeded.slug}`);
 });

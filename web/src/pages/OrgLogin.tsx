@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
-import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
 import { BrandLogo } from '../components/BrandLogo';
 import { ComplianceFooter } from '../components/ComplianceFooter';
+import { SignInForm } from '../components/SignInForm';
 
 interface OrgSummary {
   name: string;
@@ -15,14 +15,10 @@ interface OrgSummary {
 /** An organisation's own sign-in page, reached through its link (/o/:slug). */
 export function OrgLogin() {
   const { slug = '' } = useParams();
-  const { login, user } = useAuth();
+  const { user } = useAuth();
   const nav = useNavigate();
   const [org, setOrg] = useState<OrgSummary | null>(null);
   const [lookup, setLookup] = useState<'loading' | 'found' | 'missing' | 'unreachable'>('loading');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (user) nav('/');
@@ -51,19 +47,6 @@ export function OrgLogin() {
 
   useEffect(lookUpOrg, [lookUpOrg]);
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErr('');
-    setBusy(true);
-    try {
-      await login(email, password, slug);
-      nav('/');
-    } catch (error: unknown) {
-      setErr(error instanceof Error ? error.message : 'Sign-in failed');
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="landing">
@@ -102,23 +85,7 @@ export function OrgLogin() {
 
           {lookup === 'found' && org && (
             <>
-              <p className="landing-eyebrow">Signing in to</p>
-              <h1 className="landing-title">{org.name}</h1>
-              {err && <Banner kind="error">{err}</Banner>}
-              <form onSubmit={submit}>
-                <label htmlFor="org-email">Email</label>
-                <input id="org-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
-                <label htmlFor="org-password">Password</label>
-                <input id="org-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
-                <button className="btn" style={{ width: '100%', marginTop: 18 }} disabled={busy}>
-                  {busy ? 'Please wait…' : 'Sign in'}
-                </button>
-              </form>
-              {/* The organisation is carried through, so "back to sign in"
-                  returns to this door rather than the front one. */}
-              <div className="small muted" style={{ marginTop: 12, textAlign: 'center' }}>
-                <Link to={`/forgot-password?org=${encodeURIComponent(slug)}`}>Forgot your password?</Link>
-              </div>
+              <SignInForm orgSlug={slug} orgName={org.name} />
               <div className="small muted" style={{ marginTop: 6, textAlign: 'center' }}>
                 <Link to="/login">Not {org.name}?</Link>
               </div>

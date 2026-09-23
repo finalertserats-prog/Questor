@@ -217,3 +217,47 @@
 .signup-who {
   font-weight: 600;
 }
+
+/* Who enters a sign-in code (Admin → Organisation).
+   The chosen option is marked by a rail down its leading edge and by weight,
+   exactly as the signup modes above are. Nothing here fills a block with
+   colour: a tinted panel would read as a warning about the choice rather than
+   as the choice being made. */
+.policy-choices {
+  border: 0;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.policy-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 12px 12px 10px;
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid transparent;
+  border-radius: var(--radius-xs);
+  background: var(--sheet);
+  cursor: pointer;
+  margin-top: 8px;
+}
+.policy-choice.is-chosen {
+  border-color: var(--accent-edge);
+  border-left-color: var(--accent);
+}
+.policy-choice > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.policy-choice-label {
+  font-weight: 600;
+  color: var(--ink);
+}
+.policy-choice.is-chosen .policy-choice-label {
+  color: var(--accent);
+}
+.policy-choice input {
+  width: auto;
+  margin-top: 3px;
+  flex: 0 0 auto;
+}

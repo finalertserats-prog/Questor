@@ -548,3 +548,40 @@
 .sidebar .logo-rail .logo-mark {
   width: 30px;
 }
+
+/* Remembered devices (Settings).
+   A list of documents on a sheet, not a stack of tinted cards: each row is
+   separated by a hairline and marked only by weight, which is the rule this
+   stylesheet keeps everywhere else. */
+.device-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.device-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: var(--hair) solid var(--rule);
+}
+.device-row:first-child {
+  border-top: 0;
+}
+.device-name {
+  font-weight: 600;
+  color: var(--ink);
+}
+/* The browser the person is sitting at. A rule of weight and colour, never a
+   filled badge — a tinted block here would read as a warning. */
+.device-here {
+  font-weight: 500;
+  color: var(--accent);
+}
+@media (max-width: 560px) {
+  .device-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

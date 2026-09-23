@@ -8,6 +8,7 @@ import { can } from '../components/capabilityModel';
 import { DigestSetting } from '../components/hrbox/DigestSetting';
 import { BusinessAreasPanel } from '../components/BusinessAreasPanel';
 import { ChangePasswordPanel } from '../components/ChangePasswordPanel';
+import { TrustedDevicesPanel } from '../components/TrustedDevicesPanel';
 
 export function Settings() {
   const { user, tenant } = useAuth();
@@ -41,6 +42,7 @@ export function Settings() {
       {/* A demo visitor's account is a throwaway with a random password and an
           expiry; there is nothing there to change. */}
       {user && user.role !== 'demo' && <ChangePasswordPanel />}
+      {user && user.role !== 'demo' && <TrustedDevicesPanel />}
       {/* The server refuses everyone else; hiding it just spares them a 403. */}
       {user?.role === 'admin' && <AtsConnectionPanel />}
       {/* Which part of the shared role catalog this organisation searches by
