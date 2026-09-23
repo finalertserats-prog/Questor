@@ -303,14 +303,38 @@ body {
   color: var(--ink);
 }
 
+/*
+ * A link in a sentence is underlined.
+ *
+ * Colour was the only thing marking one, which axe's `link-in-text-block`
+ * caught on 39 screens: a person who cannot tell the accent from the body
+ * colour has nothing left to go on (WCAG 1.4.1). So the default is inverted —
+ * every link carries the underline, and a control that already reads as one
+ * opts out below. That way round because it is the safe way round: a new link
+ * written into a paragraph is distinguishable without anyone remembering to
+ * ask, and a control that should not be underlined is a visible mistake rather
+ * than an invisible one.
+ */
 a {
   color: var(--accent);
-  text-decoration: none;
+  text-decoration: underline;
+  text-decoration-thickness: from-font;
   text-underline-offset: 2px;
 }
 a:hover {
   color: var(--accent-hover);
-  text-decoration: underline;
+}
+
+/*
+ * The controls. None of these is a link in a sentence: a button, a nav item,
+ * the wordmark, a card or tile whose whole surface is the target, an action
+ * that carries its own arrow. Each has an affordance of its own — a shape, a
+ * border, a hover state — so an underline would only add noise. Add to this
+ * list when a new control is built out of an <a>, not to the rule above.
+ */
+:is(.btn, .link-action, .list-card-next, .profile-menu-item, .public-brand, .workflow-link, .kpi-link, .hb-bell),
+:is(.sidebar, .nav-bar, .list-card-title) a {
+  text-decoration: none;
 }
 
 /* One focus treatment, applied everywhere, visible on every surface. */
