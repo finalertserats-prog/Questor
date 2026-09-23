@@ -26,17 +26,20 @@ interface WorkflowDiagramProps {
   readonly anchor?: string;
   /** The step drawn as current. Left undefined, no step is singled out. */
   readonly activeStep?: number;
-  /** Called when a pointer or the keyboard reaches a step that has no link. */
-  readonly onActivate?: (index: number) => void;
-  /** Interaction with the sequence pauses whatever is advancing it. */
-  readonly onPause?: () => void;
-  readonly onResume?: () => void;
 }
 
 /**
- * The hiring workflow at a glance. Signed in, each step is a link to where it is
- * done; on the sign-in page the same sequence is shown with no destination, one
- * step highlighted at a time.
+ * The hiring workflow at a glance. Signed in, each step is a link to where it
+ * is done; where there is nowhere to go -- the public About page -- the same
+ * sequence is drawn, and drawn only.
+ *
+ * A step with no destination used to be a <button> wired to an `onActivate`
+ * prop that no caller ever passed, so the six steps on /about were focusable
+ * controls that did nothing at all when clicked, hovered or tabbed to, and no
+ * step was ever marked current either. Rather than invent work for them --
+ * selecting a step on a page with nothing to select it for is not work -- they
+ * are what they always were to read: a diagram. `activeStep` still marks one
+ * as current for a caller that has a reason to.
  */
 export function WorkflowDiagram({
   steps = STEPS,
@@ -44,19 +47,12 @@ export function WorkflowDiagram({
   className,
   anchor,
   activeStep,
-  onActivate,
-  onPause,
-  onResume,
 }: WorkflowDiagramProps) {
   return (
     <section
       className={className ? `workflow card ${className}` : 'workflow card'}
       aria-label={label}
       data-tour={anchor}
-      onMouseEnter={onPause}
-      onMouseLeave={onResume}
-      onFocus={onPause}
-      onBlur={onResume}
     >
       <ol className="workflow-steps">
         {steps.map((step, index) => {
@@ -75,18 +71,7 @@ export function WorkflowDiagram({
               {step.to ? (
                 <Link to={step.to} className={linkClass}>{body}</Link>
               ) : (
-                // A button, not a div: pointing at or tabbing to a step selects
-                // it, so the sequence is operable without a mouse.
-                <button
-                  type="button"
-                  className={linkClass}
-                  aria-current={active ? 'step' : undefined}
-                  onClick={() => onActivate?.(index)}
-                  onMouseEnter={() => onActivate?.(index)}
-                  onFocus={() => onActivate?.(index)}
-                >
-                  {body}
-                </button>
+                <div className={linkClass} aria-current={active ? 'step' : undefined}>{body}</div>
               )}
               {index < steps.length - 1 && <Icon name="arrow-right" size={18} className="workflow-arrow" />}
             </li>

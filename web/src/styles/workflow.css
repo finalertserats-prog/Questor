@@ -49,7 +49,10 @@
   text-decoration: none;
   transition: border-color 0.12s ease, background-color 0.12s ease;
 }
-.workflow-link:hover {
+/* Only the steps that go somewhere answer to a pointer. On the public page a
+   step is a diagram, and a card that lights up under the cursor promises a
+   click that does nothing. */
+a.workflow-link:hover {
   border-color: var(--accent);
   text-decoration: none;
 }
