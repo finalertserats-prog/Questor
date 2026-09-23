@@ -7,6 +7,7 @@ import { interviewerIdOf, listActiveInterviewers } from './interviewers.js';
 import { isOperator } from '../middleware/operator.js';
 import { isPlatformOperator } from '../middleware/platformOperator.js';
 import type { AuthClaims } from './auth.js';
+import { identityCodeTroubleDrafts } from './identityCodeTrouble.js';
 import {
   actionFor, compareNeedsYou, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, NOT_STARTED_STATES,
   type GateContext, type NeedsYouKind,
@@ -53,6 +54,9 @@ export interface NeedsYouRow {
     readonly expiresAt?: string;
     readonly opened?: boolean;
     readonly count?: number;
+    readonly channel?: string;
+    readonly certainty?: string;
+    readonly reason?: string;
   };
   /** Colleagues who have already opened it, most recent first. */
   readonly openedBy: readonly Looker[];
@@ -207,10 +211,11 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   const { tenantId } = auth;
   const none = Promise.resolve({ count: 0, drafts: [] as Draft[] });
 
-  const [attention, expiring, stalled, catalog, demo] = await Promise.all([
+  const [attention, expiring, stalled, identity, catalog, demo] = await Promise.all([
     ATTENTION_KINDS.some(may) ? attentionDrafts(tenantId, candidate, now, scan) : null,
     may('invitation_expiring') ? expiringDrafts(tenantId, candidate, now, scan) : none,
     may('stalled') ? stalledDrafts(tenantId, candidate, now, scan) : none,
+    may('identity_code_stuck') ? identityCodeTroubleDrafts(tenantId, candidate, now, scan) : none,
     may('catalog_proposals') ? catalogDrafts() : none,
     may('demo_request') ? demoDrafts(now, scan) : none,
   ]);
@@ -225,9 +230,10 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   }
   counts.invitation_expiring = expiring.count;
   counts.stalled = stalled.count;
+  counts.identity_code_stuck = identity.count;
   counts.catalog_proposals = catalog.count;
   counts.demo_request = demo.count;
-  drafts.push(...expiring.drafts, ...stalled.drafts, ...catalog.drafts, ...demo.drafts);
+  drafts.push(...expiring.drafts, ...stalled.drafts, ...identity.drafts, ...catalog.drafts, ...demo.drafts);
 
   const rows = drafts
     .map((d): NeedsYouRow => ({

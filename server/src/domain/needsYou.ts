@@ -14,6 +14,7 @@ export const NEEDS_YOU_KINDS = [
   'feedback_held',
   'invitation_expiring',
   'stalled',
+  'identity_code_stuck',
   'catalog_proposals',
   'demo_request',
 ] as const;
@@ -57,6 +58,7 @@ export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
   invitation_expiring: { capability: 'interview:invite' },
   // Retake and reopen are both interview:invite.
   stalled: { capability: 'interview:invite' },
+  identity_code_stuck: { capability: 'interview:invite' },
   catalog_proposals: { operator: 'platformOperator' },
   demo_request: { operator: 'operator' },
 };
@@ -129,6 +131,8 @@ export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: bool
       return { label: 'Resend invitation', to: interview };
     case 'stalled':
       return { label: 'Decide next step', to: interview };
+    case 'identity_code_stuck':
+      return { label: 'Check the address', to: interview };
     case 'catalog_proposals':
       return { label: 'Review proposals', to: '/catalog-review' };
     case 'demo_request':
@@ -144,6 +148,7 @@ export const KIND_LABEL: Readonly<Record<NeedsYouKind, string>> = {
   feedback_held: 'Feedback email held for you',
   invitation_expiring: 'Invitation closes soon',
   stalled: 'Interview stopped part-way',
+  identity_code_stuck: 'Could not send an identity code',
   catalog_proposals: 'Catalog proposals waiting',
   demo_request: 'Demo access requested again',
 };

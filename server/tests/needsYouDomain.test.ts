@@ -10,11 +10,11 @@ const kindsFor = (role: string, extra: { operator?: boolean; platformOperator?: 
 
 describe('needs-you gating', () => {
   it('gives a hiring manager reviews but not invitation chores it cannot do', () => {
-    expect(kindsFor('manager')).toEqual(['human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled']);
+    expect(kindsFor('manager')).toEqual(['human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled', 'identity_code_stuck']);
   });
 
   it('gives a recruiter the invitation chores and the reviews that landed on their candidates', () => {
-    expect(kindsFor('recruiter')).toEqual(['human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled']);
+    expect(kindsFor('recruiter')).toEqual(['human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled', 'identity_code_stuck']);
   });
 
   it('does not let the recruiter sign a review off, only see it', () => {
