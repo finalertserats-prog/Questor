@@ -159,6 +159,41 @@ export function createApp() {
   // already holds.
   app.use('/api/auth/register', rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true }));
 
+  // Password recovery. Its own limiters rather than a share of the sign-in
+  // budget: a person who cannot sign in must not find that their failed
+  // attempts have also used up the way to recover.
+  //
+  // Two buckets, because the two abuses are different shapes. Per ADDRESS stops
+  // one mailbox being flooded from a botnet — the bucket that actually protects
+  // the person, since an IP-keyed limit alone is worth nothing to an attacker
+  // with a thousand addresses to send from. Per IP stops one machine walking a
+  // list of addresses to find which ones have accounts. Both fail closed: while
+  // the counter store is unreachable this is an unmetered mail cannon aimed at
+  // whoever the caller names, and an hour of "try again shortly" on a recovery
+  // page is the cheaper of the two failures.
+  //
+  // The address is read from the parsed body (express.json is mounted above).
+  // It is normalised so Person@x and person@x share a bucket, and only ever
+  // appears inside the limiter key, which reaches the log as a fingerprint.
+  const forgotAddressKey = (req: Request) => {
+    const body = req.body as { email?: unknown } | undefined;
+    const email = typeof body?.email === 'string' ? body.email.trim().toLowerCase() : '';
+    return email ? `e:${email}` : `ip:${req.ip ?? 'unknown'}`;
+  };
+  app.use('/api/auth/password/forgot', rateLimit({ name: 'password-forgot-address', windowMs: 60 * 60_000, max: 5, keyOf: forgotAddressKey, failClosed: true }));
+  app.use('/api/auth/password/forgot', rateLimit({ name: 'password-forgot-ip', windowMs: 60 * 60_000, max: 20, failClosed: true }));
+  // Following a link is not guessing a password, but a token IS guessable in
+  // principle, so the attempts are bounded. 30 an hour against 256 bits is a
+  // formality; it is here so the ceiling exists rather than because anyone
+  // could reach it. `/reset/check` sits under this mount too, deliberately: it
+  // answers whether a token is real, so it is the cheaper oracle of the two.
+  app.use('/api/auth/password/reset', rateLimit({ name: 'password-reset', windowMs: 60 * 60_000, max: 30, failClosed: true }));
+  // Changing your own password is limited in routes/auth.ts instead, where it
+  // can sit after `authenticate` and key on the user. Mounted here it would run
+  // before the session is resolved, fall back to the IP, and throttle a whole
+  // NAT'd office as one caller — the exact failure the sign-in limiter above
+  // already had to be rescued from.
+
   // The candidate portal is unauthenticated and every answer triggers a paid
   // LLM call, so it is both the abuse surface and the cost-amplification path.
   // Key on the invitation token where present so one candidate cannot exhaust

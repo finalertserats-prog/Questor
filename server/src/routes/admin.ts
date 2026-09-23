@@ -3,13 +3,16 @@ import { z } from 'zod';
 import { Prisma } from '@prisma/client';
 import { prisma, parseJsonStrict, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { isPlatformOperator, isReservedOperatorEmail } from '../middleware/platformOperator.js';
+import { isPlatformOperator, isReservedOperatorEmail, requirePlatformOperator } from '../middleware/platformOperator.js';
+import { rateLimit } from '../middleware/rateLimit.js';
+import { startPasswordResetRequest } from '../services/passwordReset.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
 import { isKnownTimeZone } from '../services/roundTime.js';
 import { ASSURANCE_LEVELS, assuranceLevelOf, isSelectableLevel } from '../domain/identityAssurance.js';
 import { capabilitiesOf, isRoleName, ROLES } from '../domain/capabilities.js';
+import { passwordSchema } from '../domain/passwordPolicy.js';
 import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { getLlm } from '../providers/llm/index.js';
@@ -706,6 +709,17 @@ adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async
 // passwordHash must never leave the server; naming the columns explicitly means
 // a future column addition cannot leak by default the way `select: undefined`
 // would.
+// Mailing a reset link is free to ask for and not free to receive: a script
+// with one admin session could otherwise fill a colleague's inbox, or wear
+// through the per-account hourly ceiling on somebody else's behalf. Keyed on
+// the admin rather than the address, so one impatient admin cannot stop every
+// other admin in the building from helping anyone. Fails closed for the same
+// reason the sign-in limiter does — an outage must not become an open window.
+const passwordResetSendLimit = rateLimit({
+  name: 'admin-password-reset', windowMs: 60 * 60_000, max: 20, failClosed: true,
+  keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
+});
+
 const USER_FIELDS = { id: true, email: true, name: true, role: true, createdAt: true } as const;
 
 /** Load a user by id, but only if they belong to the caller's tenant. */
@@ -732,10 +746,12 @@ const roleNameSchema = z.enum(ROLES);
 
 const createUserSchema = z.object({
   email: z.string().trim().email().transform(normalizeEmail),
-  // Mirrors the 12-character floor in /api/auth/register. An admin-created
-  // account is a real login; letting it be weaker than a self-registered one
-  // would make the admin path the soft target.
-  password: z.string().min(12, 'Password must be at least 12 characters'),
+  // The one floor, shared with /api/auth/register, /api/signup and the reset
+  // page (domain/passwordPolicy.ts). An admin-created account is a real login;
+  // letting it be weaker than a self-registered one would make the admin path
+  // the soft target, and four separate copies of the rule was four chances for
+  // exactly that to happen by accident.
+  password: passwordSchema,
   name: z.string().min(1),
   role: roleNameSchema,
 });
@@ -810,6 +826,61 @@ adminRouter.patch('/users/:id/role', requireCapability('admin:manage'), asyncHan
   // interview socket still checks the role inside the token it connected with,
   // which is why that caveat is stated rather than claiming instant effect.
   res.json({ user: updated, note: 'The new role applies from the user\'s next request. A live interview connection they already have open keeps the old role until their sign-in expires.' });
+}));
+
+/**
+ * Send a colleague a link to set a new password.
+ *
+ * An admin never sets, sees or chooses another person's password — they can
+ * only cause a link to be mailed to the address already on the account. That is
+ * the whole difference between helping a colleague back in and being able to
+ * walk into their account: the link goes to their mailbox, not to the admin's
+ * screen, and the audit trail records who caused it.
+ *
+ * Tenant-scoped through `tenantUser`, so an admin cannot aim this at somebody
+ * else's organisation. The platform operator is the one exception, below.
+ */
+adminRouter.post('/users/:id/password-reset', requireCapability('admin:manage'), passwordResetSendLimit, asyncHandler(async (req, res) => {
+  const target = await tenantUser(req.auth!.tenantId, req.params.id);
+  // Sending is fire-and-forget for the same reason the public route is: the
+  // admin is told what will happen, not what the mail server said.
+  startPasswordResetRequest(target.email, {
+    ip: req.ip ?? 'unknown', requestId: req.requestId, requestedBy: 'admin', requestedById: req.auth!.userId,
+  });
+  res.status(202).json({
+    ok: true,
+    message: `A link to set a new password is on its way to ${target.email}. It works once and expires in an hour.`,
+  });
+}));
+
+/**
+ * The same, for an organisation that has nobody left who can do it.
+ *
+ * An admin locked out of an organisation with other admins is helped by one of
+ * them. An organisation whose ONLY admin is locked out has nobody: the route
+ * above needs `admin:manage` inside that tenant, and there is no one holding
+ * it. Self-service covers the ordinary case — the locked-out admin asks for a
+ * link themselves, since that path needs no admin at all — so this exists for
+ * the case where self-service cannot work either: the address on the account is
+ * a mailbox they have lost, or the person left and the organisation needs its
+ * own admin back.
+ *
+ * Restricted to the platform operator, who is the only party outside a tenant
+ * with any standing at all, and who still cannot choose the password — the link
+ * goes to the address on the account, not to them. Anything beyond that (the
+ * mailbox itself is gone) is a support conversation with identity checks, not
+ * an endpoint, because no automated proof of "this really is the company" fits
+ * in an HTTP request.
+ */
+adminRouter.post('/tenants/:tenantId/users/:id/password-reset', requirePlatformOperator, passwordResetSendLimit, asyncHandler(async (req, res) => {
+  const target = await prisma.user.findFirst({
+    where: { id: req.params.id, tenantId: req.params.tenantId }, select: { id: true, email: true, role: true },
+  });
+  if (!target) throw new HttpError(404, 'User not found');
+  startPasswordResetRequest(target.email, {
+    ip: req.ip ?? 'unknown', requestId: req.requestId, requestedBy: 'operator', requestedById: req.auth!.userId,
+  });
+  res.status(202).json({ ok: true, message: `A link to set a new password is on its way to ${target.email}.` });
 }));
 
 // Assignments. Deliberately separate from the role change above: what a user MAY
