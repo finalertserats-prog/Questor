@@ -144,9 +144,14 @@ export async function getNeedsAttention(tenantId: string, candidate: Prisma.Cand
     candidate: { id: s.candidate.id, name: s.candidate.fullName },
     role: { id: s.role.id, title: s.role.title },
   });
+  // An interview handed off BECAUSE the candidate asked for a person is both a
+  // MANUAL_HANDOFF session and a human request, and listing it twice would put
+  // one person in the queue as two jobs. The request is the more precise of the
+  // two — it says what they asked for — so it wins and the handoff row drops.
+  const askedForAPerson = new Set(requests.map((r) => r.session.id));
   const items = [
     ...reviews.map((s) => item('review', s, s.assessments[0]?.createdAt ?? s.completedAt ?? s.createdAt)),
-    ...handoffs.map((s) => item('accommodation', s, accommodationRequestedAt(s.consentJson) ?? s.createdAt)),
+    ...handoffs.filter((s) => !askedForAPerson.has(s.id)).map((s) => item('accommodation', s, accommodationRequestedAt(s.consentJson) ?? s.createdAt)),
     ...requests.map((r) => item('human_request', r.session, r.requestedAt ?? r.session.createdAt)),
     // The held letter's own assessment, which is where the decision is made.
     ...held.map((h) => ({ ...item('feedback_held', h.session, h.heldAt ?? h.createdAt), assessmentId: h.assessmentId })),

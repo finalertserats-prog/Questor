@@ -37,9 +37,15 @@ const FORWARD: Record<string, string[]> = {
   // this later?". It is neither a withdrawal nor an unexplained stop — they
   // still want the interview — and it is the state the recruiter's re-invite
   // already starts from (interviewEngine postponeInterview).
-  WARMUP: ['ASSESSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
+  // MANUAL_HANDOFF from every state the candidate can speak in: "can I do this
+  // with a person instead?" is the one thing the consent page explicitly
+  // promises, and a promise that only holds in ASSESSING is not a promise. It
+  // was already reachable there and from DISCLOSURE (the accommodation box);
+  // the two live states either side of it had no route, so the same sentence
+  // said one question too early or one question too late did nothing at all.
+  WARMUP: ['ASSESSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
   ASSESSING: ['CANDIDATE_QUESTIONS', 'CLOSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
-  CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE', 'RESCHEDULE_REQUIRED'],
+  CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE', 'MANUAL_HANDOFF', 'RESCHEDULE_REQUIRED'],
   // TECHNICAL_FAILURE is reachable because a finalisation can die between the
   // CLOSING transition and the PROCESSING one. Without it the recovery sweep had
   // no legal move for such a session and it stayed in CLOSING for ever.

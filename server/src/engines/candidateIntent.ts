@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { ENDS_HERE, detectAiIdentityQuestion, detectDistress, detectRepeatRequest, detectWithdrawal } from './policyEngine.js';
+import {
+  ENDS_HERE, detectAiIdentityQuestion, detectDistress, detectHumanRequest, detectInjection,
+  detectRepeatRequest, detectWithdrawal,
+} from './policyEngine.js';
 
 /**
  * What the candidate meant by their last turn, read BEFORE the interviewer
@@ -24,6 +27,8 @@ export type CandidateIntent =
   | 'stop'        // end the interview now
   | 'postpone'    // end now, and do it another time — without penalty
   | 'distress'    // the existing safety stop
+  | 'human_request' // "can I do this with a person instead?" — the consent page's promise
+
   | 'pause'       // give me a moment; ask nothing new
   | 'resume'      // back from a pause
   | 'skip'        // explicitly move past this question
@@ -54,7 +59,7 @@ export interface IntentReading {
 }
 
 /** Intents after which the interview is over. */
-export const ENDING_INTENTS: ReadonlySet<CandidateIntent> = new Set(['stop', 'postpone', 'distress']);
+export const ENDING_INTENTS: ReadonlySet<CandidateIntent> = new Set(['stop', 'postpone', 'distress', 'human_request']);
 
 /**
  * Lowercased, curly apostrophes straightened, punctuation that speech-to-text
@@ -343,11 +348,18 @@ export function detectCandidateIntent(text: string): IntentReading {
   const postpone = POSTPONE_WHOLE.test(t) || (!isReportedRequest(t) && POSTPONE_PHRASES.some((re) => re.test(t)));
   const stop = STOP_WHOLE.test(t) || STOP_PHRASES.some((re) => re.test(t)) || MUST_GO.test(t) || detectWithdrawal(raw);
   const distress = detectDistress(raw);
+  // Asked for a person. Read before the two ways of ending, because it is the
+  // more precise reading of the same turn: "I'd rather not carry on with this,
+  // can someone from your team pick it up?" is a stop AND a request, and only
+  // the request says what has to happen next. Not read from an injected turn:
+  // instruction-like text must never be able to steer the ending either.
+  const humanRequest = !isReportedRequest(t) && !detectInjection(raw).injection && detectHumanRequest(raw);
 
   // A request to do it later is also a request to stop now; the difference is
   // only what happens next, and "later" is the more precise of the two. Distress
   // outranks "later" (the person needs a human now), and an explicit stop with
   // distress keeps the long-standing rule that stopping wins.
+  if (humanRequest && !distress) return { intent: 'human_request', rule: 'human_request' };
   if (postpone && !distress) return { intent: 'postpone', rule: 'postpone' };
   if (stop) return { intent: 'stop', rule: 'stop' };
   if (distress) return { intent: 'distress', rule: 'distress' };
@@ -378,7 +390,7 @@ export function detectCandidateIntent(text: string): IntentReading {
 
 /** Intents whose turn is not an answer to the question and must not be counted or scored as one. */
 const NOT_AN_ANSWER: ReadonlySet<CandidateIntent> = new Set([
-  'stop', 'postpone', 'distress', 'pause', 'resume', 'skip', 'repeat', 'correction', 'ai_identity', 'question', 'non_answer',
+  'stop', 'postpone', 'distress', 'human_request', 'pause', 'resume', 'skip', 'repeat', 'correction', 'ai_identity', 'question', 'non_answer',
 ]);
 
 const BARE_YES = whole(String.raw`(?:yes|yeah|yep|yup|sure|correct|that'?s right|absolutely|definitely|of course)`);
@@ -413,7 +425,10 @@ export function isSubstantiveAnswer(text: string): boolean {
  * an intent outside this list is treated as having said nothing.
  */
 export const llmIntentSchema = z.object({
-  intent: z.enum(['stop', 'postpone', 'pause', 'answer', 'other']),
+  // `human_request` is in the model's vocabulary as well as the patterns':
+  // the patterns are the floor (they are all production has when no provider
+  // answers), and the model is the net for the phrasing nobody predicted.
+  intent: z.enum(['stop', 'postpone', 'pause', 'human_request', 'answer', 'other']),
   confidence: z.number().min(0).max(1),
 }).strict();
 
@@ -423,7 +438,17 @@ export type LlmIntent = z.infer<typeof llmIntentSchema>;
 export const LLM_INTENT_MIN_CONFIDENCE = 0.8;
 
 /** The deterministic readings an LLM may upgrade. Everything else is already decided. */
-const UPGRADABLE: ReadonlySet<CandidateIntent> = new Set(['answer', 'non_answer', 'question', 'resume', 'skip']);
+const UPGRADABLE: ReadonlySet<CandidateIntent> = new Set(['answer', 'non_answer', 'question', 'resume', 'skip', 'stop']);
+
+/**
+ * A deterministic `stop` is already decided — except in one direction. "I don't
+ * want to carry on with this" reads as a stop and is often the opening half of
+ * "…can someone from your team take over", and the difference between the two
+ * is whether a person ever calls the candidate back. So a stop may become a
+ * human request and nothing else: it still ends the interview, and it ends it
+ * the way the consent page promised.
+ */
+const ONLY_UPGRADE_FROM_STOP: CandidateIntent = 'human_request';
 
 /**
  * Whether asking a model about this turn could change anything. A stop, a
@@ -447,6 +472,10 @@ export function couldBeUpgraded(reading: IntentReading): boolean {
 export function mergeLlmIntent(deterministic: IntentReading, llm: LlmIntent | null): IntentReading {
   if (!llm || !UPGRADABLE.has(deterministic.intent)) return deterministic;
   if (llm.confidence < LLM_INTENT_MIN_CONFIDENCE) return deterministic;
+  // A request for a person outranks the other two upgrades: it says what has to
+  // happen next, where "stop" only says that something must.
+  if (llm.intent === 'human_request') return { intent: 'human_request', rule: 'llm_human_request' };
+  if (deterministic.intent === 'stop' && llm.intent !== ONLY_UPGRADE_FROM_STOP) return deterministic;
   if (llm.intent === 'stop' || llm.intent === 'postpone') return { intent: llm.intent, rule: `llm_${llm.intent}` };
   if (llm.intent === 'pause' && deterministic.intent !== 'answer') return { intent: 'pause', rule: 'llm_pause' };
   return deterministic;

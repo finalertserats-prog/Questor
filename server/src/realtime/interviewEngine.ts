@@ -90,7 +90,7 @@ export interface AgentTurnOut {
 async function loadContext(sessionId: string) {
   const session = await prisma.interviewSession.findUnique({
     where: { id: sessionId },
-    include: { plan: true, scorecard: true, candidate: true, role: true, turns: { orderBy: { index: 'asc' } } },
+    include: { plan: true, scorecard: true, candidate: true, role: true, tenant: { select: { name: true } }, turns: { orderBy: { index: 'asc' } } },
   });
   if (!session) throw new Error('Session not found');
   if (!session.plan) throw new Error('Session has no interview plan');
@@ -407,6 +407,9 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   const { result: utter, served } = await traceServing(() => nextUtterance({
     plan, signal, turns, role: profile, persona, sessionId,
     candidateName: session.candidate.fullName, roleTitle: session.role.title, techStack: roleTechStack(session.role),
+    // The hiring company's own name, so an acknowledgement can never thank the
+    // candidate "for the detail on" the organisation interviewing them.
+    organisationName: session.tenant?.name,
     observerNotice: hasObserverNotice(consent.disclosureText ?? '') ? OBSERVER_NOTICE : undefined,
     candidateLeft: leftByButton(session.turns[session.turns.length - 1]),
   }));
@@ -498,9 +501,13 @@ export function leftByButton(turn: { speaker: string; metaJson: string } | undef
 export async function withdrawInterview(sessionId: string, reason: EndReason): Promise<void> {
   const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { tenantId: true, state: true } });
   if (!session) return;
-  if (['CANDIDATE_WITHDREW', 'POLICY_STOP', 'CLOSED', 'RESCHEDULE_REQUIRED'].includes(session.state)) return; // already closed
+  if (['CANDIDATE_WITHDREW', 'POLICY_STOP', 'CLOSED', 'RESCHEDULE_REQUIRED', 'MANUAL_HANDOFF'].includes(session.state)) return; // already closed
   if (reason === 'candidate_postponed') {
     await postponeInterview(sessionId, session);
+    return;
+  }
+  if (reason === 'human_requested') {
+    await handoffInterview(sessionId, session);
     return;
   }
 
@@ -525,13 +532,100 @@ export async function withdrawInterview(sessionId: string, reason: EndReason): P
  * rather than branching on the kind itself, so a new way of ending cannot be
  * filed under the wrong one.
  */
-export type EndReason = 'candidate_withdrew' | 'safety_stop' | 'candidate_postponed';
+export type EndReason = 'candidate_withdrew' | 'safety_stop' | 'candidate_postponed' | 'human_requested';
 
 export function endReasonFor(kind: string): EndReason {
   if (kind === 'safety') return 'safety_stop';
   if (kind === 'postponed') return 'candidate_postponed';
+  if (kind === 'handoff') return 'human_requested';
   return 'candidate_withdrew';
 }
+
+/**
+ * The candidate asked to be interviewed by a person instead.
+ *
+ * MANUAL_HANDOFF, and deliberately the same ending consent refusal already
+ * uses: the two are the same request made at two moments, and a candidate who
+ * changes their mind at question three is owed exactly what one who changed it
+ * on the consent page gets. CANDIDATE_WITHDREW would say they walked away,
+ * which is not what happened — they asked for something we promised them.
+ *
+ * Three things have to be true when this returns, and each of them was false
+ * in the run that produced this code:
+ *
+ *   1. NOT ASSESSED. No assessment version is written, so nothing reaches a
+ *      reviewer's queue quoting the candidate's refusals back as evidence.
+ *      (An interview that ends here never passes through finalizeInterview:
+ *      the turn is `withdrawn`, and every caller branches on that.)
+ *   2. NO AUTOMATIC LETTER. The feedback mail is enqueued from the assessment;
+ *      with no assessment there is nothing to enqueue and nothing to send.
+ *   3. IN FRONT OF A PERSON, MARKED URGENT. A CandidateHumanRequest row is
+ *      written as already REQUESTED — the candidate has asked, there is no
+ *      link for them to click — which is the row the "Asked to talk to a
+ *      person" kind of the needs-you feed reads, and that kind is urgent.
+ *
+ * The row carries a token hash for a token that is never minted, because the
+ * column is unique and not null and this request did not arrive by link. There
+ * is therefore no credential in existence that opens it, which is the property
+ * that matters.
+ */
+async function handoffInterview(sessionId: string, session: { tenantId: string; state: string }): Promise<void> {
+  assertTransition(session.state, 'MANUAL_HANDOFF');
+  const moved = await transitionIfInState(sessionId, session.state, 'MANUAL_HANDOFF');
+  if (!moved) return; // another request settled it first
+  const full = await prisma.interviewSession.findUnique({
+    where: { id: sessionId }, select: { candidateId: true, consentJson: true },
+  });
+  if (!full) return;
+
+  const requestedAt = new Date();
+  // Recorded on the consent record beside the pre-interview accommodation
+  // request, so one place answers "did this candidate ask for a person, and
+  // when?" however they asked.
+  const consent = parseJsonOptional<Record<string, unknown>>(
+    full.consentJson, {}, { model: 'InterviewSession', id: sessionId, field: 'consentJson' },
+  );
+  consent.humanRequestedDuringInterview = true;
+  consent.humanRequestedAt = requestedAt.toISOString();
+  await prisma.interviewSession.update({
+    where: { id: sessionId },
+    data: { completedAt: requestedAt, consentJson: JSON.stringify(consent) },
+  });
+
+  await prisma.candidateHumanRequest.upsert({
+    where: { sessionId },
+    create: {
+      sessionId,
+      candidateId: full.candidateId,
+      tenantId: session.tenantId,
+      tokenHash: `in-interview:${sessionId}`,
+      issuedAt: requestedAt,
+      // Nothing expires a request a person still has to answer; the feed's own
+      // 30-day window decides how long it keeps asking.
+      expiresAt: new Date(requestedAt.getTime() + HUMAN_REQUEST_HOLD_DAYS * 24 * 60 * 60 * 1000),
+      status: 'REQUESTED',
+      requestedAt,
+    },
+    // An earlier request is the one that counts: a second ask does not reset
+    // how long the hiring team has left someone waiting.
+    update: {},
+  });
+
+  await logAudit({
+    tenantId: session.tenantId, actorType: 'user', actorId: 'candidate',
+    action: 'interview.human_requested',
+    entityType: 'InterviewSession', entityId: sessionId,
+    after: { assessed: false, note: 'Candidate asked to speak to a person. No assessment and no feedback letter — a person must make contact.' },
+  });
+  await emitEvent(session.tenantId, 'candidate.human_request', { sessionId, candidateId: full.candidateId })
+    .catch((err: unknown) => logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId }, 'human request webhook failed to emit; the request is recorded and visible to the hiring team in the app'));
+  await notifyHiringTeam({ tenantId: session.tenantId, candidateId: full.candidateId, sessionId, event: 'human_request' })
+    .catch((err: unknown) => logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId }, 'human request notice failed to send; the request is still in the needs-you queue'));
+  logger.info({ sessionId }, 'Interview handed off at candidate request — not assessed, a person must make contact');
+}
+
+/** How long the row stays valid. It is a queue entry, not a credential, so this is generous. */
+const HUMAN_REQUEST_HOLD_DAYS = 365;
 
 /**
  * The candidate asked to do the interview another time.
@@ -592,8 +686,8 @@ export interface StartOutcome {
 }
 
 /** Agent turn kinds after which the conversation is over (see produceAgentTurn). */
-const ENDING_KINDS: readonly string[] = ['signoff', 'safety', 'withdrawn', 'postponed'];
-const WITHDRAWN_KINDS: readonly string[] = ['withdrawn', 'safety', 'postponed'];
+const ENDING_KINDS: readonly string[] = ['signoff', 'safety', 'withdrawn', 'postponed', 'handoff'];
+const WITHDRAWN_KINDS: readonly string[] = ['withdrawn', 'safety', 'postponed', 'handoff'];
 
 /** A beat between the last thing on record and the first thing after a rejoin. */
 const RESUME_GAP_MS = 1_000;

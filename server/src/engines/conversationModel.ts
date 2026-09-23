@@ -346,15 +346,83 @@ const ACK_PLAIN = [
  * failure. Grounded in the candidate's own words where there is a phrase to
  * use; otherwise plain. Empty for anything that was not an answer.
  */
-export function acknowledgement(answer: string, seed: number, previous = ''): string {
+/**
+ * Below this, an answer has not given us "detail on" anything.
+ *
+ * "Thanks for the detail on AWS" was said to a candidate whose whole turn was
+ * "is AWS, is Snowflake permission". A person never thanks you for detail you
+ * did not give, and it is the single tell that gives the whole thing away
+ * within three turns — so the named acknowledgement is earned by substance,
+ * and everything shorter gets the plain one, which is true whatever was said.
+ */
+const MIN_WORDS_FOR_NAMED_ACK = 12;
+
+/** Words, for judging whether an answer carried enough to name something from it. */
+function wordCount(text: string): number {
+  return (text.trim().match(/\S+/g) ?? []).length;
+}
+
+/**
+ * Is this phrase one we must never echo back as though the candidate had told
+ * us about it? Matched loosely — either way round, case-insensitively — because
+ * `salientPhrase` returns one or two words out of a longer name.
+ */
+function isOursNotTheirs(phrase: string, avoid: readonly string[]): boolean {
+  const p = phrase.toLowerCase().trim();
+  if (!p) return true;
+  return avoid.some((raw) => {
+    const a = (raw ?? '').toLowerCase().trim();
+    if (!a) return false;
+    return a === p || a.includes(p) || p.includes(a);
+  });
+}
+
+/**
+ * One short sentence showing the answer was heard, before the next question.
+ *
+ * Neutral on purpose — never "great answer": praise is evaluation, the
+ * candidate hears it as a score, and the next weaker answer then sounds like a
+ * failure. Grounded in the candidate's own words where there is a phrase to
+ * use; otherwise plain. Empty for anything that was not an answer.
+ *
+ * `avoid` is the list of names that are OURS — the hiring organisation, the
+ * role title, the areas this interview is about. The candidate saying one of
+ * them back is not them telling us something: a real transcript produced
+ * "Thanks for the detail on Larkspur Media", said by Larkspur Media's own
+ * interviewer, and "that's useful context on Data Engineer", which is the job
+ * title the greeting had already read out. Both read as keyword-matching,
+ * because that is exactly what they were.
+ */
+export function acknowledgement(answer: string, seed: number, previous = '', avoid: readonly string[] = []): string {
   if (detectCandidateIntent(answer).intent !== 'answer') return '';
-  const phrase = salientPhrase(answer);
+  const phrase = wordCount(answer) >= MIN_WORDS_FOR_NAMED_ACK ? salientPhrase(answer) : '';
   // The same phrase twice running ("…on Decipher", "…on Decipher") sounds like
   // a script, so a phrase just used gives way to a plain acknowledgement.
-  const usable = phrase && !previous.toLowerCase().includes(phrase.toLowerCase()) ? phrase : '';
+  const usable = phrase && !previous.toLowerCase().includes(phrase.toLowerCase()) && !isOursNotTheirs(phrase, avoid)
+    ? phrase
+    : '';
   const options = usable ? ACK_WITH_PHRASE.map((f) => f(usable)) : ACK_PLAIN;
   const fresh = options.filter((o) => !previous.startsWith(o));
   return pick(fresh.length ? fresh : options, seed);
+}
+
+/**
+ * How many times the candidate has asked for the pending question again.
+ *
+ * The second ask is the one that matters: somebody who did not follow the
+ * question the first time is not helped by the same sentence a second time
+ * (see conversationRuntime's `repeat` handling).
+ */
+export function repeatRequestCount(turns: readonly TurnRecord[]): number {
+  const pending = pendingQuestion(turns);
+  if (!pending) return 0;
+  let count = 0;
+  for (let i = pending.at + 1; i < turns.length; i++) {
+    const t = turns[i];
+    if (t.speaker !== 'candidate') continue;
+    if (detectCandidateIntent(t.text).intent === 'repeat') count += 1;
+  }
+  return count;
 }
 
 // --- Repetition -----------------------------------------------------------------
@@ -478,11 +546,41 @@ const HIRING_TEAM_WILL_COVER = "I don't have those details, but the hiring team 
  * lines, who owns which decision) goes to the hiring team rather than being
  * invented.
  */
-export function answerFromRoleFacts(question: string, facts: RoleFacts): string {
+/**
+ * Answer ONE question from the role's own facts.
+ *
+ * Split out from {@link answerFromRoleFacts} so a candidate who asks two things
+ * at the close gets two answers. A real one asked "what technology stack does
+ * the team use most, and how does the team measure success in the first few
+ * months?" and was told "This is the Data Engineer role. The main
+ * responsibilities are to build and maintain scheduled Python jobs" — which
+ * answers neither, and was the last thing they heard before the sign-off.
+ */
+function answerOneQuestion(question: string, facts: RoleFacts): string {
   const q = question.toLowerCase();
   // Facts a scorecard never holds: said plainly rather than guessed.
   const notInTheRole = /\b(?:salary|pay|paid|compensation|package|ctc|benefits?|bonus|equity|location|located|remote|hybrid|office|relocat\w*|visa|notice period|start date|how big|team size|how many people)\b/.test(q);
-  if (notInTheRole) return `That's a fair question. ${HIRING_TEAM_WILL_COVER}`;
+  if (notInTheRole) return HIRING_TEAM_WILL_COVER;
+  // Asked FIRST, because the role facts hold a real answer to it and the
+  // generic role recital does not. "What stack do you use?" is the commonest
+  // question a candidate asks and the one we can answer best.
+  const aboutStack = /\b(?:tech(?:nology|nical)?\s*stack|stack|tooling|tools?|technolog\w*|languages?|frameworks?|platforms?|databases?|software)\b/.test(q);
+  if (aboutStack) {
+    const stack = facts.techStack ?? [];
+    return stack.length
+      ? `The role works mainly with ${listOf([...stack].slice(0, 6))}.`
+      : `The role's exact tooling is not something I have in front of me. ${HIRING_TEAM_WILL_COVER}`;
+  }
+  // "How would success be measured?", "what does good look like?" — answerable
+  // from what this interview is actually assessing, and honest about the rest.
+  const aboutSuccess = /\b(?:measure success|success look|what (?:does\s+)?(?:good|success)\s+look|succeed|successful|expectations?|first (?:few |three |90 |ninety )?(?:month|months|days|weeks)|probation|targets?|kpis?|objectives?)\b/.test(q);
+  if (aboutSuccess) {
+    const parts = facts.focus.length
+      ? [`For this role we are mainly looking for strength in ${listOf(facts.focus)}, and that is what this conversation is about.`]
+      : ['This conversation is about the areas the role is mainly looking for strength in.'];
+    parts.push('What the first few months are measured on specifically is the hiring team\'s to set out, and they will cover it when they follow up.');
+    return parts.join(' ');
+  }
   const aboutRole = /\b(?:role|position|job|looking for|hiring for|responsib\w*|day to day|day-to-day|involve|what (?:would|will) i (?:be )?do)/.test(q);
   const aboutProcess = /\b(?:next steps?|process|hear back|decision|result|outcome|feedback|when will)\b/.test(q) && !aboutRole;
   const aboutLength = /\b(?:how long|how much time|minutes|duration)\b/.test(q);
@@ -498,5 +596,46 @@ export function answerFromRoleFacts(question: string, facts: RoleFacts): string 
   }
   if (aboutLength) return `We have about ${facts.durationMinutes} minutes in total.`;
   if (aboutProcess) return 'After this, a person on the hiring team reviews the conversation and follows up with you on next steps by email.';
-  return `That's a fair question. ${HIRING_TEAM_WILL_COVER}`;
+  return HIRING_TEAM_WILL_COVER;
+}
+
+/** At most this many of the candidate's questions are answered in one reply. */
+const MAX_QUESTIONS_ANSWERED = 2;
+
+/**
+ * The separate questions inside one turn. A candidate at the close rarely asks
+ * one thing: "What stack does the team use? And also, how is success measured
+ * in the first few months?" is two questions and needs two answers.
+ */
+function questionsIn(text: string): string[] {
+  const parts = (text ?? '')
+    .split(/(?<=\?)\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const asked = parts.filter((s) => s.endsWith('?'));
+  return asked.length ? asked : [text];
+}
+
+/**
+ * Answer a candidate's question from what the role actually says — its title,
+ * its responsibilities, the technologies it works with, the competencies being
+ * assessed — and nothing else. Anything the job description does not state
+ * (pay, location, reporting lines, who owns which decision) goes to the hiring
+ * team rather than being invented.
+ *
+ * More than one question gets more than one answer, and two answers that would
+ * be the same sentence are said once.
+ */
+export function answerFromRoleFacts(question: string, facts: RoleFacts): string {
+  const asked = questionsIn(question).slice(0, MAX_QUESTIONS_ANSWERED);
+  const answers: string[] = [];
+  for (const one of asked) {
+    const answer = answerOneQuestion(one, facts);
+    if (!answers.includes(answer)) answers.push(answer);
+  }
+  if (!answers.length) return `That's a fair question. ${HIRING_TEAM_WILL_COVER}`;
+  // "That's a fair question" opens a reply that has to hand the question on;
+  // it reads as a stall in front of one that actually answers it.
+  const opener = answers.every((a) => a === HIRING_TEAM_WILL_COVER) ? "That's a fair question. " : '';
+  return `${opener}${answers.join(' ')}`;
 }
