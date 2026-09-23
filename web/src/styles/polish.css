@@ -381,10 +381,11 @@ td a:not(.btn) {
 /* --- small screens --------------------------------------------------------- */
 
 @media (max-width: 640px) {
-  /* 64px on top, as in sidebar.css: this file loads later, and an 18px top
-     put the fixed Menu button on top of every page title. */
+  /* Back to the 18px this always wanted. It was 64px only to keep the floating
+     Menu button off every page title; the top bar (sidebar.css .nav-bar) now
+     holds that height itself, in the flow, so the page needs none of it. */
   .main {
-    padding: 64px 16px 40px;
+    padding: 18px 16px 40px;
   }
   .table-scroll table {
     min-width: 560px;

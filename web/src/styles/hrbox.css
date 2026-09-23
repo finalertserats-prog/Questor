@@ -501,12 +501,12 @@
   font-weight: 700;
   color: var(--stop);
 }
-/* On a phone: fixed at the top right, in the strip the Menu button keeps clear. */
+/* On a phone the bell rides at the right of the top bar (styles/sidebar.css
+   .nav-bar), which reserves the height for it. It used to be fixed on top of
+   the page, with the same problem the Menu button had. */
 .hb-bell--top {
-  position: fixed;
-  top: 14px;
-  right: 14px;
-  z-index: 40;
+  flex: none;
+  margin-left: auto;
   padding: 6px 9px;
   border: var(--hair) solid var(--rule);
   background: var(--sheet);

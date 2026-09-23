@@ -134,3 +134,40 @@ export function navItemTooltip(mode: SidebarMode, label: string): string | undef
 export function railToggleTurned(mode: SidebarMode): boolean {
   return mode === 'collapsed';
 }
+
+/**
+ * What the narrow top bar names, beside the Menu button.
+ *
+ * Route-derived rather than published by each page: every page would otherwise
+ * have to remember to fill it in, and the one that forgot would leave the bar
+ * blank. It names the SECTION, not the record — "Candidates" on a candidate's
+ * own page — because that is what tells you where you are once the page title
+ * has scrolled away, and because a person's name does not belong in a bar that
+ * stays on screen.
+ *
+ * Order matters: the longer path is tested before the section it sits under.
+ */
+const SECTION_TITLES: ReadonlyArray<readonly [prefix: string, title: string]> = [
+  ['/candidates/new', 'Add candidate'],
+  ['/candidates/import', 'Add candidate'],
+  ['/candidates', 'Candidates'],
+  ['/roles/new', 'New role'],
+  ['/roles', 'Roles'],
+  ['/interviews', 'Interviews'],
+  ['/assessments', 'Assessment'],
+  ['/rounds', 'Interviews'],
+  ['/admin/signups', 'Sign-up requests'],
+  ['/admin', 'Admin'],
+  ['/audit', 'Audit log'],
+  ['/settings', 'Settings'],
+  ['/about', 'About'],
+  ['/contact', 'Contact'],
+  ['/catalog-review', 'Catalog review'],
+  ['/library-admin', 'Question library'],
+];
+
+export function pageTitleFor(pathname: string): string {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname;
+  const match = SECTION_TITLES.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));
+  return match ? match[1] : 'Home';
+}

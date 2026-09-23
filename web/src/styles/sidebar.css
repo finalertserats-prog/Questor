@@ -58,12 +58,57 @@
   cursor: default;
 }
 
-/* The button that opens the drawer, sitting at the top-left of every page. */
-.nav-toggle {
-  position: fixed;
-  top: 14px;
-  left: 14px;
+/* ==========================================================================
+   The narrow-viewport top bar.
+
+   The Menu button used to be `position: fixed` at the top-left of every page,
+   which took it out of the flow: the only thing keeping it off the page was
+   64px of padding on .main, and that held for exactly one screenful. Scrolled,
+   or on a page whose content is not .main (the portal, the interview room), it
+   floated over whatever was underneath — help text on the interview setup form,
+   the middle of a long page in a full-page capture.
+
+   It now has a place to be. The bar is a real block in the flow, so it reserves
+   its own height and nothing can sit under it, and it is sticky rather than
+   fixed, so the way into the menu is still one tap away once the page has
+   scrolled. Its height is fixed and it is always present at this width, so
+   nothing moves as a page loads. It stacks above the page (40) and below the
+   drawer and its backdrop (50, 60), the tour (100) and the toasts (1000).
+   ========================================================================== */
+
+.nav-bar {
+  position: sticky;
+  top: 0;
   z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  height: 56px;
+  padding: 0 14px;
+  border-bottom: var(--hair) solid var(--rule);
+  /* Opaque: the page scrolls underneath it. */
+  background: var(--sheet);
+}
+
+/* Where you are, for when the page's own heading has scrolled away. Hidden
+   from screen readers (aria-hidden in App.tsx): the page's <h1> is the
+   heading, and this must not read as a second one. */
+.nav-bar-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The button that opens the drawer, at the left of that bar. */
+.nav-toggle {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -115,6 +160,7 @@
    ========================================================================== */
 
 @media (min-width: 821px) {
+  .nav-bar,
   .nav-toggle,
   .nav-backdrop,
   .nav-close {
@@ -275,10 +321,10 @@
     display: block;
   }
 
-  /* Leave room for the toggle so it never sits on a page title. */
+  /* The bar above reserves its own height now, so the page starts where its
+     own padding says rather than behind a floating button. */
   .main {
     margin: 0 auto;
-    padding-top: 64px;
   }
 
   .rail-toggle {

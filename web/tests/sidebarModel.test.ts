@@ -3,6 +3,7 @@ import {
   SIDEBAR_STORAGE_KEY,
   brandDisplay,
   navItemTooltip,
+  pageTitleFor,
   readSidebarMode,
   shellClassName,
   sidebarToggleLabel,
@@ -201,5 +202,35 @@ describe('navItemTooltip', () => {
 describe('railToggleTurned', () => {
   it('shows the collapse arrow (toward the menu) while open and turns it half a circle once collapsed', () => {
     expect([railToggleTurned('expanded'), railToggleTurned('collapsed')]).toEqual([false, true]);
+  });
+});
+
+describe('pageTitleFor', () => {
+  it('names the section, not the record, on a candidate page', () => {
+    expect(pageTitleFor('/candidates/abc123')).toBe('Candidates');
+  });
+
+  it('takes the longer path over the section it sits under', () => {
+    expect([pageTitleFor('/candidates/new'), pageTitleFor('/roles/new')]).toEqual(['Add candidate', 'New role']);
+  });
+
+  it('names Home for the root', () => {
+    expect(pageTitleFor('/')).toBe('Home');
+  });
+
+  it('names the assessment page', () => {
+    expect(pageTitleFor('/assessments/a1/differences')).toBe('Assessment');
+  });
+
+  it('ignores a trailing slash', () => {
+    expect(pageTitleFor('/admin/')).toBe('Admin');
+  });
+
+  it('does not mistake a longer word for the section', () => {
+    expect(pageTitleFor('/rolesomething')).toBe('Home');
+  });
+
+  it('falls back to Home for an address nothing claims', () => {
+    expect(pageTitleFor('/nowhere')).toBe('Home');
   });
 });

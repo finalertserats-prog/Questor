@@ -11,6 +11,7 @@ import { demoHasEnded, formatDemoCountdown, isFinalDemoMinute } from './componen
 import {
   brandDisplay,
   navItemTooltip,
+  pageTitleFor,
   RAIL_TRANSITION_MS,
   readSidebarMode,
   shellClassName,
@@ -252,21 +253,30 @@ function Layout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={shellClassName(railMode, railAnimating)}>
-      <button
-        ref={toggleRef}
-        type="button"
-        className="nav-toggle"
-        data-tour="nav-toggle"
-        aria-controls="app-sidebar"
-        aria-expanded={overlayOpen}
-        onClick={() => setNavOpen(true)}
-      >
-        <Icon name="menu" />
-        <span>Menu</span>
-      </button>
-
-      {/* On a phone the bell sits at the top right, clear of the Menu button. */}
-      {mayReadCandidates && <NeedsYouBell total={needsYouTotal} className="hb-bell--top" />}
+      {/* The narrow-viewport top bar. It is in the page's flow and reserves its
+          own height, so nothing it carries can sit on top of the page beneath
+          it; sticky, so the way into the menu stays reachable once scrolled.
+          Above the page, below the drawer, the tour and the toasts. Hidden
+          entirely on a wide viewport, where the sidebar is docked. The title
+          is a visual wayfinder for a bar that outlives the page heading, and
+          is hidden from screen readers because the page's own <h1> is the
+          heading they already have. */}
+      <div className="nav-bar">
+        <button
+          ref={toggleRef}
+          type="button"
+          className="nav-toggle"
+          data-tour="nav-toggle"
+          aria-controls="app-sidebar"
+          aria-expanded={overlayOpen}
+          onClick={() => setNavOpen(true)}
+        >
+          <Icon name="menu" />
+          <span>Menu</span>
+        </button>
+        <span className="nav-bar-title" aria-hidden="true">{pageTitleFor(location.pathname)}</span>
+        {mayReadCandidates && <NeedsYouBell total={needsYouTotal} className="hb-bell--top" />}
+      </div>
 
       {overlayOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
 
