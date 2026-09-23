@@ -97,6 +97,10 @@ export async function refineCvFacts(cv: ScoreableCv, rawText: string, opts: Refi
 
   const reply = await generateJson<CvFactsReply>({
     fn: 'cv_facts',
+    // A recruiter is watching a CV being read, so it gets the authoring
+    // budget. CV_FACTS_TIMEOUT_MS below is well inside it and stands: a
+    // call-site timeout may shorten a purpose's budget, never lengthen it.
+    purpose: 'authoring',
     system: SYSTEM,
     user: [
       'Lines of the CV, one per row, as "index|section|text".',

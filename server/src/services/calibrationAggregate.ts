@@ -190,6 +190,9 @@ export async function clusterReasons(opts: {
 
   const themes = await generateJson<ReasonTheme[]>({
     fn: 'calibration_reason_themes',
+    // Nobody is waiting: this runs while a role's calibration is aggregated,
+    // and an empty list is a perfectly good answer.
+    purpose: 'finalisation',
     temperature: 0.1,
     reasoningEffort: 'low',
     // Grouping notes is not a job for a 3B model on a CPU, and it is not spoken.
