@@ -191,7 +191,13 @@
   --room-you-halo: rgba(242, 184, 128, 0.3);
   --room-observer: #86d3b3;
   --room-observer-halo: rgba(134, 211, 179, 0.25);
-  --room-ink-3: #6f6f86;
+  /* The dimmest room ink is still text. At #6f6f86 it read between 3.41:1 and
+     3.99:1 on the room's surfaces -- below AA everywhere it was used, which
+     axe caught first on the conversation heading and then, once that moved, on
+     the composer hint behind it. Lifted to clear 4.5:1 on every room surface
+     (4.94:1 on the lightest) while staying a step below --room-ink-2, so the
+     three-step scale is still three steps. */
+  --room-ink-3: #8a8aa0;
   --room-panel-2: #1d1d28;
   --room-input: #111118;
   --room-code: #0c0c12;
