@@ -15,6 +15,7 @@ import { PageHeader } from '../components/PageHeader';
 import { Icon } from '../components/Icon';
 import { AdminTabList } from '../components/AdminTabList';
 import { OutcomePanel } from '../components/reports/OutcomePanel';
+import { CalibrationPanel } from '../components/CalibrationPanel';
 import { adminPanelId, adminTabFromParam, adminTabId, adminTabPath, nextAdminTab, type AdminTabKey } from '../components/adminTabsModel';
 import {
   LEGACY_OFF_CONFIRMATION, eventsForApi, eventsLabel, signatureView,
@@ -358,6 +359,12 @@ export function Admin() {
         <OutcomePanel />
       </div>
       ))}
+
+      {/* Calibration fetches its own data, like the Analytics panel above it:
+          it is the only panel whose two endpoints are admin-only AND audited,
+          and folding them into the console's shared load would have every
+          admin visit record a read of employee data nobody asked to see. */}
+      {panel('calibration', <CalibrationPanel />)}
 
       {panel('executions', loaded(
       <div className="card">

@@ -12,7 +12,7 @@ describe('the tabs', () => {
   });
 
   it('lists every section of the console in order', () => {
-    expect(ADMIN_TABS.map((tab) => tab.label)).toEqual(['System health', 'Organisation', 'Connectors', 'Meetings', 'Analytics', 'Model executions', 'Webhooks']);
+    expect(ADMIN_TABS.map((tab) => tab.label)).toEqual(['System health', 'Organisation', 'Connectors', 'Meetings', 'Analytics', 'Calibration', 'Model executions', 'Webhooks']);
   });
 });
 

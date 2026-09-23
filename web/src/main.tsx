@@ -34,6 +34,7 @@ import './styles/assessment.css';
 import './styles/compare.css';
 import './styles/status.css';
 import './styles/fit.css';
+import './styles/calibration.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

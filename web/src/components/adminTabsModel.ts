@@ -8,7 +8,7 @@
  * so a link to "the webhooks" or "system health" is a link that stays true.
  */
 
-export type AdminTabKey = 'health' | 'organisation' | 'connectors' | 'meetings' | 'analytics' | 'executions' | 'webhooks';
+export type AdminTabKey = 'health' | 'organisation' | 'connectors' | 'meetings' | 'analytics' | 'calibration' | 'executions' | 'webhooks';
 
 export interface AdminTab {
   readonly key: AdminTabKey;
@@ -21,6 +21,10 @@ export const ADMIN_TABS: readonly AdminTab[] = [
   { key: 'connectors', label: 'Connectors' },
   { key: 'meetings', label: 'Meetings' },
   { key: 'analytics', label: 'Analytics' },
+  // Next to Analytics on purpose: both answer "what is this actually doing?",
+  // and the fairness check on a calibration reads the outcome statistics the
+  // tab before it shows.
+  { key: 'calibration', label: 'Calibration' },
   { key: 'executions', label: 'Model executions' },
   { key: 'webhooks', label: 'Webhooks' },
 ];
