@@ -4,7 +4,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config.js';
 import { prisma } from './db.js';
-import { requestId, errorHandler, csrfProtection, authenticate, HttpError } from './middleware/index.js';
+import { requestId, errorHandler, csrfProtection, authenticate, rejectNulBytes, HttpError } from './middleware/index.js';
 import { failureRateLimit, rateLimit, LOGIN_FAILURES_PER_ACCOUNT, LOGIN_FAILURES_PER_ADDRESS, LOGIN_WINDOW_MS } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
 import { isDraining } from './services/drainState.js';
@@ -57,6 +57,14 @@ export function createApp() {
   app.use(helmet());
   app.use(cors({ origin: config.webOrigin, credentials: true }));
   app.use(express.json({ limit: '2mb' }));
+  // A NUL inside a JSON string is valid JSON — `"a\u0000b"` parses — and then
+  // reaches Postgres, which refuses it. The caller was answered 500 with a
+  // ConnectorError in the log, so anyone could produce a server error, and a
+  // log line, with one byte (docs/qa/resilience-2026-09-23.md, R22). Refused
+  // here it is what it actually is: a bad request, with a message a person can
+  // act on. Checked after parsing rather than on the raw bytes, because the
+  // escape sequence is what survives and the raw byte is a parse error anyway.
+  app.use(rejectNulBytes);
   app.use(requestId);
   // The shutdown drain waits for these: a candidate's answer whose model call
   // is still running must get its reply before the process exits.

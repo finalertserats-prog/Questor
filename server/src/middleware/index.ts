@@ -194,6 +194,53 @@ export function asyncHandler(fn: (req: Request, res: Response, next: NextFunctio
   };
 }
 
+/** How deep a body is walked looking for a NUL. Deeper than any shape we accept. */
+const NUL_SCAN_MAX_DEPTH = 12;
+
+function holdsNul(value: unknown, depth = 0): boolean {
+  if (typeof value === 'string') return value.includes('\u0000');
+  if (depth >= NUL_SCAN_MAX_DEPTH || typeof value !== 'object' || value === null) return false;
+  if (Array.isArray(value)) return value.some((v) => holdsNul(v, depth + 1));
+  // Keys as well as values: a NUL in a key reaches the database just as easily.
+  return Object.entries(value).some(([k, v]) => k.includes('\u0000') || holdsNul(v, depth + 1));
+}
+
+/**
+ * Refuse a parsed body carrying a NUL byte, before anything tries to store it.
+ * See the mount in app.ts for why this runs after parsing rather than on the
+ * raw bytes.
+ */
+export function rejectNulBytes(req: Request, _res: Response, next: NextFunction): void {
+  if (req.body !== undefined && holdsNul(req.body)) {
+    next(new HttpError(400, 'That text contains a character we cannot store. Please retype it and try again.', 'nul_byte'));
+    return;
+  }
+  next();
+}
+
+/**
+ * A refusal the client caused, with the status that says so.
+ *
+ * `type` is body-parser's own classification, which is stable and does not
+ * depend on matching an error message. Returns null for everything else, so
+ * nothing that is genuinely a server error is quietly downgraded.
+ */
+function clientBodyError(err: unknown): { status: number; message: string } | null {
+  if (typeof err !== 'object' || err === null) return null;
+  switch ((err as { type?: unknown }).type) {
+    case 'entity.parse.failed':
+      return { status: 400, message: 'The request body was not valid JSON.' };
+    case 'entity.too.large':
+      return { status: 413, message: 'That request is too large. Please shorten it and try again.' };
+    case 'encoding.unsupported':
+      return { status: 415, message: 'That character encoding is not supported.' };
+    case 'request.aborted':
+      return { status: 400, message: 'The request ended before it was complete.' };
+    default:
+      return null;
+  }
+}
+
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   const status = err.status ?? err.statusCode ?? 500;
   logger.error({ err: err?.message ?? String(err), stack: err?.stack, requestId: req.requestId, path: req.path }, 'Request error');
@@ -211,6 +258,16 @@ export function errorHandler(err: any, req: Request, res: Response, _next: NextF
   if (err instanceof CorruptRecordError) {
     logger.error({ ...err.record, requestId: req.requestId, path: req.path }, 'Corrupt stored JSON');
     return res.status(500).json({ error: 'Stored data is corrupted. Contact support with this request ID.', requestId: req.requestId });
+  }
+  // A client's mistake is not a server error. body-parser already decided
+  // these and set a status; forcing 500 told a candidate who wrote a long
+  // answer that Questor had broken, and filed every one of them in the log
+  // where a real incident has to be spotted
+  // (docs/qa/resilience-2026-09-23.md, S5). The BODY is unchanged — still a
+  // message we authored, never the parser's.
+  const client = clientBodyError(err);
+  if (client) {
+    return res.status(client.status).json({ error: client.message, requestId: req.requestId });
   }
   if (err instanceof HttpError && err.retryAfterSeconds !== undefined) {
     res.setHeader('Retry-After', String(err.retryAfterSeconds));
