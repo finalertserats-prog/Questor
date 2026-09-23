@@ -15,9 +15,10 @@
 //
 // The outcome statistics are owned by another lane (services/outcomeStats.ts,
 // the Admin analytics tab). This module reads them through a guarded dynamic
-// import so that calibration works whether or not that lane has landed — and
-// fails CLOSED when it has not, because "we could not check" is not "the check
-// passed".
+// import and duck-types what comes back: that lane owns its own shape and is
+// free to change it, and a rename there must degrade this check rather than
+// break scoring. When the statistics cannot be read at all, the gate fails
+// CLOSED — "we could not check" is not "the check passed".
 
 import { config } from '../config.js';
 import { parseJson, prisma } from '../db.js';
@@ -88,8 +89,9 @@ export interface OutcomeReading {
 
 const UNAVAILABLE: OutcomeReading = { available: false, readable: false, passRate: null, sample: 0 };
 
-/** The outcome-statistics lane's module, resolved at run time (see readOutcomeStatistics). */
+/** The outcome-statistics lane's modules, resolved at run time (see readOutcomeStatistics). */
 const OUTCOME_STATS_MODULE = './outcomeStats.js';
+const OUTCOME_DOMAIN_MODULE = '../domain/outcomeStats.js';
 
 /**
  * The role's observed pass rate from the outcome-statistics lane.
@@ -103,20 +105,20 @@ export async function readOutcomeStatistics(opts: {
   readonly roleId: string;
 }): Promise<OutcomeReading> {
   try {
-    // The specifier is held in a variable ON PURPOSE. The outcome-statistics
-    // lane may not have landed yet, and a literal here would make this file
-    // fail to compile until it does — which would couple two lanes that are
-    // meant to ship independently.
+    // The specifier is held in a variable ON PURPOSE, so this file compiles
+    // whether or not that lane's module is present — the two are meant to ship
+    // independently, and a missing module must degrade the check, not the build.
     const specifier = OUTCOME_STATS_MODULE;
     const module: Record<string, unknown> | null = await import(specifier).catch(() => null);
     if (!module) return UNAVAILABLE;
     const gather = module.gatherOutcomeRows;
     if (typeof gather !== 'function') return UNAVAILABLE;
 
-    // The lane's own gather takes the caller's auth claims; calibration runs as
-    // the system, so it is handed a system claim scoped to this one tenant.
+    // The lane's own gather takes the caller's auth claims and scopes the query
+    // by them. Calibration runs as the system over one organisation, so it is
+    // handed a tenant-wide claim for that organisation and no other.
     const gathered = await (gather as (auth: unknown, options: unknown) => Promise<unknown>)(
-      { tenantId: opts.tenantId, userId: 'system', role: 'admin', capabilities: [] },
+      { tenantId: opts.tenantId, userId: 'system', role: 'admin', email: '' },
       { roleId: opts.roleId },
     );
     const rows = readRows(gathered);
@@ -125,7 +127,7 @@ export async function readOutcomeStatistics(opts: {
     const assessed = rows.filter((r) => r.assessed);
     if (assessed.length === 0) return { available: true, readable: false, passRate: null, sample: 0 };
     const passed = assessed.filter((r) => (r.humanVerdict ?? r.aiVerdict) === 'PROCEED').length;
-    const minSample = readMinSample(module);
+    const minSample = await readMinSample();
     return {
       available: true,
       readable: assessed.length >= minSample,
@@ -162,9 +164,17 @@ function readRows(gathered: unknown): OutcomeRowish[] | null {
   return out;
 }
 
-/** The other lane's own minimum readable sample, when it publishes one. */
-function readMinSample(module: Record<string, unknown>): number {
-  const value = module.OUTCOME_MIN_SAMPLE;
+/**
+ * The other lane's own minimum readable sample.
+ *
+ * Read from that lane rather than copied, so the two cannot come to disagree
+ * about how small is too small to say anything. Falls back to its published
+ * value of 20 when the module is not there to ask.
+ */
+async function readMinSample(): Promise<number> {
+  const specifier = OUTCOME_DOMAIN_MODULE;
+  const domain: Record<string, unknown> | null = await import(specifier).catch(() => null);
+  const value = domain?.OUTCOME_MIN_SAMPLE;
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 20;
 }
 

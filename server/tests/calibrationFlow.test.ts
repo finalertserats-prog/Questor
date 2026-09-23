@@ -169,8 +169,10 @@ describe('activation', () => {
     expect(rows.filter((r) => r.status === 'active')).toHaveLength(0);
   });
 
-  it('holds when the outcome statistics cannot be read, rather than applying', async () => {
+  it('holds when this role has too few outcomes for the statistics to say anything', async () => {
     const ids = await seed();
+    // Enough reviews to clear every statistical gate, but fewer assessed
+    // outcomes than the outcome statistics will read (OUTCOME_MIN_SAMPLE).
     await buildEvidence(ids, 18);
     await runCalibration(ids.tenantId);
     const stake = await prisma.calibrationAdjustment.findFirst({
@@ -180,13 +182,15 @@ describe('activation', () => {
     expect(stake!.status).toBe('held');
     expect(stake!.delta).toBe(0);
     expect(stake!.holdReason).toBe('fairness_flagged');
-    expect(stake!.statement).toContain('could not be checked');
+    expect(stake!.statement).toContain('too few for the pass-rate statistics');
+    // The measurement is still recorded; it is the APPLICATION that is held.
+    expect(stake!.measuredMedian).toBe(-1);
+    expect(stake!.observations).toBeGreaterThanOrEqual(15);
   });
 
   it('activates once the fairness check can run, bounded to one level, and audits it', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
     const stake = await prisma.calibrationAdjustment.findFirst({
       where: { tenantId: ids.tenantId, competencyId: 'stake' },
@@ -207,10 +211,23 @@ describe('activation', () => {
     expect(after.interval).toBeTruthy();
   });
 
-  it('leaves a competency reviewers agreed with alone', async () => {
+  it('can be told not to require the statistics, and then applies on the projection alone', async () => {
     const ids = await seed();
     withoutFairnessGate();
+    // Too few outcomes for the statistics to read, which normally holds it.
     await buildEvidence(ids, 18);
+    await runCalibration(ids.tenantId);
+    const stake = await prisma.calibrationAdjustment.findFirst({ where: { tenantId: ids.tenantId, competencyId: 'stake' } });
+    expect(stake!.status).toBe('active');
+    expect(stake!.delta).toBe(-1);
+    const fairness = JSON.parse(stake!.fairnessJson);
+    expect(fairness.flagged).toBe(false);
+    expect(fairness.statement).toContain('only the replayed projection was checked');
+  });
+
+  it('leaves a competency reviewers agreed with alone', async () => {
+    const ids = await seed();
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
     const sql = await prisma.calibrationAdjustment.findFirst({
       where: { tenantId: ids.tenantId, competencyId: 'sql' },
@@ -221,8 +238,7 @@ describe('activation', () => {
 
   it('reverts in one action, audits it, and does not reactivate on the next run', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
     const stake = await prisma.calibrationAdjustment.findFirst({ where: { tenantId: ids.tenantId, competencyId: 'stake' } });
 
@@ -239,8 +255,7 @@ describe('activation', () => {
 
   it('withdraws everything when the organisation switches calibration off', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
     expect(await prisma.calibrationAdjustment.count({ where: { tenantId: ids.tenantId, status: 'active' } })).toBeGreaterThan(0);
 
@@ -254,8 +269,7 @@ describe('activation', () => {
 describe('forward only', () => {
   it('leaves every recorded assessment byte for byte unchanged after a calibration activates', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
 
     const before = await prisma.assessmentVersion.findMany({ orderBy: { id: 'asc' } });
     expect(before.length).toBeGreaterThan(0);
@@ -277,8 +291,7 @@ describe('forward only', () => {
 
   it('leaves the human reviews and the differences unchanged too', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     const reviews = JSON.stringify(await prisma.humanReview.findMany({ orderBy: { id: 'asc' } }));
     await runCalibration(ids.tenantId);
     expect(JSON.stringify(await prisma.humanReview.findMany({ orderBy: { id: 'asc' } }))).toBe(reviews);
@@ -286,8 +299,7 @@ describe('forward only', () => {
 
   it('hands the calibration to the NEXT interview instead', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
 
     const role = await prisma.role.findUnique({ where: { id: ids.roleId } });
@@ -305,8 +317,7 @@ describe('forward only', () => {
 
   it('hands nothing over once calibration is switched off', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
     await prisma.tenant.update({ where: { id: ids.tenantId }, data: { policyJson: '{}' } });
 
@@ -444,8 +455,7 @@ describe('the admin surface', () => {
 
   it('refuses a revert without a reason', async () => {
     const ids = await seed();
-    withoutFairnessGate();
-    await buildEvidence(ids, 18);
+    await buildEvidence(ids, 22);
     await runCalibration(ids.tenantId);
     const stake = await prisma.calibrationAdjustment.findFirst({ where: { tenantId: ids.tenantId, competencyId: 'stake' } });
     const res = await request(app).post(`/api/admin/calibration/${stake!.id}/revert`).set(ids.auth).send({ reason: 'no' });

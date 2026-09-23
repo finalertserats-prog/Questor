@@ -593,13 +593,18 @@ export function evaluateFairness(opts: {
     };
   }
   if (!opts.statisticsReadable) {
+    // A sample too small to read is the same situation as no statistics at
+    // all: the check could not be made. It is treated the same way, and the
+    // same deployment switch governs both.
     return {
       source: 'insufficient_sample',
       projection,
       observedPassRate: opts.observedPassRate,
       observedSample: opts.observedSample,
-      flagged: true,
-      statement: `Held: this role has ${opts.observedSample} outcomes on record, too few for the pass-rate statistics to say anything. Nothing was applied.`,
+      flagged: opts.requireStatistics,
+      statement: opts.requireStatistics
+        ? `Held: this role has ${opts.observedSample} outcomes on record, too few for the pass-rate statistics to say anything. Nothing was applied.`
+        : `This role has ${opts.observedSample} outcomes on record, too few for the pass-rate statistics to say anything, so only the replayed projection was checked.`,
     };
   }
   if (movesTooMuch) {
