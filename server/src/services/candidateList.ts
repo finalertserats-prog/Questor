@@ -4,6 +4,7 @@ import { candidateScope, roleScope } from './access.js';
 import type { AuthClaims } from './auth.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { anyFieldMatches, foldText, pageMeta, skipFor, type PageMeta, type Paging } from './listPaging.js';
+import { memoBriefly, shapeKey } from './listCache.js';
 
 /**
  * One page of the Candidates list.
@@ -50,6 +51,41 @@ export interface CandidateListPage {
   readonly summary: { readonly latestStateCounts: Record<string, number> };
 }
 
+/**
+ * The roles in scope whose title matches, by id. A tenant has tens of roles,
+ * not thousands, so this is one small read however many candidates there are —
+ * and it means the candidate scan does not have to carry a role join.
+ */
+async function matchingRoleIds(where: Prisma.CandidateWhereInput, needle: string): Promise<ReadonlySet<string>> {
+  const roles = await prisma.role.findMany({ where: { candidates: { some: where } }, select: { id: true, title: true } });
+  return new Set(roles.filter((r) => anyFieldMatches(needle, [r.title])).map((r) => r.id));
+}
+
+/**
+ * Every candidate in scope the search matches, newest first, as ids.
+ *
+ * Matched in the application because `mode: 'insensitive'` does not exist on
+ * SQLite and Postgres LIKE is case-sensitive, so the same search would find
+ * different people in development and production — the reason this scan exists
+ * at all. What it no longer does is join a role per candidate: that made it a
+ * 5,000-row join for at most a few dozen distinct titles, and the titles are
+ * one small read (§2.2 attributed 324 ms of the search to this scan).
+ *
+ * Held for a few seconds, so paging through the results and a re-render do not
+ * each rerun it.
+ */
+async function matchingIds(where: Prisma.CandidateWhereInput, needle: string): Promise<readonly string[]> {
+  return memoBriefly(`candidates:search:${shapeKey([where, needle])}`, async () => {
+    const [narrow, titles] = await Promise.all([
+      prisma.candidate.findMany({ where, orderBy: ORDER, select: { id: true, fullName: true, email: true, roleId: true } }),
+      matchingRoleIds(where, needle),
+    ]);
+    return narrow
+      .filter((c) => (c.roleId !== null && titles.has(c.roleId)) || anyFieldMatches(needle, [c.fullName, c.email]))
+      .map((c) => c.id);
+  });
+}
+
 async function pageRows(where: Prisma.CandidateWhereInput, query: CandidateListQuery): Promise<{ total: number; rows: Row[] }> {
   const skip = skipFor(query);
   const needle = query.q ? foldText(query.q) : '';
@@ -59,11 +95,8 @@ async function pageRows(where: Prisma.CandidateWhereInput, query: CandidateListQ
     const rows = skip >= total ? [] : await prisma.candidate.findMany({ where, orderBy: ORDER, skip, take: query.pageSize, select: ROW_SELECT });
     return { total, rows };
   }
-  const narrow = await prisma.candidate.findMany({
-    where, orderBy: ORDER, select: { id: true, fullName: true, email: true, role: { select: { title: true } } },
-  });
-  const matched = narrow.filter((c) => anyFieldMatches(needle, [c.fullName, c.email, c.role?.title]));
-  const ids = matched.slice(skip, skip + query.pageSize).map((c) => c.id);
+  const matched = await matchingIds(where, needle);
+  const ids = matched.slice(skip, skip + query.pageSize).map((id) => id);
   const rows = ids.length
     // The scope again, not only the ids: the read that returns detail never relies on
     // the scan before it having been scoped.
@@ -109,15 +142,33 @@ async function rolesForLabels(auth: AuthClaims, titles: readonly string[]): Prom
   return roles.filter((r) => wanted.has(foldText(r.title.trim())));
 }
 
-/** How many candidates' latest interview sits in each state. Two columns per session, no detail. */
+/**
+ * How many candidates' latest interview sits in each state.
+ *
+ * This read every session in the tenant and deduplicated them in the
+ * application: 20,000 rows and 582 ms of a 940 ms page, on every request,
+ * whichever page was asked for (docs/qa/resilience-2026-09-23.md §2.2).
+ *
+ * `distinct` on candidateId, with candidateId leading the ordering, lets the
+ * database do it: on PostgreSQL that is a DISTINCT ON walking
+ * `[tenantId, candidateId, createdAt]` and taking the first row of each run, so
+ * the rows that cross the wire are one per CANDIDATE rather than one per
+ * INTERVIEW. The secondary ordering keeps the same row winning as before — the
+ * newest session, ties broken by id.
+ */
 export async function latestStateCounts(tenantId: string, where: Prisma.CandidateWhereInput): Promise<Record<string, number>> {
-  const sessions = await prisma.interviewSession.findMany({
-    where: { tenantId, candidate: where },
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    select: { candidateId: true, state: true },
+  // Tenant-wide by definition, so it cannot be made to scale with the page.
+  // Held for a few seconds instead, which is what stops ten operators
+  // refreshing the list from running ten identical whole-tenant queries.
+  return memoBriefly(`candidates:states:${shapeKey([tenantId, where])}`, async () => {
+    const latest = await prisma.interviewSession.findMany({
+      where: { tenantId, candidate: where },
+      orderBy: [{ candidateId: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }],
+      distinct: ['candidateId'],
+      select: { state: true },
+    });
+    return latest.reduce<Record<string, number>>((acc, s) => ({ ...acc, [s.state]: (acc[s.state] ?? 0) + 1 }), {});
   });
-  const latest = sessions.reduce((acc, s) => (acc.has(s.candidateId) ? acc : acc.set(s.candidateId, s.state)), new Map<string, string>());
-  return [...latest.values()].reduce<Record<string, number>>((acc, state) => ({ ...acc, [state]: (acc[state] ?? 0) + 1 }), {});
 }
 
 /**

@@ -6,6 +6,7 @@ import type { AuthClaims } from './auth.js';
 import { aiConclusionVisible } from './shadowMode.js';
 import { humanVerdict } from '../domain/reviewedAssessment.js';
 import { anyFieldMatches, foldText, pageMeta, pagingQuerySchema, skipFor, type PageMeta } from './listPaging.js';
+import { memoBriefly, shapeKey } from './listCache.js';
 
 /**
  * One page of the Interviews list. Paged, filtered and searched here rather
@@ -51,6 +52,31 @@ export interface InterviewListPage {
   readonly meta: PageMeta;
 }
 
+/**
+ * Every interview in scope the search matches, newest first, as ids.
+ *
+ * The scan used to join a candidate AND a role to each of the tenant's 20,000
+ * sessions to read two strings — 2.3 s a search
+ * (docs/qa/resilience-2026-09-23.md §2.2). Three flat reads instead: which
+ * candidates match by name, which roles match by title, and the sessions'
+ * foreign keys. The matching itself is unchanged, and still in the
+ * application, because `mode: 'insensitive'` does not exist on SQLite.
+ *
+ * Held for a few seconds, so paging through the results does not rerun it.
+ */
+async function matchingIds(where: Prisma.InterviewSessionWhereInput, needle: string): Promise<readonly string[]> {
+  return memoBriefly(`interviews:search:${shapeKey([where, needle])}`, async () => {
+    const [sessions, candidates, roles] = await Promise.all([
+      prisma.interviewSession.findMany({ where, orderBy: ORDER, select: { id: true, candidateId: true, roleId: true } }),
+      prisma.candidate.findMany({ where: { interviews: { some: where } }, select: { id: true, fullName: true } }),
+      prisma.role.findMany({ where: { interviews: { some: where } }, select: { id: true, title: true } }),
+    ]);
+    const byName = new Set(candidates.filter((c) => anyFieldMatches(needle, [c.fullName])).map((c) => c.id));
+    const byTitle = new Set(roles.filter((r) => anyFieldMatches(needle, [r.title])).map((r) => r.id));
+    return sessions.filter((s) => byName.has(s.candidateId) || byTitle.has(s.roleId)).map((s) => s.id);
+  });
+}
+
 async function pageRows(where: Prisma.InterviewSessionWhereInput, query: InterviewListQuery): Promise<{ total: number; rows: Row[] }> {
   const skip = skipFor(query);
   const needle = query.q ? foldText(query.q) : '';
@@ -59,11 +85,8 @@ async function pageRows(where: Prisma.InterviewSessionWhereInput, query: Intervi
     const rows = skip >= total ? [] : await prisma.interviewSession.findMany({ where, orderBy: ORDER, skip, take: query.pageSize, select: ROW_SELECT });
     return { total, rows };
   }
-  const narrow = await prisma.interviewSession.findMany({
-    where, orderBy: ORDER, select: { id: true, candidate: { select: { fullName: true } }, role: { select: { title: true } } },
-  });
-  const matched = narrow.filter((s) => anyFieldMatches(needle, [s.candidate.fullName, s.role.title]));
-  const ids = matched.slice(skip, skip + query.pageSize).map((s) => s.id);
+  const matched = await matchingIds(where, needle);
+  const ids = matched.slice(skip, skip + query.pageSize);
   const rows = ids.length
     // The scope again, not only the ids: the read that returns detail never relies on
     // the scan before it having been scoped.

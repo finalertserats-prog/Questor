@@ -449,6 +449,11 @@ model InterviewSession {
   @@index([tenantId, completedAt])
   @@index([tenantId, state])
   @@index([tenantId, roleId, candidateId])
+  // The candidates list's state summary wants the NEWEST session per candidate.
+  // With this the database walks one index in candidate order and takes the
+  // first row of each run, instead of handing 20,000 rows to the application to
+  // deduplicate (582 ms of a 940 ms page — docs/qa/resilience-2026-09-23.md §2.2).
+  @@index([tenantId, candidateId, createdAt])
 }
 
 model IntegrityEvent {
