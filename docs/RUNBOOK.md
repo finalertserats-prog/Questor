@@ -208,6 +208,28 @@ What counts as "sent" is the invitation's `sentAt` (its creation, for one create
 
 **Who else has opened it.** Opening an assessment now writes one `assessment.opened` audit row (user id and assessment id only) per person per hour. HR-Box uses it, with the existing interview-opened events, to show colleagues who have already looked.
 
+## Role calibration
+
+*What the evaluator learns from what reviewers decided. Full design in `docs/plans/role-calibration.md`.*
+
+**Off unless two switches are on.** `CALIBRATION_ENABLED=true` in the deployment env, AND `calibrationEnabled` in the organisation's policy (Admin -> Organisation). With either off, observations are still captured -- the record of what reviewers decided is worth keeping whatever the scoring does -- but nothing is aggregated, activated or applied.
+
+**What it does when it is on.** A daily leased job (`role-calibration`) recomputes each organisation's calibration, refreshes the reviewer-pattern alerts, and contributes to the shared pool where an organisation has opted in. An adjustment is at most one level, on one role's one competency at one band, and applies ONLY to interviews assessed after it activated. Nothing already assessed is ever changed.
+
+**Where to look.** Admin -> Calibration shows what is applied, what is held and why, the evidence behind each, and the reviewer patterns. Every activation and withdrawal is audited (`calibration.activated`, `calibration.withdrawn`, `calibration.held`, `calibration.reverted`) and emails the organisation's admins.
+
+**To switch one off:** Admin -> Calibration -> "Switch this off", with a reason. It stops applying from the next interview assessed, it is audited, and the daily job will not turn it back on. "Let it be reconsidered" puts it back in the queue, where it must clear every threshold again.
+
+**To switch everything off for one organisation:** set `calibrationEnabled` to false in its policy. Everything active is withdrawn on the next run. **For every organisation at once:** `CALIBRATION_ENABLED=false` and restart.
+
+**The fairness gate fails closed.** Before any activation the adjustment is replayed over that role's past assessments and checked against the outcome statistics. A role with too few outcomes for those statistics to read is HELD, not activated -- so a new organisation will see everything held until it has enough hiring history, and that is correct rather than a fault. `CALIBRATION_REQUIRE_FAIRNESS_CHECK=false` relaxes this to the replayed projection alone; it is a deliberate reduction in safety and should be a decision, not a default.
+
+**If a score moved and somebody asks why.** The answer is on the assessment itself: each calibrated competency carries the model's own level, the calibrated level and a provenance line naming the number of reviews, the number of reviewers and the date they start from. The audit event for the activation carries the full fairness check and the confidence interval. Neither depends on the adjustment still existing.
+
+**The shared calibration** (`CALIBRATION_GLOBAL_ENABLED`, plus the organisation's own `calibrationGlobalContribution` opt-in) shares role, competency name, band, both levels, the month and a one-way reviewer code. It never shares the organisation, the candidate, the reviewer's identity or anything a reviewer wrote. Turning the opt-in off stops further sharing; what has already been contributed cannot be traced back, which is also why it cannot be picked out and withdrawn.
+
+**Reviewer statistics are employee data.** Every admin view of them is audited (`reviewer.pattern.viewed`). Every reviewer can read their own at `/api/admin/calibration/reviewers/me`. Nothing acts on a pattern automatically; the only effect is that a flagged reviewer stops feeding calibration until an admin closes the alert. The legal questions this raises are listed in the plan for the solicitor's pack.
+
 ## Known limits
 
 - Single instance today.
