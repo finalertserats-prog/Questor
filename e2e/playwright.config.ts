@@ -7,7 +7,10 @@ export default defineConfig({
   workers: 1,
   reporter: [['html', { outputFolder: 'playwright-report', open: 'never' }], ['list']],
   use: {
-    baseURL: 'http://localhost:5173',
+    // The dev server's address. Overridable so two checkouts of this repo can
+    // run their suites at once instead of silently reusing each other's server
+    // — which points one branch's tests at another branch's database.
+    baseURL: process.env.QUESTOR_BASE_URL ?? 'http://localhost:5173',
     storageState: './.auth/recruiter.json',
     trace: 'on-first-retry',
   },
@@ -21,9 +24,11 @@ export default defineConfig({
     command: 'node e2e/scripts/dev-server.mjs',
     // The API behind Vite's proxy, not the page: the page answers first, and
     // global setup's sign-in then met "We can't reach Questor right now".
-    url: 'http://localhost:5173/api/health',
+    url: `${process.env.QUESTOR_BASE_URL ?? 'http://localhost:5173'}/api/health`,
     cwd: '..',
-    reuseExistingServer: !process.env.CI,
+    // Never silently adopt whatever is already on the port when this run named
+    // its own address: that server belongs to another checkout.
+    reuseExistingServer: !process.env.CI && !process.env.QUESTOR_BASE_URL,
     timeout: 120_000,
   },
 });

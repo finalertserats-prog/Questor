@@ -11,7 +11,7 @@ import {
 import { bandForRoleSeniority } from './bandCalibration.js';
 import { extractCvFacts } from './cvFacts.js';
 import { RECENT_YEARS, STALE_YEARS, STRENGTH_SCORE, hitsFor, readTechnologies, strengthOf, vocabularyFor } from './fitEvidence.js';
-import { buildProbes, competencySentence, experienceSentence, technologySentence } from './fitExplain.js';
+import { buildProbes, competencySentence, experienceSentence, technologySentence, tenureNote } from './fitExplain.js';
 
 /**
  * Pre-interview fit: what a CV evidences about THIS role, with the line behind
@@ -219,6 +219,10 @@ export function scoreFit(facts: CvFacts, role: RoleSuccessProfile, techStack: re
     notEvidenced,
     probeDetail,
     experience: { roleBand: roleBand.id, explanation: experience.explanation },
+    // Shown, never scored. Gaps and short tenures are facts about a document,
+    // and the reasons for them are usually not on it — so they are put in front
+    // of a person as a neutral observation rather than turned into a number.
+    ...(tenureNote(facts) ? { tenureNote: tenureNote(facts)! } : {}),
     redaction: facts.redaction,
     engineVersion: FIT_ENGINE_VERSION,
     scorecardVersion: opts.scorecardVersion ?? null,

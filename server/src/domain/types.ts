@@ -134,6 +134,8 @@ export interface FitScore {
   notEvidenced?: string[];
   probeDetail?: FitProbe[];
   experience?: { roleBand: BandId; explanation: string };
+  /** A neutral sentence about tenure shape and gaps. Shown to a person; never scored. */
+  tenureNote?: string;
   /** What was taken out of the CV before scoring, and any injection attempt. */
   redaction?: RedactionReport;
 

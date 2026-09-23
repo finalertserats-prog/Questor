@@ -164,6 +164,23 @@ describe('what was not read', () => {
   });
 });
 
+describe('gaps and short tenures', () => {
+  it('are shown when there are any', () => {
+    panel({ tenureNote: 'There is a gap between dated roles.' });
+    expect(screen.getByTestId('fit-tenure').textContent).toContain('There is a gap between dated roles.');
+  });
+
+  it('are said not to move the score', () => {
+    panel({ tenureNote: 'There is a gap between dated roles.' });
+    expect(screen.getByTestId('fit-tenure').textContent).toContain('Neither gaps nor short tenures move the score.');
+  });
+
+  it('are absent rather than reassuring when there are none', () => {
+    panel();
+    expect(screen.queryByTestId('fit-tenure')).toBeNull();
+  });
+});
+
 describe('a re-scored reading', () => {
   it('says why it was re-scored', () => {
     const { container } = panel({}, 'Re-scored just now because the role moved from scorecard v2 to v3.');

@@ -48,6 +48,7 @@ export interface Fit {
   notEvidenced?: string[];
   probeDetail?: FitProbe[];
   experience?: { roleBand: string; explanation: string };
+  tenureNote?: string;
   redaction?: FitRedaction;
   engineVersion?: string;
   scorecardVersion?: number | null;

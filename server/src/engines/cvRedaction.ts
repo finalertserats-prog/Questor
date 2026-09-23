@@ -77,12 +77,35 @@ const DROP_LINE: ReadonlyArray<{ readonly kind: ProtectedKind; readonly re: RegE
  */
 const ADDRESS_SHAPE = /^\d{1,5}[a-z]?[,\s]+\p{Lu}[\p{L}'.-]*(?:[\s,]+[\p{L}'.-]+){0,6}$/u;
 
-/** Protected detail that sits inside an otherwise useful line and is cut out of it. */
+/**
+ * Protected detail that sits inside an otherwise useful line and is cut out of
+ * it. An address carries a name; a personal URL carries a name and often a
+ * photograph.
+ */
 const MASK_INLINE: ReadonlyArray<{ readonly kind: ProtectedKind; readonly re: RegExp }> = [
   { kind: 'contact', re: /[\w.+-]+@[\w-]+\.[\w.]{2,}/g },
-  { kind: 'contact', re: /(?:\+\d{1,3}[\s-]?)?(?:\(\d{2,4}\)[\s-]?)?\d{3,5}[\s-]?\d{3,5}(?:[\s-]?\d{3,5})?(?=\D|$)/g },
   { kind: 'contact', re: /\bhttps?:\/\/\S+|\b(?:www\.|linkedin\.com|github\.com)\/\S+/gi },
 ];
+
+/**
+ * A phone number, masked only where one can actually be.
+ *
+ * This used to run over every line as a bare run of digits with a separator,
+ * which also describes "2019-2021". Every employment date range written without
+ * spaces around the dash was therefore deleted as a phone number, and the CV
+ * came out with no dated roles at all — no durations, no recency on any
+ * technology, and a career that looked like it had never happened.
+ *
+ * A phone number lives in the contact block at the top, or on a line that says
+ * it is a phone number, or carries an international prefix. Nowhere else, so
+ * nowhere else is searched.
+ */
+const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?)?\d(?:[\s.-]?\d){6,14}(?=\D|$)/g;
+const PHONE_LABEL = /\b(phone|mobile|tel|telephone|cell|contact no|whatsapp)\b/i;
+
+function looksLikeContactLine(line: string, inHeader: boolean): boolean {
+  return inHeader || PHONE_LABEL.test(line) || /\+\d{1,3}[\s.-]?\d/.test(line);
+}
 
 /**
  * A degree line, reduced to the degree.
@@ -97,12 +120,17 @@ const DEGREE_PHRASE =
 
 const YEAR_RE = /\b(19|20)\d{2}\b/g;
 
-function maskInline(line: string): { text: string; kinds: ProtectedKind[] } {
+function maskInline(line: string, inHeader: boolean): { text: string; kinds: ProtectedKind[] } {
   const kinds: ProtectedKind[] = [];
   let text = line;
   for (const { kind, re } of MASK_INLINE) {
     const next = text.replace(new RegExp(re.source, re.flags), ' ');
     if (next !== text) kinds.push(kind);
+    text = next;
+  }
+  if (looksLikeContactLine(text, inHeader)) {
+    const next = text.replace(new RegExp(PHONE.source, PHONE.flags), ' ');
+    if (next !== text) kinds.push('contact');
     text = next;
   }
   return { text: text.replace(/\s{2,}/g, ' ').trim(), kinds };
@@ -198,7 +226,7 @@ export function prepareCvForScoring(rawText: string): ScoreableCv {
       continue;
     }
 
-    let { text, kinds: inline } = maskInline(trimmed);
+    let { text, kinds: inline } = maskInline(trimmed, !seenHeading);
     for (const k of inline) kinds.add(k);
 
     if (section === 'education') {

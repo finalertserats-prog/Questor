@@ -45,6 +45,33 @@ describe('reading roles off a CV', () => {
   });
 });
 
+describe('a CV that writes its dates without spaces', () => {
+  const CV = `Ravi Menon
+Phone: +91 98765 43210
+
+Experience
+
+Data Engineer, Acme Data (2019-2022)
+- Built the Kafka ingestion and owned the Airflow DAGs.
+
+Junior Engineer, Acme Data (2016-2019)
+- Wrote the first batch loads.
+`;
+  const facts = extractCvFacts(CV, { today: TODAY });
+
+  it('keeps its dates, which a phone-number mask once ate whole', () => {
+    expect(facts.roles.map((r) => [r.startYear, r.endYear])).toEqual([[2019, 2022], [2016, 2019]]);
+  });
+
+  it('can therefore still say how recently a technology was used', () => {
+    expect(facts.technologies.find((t) => t.name === 'Kafka')?.recencyYears).toBe(4);
+  });
+
+  it('still removes the phone number from the line that is one', () => {
+    expect(facts.lines.map((l) => l.text).join(' ')).not.toContain('98765');
+  });
+});
+
 describe('reading technologies off a CV', () => {
   const facts = extractCvFacts(STRONG_CV, { today: TODAY });
   const kafka = facts.technologies.find((t) => t.name === 'Kafka');

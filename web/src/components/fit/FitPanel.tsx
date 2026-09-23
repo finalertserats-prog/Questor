@@ -111,6 +111,14 @@ export function FitPanel({ fit, rescoredNote }: { fit: Fit | null; rescoredNote?
         <p className="fit-note">These reach the interview plan, so the conversation checks what the CV left open.</p>
       </section>
 
+      {fit.tenureNote && (
+        <section className="fit-block" data-testid="fit-tenure">
+          <h3 className="fit-h">About the shape of this career</h3>
+          <p className="fit-note">{fit.tenureNote}</p>
+          <p className="fit-note">Neither gaps nor short tenures move the score. They are here because a person reading a CV should see them and decide for themselves whether to ask.</p>
+        </section>
+      )}
+
       {(fit.niceToHavesPresent ?? []).length > 0 && (
         <section className="fit-block" data-testid="fit-nice-to-have">
           <h3 className="fit-h">Nice-to-haves this CV does have</h3>
