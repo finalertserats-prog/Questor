@@ -1,12 +1,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { prisma } from '../src/db.js';
+import { config, parseRemindersStartAt } from '../src/config.js';
 import { wipe } from '../src/seed/demoData.js';
 import { invitationSecretColumns, mintInvitationToken } from '../src/services/invitations.js';
-import { candidateStageDue, recruiterWarningDue, runInvitationReminders } from '../src/services/invitationReminders.js';
+import { candidateStageDue, recruiterWarningDue, remindersActiveFrom, runInvitationReminders } from '../src/services/invitationReminders.js';
 
 // HR-Box reminders: the candidate at day 3 and day 10 of the 14-day
 // invitation, the owning recruiter two days before it closes. Each at most
-// once, never to someone who has started, been decided or asked for a person.
+// once, never to someone who has started, been decided or asked for a person,
+// and never for an invitation sent before reminders were switched on.
 
 const mail = vi.hoisted(() => ({
   delivers: true,
@@ -59,8 +61,21 @@ async function invite(s: Setup, dayOfWindow: number, state = 'INVITED') {
 const toCandidate = () => mail.messages.filter((m) => m.to === 'sofia@m.local');
 const toRecruiter = () => mail.messages.filter((m) => m.to === 'kavya@acme.local');
 
+/**
+ * Reminders have been on since `days` ago. Written straight to the table:
+ * without it, the first run would stamp "now" and every fixture here — all of
+ * them sent days ago — would be on the wrong side of the cutoff. The cutoff
+ * itself has its own block at the foot of this file.
+ */
+async function remindersOnSince(days: number) {
+  const activeFrom = new Date(Date.now() - days * DAY);
+  await prisma.reminderWindow.upsert({ where: { id: 'reminders' }, update: { activeFrom }, create: { id: 'reminders', activeFrom } });
+}
+
 beforeEach(async () => {
   await wipe();
+  await remindersOnSince(365);
+  config.hrBox.remindersStartAt = null;
   mail.delivers = true;
   mail.fail = false;
   mail.messages = [];
@@ -225,5 +240,121 @@ describe('recruiter expiry warning', () => {
     await invite(s, 12.5);
     await runInvitationReminders();
     expect(toRecruiter().length).toBe(1);
+  });
+});
+
+describe('the cutoff: only invitations sent after reminders were switched on', () => {
+  /** Nothing has ever run: the table has no stamp, as production does not today. */
+  const switchNotYetThrown = () => prisma.reminderWindow.deleteMany();
+
+  it('stamps the moment of the first run', async () => {
+    await switchNotYetThrown();
+    const before = Date.now();
+    await runInvitationReminders();
+    const row = await prisma.reminderWindow.findUnique({ where: { id: 'reminders' } });
+    expect(row?.activeFrom.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('never moves the stamp once it is written', async () => {
+    await switchNotYetThrown();
+    await runInvitationReminders();
+    const first = await prisma.reminderWindow.findUnique({ where: { id: 'reminders' } });
+    await runInvitationReminders();
+    const second = await prisma.reminderWindow.findUnique({ where: { id: 'reminders' } });
+    expect(second?.activeFrom.getTime()).toBe(first?.activeFrom.getTime());
+  });
+
+  it('stamps even on a run that cannot mail, so a later run cannot draw the line somewhere else', async () => {
+    await switchNotYetThrown();
+    mail.delivers = false;
+    await runInvitationReminders();
+    expect(await prisma.reminderWindow.count()).toBe(1);
+  });
+
+  it('leaves an invitation already past day 3 alone when the switch is thrown', async () => {
+    const s = await setup();
+    await invite(s, 3.5);
+    await switchNotYetThrown();
+    await runInvitationReminders();
+    expect(toCandidate()).toEqual([]);
+  });
+
+  it('leaves it alone on every later run too', async () => {
+    const s = await setup();
+    await invite(s, 10.5);
+    await switchNotYetThrown();
+    await runInvitationReminders();
+    await runInvitationReminders();
+    await runInvitationReminders();
+    expect(toCandidate()).toEqual([]);
+  });
+
+  it('never warns the recruiter about an invitation from before the switch', async () => {
+    const s = await setup();
+    await invite(s, 12.5);
+    await switchNotYetThrown();
+    await runInvitationReminders();
+    expect(toRecruiter()).toEqual([]);
+  });
+
+  it('reminds an invitation sent after the switch', async () => {
+    // The switch was thrown five days ago; this invitation went out since.
+    await remindersOnSince(5);
+    const s = await setup();
+    await invite(s, 3.5);
+    await runInvitationReminders();
+    expect(toCandidate().length).toBe(1);
+  });
+
+  it('chases an old invitation once it is resent after the switch, because that is a fresh send', async () => {
+    await remindersOnSince(5);
+    const s = await setup();
+    const { invitation } = await invite(s, 10.5);
+    await runInvitationReminders();
+    expect(toCandidate()).toEqual([]);
+    // POST /interviews/:id/resend moves sentAt and leaves the expiry alone, so
+    // the stage is still counted from the original window: the day-10 note.
+    await prisma.invitation.update({ where: { id: invitation.id }, data: { sentAt: new Date(Date.now() - 2 * DAY) } });
+    await runInvitationReminders();
+    expect([toCandidate().length, toCandidate()[0]?.text.includes('This is the last reminder we will send.')]).toEqual([1, true]);
+  });
+
+  it('holds an invitation the recruiter has not resent, in the same run as one they have', async () => {
+    await remindersOnSince(5);
+    const s = await setup();
+    const { invitation } = await invite(s, 10.5);
+    const other = await prisma.candidate.create({ data: { tenantId: s.tenant.id, roleId: s.role.id, fullName: 'Ravi Menon', email: 'ravi@m.local' } });
+    await invite({ ...s, candidate: other }, 10.5);
+    await runInvitationReminders();
+    await prisma.invitation.update({ where: { id: invitation.id }, data: { sentAt: new Date(Date.now() - 2 * DAY) } });
+    await runInvitationReminders();
+    expect(mail.messages.map((m) => m.to)).toEqual(['sofia@m.local']);
+  });
+
+  it('reads REMINDERS_START_AT as a date or a date-time, and a bare date as midnight UTC', () => {
+    expect([parseRemindersStartAt(undefined), parseRemindersStartAt('2026-09-24')?.toISOString(), parseRemindersStartAt('2026-09-24T09:30:00Z')?.toISOString()])
+      .toEqual([null, '2026-09-24T00:00:00.000Z', '2026-09-24T09:30:00.000Z']);
+  });
+
+  it('refuses a REMINDERS_START_AT it cannot read, rather than reminding everyone', () => {
+    expect(() => parseRemindersStartAt('next tuesday')).toThrow(/REMINDERS_START_AT/);
+  });
+
+  it('takes REMINDERS_START_AT over the stamp', async () => {
+    await remindersOnSince(365);
+    config.hrBox.remindersStartAt = new Date(Date.now() - DAY);
+    const s = await setup();
+    await invite(s, 3.5);
+    await runInvitationReminders();
+    expect(toCandidate()).toEqual([]);
+  });
+
+  it('leaves the stamp in place while REMINDERS_START_AT is set, so removing it goes back to the stamp', async () => {
+    await remindersOnSince(365);
+    const stamped = await prisma.reminderWindow.findUnique({ where: { id: 'reminders' } });
+    config.hrBox.remindersStartAt = new Date(Date.now() - DAY);
+    await runInvitationReminders();
+    config.hrBox.remindersStartAt = null;
+    expect((await remindersActiveFrom(new Date())).getTime()).toBe(stamped?.activeFrom.getTime());
   });
 });

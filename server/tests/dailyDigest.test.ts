@@ -7,6 +7,7 @@ import { signToken } from '../src/services/auth.js';
 import { digestDayFor, runDailyDigest } from '../src/services/dailyDigest.js';
 import { waitedFor } from '../src/providers/email/digestEmail.js';
 import { parseDigestHour } from '../src/config.js';
+import { invitationSecretColumns, mintInvitationToken } from '../src/services/invitations.js';
 
 // The HR-Box daily summary: each HR user's "Needs you" rows by email, once a
 // day from DIGEST_HOUR on the organisation's clock, never when nothing waits,
@@ -43,7 +44,7 @@ async function setup(opts: { digestOptOut?: boolean; withWork?: boolean } = {}) 
     const candidate = await prisma.candidate.create({ data: { tenantId: tenant.id, roleId: role.id, fullName: 'Daniel Okafor', email: 'd@m.local' } });
     await prisma.interviewSession.create({ data: { tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id, state: 'INCOMPLETE', interruptedAt: new Date(MORNING.getTime() - DAY) } });
   }
-  return { tenant, user, token: signToken({ userId: user.id, tenantId: tenant.id, role: 'recruiter', email: user.email }) };
+  return { tenant, user, role, token: signToken({ userId: user.id, tenantId: tenant.id, role: 'recruiter', email: user.email }) };
 }
 
 beforeEach(async () => {
@@ -109,6 +110,25 @@ describe('daily summary', () => {
     await setup({ digestOptOut: true });
     await runDailyDigest(null, MORNING);
     expect(mail.messages).toEqual([]);
+  });
+
+  // The summary reports what needs a person; the reminders job chases
+  // candidates. Only the second has a cutoff, and switching reminders on must
+  // not quietly empty the summary of everything older than it.
+  it('still reports an invitation sent before reminders were switched on', async () => {
+    const s = await setup({ withWork: false });
+    await prisma.reminderWindow.create({ data: { id: 'reminders', activeFrom: MORNING } });
+    const scorecard = await prisma.roleScorecardVersion.create({ data: { roleId: s.role.id, status: 'approved', profileJson: '{}' } });
+    const candidate = await prisma.candidate.create({ data: { tenantId: s.tenant.id, roleId: s.role.id, fullName: 'Sofia Alvarez', email: 'sofia@m.local' } });
+    const session = await prisma.interviewSession.create({ data: { tenantId: s.tenant.id, candidateId: candidate.id, roleId: s.role.id, scorecardId: scorecard.id, state: 'INVITED' } });
+    await prisma.invitation.create({
+      data: {
+        sessionId: session.id, ...invitationSecretColumns(mintInvitationToken()), status: 'sent',
+        sentAt: new Date(MORNING.getTime() - 13 * DAY), expiresAt: new Date(MORNING.getTime() + DAY),
+      },
+    });
+    await runDailyDigest(null, MORNING);
+    expect(mail.messages[0]?.text).toContain('Invitation closes soon: Sofia Alvarez, Data Engineer');
   });
 
   it('sends nothing to an auditor, who cannot act on candidates', async () => {

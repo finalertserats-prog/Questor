@@ -178,18 +178,29 @@ The benchmark prints, for each model and for each of the three spoken jobs: time
 
 HR-Box is the console's Home tab: what needs each HR user, what is coming up, and what was done. The Home page itself needs no setting. Its two email add-ons are off until the owner has seen them, each behind its own switch.
 
-**Reminders (`REMINDERS_ENABLED=false`).** When on, a candidate who has not started gets a reminder on day 3 and day 10 of the 14-day invitation, and each recruiter who owns the candidate (else the role's owners) gets one warning about 2 days before the link closes. No reminder goes if the link has expired, the candidate has started or finished, the application was decided, the role is archived, the candidate asked to talk to a person, or the invitation was sent again in the last 24 hours. Demo sandboxes get none. A job was down past day 10: only the day-10 note goes, not both. A re-invite sets a new expiry and starts its own reminders.
+**Reminders (`REMINDERS_ENABLED=false`).** When on, a candidate who has not started gets a reminder on day 3 and day 10 of the 14-day invitation, and each recruiter who owns the candidate (else the role's owners) gets one warning about 2 days before the link closes. No reminder goes if the link has expired, the candidate has started or finished, the application was decided, the role is archived, the candidate asked to talk to a person, or the invitation was sent again in the last 24 hours. Demo sandboxes get none. A job was down past day 10: only the day-10 note goes, not both. A re-invite sets a new expiry and starts its own reminders. And nothing is ever sent for an invitation posted before the switch was thrown — see "The cutoff" below.
 
 **Daily summary (`DIGEST_ENABLED=false`).** When on, each HR user who can read candidates gets their "Needs you" rows by email once a day, between `DIGEST_HOUR` (default 8) and six hours later on the organisation's own clock. Nothing waiting, no email; a morning missed because the server was down is skipped, not sent at night. Each user can switch it off in Settings.
 
 **Turning them on:**
 
 1. Check email delivers (`EMAIL_PROVIDER` is `smtp` or `sendgrid`). With a provider that does not deliver, both jobs claim nothing and say so in their job record, so nothing is lost.
-2. In the server `.env`: `REMINDERS_ENABLED=true` and/or `DIGEST_ENABLED=true` (and `DIGEST_HOUR` if 8 is wrong).
+2. In the server `.env`: `REMINDERS_ENABLED=true` and/or `DIGEST_ENABLED=true` (and `DIGEST_HOUR` if 8 is wrong). Leave `REMINDERS_START_AT` empty — the job draws the line itself.
 3. Restart: `pm2 restart questor --update-env --kill-timeout 1260000`.
-4. Check: `GET /api/admin/ops` lists `invitation-reminders` and `daily-digest` within 15 minutes, each with a note of what it sent.
+4. Check: `GET /api/admin/ops` lists `invitation-reminders` and `daily-digest` within 15 minutes, each with a note of what it sent. The first reminders note reads `candidates: 0 sent` — that is the cutoff working, not a fault.
+5. Confirm the line was drawn: `SELECT "activeFrom" FROM "ReminderWindow";` should be the moment of that first pass.
 
-**What the first run does.** Reminders are counted from the invitation, not from the day the switch was thrown: candidates already past day 3 with an open, unstarted invitation get their reminder on the next run — the day-10 note if they are past day 10, never both. That is the backlog, and it goes out at up to 25 emails per kind every 15 minutes. If that is not wanted, leave the switch off until the current invitations have closed.
+**The cutoff: new invitations only.** Throwing the switch does not chase the people already in flight. The first pass the job makes with `REMINDERS_ENABLED=true` writes the moment it ran into the single `ReminderWindow` row (`id = 'reminders'`, column `activeFrom`) and never moves it again. An invitation whose latest send is older than that line gets no day-3 note, no day-10 note and no recruiter warning — not on that pass and not on any later one. So **the owner sets `REMINDERS_ENABLED=true` and restarts, and nothing else**: there is no date to remember and no window to time the restart into.
+
+What counts as "sent" is the invitation's `sentAt` (its creation, for one created but never delivered). A **resend** (`POST /interviews/:id/resend`) moves `sentAt`, so an older invitation the recruiter chases again after the switch becomes eligible from that point: the recruiter has just asked this candidate to come in, and the follow-up belongs with it. The stage is still counted from the original 14-day window, so what goes is whichever note is current — and never sooner than 24 hours after the resend, by the quiet rule above. An invitation nobody resends is left alone for good.
+
+**Moving the line afterwards (`REMINDERS_START_AT`).** Optional, and normally unset. An ISO date (`2026-09-24`, read as midnight UTC) or date-time (`2026-09-24T09:00:00Z`) that overrides the stamp: set it earlier to pick up invitations already in flight, later to hold reminders off until then. A value the server cannot read stops it starting, rather than being taken as "no cutoff" and mailing every open invitation at once. It does not overwrite the stamp, so clearing the variable returns to the moment the switch was thrown.
+
+**Checking the line.** `SELECT * FROM "ReminderWindow";` — one row, or none if reminders have never run. To re-draw it deliberately, stop the server, update `activeFrom` (or delete the row so the next run re-stamps), start again.
+
+**The backlog, if it is ever wanted.** Reminders are counted from the invitation, so setting `REMINDERS_START_AT` to a date before the current invitations went out makes candidates already past day 3 eligible — the day-10 note if they are past day 10, never both. That backlog goes out at up to 25 emails per kind every 15 minutes. It is off by default, and is the only way to get it.
+
+**The daily summary has no cutoff**, deliberately: it is a report to your own staff of what needs them, not a chase of candidates, so it keeps listing every invitation about to close, including ones from before reminders were switched on.
 
 **How it stays at most once.** Each reminder is an `InvitationReminder` row, and each summary a `DigestDelivery` row, written before the email goes under a unique key (invitation + expiry + kind + recipient; user + day). A restart or a second instance cannot send one twice. A crash between the row and the send loses that one email rather than repeating it. A failed send is recorded (`status = failed`) and not retried. Every reminder is audited (`invitation.reminder_sent`, `_failed`, `_skipped`) against the interview.
 

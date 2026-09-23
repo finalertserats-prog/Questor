@@ -82,6 +82,10 @@ export async function wipe(): Promise<void> {
   assertNotProduction('wipe');
   await prisma.webhookDelivery.deleteMany();
   await prisma.webhookEndpoint.deleteMany();
+  // The "reminders active from" stamp: no foreign keys, but it outlives every
+  // row it applies to, so a wipe that left it behind would make the next test
+  // (or the next seed) run against a cutoff it never set.
+  await prisma.reminderWindow.deleteMany();
   // Both hold foreign keys onto InterviewSession and Candidate, so they go
   // before either of those is deleted below.
   await prisma.candidateFeedbackOptIn.deleteMany();

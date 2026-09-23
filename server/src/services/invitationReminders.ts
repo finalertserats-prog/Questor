@@ -25,6 +25,10 @@ import { NOT_STARTED_STATES } from '../domain/needsYou.js';
  * Never after the link has expired, the interview has started or finished, the
  * application was decided, the role was archived, or the candidate asked to
  * talk to a person; never in a demo sandbox.
+ *
+ * And never for an invitation whose latest send predates the moment reminders
+ * were switched on — see remindersActiveFrom. Throwing the switch must not
+ * mail everyone already past day 3 or day 10.
  */
 
 const HOUR_MS = 3_600_000;
@@ -69,8 +73,59 @@ export function recruiterWarningDue(expiresAt: Date, now: Date): boolean {
   return now < expiresAt && expiresAt.getTime() - now.getTime() <= RECRUITER_WARNING_DAYS * DAY_MS;
 }
 
+/** The singleton ReminderWindow row: one deployment, one moment the switch was thrown. */
+const WINDOW_ID = 'reminders';
+
+/**
+ * The stamp, written once. Two instances racing both try the insert; the loser
+ * reads the winner's value, so every instance works to the same line.
+ */
+async function stampedActiveFrom(now: Date): Promise<Date> {
+  const existing = await prisma.reminderWindow.findUnique({ where: { id: WINDOW_ID }, select: { activeFrom: true } });
+  if (existing) return existing.activeFrom;
+  try {
+    const row = await prisma.reminderWindow.create({ data: { id: WINDOW_ID, activeFrom: now }, select: { activeFrom: true } });
+    return row.activeFrom;
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code !== 'P2002') throw err;
+    const won = await prisma.reminderWindow.findUnique({ where: { id: WINDOW_ID }, select: { activeFrom: true } });
+    if (!won) throw err;
+    return won.activeFrom;
+  }
+}
+
+/**
+ * The line an invitation must have been sent after to be reminded at all.
+ *
+ * The owner switches reminders on by setting REMINDERS_ENABLED and restarting,
+ * and nothing more: the first pass this job makes stamps that moment, and the
+ * stamp never moves again. So the day-3 and day-10 notes and the recruiter's
+ * warning apply to invitations sent from then on, and the invitations already
+ * in flight — some of them weeks old — are left alone for good.
+ *
+ * REMINDERS_START_AT overrides the stamp when the owner wants to move the line
+ * later (back, to pick up a period already passed; forward, to hold off). It
+ * does not overwrite the stamp, so removing the variable returns to it rather
+ * than to "remind everything".
+ */
+export async function remindersActiveFrom(now: Date): Promise<Date> {
+  const stamped = await stampedActiveFrom(now);
+  return config.hrBox.remindersStartAt ?? stamped;
+}
+
+/**
+ * The invitation's latest send. `sentAt` is null only for one created but never
+ * delivered (status "created"), which the candidate's reminders skip anyway and
+ * the recruiter's warning does consider; its creation is its closest thing to a
+ * send, and using it keeps a row with no `sentAt` out of the reminded set
+ * rather than letting a null slip past the comparison.
+ */
+function latestSend(inv: { sentAt: Date | null; createdAt: Date }): Date {
+  return inv.sentAt ?? inv.createdAt;
+}
+
 const invitationSelect = {
-  id: true, sessionId: true, expiresAt: true, sentAt: true, openedAt: true, tokenSealed: true,
+  id: true, sessionId: true, expiresAt: true, sentAt: true, createdAt: true, openedAt: true, tokenSealed: true,
   session: {
     select: {
       id: true, tenantId: true, candidateId: true, roleId: true, state: true, durationMinutes: true, scheduledTimeZone: true,
@@ -133,10 +188,14 @@ async function scanDue(where: object, want: number, pick: (inv: Invitation, expi
   return found.slice(0, want);
 }
 
-function baseWhere(now: Date, withinDays: number, statuses: readonly string[]) {
+function baseWhere(now: Date, withinDays: number, statuses: readonly string[], activeFrom: Date) {
   return {
     expiresAt: { gt: now, lte: new Date(now.getTime() + withinDays * DAY_MS) },
     status: { in: [...statuses] },
+    // Sent after reminders were switched on. A resend counts: it moves sentAt,
+    // and it is a fresh send of a fresh 14-day window, so it earns the
+    // reminders of that window even when the first send predates the switch.
+    OR: [{ sentAt: { gt: activeFrom } }, { sentAt: null, createdAt: { gt: activeFrom } }],
     session: { state: { in: [...NOT_STARTED_STATES] }, role: { status: { not: 'archived' } }, tenant: { isDemo: false } },
   };
 }
@@ -146,13 +205,13 @@ function baseWhere(now: Date, withinDays: number, statuses: readonly string[]) {
  * immediately before the send, and re-checks everything the scan filtered on:
  * the scan is a page read earlier, and any of it may have changed since.
  */
-async function ineligibility(due: Due, now: Date): Promise<string | null> {
+async function ineligibility(due: Due, now: Date, activeFrom: Date): Promise<string | null> {
   const inv = due.invitation;
   const [fresh, decided, asked] = await Promise.all([
     prisma.invitation.findUnique({
       where: { id: inv.id },
       select: {
-        expiresAt: true, status: true, sentAt: true,
+        expiresAt: true, status: true, sentAt: true, createdAt: true,
         session: { select: { state: true, role: { select: { status: true } }, tenant: { select: { isDemo: true } } } },
       },
     }),
@@ -160,6 +219,7 @@ async function ineligibility(due: Due, now: Date): Promise<string | null> {
     prisma.candidateHumanRequest.findFirst({ where: { sessionId: inv.sessionId, status: 'REQUESTED' }, select: { id: true } }),
   ]);
   if (!fresh || fresh.expiresAt?.getTime() !== due.expiresAt.getTime() || due.expiresAt <= now) return 'invitation changed or expired';
+  if (latestSend(fresh) <= activeFrom) return 'sent before reminders were switched on';
   if (!NOT_STARTED_STATES.includes(fresh.session.state)) return `interview is ${fresh.session.state}`;
   if (fresh.session.role.status === 'archived') return 'role archived';
   if (fresh.session.tenant.isDemo) return 'demo sandbox';
@@ -243,7 +303,7 @@ async function recruitersFor(inv: Invitation): Promise<string[]> {
   return roleOwners.map((o) => o.user).filter((u) => u.tenantId === inv.session.tenantId && mayResend(u.role)).map((u) => u.id);
 }
 
-async function deliver(dues: readonly Due[], now: Date, lease: LeaseHandle | null, send: (due: Due) => Promise<void>): Promise<{ sent: number; failed: number; skipped: number; stopped: boolean }> {
+async function deliver(dues: readonly Due[], now: Date, activeFrom: Date, lease: LeaseHandle | null, send: (due: Due) => Promise<void>): Promise<{ sent: number; failed: number; skipped: number; stopped: boolean }> {
   let sent = 0;
   let failed = 0;
   let skipped = 0;
@@ -254,7 +314,7 @@ async function deliver(dues: readonly Due[], now: Date, lease: LeaseHandle | nul
     if (due.recipientKey === 'candidate' && await resentSince(due, now)) continue;
     const id = await claim(due);
     if (!id) continue;
-    const reason = await ineligibility(due, now);
+    const reason = await ineligibility(due, now, activeFrom);
     if (reason) {
       await finish(id, due, 'skipped', reason);
       skipped += 1;
@@ -277,19 +337,24 @@ async function deliver(dues: readonly Due[], now: Date, lease: LeaseHandle | nul
 /** One pass. Returns a note for the job record. */
 export async function runInvitationReminders(lease: LeaseHandle | null = null, now: Date = new Date()): Promise<string> {
   // Nothing is claimed when mail cannot go: a claim is a promise it was sent.
+  // Stamped whether or not anything goes out on this pass: the line is the
+  // moment the switch was thrown, not the moment the first email happened to
+  // succeed. A pass that cannot mail must not leave the line unset and let a
+  // later pass draw it somewhere else.
+  const activeFrom = await remindersActiveFrom(now);
   if (!getEmail().delivers) return 'email does not deliver; nothing claimed';
   const quietSince = new Date(now.getTime() - RECENT_SEND_QUIET_MS);
-  const candidateWhere = { AND: [baseWhere(now, INVITATION_WINDOW_DAYS - CANDIDATE_REMINDER_DAYS.day3, DELIVERED_STATUSES), { sentAt: { lte: quietSince } }] };
+  const candidateWhere = { AND: [baseWhere(now, INVITATION_WINDOW_DAYS - CANDIDATE_REMINDER_DAYS.day3, DELIVERED_STATUSES, activeFrom), { sentAt: { lte: quietSince } }] };
   const candidateDue = await scanDue(candidateWhere, SENDS_PER_RUN, (_inv, expiresAt) => {
     const stage = candidateStageDue(expiresAt, now);
     return stage ? [{ kind: stage === 'day3' ? 'candidate_day3' : 'candidate_day10', recipientKey: 'candidate' }] : [];
   });
-  const toCandidates = await deliver(candidateDue, now, lease, sendCandidate);
+  const toCandidates = await deliver(candidateDue, now, activeFrom, lease, sendCandidate);
   if (toCandidates.stopped) return `lease lost after ${toCandidates.sent} candidate reminders`;
 
-  const recruiterDue = await scanDue(baseWhere(now, RECRUITER_WARNING_DAYS, OPEN_STATUSES), SENDS_PER_RUN, async (inv, expiresAt) =>
+  const recruiterDue = await scanDue(baseWhere(now, RECRUITER_WARNING_DAYS, OPEN_STATUSES, activeFrom), SENDS_PER_RUN, async (inv, expiresAt) =>
     recruiterWarningDue(expiresAt, now) ? (await recruitersFor(inv)).map((userId) => ({ kind: 'recruiter_expiry' as const, recipientKey: userId })) : []);
-  const toRecruiters = await deliver(recruiterDue, now, lease, sendRecruiter);
+  const toRecruiters = await deliver(recruiterDue, now, activeFrom, lease, sendRecruiter);
   return `candidates: ${toCandidates.sent} sent, ${toCandidates.failed} failed, ${toCandidates.skipped} skipped; recruiters: ${toRecruiters.sent} sent, ${toRecruiters.failed} failed, ${toRecruiters.skipped} skipped`;
 }
 

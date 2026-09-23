@@ -182,6 +182,28 @@ export function parseDigestHour(raw: string | undefined): number {
   return hour;
 }
 
+/**
+ * The cutoff invitations are reminded from, out of REMINDERS_START_AT.
+ *
+ * Normally unset: the reminders job stamps its own start on the first pass it
+ * makes with the switch on (ReminderWindow), which is what the owner wants the
+ * first time and needs no variable to be remembered. This exists for moving
+ * that line afterwards — reminding from a date in the past, or holding
+ * reminders off until a date ahead. A bare date is read as midnight UTC.
+ *
+ * Anything unparseable refuses to start rather than being read as "no cutoff",
+ * which would mail every open invitation at once.
+ */
+export function parseRemindersStartAt(raw: string | undefined): Date | null {
+  if (raw === undefined || raw.trim() === '') return null;
+  const text = raw.trim();
+  const at = new Date(/^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00:00.000Z` : text);
+  if (Number.isNaN(at.getTime())) {
+    throw new Error(`REMINDERS_START_AT must be an ISO date or date-time, e.g. "2026-09-24" or "2026-09-24T09:00:00Z" (got "${raw}").`);
+  }
+  return at;
+}
+
 /** Ollama's own default listen address: on the VPS it serves loopback only. */
 export const DEFAULT_LOCAL_LLM_URL = 'http://127.0.0.1:11434';
 export const DEFAULT_LOCAL_LLM_MODEL = 'llama3.2:3b';
@@ -405,6 +427,11 @@ export const config = {
    */
   hrBox: {
     remindersEnabled: parseBooleanSetting('REMINDERS_ENABLED', process.env.REMINDERS_ENABLED, false),
+    /**
+     * Overrides the stamp the job wrote on its first run with the switch on.
+     * Unset is the normal case; see parseRemindersStartAt.
+     */
+    remindersStartAt: parseRemindersStartAt(process.env.REMINDERS_START_AT),
     digestEnabled: parseBooleanSetting('DIGEST_ENABLED', process.env.DIGEST_ENABLED, false),
     /** The hour, on each organisation's own clock, from which that day's summary may go. */
     digestHour: parseDigestHour(process.env.DIGEST_HOUR),

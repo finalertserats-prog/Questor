@@ -999,6 +999,22 @@ model InvitationReminder {
   @@index([sessionId])
 }
 
+// The one row that says when reminders were switched on.
+//
+// Written by the reminders job on the first pass it makes with
+// REMINDERS_ENABLED=true, and never moved afterwards. An invitation whose
+// latest send is older than `activeFrom` is never reminded — not on that run
+// and not on any later one — so throwing the switch does not chase everybody
+// who is already past day 3 or day 10. REMINDERS_START_AT overrides it without
+// changing the row, so removing the variable falls back to the stamp the job
+// wrote rather than to "remind everything".
+model ReminderWindow {
+  // A singleton: one deployment, one moment the switch was thrown.
+  id         String   @id @default("reminders")
+  activeFrom DateTime
+  createdAt  DateTime @default(now())
+}
+
 // One row per user per organisation day the daily summary was considered,
 // claimed before sending so a restart never mails the same summary twice.
 model DigestDelivery {
