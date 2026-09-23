@@ -14,6 +14,8 @@ const mail = vi.hoisted(() => ({
   delivers: true,
   fail: false,
   messages: [] as Array<{ to: string; subject: string; text: string; html: string }>,
+  /** Runs as an email goes, for tests that need the world to change mid-run. */
+  onSend: null as null | ((to: string) => Promise<void>),
 }));
 
 vi.mock('../src/providers/email/index.js', async (importOriginal) => {
@@ -25,6 +27,7 @@ vi.mock('../src/providers/email/index.js', async (importOriginal) => {
       async send(msg: { to: string; subject: string; text: string; html: string }) {
         if (mail.fail) throw new Error('smtp down');
         mail.messages.push(msg);
+        if (mail.onSend) await mail.onSend(msg.to);
         return { status: 'sent', id: `test-${mail.messages.length}` };
       },
     }),
@@ -79,6 +82,7 @@ beforeEach(async () => {
   mail.delivers = true;
   mail.fail = false;
   mail.messages = [];
+  mail.onSend = null;
 });
 
 describe('when a candidate reminder is due', () => {
@@ -183,6 +187,38 @@ describe('candidate reminders', () => {
     await prisma.invitation.update({ where: { id: invitation.id }, data: { sentAt: new Date(Date.now() - HOUR) } });
     await runInvitationReminders();
     expect(toCandidate()).toEqual([]);
+  });
+
+  // The scan is a page read earlier in the run. A resend landing between it and
+  // the send would otherwise put the reminder on top of the invitation it was
+  // meant to follow, so the quiet rule is re-checked after the claim — and the
+  // claim is handed back, not closed, because the reminder is still owed.
+  it('does not send a reminder on top of a resend that lands mid-run', async () => {
+    const s = await setup();
+    await invite(s, 3.5);
+    const other = await prisma.candidate.create({ data: { tenantId: s.tenant.id, roleId: s.role.id, fullName: 'Ravi Menon', email: 'ravi@m.local' } });
+    const second = await invite({ ...s, candidate: other }, 3.4);
+    // The recruiter resends Ravi's invitation while Sofia's reminder is going.
+    mail.onSend = async (to) => {
+      if (to !== 'sofia@m.local') return;
+      mail.onSend = null;
+      await prisma.invitation.update({ where: { id: second.invitation.id }, data: { sentAt: new Date() } });
+    };
+    await runInvitationReminders();
+    const claims = await prisma.invitationReminder.count({ where: { sessionId: second.session.id } });
+    expect([mail.messages.map((m) => m.to), claims]).toEqual([['sofia@m.local'], 0]);
+  });
+
+  it('sends the reminder it held back once the quiet day has passed', async () => {
+    const s = await setup();
+    const { session, invitation } = await invite(s, 3.5);
+    await prisma.invitation.update({ where: { id: invitation.id }, data: { sentAt: new Date(Date.now() - HOUR) } });
+    await runInvitationReminders();
+    expect([toCandidate().length, await prisma.invitationReminder.count({ where: { sessionId: session.id } })]).toEqual([0, 0]);
+    await prisma.invitation.update({ where: { id: invitation.id }, data: { sentAt: new Date(Date.now() - 2 * DAY) } });
+    await runInvitationReminders();
+    await runInvitationReminders();
+    expect(toCandidate().length).toBe(1);
   });
 
   it('claims nothing while email cannot be delivered, so it goes once it can', async () => {
@@ -338,6 +374,24 @@ describe('the cutoff: only invitations sent after reminders were switched on', (
 
   it('refuses a REMINDERS_START_AT it cannot read, rather than reminding everyone', () => {
     expect(() => parseRemindersStartAt('next tuesday')).toThrow(/REMINDERS_START_AT/);
+  });
+
+  it('refuses a loose date Date would happily read as something else', () => {
+    expect(() => parseRemindersStartAt('09/24/2026')).toThrow(/REMINDERS_START_AT/);
+  });
+
+  // Without a zone the instant depends on the server's own clock, and the same
+  // setting would mean a different cutoff on a machine in another zone.
+  it('refuses a date-time with no time zone', () => {
+    expect(() => parseRemindersStartAt('2026-09-24T09:00:00')).toThrow(/time zone/);
+  });
+
+  it('takes an offset as readily as Z', () => {
+    expect(parseRemindersStartAt('2026-09-24T09:00:00+05:30')?.toISOString()).toBe('2026-09-24T03:30:00.000Z');
+  });
+
+  it('refuses a date that looks right and is not', () => {
+    expect(() => parseRemindersStartAt('2026-13-45')).toThrow(/REMINDERS_START_AT/);
   });
 
   it('takes REMINDERS_START_AT over the stamp', async () => {

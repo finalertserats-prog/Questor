@@ -194,12 +194,25 @@ export function parseDigestHour(raw: string | undefined): number {
  * Anything unparseable refuses to start rather than being read as "no cutoff",
  * which would mail every open invitation at once.
  */
+/** "2026-09-24" — read as midnight UTC. */
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+/**
+ * "2026-09-24T09:00:00Z" or "...+05:30". The zone is required: without it,
+ * Date reads the time on the server's own clock, so the same setting would
+ * mean a different instant on a machine in another zone — and the setting
+ * decides who gets mailed.
+ */
+const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+
 export function parseRemindersStartAt(raw: string | undefined): Date | null {
   if (raw === undefined || raw.trim() === '') return null;
   const text = raw.trim();
-  const at = new Date(/^\d{4}-\d{2}-\d{2}$/.test(text) ? `${text}T00:00:00.000Z` : text);
+  // Shape first, and only these two shapes: `new Date` also accepts
+  // "09/24/2026" and other loose forms, and reading a typo as a date is how a
+  // cutoff ends up somewhere nobody chose.
+  const at = ISO_DATE.test(text) ? new Date(`${text}T00:00:00.000Z`) : ISO_DATE_TIME.test(text) ? new Date(text) : new Date(NaN);
   if (Number.isNaN(at.getTime())) {
-    throw new Error(`REMINDERS_START_AT must be an ISO date or date-time, e.g. "2026-09-24" or "2026-09-24T09:00:00Z" (got "${raw}").`);
+    throw new Error(`REMINDERS_START_AT must be an ISO date or a date-time with a time zone, e.g. "2026-09-24" or "2026-09-24T09:00:00Z" (got "${raw}").`);
   }
   return at;
 }

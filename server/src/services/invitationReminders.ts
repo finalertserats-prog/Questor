@@ -230,23 +230,49 @@ async function ineligibility(due: Due, now: Date, activeFrom: Date): Promise<str
   return null;
 }
 
-async function resentSince(due: Due, now: Date): Promise<boolean> {
-  const fresh = await prisma.invitation.findUnique({ where: { id: due.invitation.id }, select: { sentAt: true } });
-  return !!fresh?.sentAt && fresh.sentAt.getTime() > now.getTime() - RECENT_SEND_QUIET_MS;
-}
+/** Thrown to roll the claim back; never leaves `claim`. */
+class ResentTooRecently extends Error {}
 
-/** Claim, or false when another run (or an earlier one) already has. */
-async function claim(due: Due): Promise<string | null> {
+/**
+ * Claim, or null when this reminder must not be sent now — because another run
+ * (or an earlier one) already has it, or because the candidate was sent the
+ * invitation again inside the quiet period and does not need a reminder on top
+ * of it.
+ *
+ * The quiet check reads `sentAt` inside the same transaction as the claim, and
+ * rolls the claim back when it is too recent. Two things follow, and both
+ * matter. The scan is a page read minutes earlier, so a resend landing between
+ * it and the send would otherwise slip through — reading here shrinks that
+ * window to the moment between this commit and the email leaving. And a
+ * reminder held back for a resend is still owed: rolling the row back rather
+ * than writing it means nothing is left under the unique key to refuse the run
+ * that will finally send it, and a crash mid-way rolls back with it.
+ *
+ * That last moment is deliberately left open. Closing it means holding a lock
+ * on the invitation across the call to the mail provider, in both this path
+ * and POST /interviews/:id/resend — so a slow or hung SMTP server would block
+ * a recruiter from resending at all. A courtesy rule ("do not nudge someone we
+ * just wrote to") is not worth that: the cost of losing the race is one extra
+ * warm email, and the cost of the lock is a recruiter who cannot work.
+ */
+async function claim(due: Due, now: Date): Promise<string | null> {
   try {
-    const row = await prisma.invitationReminder.create({
-      data: {
-        tenantId: due.invitation.session.tenantId, sessionId: due.invitation.sessionId, invitationId: due.invitation.id,
-        cycleExpiresAt: due.expiresAt, kind: due.kind, recipientKey: due.recipientKey,
-      },
-      select: { id: true },
+    return await prisma.$transaction(async (tx) => {
+      const row = await tx.invitationReminder.create({
+        data: {
+          tenantId: due.invitation.session.tenantId, sessionId: due.invitation.sessionId, invitationId: due.invitation.id,
+          cycleExpiresAt: due.expiresAt, kind: due.kind, recipientKey: due.recipientKey,
+        },
+        select: { id: true },
+      });
+      if (due.recipientKey === 'candidate') {
+        const fresh = await tx.invitation.findUnique({ where: { id: due.invitation.id }, select: { sentAt: true } });
+        if (fresh?.sentAt && fresh.sentAt.getTime() > now.getTime() - RECENT_SEND_QUIET_MS) throw new ResentTooRecently();
+      }
+      return row.id;
     });
-    return row.id;
   } catch (err) {
+    if (err instanceof ResentTooRecently) return null;
     if ((err as { code?: unknown } | null)?.code === 'P2002') return null;
     throw err;
   }
@@ -309,10 +335,9 @@ async function deliver(dues: readonly Due[], now: Date, activeFrom: Date, lease:
   let skipped = 0;
   for (const due of dues) {
     if (lease && !(await lease.renew(REMINDER_JOB.ttlMs))) return { sent, failed, skipped, stopped: true };
-    // A resend since the scan is a reason to wait, not to give the reminder up:
-    // checked before claiming, so a later run can still send it.
-    if (due.recipientKey === 'candidate' && await resentSince(due, now)) continue;
-    const id = await claim(due);
+    // A resend since the scan is a reason to wait, not to give the reminder
+    // up; claim() rolls its own row back for that, so a later run may take it.
+    const id = await claim(due, now);
     if (!id) continue;
     const reason = await ineligibility(due, now, activeFrom);
     if (reason) {
