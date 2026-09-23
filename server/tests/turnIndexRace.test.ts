@@ -57,8 +57,22 @@ describe('two answers submitted at the same moment', () => {
 
     await answerTwiceAtOnce(ids.sessionId);
 
-    const candidateTurns = await prisma.turn.count({ where: { sessionId: ids.sessionId, speaker: 'candidate' } });
-    expect(candidateTurns).toBe(2);
+    // Both sets of words survive. They may sit in ONE turn rather than two:
+    // two answers against one question with no agent turn between them is the
+    // shape the grader misreads, so a second answer to an already-answered
+    // question is folded into it (S4, tests/twoTabsOneQuestion.test.ts).
+    const said = (await prisma.turn.findMany({ where: { sessionId: ids.sessionId, speaker: 'candidate' }, select: { text: true } }))
+      .map((t) => t.text).join(' ');
+    expect(ANSWERS.every((answer) => said.includes(answer))).toBe(true);
+  });
+
+  it('leaves the transcript alternating, whichever way the race falls', async () => {
+    const ids = await liveInterview();
+
+    await answerTwiceAtOnce(ids.sessionId);
+
+    const turns = await prisma.turn.findMany({ where: { sessionId: ids.sessionId }, orderBy: { index: 'asc' }, select: { speaker: true } });
+    expect(turns.some((t, i) => i > 0 && t.speaker === 'candidate' && turns[i - 1].speaker === 'candidate')).toBe(false);
   });
 });
 

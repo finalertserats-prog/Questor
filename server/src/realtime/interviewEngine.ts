@@ -204,6 +204,108 @@ async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'inde
   throw lastErr;
 }
 
+/**
+ * One question, one answer.
+ *
+ * Two tabs answering the same question at the same moment used to put TWO
+ * consecutive candidate turns on the transcript with no agent turn between
+ * them (indexes 3 and 4, docs/qa/resilience-2026-09-23.md, S4). `inReplyTo`
+ * did not catch it: both tabs were looking at the same agent turn, and that
+ * agent turn is still the newest one after the first answer lands — so the
+ * staleness check passed for both. The grader attributes quotes to
+ * competencies BY QUESTION SLOT (engines/evaluator.ts), so the second answer
+ * was credited to whichever competency that slot carried.
+ *
+ * So the slot, not the tab, decides. Under the same lock as the write: if a
+ * candidate turn already sits after the newest agent turn, this submission
+ * belongs to a slot that is already answered, and it is folded into that
+ * answer rather than appended beside it.
+ *
+ *   the same text   a retry whose response was lost. Nothing changes; the
+ *                   caller is handed the same reply. Idempotent.
+ *   different text  the candidate said both things in answer to one question,
+ *                   so the turn carries both. Nothing they said is lost, and
+ *                   the transcript still alternates.
+ *
+ * Leave is excluded: it is an action, not an answer, and "answered, then
+ * left" is a true and useful pair of records. A repeated Leave has its own
+ * idempotence in submitCandidateAnswer.
+ */
+async function recordCandidateAnswer(
+  sessionId: string,
+  turn: Omit<TurnRecord, 'id' | 'index'>,
+  meta: Record<string, unknown> | undefined,
+  opts: { inReplyTo?: string; leaving: boolean },
+): Promise<TurnRecord> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const rec = await prisma.$transaction(async (tx) => {
+        await lockSessionForAppend(tx, sessionId);
+        const newestAgent = await tx.turn.findFirst({
+          where: { sessionId, speaker: 'agent' }, orderBy: { index: 'desc' }, select: { id: true, index: true },
+        });
+        if (opts.inReplyTo && newestAgent?.id !== opts.inReplyTo) {
+          throw new HttpError(409, 'The interviewer has already moved on to the next question.', 'stale_question');
+        }
+        const answered = opts.leaving ? null : await tx.turn.findFirst({
+          where: { sessionId, speaker: 'candidate', index: { gt: newestAgent?.index ?? -1 } },
+          orderBy: { index: 'asc' },
+        });
+        if (answered) {
+          logger.warn({ sessionId, slot: newestAgent?.index ?? -1, turnId: answered.id }, 'Second answer to one question folded into the first');
+          return tx.turn.update({ where: { id: answered.id }, data: foldedAnswer(answered, turn, meta) });
+        }
+        const tail = await tx.turn.findFirst({ where: { sessionId }, orderBy: { index: 'desc' }, select: { index: true } });
+        return tx.turn.create({
+          data: {
+            id: nanoid(10), sessionId, index: (tail?.index ?? -1) + 1, speaker: turn.speaker, text: turn.text,
+            startMs: turn.startMs, endMs: turn.endMs, confidence: turn.confidence, competencyId: turn.competencyId ?? '',
+            ...(meta ? { metaJson: JSON.stringify(meta) } : {}),
+          },
+        });
+      });
+      return { id: rec.id, index: rec.index, speaker: rec.speaker as TurnRecord['speaker'], text: rec.text, startMs: rec.startMs, endMs: rec.endMs, confidence: rec.confidence, competencyId: rec.competencyId };
+    } catch (err) {
+      if (!isDuplicateIndex(err)) throw err;
+      lastErr = err;
+    }
+  }
+  logger.error({ sessionId }, 'Could not allocate a turn index after a retry');
+  throw lastErr;
+}
+
+/** What the already-answered slot becomes once a second submission is folded in. */
+function foldedAnswer(
+  answered: { id: string; text: string; endMs: number; metaJson: string },
+  incoming: Omit<TurnRecord, 'id' | 'index'>,
+  incomingMeta: Record<string, unknown> | undefined,
+): { text: string; endMs: number; metaJson: string } {
+  const addition = incoming.text.trim();
+  // A retry of the same words adds nothing. Substring rather than equality,
+  // because a re-send may carry the earlier fold as well.
+  const repeat = !addition || answered.text.includes(addition);
+  const text = repeat ? answered.text : `${answered.text} ${addition}`.slice(0, MAX_ANSWER_CHARS);
+  const existingMeta = parseJsonOptional<Record<string, unknown>>(answered.metaJson, {}, { model: 'Turn', id: answered.id, field: 'metaJson' });
+  const flags = new Set([
+    ...(Array.isArray(existingMeta.flags) ? existingMeta.flags as string[] : []),
+    ...(Array.isArray(incomingMeta?.flags) ? incomingMeta.flags as string[] : []),
+  ]);
+  const submissions = typeof existingMeta.submissions === 'number' ? existingMeta.submissions + 1 : 2;
+  return {
+    text,
+    endMs: Math.max(answered.endMs, incoming.endMs),
+    metaJson: JSON.stringify({
+      ...existingMeta,
+      ...(incomingMeta ? { ...incomingMeta } : {}),
+      // How many times this one slot was answered. A reviewer seeing an odd
+      // answer can tell "said twice in two tabs" from "said once".
+      submissions,
+      ...(flags.size ? { flags: [...flags] } : {}),
+    }),
+  };
+}
+
 export async function setState(sessionId: string, from: string, to: string) {
   assertTransition(from, to);
   await prisma.interviewSession.update({ where: { id: sessionId }, data: { state: to } });
@@ -889,22 +991,14 @@ export async function submitCandidateAnswer(
     logger.warn({ sessionId, index: turns.length, matched: injection.matched, textLength: said.length }, 'Prompt-injection attempt flagged on candidate turn');
   }
   const lastEnd = turns.reduce((m, t) => Math.max(m, t.endMs), 0);
-  const answer = await appendTurn(sessionId, {
+  const answer = await recordCandidateAnswer(sessionId, {
     speaker: 'candidate', text: said,
     startMs: timing?.startMs ?? lastEnd + 1000,
     endMs: timing?.endMs ?? lastEnd + 30_000,
     confidence: timing?.confidence ?? 0.9,
     competencyId,
   }, Object.keys(meta).length > 0 ? meta : undefined,
-  async (tx) => {
-    if (!opts?.inReplyTo) return;
-    const newest = await tx.turn.findFirst({
-      where: { sessionId, speaker: 'agent' }, orderBy: { index: 'desc' }, select: { id: true },
-    });
-    if (newest?.id !== opts.inReplyTo) {
-      throw new HttpError(409, 'The interviewer has already moved on to the next question.', 'stale_question');
-    }
-  });
+  { inReplyTo: opts?.inReplyTo, leaving: opts?.leaving === true });
   // Only onto this answer: if a Continue from another tab already replied to
   // it, that reply is handed back rather than a second one written after it.
   return produceOrCurrent(sessionId, answer.id);
