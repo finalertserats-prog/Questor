@@ -157,8 +157,8 @@ export interface PatternReport {
 
 export const PATTERN_NOTICE = [
   'These are patterns, not findings. They describe what was recorded, over how many reviews, against what the rest of the organisation did.',
-  'Nothing here concludes anything about a person, and nothing acts on them automatically.',
-  'Questor keeps these statistics so that what it learns from human reviews can be checked. Every reviewer can see their own figures, and every time an admin opens someone else\'s, that is recorded in the audit log.',
+  'Nothing here concludes anything about a person, and nothing is done to anyone automatically. While a pattern is open, that reviewer\'s reviews stop feeding what the model learns — a brake on the model, not a mark against them — and that stops as soon as you close it.',
+  'Questor keeps these statistics so that what it learns from human reviews can be checked. They are never part of anyone\'s performance record. Every reviewer can see their own figures, and every time an admin opens someone else\'s, that is recorded in the audit log.',
 ].join(' ');
 
 /**

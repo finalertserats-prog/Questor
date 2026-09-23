@@ -379,12 +379,46 @@ export async function withdrawAll(tenantId: string, reason: string): Promise<num
   return active.length;
 }
 
+/**
+ * Competency names, read from each role's approved scorecard.
+ *
+ * Read rather than stored on the adjustment: the scorecard is where the name
+ * lives, and a copy here would go stale the first time somebody renamed a
+ * competency. Falls back to the key, which is at least always present.
+ */
+async function competencyNames(
+  rows: ReadonlyArray<{ roleId: string; competencyId: string }>,
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  const roleIds = [...new Set(rows.map((r) => r.roleId).filter(Boolean))];
+  for (const roleId of roleIds) {
+    const scorecard = await prisma.roleScorecardVersion.findFirst({
+      where: { roleId, status: 'approved' },
+      orderBy: { version: 'desc' },
+      select: { id: true },
+    });
+    if (!scorecard) continue;
+    const profile = await profileForScorecard(scorecard.id);
+    for (const competency of profile?.competencies ?? []) {
+      names.set(`${roleId}|${competency.id}`, competency.name);
+    }
+  }
+  return names;
+}
+
 /** Everything an admin view needs, without exposing the raw observations. */
 export interface AdjustmentView {
   readonly id: string;
   readonly scope: string;
   readonly roleId: string;
   readonly competencyId: string;
+  /**
+   * The competency's name as the scorecard spells it — "SQL and data
+   * modelling", not "Sql and data modelling". The key is a lower-cased
+   * grouping key and was never meant to be shown to anybody; reconstructing a
+   * name from it mangles every acronym an employer types.
+   */
+  readonly competencyName: string;
   readonly competencyKey: string;
   readonly band: string;
   readonly status: string;
@@ -411,11 +445,15 @@ export async function adjustmentsFor(tenantId: string): Promise<AdjustmentView[]
     orderBy: [{ status: 'asc' }, { computedAt: 'desc' }],
     take: 500,
   });
+  const names = await competencyNames(rows);
   return rows.map((row) => ({
     id: row.id,
     scope: row.scope,
     roleId: row.roleId,
     competencyId: row.competencyId,
+    // Empty, not the key: the client capitalises a key as a last resort and
+    // cannot do that if a key arrives dressed as a name.
+    competencyName: names.get(`${row.roleId}|${row.competencyId}`) ?? '',
     competencyKey: row.competencyKey,
     band: row.band,
     status: row.status,

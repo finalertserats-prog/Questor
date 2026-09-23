@@ -21,6 +21,7 @@ import { logger } from '../logger.js';
 import type { CalibrationAggregate } from '../domain/calibration.js';
 import type { InterviewPlan, PlanBlock } from '../domain/types.js';
 import { logAudit } from './audit.js';
+import { profileForScorecard } from './calibrationCapture.js';
 import type { CalibrationGroup, ReasonTheme } from './calibrationAggregate.js';
 
 /** Themes must be this widely held before they are put to a rubric approver. */
@@ -133,6 +134,8 @@ export interface AnchorProposalView {
   readonly id: string;
   readonly roleId: string;
   readonly competencyId: string;
+  /** As the scorecard spells it; the key is a grouping key, not a label. */
+  readonly competencyName: string;
   readonly competencyKey: string;
   readonly band: string;
   readonly status: string;
@@ -147,10 +150,20 @@ export async function anchorProposalsFor(tenantId: string): Promise<AnchorPropos
   const rows = await prisma.calibrationAnchorProposal.findMany({
     where: { tenantId }, orderBy: [{ status: 'asc' }, { createdAt: 'desc' }], take: 200,
   });
+  const names = new Map<string, string>();
+  for (const roleId of [...new Set(rows.map((r) => r.roleId))]) {
+    const scorecard = await prisma.roleScorecardVersion.findFirst({
+      where: { roleId, status: 'approved' }, orderBy: { version: 'desc' }, select: { id: true },
+    });
+    if (!scorecard) continue;
+    const profile = await profileForScorecard(scorecard.id);
+    for (const competency of profile?.competencies ?? []) names.set(`${roleId}|${competency.id}`, competency.name);
+  }
   return rows.map((row) => ({
     id: row.id,
     roleId: row.roleId,
     competencyId: row.competencyId,
+    competencyName: names.get(`${row.roleId}|${row.competencyId}`) ?? '',
     competencyKey: row.competencyKey,
     band: row.band,
     status: row.status,

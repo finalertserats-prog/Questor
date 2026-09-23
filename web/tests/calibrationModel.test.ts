@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import {
   bandLabel, competencyLabel, deltaLabel, durationLabel, groupAdjustments, headline, holdLabel,
-  intervalLabel, proportionLabel, statusLabel, thresholdSentence, tooFewSentence,
+  intervalLabel, proportionLabel, signedLabel, statusLabel, thresholdSentence, tooFewSentence,
   type Adjustment, type CalibrationSettings,
 } from '../src/components/calibrationModel';
 
@@ -17,7 +17,8 @@ const SETTINGS: CalibrationSettings = {
 
 function adjustment(patch: Partial<Adjustment> = {}): Adjustment {
   return {
-    id: 'a1', scope: 'org', roleId: 'r1', competencyId: 'stake', competencyKey: 'stakeholder management',
+    id: 'a1', scope: 'org', roleId: 'r1', competencyId: 'stake',
+    competencyName: 'Stakeholder management', competencyKey: 'stakeholder management',
     band: 'mid', status: 'active', delta: -1, measuredMedian: -1,
     interval: { low: -1, high: -1 }, observations: 18, reviewers: 4, majorDisagreements: 2,
     since: '2026-08-12T00:00:00.000Z',
@@ -28,8 +29,15 @@ function adjustment(patch: Partial<Adjustment> = {}): Adjustment {
 }
 
 describe('labels', () => {
-  it('says a competency in the words it was typed in', () => {
-    expect(competencyLabel('stakeholder management')).toBe('Stakeholder management');
+  it('says a competency in the words the scorecard spells it in', () => {
+    // The key is lower-cased for grouping; showing it would mangle acronyms.
+    expect(competencyLabel({ competencyName: 'SQL & Data Warehousing', competencyKey: 'sql & data warehousing' }))
+      .toBe('SQL & Data Warehousing');
+  });
+
+  it('falls back to the key when the scorecard no longer has the competency', () => {
+    expect(competencyLabel({ competencyName: '', competencyKey: 'stakeholder management' }))
+      .toBe('Stakeholder management');
   });
 
   it('names the absence of a band rather than leaving a gap', () => {
@@ -39,6 +47,12 @@ describe('labels', () => {
   it('signs a change so a reader never has to guess its direction', () => {
     expect(deltaLabel(-0.5)).toBe('-0.5');
     expect(deltaLabel(1)).toBe('+1');
+  });
+
+  it('gives a bare signed figure for use inside a sentence', () => {
+    // "measured No change, interval 0 to 0" is not a sentence.
+    expect(signedLabel(0)).toBe('0');
+    expect(signedLabel(-1)).toBe('-1');
   });
 
   it('says no change rather than showing a zero', () => {

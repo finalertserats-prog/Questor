@@ -4,7 +4,7 @@ import { Banner } from './ui';
 import { useToast } from './Toast';
 import {
   bandLabel, competencyLabel, deltaLabel, durationLabel, groupAdjustments, headline, intervalLabel,
-  proportionLabel, statusLabel, thresholdSentence, tooFewSentence,
+  proportionLabel, signedLabel, statusLabel, thresholdSentence, tooFewSentence,
   type Adjustment, type AdjustmentGroups, type AnchorProposal, type CalibrationResponse,
   type PatternReportResponse, type ReviewerPattern,
 } from './calibrationModel';
@@ -32,7 +32,7 @@ function AdjustmentCard({ adjustment, onRevert, onRestore, busy }: {
   return (
     <li className="calib-row">
       <div className="calib-row-head">
-        <span className="calib-competency">{competencyLabel(adjustment.competencyKey)}</span>
+        <span className="calib-competency">{competencyLabel(adjustment)}</span>
         <span className="small muted">{bandLabel(adjustment.band)}</span>
         <span className={`calib-state calib-state-${applied ? 'applied' : adjustment.status}`}>
           {statusLabel(adjustment)}
@@ -44,7 +44,7 @@ function AdjustmentCard({ adjustment, onRevert, onRestore, busy }: {
           {deltaLabel(adjustment.delta)}
         </span>
         <span className="small muted">
-          measured {deltaLabel(adjustment.measuredMedian)}, interval {intervalLabel(adjustment)}
+          measured {signedLabel(adjustment.measuredMedian)}, interval {intervalLabel(adjustment)}
         </span>
       </p>
 
@@ -91,7 +91,7 @@ function ProposalCard({ proposal, onDecide, busy }: {
   return (
     <li className="calib-row">
       <div className="calib-row-head">
-        <span className="calib-competency">{competencyLabel(proposal.competencyKey)}</span>
+        <span className="calib-competency">{competencyLabel(proposal)}</span>
         <span className="small muted">{bandLabel(proposal.band)}</span>
       </div>
       <p className="small">

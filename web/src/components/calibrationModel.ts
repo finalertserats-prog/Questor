@@ -21,6 +21,8 @@ export interface Adjustment {
   readonly scope: string;
   readonly roleId: string;
   readonly competencyId: string;
+  /** As the scorecard spells it. Falls back to the key when the role is gone. */
+  readonly competencyName: string;
   readonly competencyKey: string;
   readonly band: string;
   readonly status: string;
@@ -44,6 +46,7 @@ export interface AnchorProposal {
   readonly id: string;
   readonly roleId: string;
   readonly competencyId: string;
+  readonly competencyName: string;
   readonly competencyKey: string;
   readonly band: string;
   readonly status: string;
@@ -74,8 +77,17 @@ export interface CalibrationResponse {
   readonly proposals: readonly AnchorProposal[];
 }
 
-/** A competency name from its key: the key is the name, reduced. */
-export function competencyLabel(key: string): string {
+/**
+ * What to call a competency on screen.
+ *
+ * The server sends the scorecard's own spelling, which is the only one that
+ * gets acronyms right — "SQL and data modelling", not "Sql and data
+ * modelling". The key is a lower-cased grouping key and is the last resort.
+ */
+export function competencyLabel(adjustment: { competencyName?: string; competencyKey: string }): string {
+  const name = (adjustment.competencyName ?? '').trim();
+  if (name) return name;
+  const key = adjustment.competencyKey.trim();
   if (!key) return 'An unnamed competency';
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
@@ -87,8 +99,19 @@ export function bandLabel(band: string): string {
 /** "-0.5" reads better than "-0.5 levels" in a column of numbers. */
 export function deltaLabel(delta: number): string {
   if (delta === 0) return 'No change';
-  const rounded = Math.round(delta * 100) / 100;
-  return `${rounded > 0 ? '+' : ''}${rounded}`;
+  return signedLabel(delta);
+}
+
+/**
+ * The same number as a bare signed figure.
+ *
+ * `deltaLabel` says "No change" for zero, which is right for the headline
+ * figure and wrong inside "measured {x}, interval {a} to {b}" — that read
+ * "measured No change", which is not a sentence.
+ */
+export function signedLabel(value: number): string {
+  const rounded = Math.round(value * 100) / 100;
+  return rounded > 0 ? `+${rounded}` : `${rounded}`;
 }
 
 export function intervalLabel(adjustment: Pick<Adjustment, 'interval'>): string {
