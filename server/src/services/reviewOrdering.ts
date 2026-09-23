@@ -41,7 +41,18 @@ export async function aiVisibleBeforeReview(assessmentId: string, reviewerId: st
       select: { createdAt: true },
     }),
   ]);
+  // No blind verdict at all: nothing shows this reviewer ever formed a view
+  // before the machine's, so independence is not claimed.
   if (!blind) return true;
+  // A blind verdict and no record of them ever opening the AI's conclusions.
+  // The blind row IS the evidence here, not the absence of one: it can only be
+  // written through the blind view, which serves no AI conclusion at all, and
+  // both ways of reaching those conclusions (the unblinded read and the
+  // reveal) write an audit event. Returning `true` here would mislabel a
+  // reviewer who genuinely judged blind as having read the AI first, which
+  // understates real independence in the compliance record.
   if (!seen) return false;
+  // Both happened: only the order decides. A "blind" verdict filed after the
+  // reading was on screen is not blind, whatever the row is called.
   return blind.createdAt > seen.createdAt;
 }

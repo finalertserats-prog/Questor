@@ -94,6 +94,13 @@ fieldDraftsRouter.post('/tidy', asyncHandler(async (req, res) => {
 fieldDraftsRouter.post('/accepted', asyncHandler(async (req, res) => {
   const body = acceptedSchema.parse(req.body);
   assertMayDraft(req.auth!, body.field);
+  // A record saying "a suggestion was accepted for the verdict reason" would
+  // be a record of something that cannot happen — and an audit trail that can
+  // be made to assert the boundary was crossed is worse than none. The pair
+  // is checked against the same spec the suggest route refuses on.
+  const spec = fieldDraftSpec(body.field);
+  if (body.source === 'suggestion' && !spec.suggest) throw new HttpError(422, spec.refusal);
+  if (body.source === 'tidy' && !spec.tidy) throw new HttpError(422, 'This text cannot be tidied.');
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'draft.accepted',
     entityType: body.entityType || 'FieldDraft', entityId: body.entityId,

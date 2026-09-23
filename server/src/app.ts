@@ -271,7 +271,18 @@ export function createApp() {
   app.use('/api/catalog', catalogRouter);
   app.use('/api/catalog-review', catalogReviewRouter);
   app.use('/api/jd-drafts', jdDraftsRouter);
-  app.use('/api/drafts', fieldDraftsRouter);
+  // Every /suggest and /tidy is a model call, so an unbounded one is somebody
+  // else's bill. Generous enough that a person writing a job advert never
+  // meets it — each field asks once per visit — and low enough that a loop
+  // does. Per user rather than per IP: a whole office behind one address must
+  // not share one person's budget.
+  // `authenticate` ahead of the limiter, not only inside the router: without
+  // it req.auth is not set yet and every user behind one address would share
+  // one budget.
+  app.use('/api/drafts', authenticate, rateLimit({
+    name: 'field-drafts', windowMs: 60 * 60_000, max: 240,
+    keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
+  }), fieldDraftsRouter);
   app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);

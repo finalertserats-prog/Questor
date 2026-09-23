@@ -161,6 +161,22 @@ describe('an accepted draft', () => {
     const event = await prisma.auditEvent.findFirst({ where: { action: 'draft.accepted' }, orderBy: { createdAt: 'desc' } });
     expect(event?.afterJson).toContain('role_summary');
   });
+
+  it('cannot be recorded as a suggestion for a field no suggestion may be offered for', async () => {
+    const res = await request(app).post('/api/drafts/accepted')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ field: 'verdict_reason', source: 'suggestion' });
+    expect(res.status).toBe(422);
+    const events = await prisma.auditEvent.count({ where: { action: 'draft.accepted', afterJson: { contains: 'verdict_reason' } } });
+    expect(events).toBe(0);
+  });
+
+  it('is recorded for a tidy of the reviewer\'s own words, which is allowed there', async () => {
+    const res = await request(app).post('/api/drafts/accepted')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ field: 'verdict_reason', source: 'tidy' });
+    expect(res.status).toBe(201);
+  });
 });
 
 describe('permission', () => {

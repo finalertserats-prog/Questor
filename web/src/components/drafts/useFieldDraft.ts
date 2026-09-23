@@ -122,7 +122,14 @@ export function useFieldDraft(opts: FieldDraftOptions): FieldDraft {
     onKeyDown,
     accept,
     dismiss: () => { liveRef.current += 1; setState({ phase: 'dismissed', text: '' }); },
-    offerAgain: () => { setState(IDLE); void ask(); },
+    // Asked for, but still never over their words: "offer one" on a field they
+    // have since typed into would put a suggestion under text it knows nothing
+    // about, and accepting it would replace what they wrote.
+    offerAgain: () => {
+      if (opts.value.trim() !== '') return;
+      setState(IDLE);
+      void ask();
+    },
   };
 }
 
@@ -161,20 +168,36 @@ export function useTidyUp(opts: {
   const [state, setState] = useState<TidyState>({ phase: 'idle', text: '' });
   const allowed = mayTidy(opts.field) && !draftingOff;
   const offered = allowed && opts.value.trim().length >= MIN_TIDY_CHARS;
+  /**
+   * The exact text this tidy was asked for.
+   *
+   * A reviewer who presses "tidy up" and keeps typing would otherwise be shown
+   * a before-and-after built from the sentence they have since changed — and
+   * "keep the tidied version" would then overwrite the newer words with a
+   * rewrite of the older ones. A tidy that no longer matches what is in the
+   * box is dropped rather than offered.
+   */
+  const askedFor = useRef('');
 
   const run = useCallback(async () => {
+    const submitted = opts.value;
+    askedFor.current = submitted;
     setState({ phase: 'working', text: '' });
     try {
-      const reply = await api.post<DraftReply>('/drafts/tidy', { field: opts.field, text: opts.value.slice(0, 4000) });
+      const reply = await api.post<DraftReply>('/drafts/tidy', { field: opts.field, text: submitted.slice(0, 4000) });
       if (reply.disabled) draftingOff = true;
+      if (askedFor.current !== submitted) return;
       setState(reply.text.trim() === '' ? { phase: 'nothing', text: '' } : { phase: 'ready', text: reply.text });
     } catch {
-      setState({ phase: 'nothing', text: '' });
+      if (askedFor.current === submitted) setState({ phase: 'nothing', text: '' });
     }
   }, [opts.field, opts.value]);
 
   const keep = useCallback(() => {
     if (state.phase !== 'ready') return;
+    // Refused rather than applied: this rewrite is of a sentence the box no
+    // longer holds, and keeping it would throw away what they typed since.
+    if (askedFor.current !== opts.value) return;
     opts.onAccept(state.text);
     setState({ phase: 'idle', text: '' });
     void api.post('/drafts/accepted', {
@@ -183,8 +206,14 @@ export function useTidyUp(opts: {
     }).catch(() => undefined);
   }, [state, opts]);
 
+  // The before-and-after is about one specific sentence. The moment that
+  // sentence changes the panel is about text that is no longer there, so it
+  // stops being shown. Derived rather than stored: nothing is written during a
+  // render, and the panel comes back by itself if the edit is undone.
+  const stale = state.phase !== 'idle' && askedFor.current !== opts.value;
+
   return {
-    state,
+    state: stale ? { phase: 'idle', text: '' } : state,
     allowed,
     offered,
     run: () => { void run(); },

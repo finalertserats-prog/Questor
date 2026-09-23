@@ -83,7 +83,9 @@ export function SkillsGrid({ skills, activeChip, onChip, masked = false }: Skill
                 {meterCells(skill.level).map((cell, i) => <i key={i} className={`is-${cell}`} />)}
               </span>
             )}
-            <p className="skill-need muted">Needs {skill.requiredLevel}/5</p>
+            {/* Absent rather than zero: a competency whose required level did
+                not reach the page must not read as "needs nothing". */}
+            {skill.requiredLevel > 0 && <p className="skill-need muted">Needs {skill.requiredLevel}/5</p>}
             {!masked && skill.notEnoughEvidence && (
               <p className="skill-thin"><Icon name="alert" size={14} />The interview did not reach this.</p>
             )}

@@ -167,6 +167,21 @@ describe('when there is nothing good to show', () => {
   });
 });
 
+describe('a suggestion asked for again', () => {
+  it('is refused over text the person has already written', async () => {
+    http.post.mockResolvedValue({ text: DRAFT, disabled: false });
+    render(h(Field));
+    fireEvent.focus(box());
+    await screen.findByTestId('draft-text');
+    fireEvent.change(box(), { target: { value: 'My own words instead.' } });
+    const asked = http.post.mock.calls.length;
+    const offerAgain = screen.queryByText('Offer one');
+    if (offerAgain) fireEvent.click(offerAgain);
+    expect(http.post.mock.calls.length).toBe(asked);
+    expect(box().value).toBe('My own words instead.');
+  });
+});
+
 describe('the reviewer\'s own verdict reason', () => {
   it('says plainly that no draft is offered, and why', () => {
     render(h(TidyField, { initial: '' }));
@@ -198,6 +213,20 @@ describe('the reviewer\'s own verdict reason', () => {
     fireEvent.click(screen.getByTestId('tidy-run'));
     fireEvent.click(await screen.findByTestId('tidy-discard'));
     expect((document.getElementById('r') as HTMLTextAreaElement).value).toBe('a messy sentence about the evidence here');
+  });
+
+  it('drops a tidy of a sentence they have since changed', async () => {
+    let resolve: (value: { text: string; disabled: boolean }) => void = () => undefined;
+    http.post.mockReturnValue(new Promise((r) => { resolve = r; }));
+    render(h(TidyField, { initial: 'a messy sentence about the evidence here' }));
+    fireEvent.click(screen.getByTestId('tidy-run'));
+    fireEvent.change(document.getElementById('r') as HTMLTextAreaElement, {
+      target: { value: 'completely different words now, written after' },
+    });
+    resolve({ text: 'A tidied sentence about the evidence.', disabled: false });
+    await waitFor(() => expect(screen.queryByTestId('tidy-panel')).toBeNull());
+    expect((document.getElementById('r') as HTMLTextAreaElement).value)
+      .toBe('completely different words now, written after');
   });
 
   it('takes the tidied version only when they keep it', async () => {
