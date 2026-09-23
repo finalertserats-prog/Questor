@@ -83,9 +83,34 @@ describe('reaching the transcript without a scrollbar', () => {
     expect(ends).toHaveLength(1);
   });
 
+  it('offers a way out of the run of turns, one Tab from the column', () => {
+    transcript();
+    const skip = screen.getByTestId('transcript-skip');
+    expect(skip.tagName).toBe('BUTTON');
+    expect(skip.textContent).toContain('Skip to the end');
+  });
+
+  it('sends that way out straight to the end marker', () => {
+    const ends: number[] = [];
+    transcript({ onEndReached: () => ends.push(1) });
+    fireEvent.click(screen.getByTestId('transcript-skip'));
+    expect(document.activeElement).toBe(screen.getByTestId('transcript-end'));
+    expect(ends).toHaveLength(1);
+  });
+
   it('offers no end marker while there is nothing to read', () => {
     transcript({ rows: [] });
     expect(screen.queryByTestId('transcript-end')).toBeNull();
+  });
+});
+
+describe('an empty transcript', () => {
+  it('reads as satisfied by the pure rule, which is why the page must not ask before it has loaded', () => {
+    // Vacuously true of no turns. Recorded here because it is the trap: the
+    // page guards on the transcript being ready AND having rows before it
+    // records anything (pages/AssessmentView.tsx), and the server checks the
+    // indexes against the interview it has.
+    expect(hasReadAll(noTurnsSeen('k1'), [])).toBe(true);
   });
 });
 

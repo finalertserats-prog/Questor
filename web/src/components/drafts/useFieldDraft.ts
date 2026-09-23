@@ -64,6 +64,17 @@ export function useFieldDraft(opts: FieldDraftOptions): FieldDraft {
   // A draft that arrives after the person has left the field, or started
   // typing, must not appear over what they are doing.
   const liveRef = useRef(0);
+  /**
+   * The field's value as it is right now.
+   *
+   * `onTyped` catches the person typing, but a field can also be filled by
+   * something else while a draft is in flight — another control on the form,
+   * the browser's autofill, a parent resetting its state. A suggestion shown
+   * under text that arrived by one of those routes is a suggestion about
+   * nothing, and accepting it would throw that text away.
+   */
+  const valueRef = useRef(opts.value);
+  valueRef.current = opts.value;
   const panelId = `draft-${opts.field}-${opts.entityId ?? 'new'}`;
 
   const ask = useCallback(async () => {
@@ -75,6 +86,8 @@ export function useFieldDraft(opts: FieldDraftOptions): FieldDraft {
       const reply = await api.post<DraftReply>('/drafts/suggest', { field: opts.field, context: opts.context.slice(0, 4000) });
       if (liveRef.current !== attempt) return;
       if (reply.disabled) draftingOff = true;
+      // Whatever route it arrived by, there are words in the box now.
+      if (valueRef.current.trim() !== '') { setState({ phase: 'dismissed', text: '' }); return; }
       setState(stateFromReply(reply));
     } catch {
       // Nothing rather than something bad, and nothing rather than an error
@@ -96,6 +109,8 @@ export function useFieldDraft(opts: FieldDraftOptions): FieldDraft {
 
   const accept = useCallback(() => {
     if (state.phase !== 'offered') return;
+    // Never over someone's words, however they got there.
+    if (valueRef.current.trim() !== '') { setState({ phase: 'dismissed', text: '' }); return; }
     opts.onAccept(state.text);
     setState({ phase: 'taken', text: state.text });
     // Audited, and never allowed to fail the acceptance: the text is already

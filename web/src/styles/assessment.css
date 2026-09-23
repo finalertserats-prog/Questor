@@ -885,3 +885,29 @@ details.read-elsewhere > summary:hover { color: var(--ink); }
 details.read-elsewhere > *:not(summary) {
   margin-bottom: var(--space-3);
 }
+
+/* The way out of a long run of turns, one Tab from the column. Visible when
+   focused and quiet otherwise: it is for someone moving by keyboard, and it
+   should not compete with the transcript for a reader who is not. */
+.tx-skip {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--space-2);
+  padding: 0;
+  height: 0;
+  overflow: hidden;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--accent);
+  background: var(--sheet);
+  border: 0;
+  cursor: pointer;
+}
+.tx-skip:focus-visible {
+  height: auto;
+  padding: var(--space-2) var(--space-3);
+  border: var(--hair) solid var(--accent);
+  border-radius: var(--radius);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

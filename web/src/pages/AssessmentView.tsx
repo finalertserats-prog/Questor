@@ -42,8 +42,8 @@ import { TidyUp } from '../components/drafts/TidyUp';
 import { useTidyUp } from '../components/drafts/useFieldDraft';
 import { useTranscriptReadGate } from '../components/review/useTranscriptReadGate';
 import {
-  ATTESTATION_PROMPT, attestationIsEnough, isTranscriptNotReadError, markEndReached, markTurnSeen,
-  noTurnsSeen, readRecordSentence, turnsReadLabel, HUMAN_REVIEW_REQUIRED, type SeenTurns,
+  ATTESTATION_PROMPT, attestationIsEnough, forTranscript, isTranscriptNotReadError, markEndReached,
+  markTurnSeen, noTurnsSeen, readRecordSentence, turnsReadLabel, HUMAN_REVIEW_REQUIRED, type SeenTurns,
 } from '../components/review/transcriptReadGate';
 
 /**
@@ -276,6 +276,9 @@ export function AssessmentView() {
   );
   const readGate = useTranscriptReadGate(id ?? null, turnIndexes);
   const [seen, setSeen] = useState<SeenTurns>(() => noTurnsSeen(id ?? ''));
+  // A different assessment is a different transcript: the count starts again,
+  // as the hook's own marks do.
+  useEffect(() => { setSeen((previous) => forTranscript(previous, id ?? '')); }, [id]);
   const { noteTurnSeen, noteEndReached } = readGate;
 
   const onTurnSeen = useCallback((index: number) => {
@@ -295,10 +298,21 @@ export function AssessmentView() {
    * through a control without reading it.
    */
   const { canRecord, record: readRecord, saving: readSaving, recordRead } = readGate;
+  /**
+   * There has to be a transcript before there is anything to have read.
+   *
+   * "Every turn has been shown" is vacuously true of no turns, so while the
+   * transcript is still loading — or failed to load — `canRecord` is true and
+   * this would record a read of nothing the moment the page opened. The server
+   * checks the indexes against the interview and would refuse it, but a client
+   * that asks is a client that would sail through the one interview whose
+   * turns had not loaded yet.
+   */
+  const transcriptReady = transcript.status === 'ready' && turnIndexes.length > 0;
   useEffect(() => {
-    if (!canRecord || readRecord || readSaving) return;
+    if (!transcriptReady || !canRecord || readRecord || readSaving) return;
     void recordRead();
-  }, [canRecord, readRecord, readSaving, recordRead]);
+  }, [transcriptReady, canRecord, readRecord, readSaving, recordRead]);
 
   // Where the transcript is, so a refusal can put it in front of the reviewer
   // rather than describing it to them.
@@ -613,7 +627,9 @@ export function AssessmentView() {
             <Icon name={readRecord ? 'check-circle' : 'evidence'} size={16} />
             <span>
               {readRecordSentence(readRecord)}
-              {!readRecord && <> <span className="reader-count">{turnsReadLabel(seen, turnIndexes)}</span></>}
+              {!readRecord && transcriptReady && (
+                <> <span className="reader-count">{turnsReadLabel(seen, turnIndexes)}</span></>
+              )}
             </span>
           </div>
           {readGate.error && <Banner kind="error">{readGate.error}</Banner>}

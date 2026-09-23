@@ -44,6 +44,7 @@ export interface AssessmentTranscriptProps {
 
 export function AssessmentTranscript(props: AssessmentTranscriptProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLButtonElement>(null);
   const ready = props.status === 'ready';
   const { fraction, read } = useColumnReadProgress(bodyRef, ready, props.transcriptKey);
   const { onRead } = props;
@@ -122,6 +123,22 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
         )}
 
         {ready && props.rows.length > 0 && (
+          /* Every turn is a tab stop, which is what makes tabbing through the
+             transcript report it — and on a long interview that is a long run
+             of them before anything else on the page. So the run has a way
+             out at the top of it, one Tab from the column itself. It is the
+             same control the end of the list carries, reached early. */
+          <button
+            type="button"
+            className="tx-skip"
+            data-testid="transcript-skip"
+            onClick={() => { endRef.current?.focus(); }}
+          >
+            Skip to the end of the transcript
+          </button>
+        )}
+
+        {ready && props.rows.length > 0 && (
           <ol className="tx-turns" role="list">
             {props.rows.map((row) => {
               const quoted = row.turnId !== null && row.turnId === props.quotedTurnId;
@@ -160,6 +177,7 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
              end", and it must be reachable by Tab and announceable. */
           <button
             type="button"
+            ref={endRef}
             className="tx-end"
             data-end-marker="true"
             data-testid="transcript-end"

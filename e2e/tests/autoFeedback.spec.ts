@@ -97,9 +97,11 @@ test('a completed typed interview shows its assessment at once and records the f
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.evaluate(() => window.scrollTo(0, 0));
   // The decision leads the page; the transcript is the column beside it, and
-  // the note asks for it to be read before a verdict is recorded.
+  // the note asks for it to be read before a verdict is recorded. The sentence
+  // is the gate's own (web/src/components/review/transcriptReadGate.ts), so it
+  // is the same one the server's refusal is about.
   await expect(page.getByTestId('verdict-panel')).toBeVisible();
-  await expect(page.getByTestId('transcript-read-note')).toContainText('Read the transcript before recording your review');
+  await expect(page.getByTestId('transcript-read-note')).toContainText('Read the transcript before recording your verdict');
   await expect(page.getByTestId('assessment-transcript')).toBeVisible();
 
   // The AI's reading, with its confidence and the one thing it is unsure of.
