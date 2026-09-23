@@ -114,6 +114,10 @@
 .report-rate--unreadable .report-rate-value::after {
   content: ']';
 }
+/* A cell that carries the brackets in its own text rather than in a child. */
+td.report-rate--unreadable {
+  color: var(--ink-3);
+}
 
 /* --- Tables --------------------------------------------------------------- */
 

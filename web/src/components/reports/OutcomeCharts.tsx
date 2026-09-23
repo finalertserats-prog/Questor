@@ -161,7 +161,12 @@ export function RateBarChart({ bars, title, summary, valueHeading, tableless }: 
               {bars.map((bar) => (
                 <tr key={bar.key}>
                   <th scope="row">{bar.label}</th>
-                  <td>{bar.percent || '—'}</td>
+                  {/* Bracketed here too. The warning beside it in the next
+                      column is not enough: this cell is what gets read, sorted
+                      and copied out on its own. */}
+                  <td className={bar.readable ? undefined : 'report-rate--unreadable'}>
+                    {bar.percent ? (bar.readable ? bar.percent : `[${bar.percent}]`) : '—'}
+                  </td>
                   <td>{bar.counts}{bar.readable ? '' : ` — ${bar.note}`}</td>
                 </tr>
               ))}

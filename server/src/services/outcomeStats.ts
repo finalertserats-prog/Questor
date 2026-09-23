@@ -66,6 +66,13 @@ export const DEFAULT_PERIOD_DAYS = 365;
 export const PROFICIENCY_LEVELS = [0, 1, 2, 3, 4, 5] as const;
 /** Audit action written when a candidate comes back into a room they had lost. */
 const REJOINED_ACTION = 'interview.rejoined';
+/**
+ * Names read from the interviewer catalogue. Far above the five it holds; it
+ * is a ceiling on a lookup, not a sample, so it never sets `truncated` — an
+ * interviewer whose name is missing shows as its id rather than dropping the
+ * cut.
+ */
+const INTERVIEWER_LIMIT = 200;
 
 export interface OutcomePeriod {
   readonly from: Date;
@@ -253,10 +260,13 @@ export async function gatherOutcomeRows(auth: AuthClaims, options: OutcomeStatsO
     take: rowLimit,
   });
 
-  // Every one of these carries the same ceiling as the session read. Without
-  // it the "5,000 rows" the report claims to be built from would bound only
-  // one of six queries, and a long period in a large tenant would quietly
-  // load far more than that.
+  // Every read of tenant data here carries the same ceiling as the session
+  // read. Without it the "5,000 rows" the report claims to be built from would
+  // bound one of six queries, and a long period in a large tenant would quietly
+  // load far more than that. The interviewer catalogue is the exception and is
+  // bounded separately: it is a fixed, deployment-wide list of five names
+  // (domain/interviewerModel.ts), not tenant data, and it cannot make the
+  // report describe fewer interviews than it claims to.
   const [reviews, hiredPipelines, interviewers, rejoinRows, differenceRows] = await Promise.all([
     prisma.humanReview.findMany({
       // The one completed review of each assessment. A BLIND verdict carries no
@@ -275,7 +285,7 @@ export async function gatherOutcomeRows(auth: AuthClaims, options: OutcomeStatsO
       orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
       take: rowLimit,
     }),
-    prisma.aIInterviewer.findMany({ select: { id: true, name: true } }),
+    prisma.aIInterviewer.findMany({ select: { id: true, name: true }, orderBy: { id: 'asc' }, take: INTERVIEWER_LIMIT }),
     // By period rather than by session id, for the same bind-limit reason; a
     // rejoin of an interview created just before the period is simply not seen.
     prisma.auditEvent.groupBy({

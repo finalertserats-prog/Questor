@@ -284,11 +284,26 @@ describe('monthly snapshots', () => {
     await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', overallScore: 71, humanVerdict: 'PROCEED' });
     const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
 
-    expect(snapshot).toMatchObject({ interviews: 1, scoreMedian: null, scoreBuckets: null, health: null });
-    // The count of interviews is still kept: it identifies nobody, and losing
-    // it would leave a hole in the trend that reads as "nothing happened".
-    expect(snapshot.funnel.find((f) => f.key === 'invited')?.count).toBe(1);
+    // The funnel goes too: its later steps are the verdict and the hire, which
+    // in a one-interview month are that person's outcome.
+    expect(snapshot).toMatchObject({ interviews: 1, funnel: null, scoreMedian: null, scoreBuckets: null, health: null });
+    // The bare count is still kept: it identifies nobody, and losing it would
+    // leave a hole in the trend that reads as "nothing happened".
+    expect(snapshot.interviews).toBe(1);
     expect(JSON.stringify(snapshot)).not.toContain('71');
+  });
+
+  it('keeps no verdict or hire count for a month that is one person’s interview', async () => {
+    const made = await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', humanVerdict: 'PROCEED' });
+    await prisma.candidatePipeline.create({
+      data: {
+        tenantId, roleId, candidateId: made.candidate.id, stagesJson: '', currentStageKey: 'diamond',
+        status: 'DECIDED', decision: 'APPROVED', decidedAt: now,
+      },
+    });
+    const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
+    expect(snapshot.funnel).toBeNull();
+    expect(JSON.stringify(snapshot)).not.toContain('hired');
   });
 
   it('keeps the medians once the month is big enough for them to be about nobody in particular', async () => {
@@ -298,6 +313,7 @@ describe('monthly snapshots', () => {
     const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
     expect(snapshot.scoreMedian).toBe(62);
     expect(snapshot.health).not.toBeNull();
+    expect(snapshot.funnel?.find((f) => f.key === 'proceed')?.count).toBe(5);
   });
 
   it('snapshots every organisation, not just the first page of them', async () => {

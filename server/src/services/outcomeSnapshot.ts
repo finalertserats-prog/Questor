@@ -66,7 +66,14 @@ export interface SnapshotCutRow {
 export interface OutcomeSnapshotStats {
   readonly month: string;
   readonly interviews: number;
-  readonly funnel: ReadonlyArray<{ readonly key: string; readonly count: number }>;
+  /**
+   * Null for a month with fewer than SNAPSHOT_MIN_GROUP interviews. The funnel
+   * is not just activity: its later steps are verdicts and hires, and in a
+   * one-interview month `hired: 1` is that person's outcome. `interviews`
+   * survives on its own because a count of interviews is a fact about a month,
+   * not about anybody in it.
+   */
+  readonly funnel: ReadonlyArray<{ readonly key: string; readonly count: number }> | null;
   /**
    * Null for a month with fewer than SNAPSHOT_MIN_GROUP interviews. In such a
    * month a score bucket, a median or a turn rate IS one person's interview,
@@ -131,13 +138,14 @@ function storableCut(
  * The month's statistics for one organisation, as the aggregate that is safe
  * to keep.
  *
- * A month below SNAPSHOT_MIN_GROUP keeps its funnel counts and nothing else.
- * In a one-interview month the score median IS that person's score and the
- * median duration IS their interview; keeping either would put personal data
- * in a table designed to outlive the erasure of everything it came from.
- * Counts are kept because "three interviews happened in September" identifies
- * nobody, and dropping the month entirely would leave a hole in the trend
- * that reads as "nothing happened".
+ * A month below SNAPSHOT_MIN_GROUP keeps how many interviews it had, and
+ * nothing else. In a one-interview month the score median IS that person's
+ * score, the median duration IS their interview, and the funnel's later steps
+ * — reviewed, the verdict, hired — ARE their outcome. Keeping any of them
+ * would put personal data in a table designed to outlive the erasure of
+ * everything it came from. The bare count stays because "three interviews
+ * happened in September" identifies nobody, and dropping the month entirely
+ * would leave a hole in the trend that reads as "nothing happened".
  */
 export async function buildSnapshot(auth: AuthClaims, month: string): Promise<OutcomeSnapshotStats> {
   const { rows } = await gatherOutcomeRows(auth, { period: monthRange(month) });
@@ -147,7 +155,7 @@ export async function buildSnapshot(auth: AuthClaims, month: string): Promise<Ou
   return {
     month,
     interviews: rows.length,
-    funnel: buildFunnel(countFunnel(rows)).map((step: FunnelStep) => ({ key: step.key, count: step.count })),
+    funnel: bigEnough ? buildFunnel(countFunnel(rows)).map((step: FunnelStep) => ({ key: step.key, count: step.count })) : null,
     scoreBuckets: bigEnough ? scores.buckets : null,
     scoreMedian: bigEnough ? scores.median : null,
     cuts: {

@@ -8,7 +8,7 @@ import { formatDateTime } from '../dateFormat';
 import { CountColumnChart, RateBarChart } from './OutcomeCharts';
 import {
   CUT_MEASURES, PERIOD_PRESETS, cutBars, funnelBars, levelColumns, monthLabel, percent,
-  periodRange, readRate, scoreColumns, spreadSentence,
+  periodRange, readRate, scoreColumns, spreadSentence, tooSmallNote,
   type CutGroup, type CutMeasureKey, type FunnelStep, type LevelCount, type PeriodKey,
   type Quantiles, type Rate, type ScoreBucket,
 } from './outcomeModel';
@@ -408,9 +408,21 @@ export function OutcomePanel() {
                 </div></li>
               ))}
               <li className="kpi"><div className="kpi-link">
-                <span className="kpi-value">{percent(report.health.evidenceCoverage.mean)}</span>
+                {/* A mean is not a rate, but it is still a percentage read off
+                    a sample, and the page's rule is about percentages. Below
+                    the minimum it wears the same brackets as everything else. */}
+                <span className="kpi-value">
+                  <span className={report.health.evidenceCoverage.readable ? 'report-rate' : 'report-rate report-rate--unreadable'}>
+                    <span className="report-rate-value">{percent(report.health.evidenceCoverage.mean)}</span>
+                    <span className="report-rate-counts">
+                      over {report.health.evidenceCoverage.n} assessment{report.health.evidenceCoverage.n === 1 ? '' : 's'}
+                    </span>
+                    {!report.health.evidenceCoverage.readable && report.health.evidenceCoverage.n > 0 && (
+                      <span className="report-rate-note">{tooSmallNote(minSample)}</span>
+                    )}
+                  </span>
+                </span>
                 <span className="kpi-label">Mean evidence coverage</span>
-                <span className="kpi-hint">over {report.health.evidenceCoverage.n} assessment{report.health.evidenceCoverage.n === 1 ? '' : 's'}</span>
               </div></li>
             </ul>
             <Reading>

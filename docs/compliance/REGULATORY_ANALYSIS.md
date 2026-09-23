@@ -64,8 +64,9 @@ significant.
 by default) stores each organisation-month's aggregate counts so a trend survives the candidate
 data it was computed from being erased. A snapshot holds no candidate id and no session id; a
 group below five keeps its size but no outcome rate, including the folded "other" row when even
-the fold is that small; and a month below five interviews keeps only its counts, because in such
-a month a median score or a median duration IS one person's interview. It is therefore not
+the fold is that small; and a month below five interviews keeps **only how many interviews it
+had** — no funnel, no distribution, no median — because in such a month the verdict, the hire,
+the median score and the median duration are all one person's interview. It is therefore not
 personal data, and a candidate's erasure neither reads nor writes it.
 
 **NOT in place — group-level adverse impact (the part Article 10 and NYC LL 144 §5-301 actually
