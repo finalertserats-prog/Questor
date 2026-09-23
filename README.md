@@ -76,8 +76,38 @@ transcript evidence.
 ### Tests
 
 ```bash
-npm test               # 31 unit + API integration tests (Vitest + Supertest)
+npm test               # unit + API integration tests (Vitest + Supertest)
 ```
+
+### Browser tests, when someone else is already using the machine
+
+Playwright starts the dev server itself and reuses one that is already
+listening. It does **not** check whose server it found — so a second checkout
+running its own suite will silently drive the first checkout's build, and the
+failures it reports are about code that is not under test. It has cost two
+lanes most of a day between them.
+
+Give the run its own address, and give the SERVER the same one: without
+`WEB_ORIGIN` the portal and invitation links it mints still point at 5173, and
+every candidate-side spec walks straight back into the other checkout.
+
+```bash
+cd e2e
+QUESTOR_BASE_URL=http://localhost:5373 \
+  VITE_DEV_PORT=5373 \
+  VITE_API_TARGET=http://localhost:4310 \
+  PORT=4310 \
+  WEB_ORIGIN=http://localhost:5373 \
+  npx playwright test
+```
+
+`e2e/scripts/dev-server.mjs` derives `WEB_ORIGIN` from `QUESTOR_BASE_URL`, and
+naming `QUESTOR_BASE_URL` also turns off `reuseExistingServer`, so the run
+starts a server of its own rather than borrowing one. The variables above are
+the same ones `web/vite.config.ts` and `server/src/config.ts` already read;
+nothing here is test-only plumbing.
+
+A run on the default ports is still the right thing when the machine is yours.
 
 ---
 

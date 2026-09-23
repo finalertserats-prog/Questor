@@ -68,6 +68,34 @@ describe('calibration, when the calibration lane has published some', () => {
     expect(cal.note).toBe('Calibrated last night.');
   });
 
+  it('reads the shape the calibration lane actually sends', () => {
+    // Copied from server/src/domain/calibrationView.ts — AssessmentCalibration
+    // and CalibrationCompetencyView, as GET /api/assessments/:id carries them.
+    // `note` is optional there and `level` is `number | null`, so both are
+    // exercised here rather than assumed.
+    const cal = readCalibration({
+      competencies: [
+        {
+          competencyId: 'reliability',
+          level: 3,
+          provenance: 'The model graded 2/5; this organisation’s reviewers have moved it up by about one level '
+            + 'across 62 observations from 7 reviewers. A reviewer has since set 4/5, and theirs is the level that counts.',
+        },
+        { competencyId: 'api-design', level: null, provenance: 'Not enough evidence to move this one.' },
+      ],
+    });
+    expect(cal.present).toBe(true);
+    expect(cal.note).toBe('');
+    expect(cal.byCompetency.get('reliability')?.level).toBe(3);
+    expect(cal.byCompetency.get('api-design')?.level).toBeNull();
+    expect(cal.byCompetency.get('reliability')?.provenance).toContain('62 observations');
+  });
+
+  it('renders nothing for the empty block that lane sends when nothing moved', () => {
+    // `EMPTY` there is `{}` — competencies absent, not an empty array.
+    expect(readCalibration({}).present).toBe(false);
+  });
+
   it('drops the entries it cannot use rather than rendering blanks', () => {
     const cal = readCalibration({ competencies: [{ competencyId: 'c2', level: 3 }, { competencyId: '', level: 1 }] });
     expect([...cal.byCompetency.keys()]).toEqual(['c2']);
