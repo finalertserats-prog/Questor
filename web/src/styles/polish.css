@@ -74,10 +74,18 @@
 }
 
 /* Section headings inside a card that carry an icon. */
+/* A card's title is a card title at whatever level the outline needs.
+   These sit directly under the page's own h1, so they are h2 elements -- an h3
+   there skipped a level, which axe caught as `heading-order`. The level is the
+   outline a screen reader navigates by; the size belongs to the class, and is
+   set here so lifting one does not resize it. */
 .card-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: var(--type-card-title-size);
+  font-weight: var(--type-card-title-weight);
+  line-height: var(--type-card-title-line);
 }
 .card-title .icon {
   color: var(--ink-3);

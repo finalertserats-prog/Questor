@@ -146,7 +146,7 @@ function Comparison({ view, levels, disposition, ai }: {
       <ValidationStatus />
 
       <div className="card">
-        <h3 className="card-title"><Icon name="handoff" size={16} />Your call vs the AI</h3>
+        <h2 className="card-title"><Icon name="handoff" size={16} />Your call vs the AI</h2>
         <div className="row" style={{ gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>
           <Stat
             label="You said"
@@ -174,7 +174,7 @@ function Comparison({ view, levels, disposition, ai }: {
       </div>
 
       <div className="card">
-        <h3 className="card-title"><Icon name="scorecard" size={16} />Competency comparison</h3>
+        <h2 className="card-title"><Icon name="scorecard" size={16} />Competency comparison</h2>
         <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency comparison">
         <table className="table">
           <thead>
@@ -200,7 +200,7 @@ function Comparison({ view, levels, disposition, ai }: {
       </div>
 
       <div className="card">
-        <h3 className="card-title"><Icon name="insights" size={16} />AI summary</h3>
+        <h2 className="card-title"><Icon name="insights" size={16} />AI summary</h2>
         <p style={{ whiteSpace: 'pre-wrap' }}>{ai.summary}</p>
       </div>
     </>
@@ -290,7 +290,10 @@ export default function BlindReview() {
     }
   };
 
-  if (error && !view) return <Banner kind="error">{error}</Banner>;
+  // The page still says what it is when its data could not be read: a screen
+  // with an error and no heading announces nothing at all, and a person who
+  // arrived by a link has no way to tell which record failed.
+  if (error && !view) return <><PageHeader icon="eye-off" title="Independent review" /><Banner kind="error">{error}</Banner></>;
   if (!view) return <PageSkeleton label="Loading the evidence…" cards={3} />;
 
   // Recorded, one way or another: earlier by this reviewer, or a moment ago on
@@ -337,7 +340,7 @@ export default function BlindReview() {
         <Comparison view={view} levels={levels} disposition={disposition} ai={reveal.result} />
       ) : awaitingReveal ? (
         <div className="card">
-          <h3 className="card-title"><Icon name="eye" size={16} />The AI's assessment</h3>
+          <h2 className="card-title"><Icon name="eye" size={16} />The AI's assessment</h2>
           <p className="muted">
             Held back until a verdict was recorded. It is available now — and if this does not load,
             the full assessment page shows the same thing.
@@ -350,7 +353,7 @@ export default function BlindReview() {
       ) : (
           <>
             <div className="card">
-              <h3 className="card-title"><Icon name="evidence" size={16} />Score each competency from the evidence</h3>
+              <h2 className="card-title"><Icon name="evidence" size={16} />Score each competency from the evidence</h2>
               <p className="muted">
                 {scoredCount} of {view.competencies.length} scored. Leaving one as “not enough
                 evidence” is a valid answer — judge the evidence, not how fluent the answers sounded.
@@ -368,7 +371,7 @@ export default function BlindReview() {
             {view.competencies.map((c) => (
               <div className="card" key={c.id}>
                 <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-                  <h3>{c.name}</h3>
+                  <h2 className="card-title">{c.name}</h2>
                   <Badge kind="gray">requires {c.requiredLevel}/5</Badge>
                 </div>
                 <p className="muted">{c.definition}</p>
@@ -386,7 +389,7 @@ export default function BlindReview() {
 
             <div className="card">
               <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
-                <h3 className="card-title"><Icon name="captions" size={16} />Full transcript</h3>
+                <h2 className="card-title"><Icon name="captions" size={16} />Full transcript</h2>
                 <button type="button" className="btn ghost" onClick={() => setShowTranscript((s) => !s)}>
                   <Icon name={showTranscript ? 'eye-off' : 'eye'} size={16} />
                   {showTranscript ? 'Hide' : 'Show'}
@@ -400,7 +403,7 @@ export default function BlindReview() {
             </div>
 
             <div className="card">
-              <h3 className="card-title"><Icon name="decision" size={16} />Your recommendation</h3>
+              <h2 className="card-title"><Icon name="decision" size={16} />Your recommendation</h2>
               <div
                 className="row"
                 style={{ gap: 8, flexWrap: 'wrap', marginBottom: 12 }}

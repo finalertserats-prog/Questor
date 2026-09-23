@@ -127,10 +127,14 @@ export function RoleDetail() {
   }, [dirty]);
 
   if (loading) return <PageSkeleton label="Loading role…" cards={3} />;
-  if (loadError) return <Banner kind="error">{loadError}</Banner>;
+  // The page still says what it is when its data could not be read: a screen
+  // with an error and no heading announces nothing at all, and a person who
+  // arrived by a link has no way to tell which record failed.
+  if (loadError) return <><PageHeader icon="role" title="Role" /><Banner kind="error">{loadError}</Banner></>;
   if (!data || !profile) {
     return (
       <EmptyState
+        heading="page"
         icon="role"
         title="No scorecard found for this role"
         message="A scorecard is drafted from the job description. Create the role again from its JD to generate one."
@@ -311,11 +315,11 @@ export function RoleDetail() {
 
       <div className="grid cols-2">
         <div className="card">
-          <h3 className="card-title"><Icon name="flag" size={16} />Outcomes</h3>
+          <h2 className="card-title"><Icon name="flag" size={16} />Outcomes</h2>
           <ul>{(profile.outcomes ?? []).map((o, i) => <li key={i}>{o}</li>)}</ul>
         </div>
         <div className="card">
-          <h3 className="card-title"><Icon name="list" size={16} />Responsibilities</h3>
+          <h2 className="card-title"><Icon name="list" size={16} />Responsibilities</h2>
           <ul>{(profile.responsibilities ?? []).map((r, i) => <li key={i}>{r}</li>)}</ul>
         </div>
       </div>
@@ -347,7 +351,7 @@ export function RoleDetail() {
       />
 
       <div className="card">
-        <h3 className="card-title"><Icon name="scale" size={16} />Scoring</h3>
+        <h2 className="card-title"><Icon name="scale" size={16} />Scoring</h2>
         <div className="row" style={{ marginTop: 10, gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <label htmlFor="pass-threshold" className="muted small" style={{ margin: 0 }}>Pass threshold</label>
           <input
@@ -372,7 +376,7 @@ export function RoleDetail() {
 
       <div className="grid cols-2">
         <div className="card">
-          <h3 className="card-title"><Icon name="alert" size={16} />Red flags</h3>
+          <h2 className="card-title"><Icon name="alert" size={16} />Red flags</h2>
           <p className="muted small">
             Things the interviewer should note if they come up. They are flagged for a person to weigh, never
             scored.
@@ -416,7 +420,7 @@ export function RoleDetail() {
           <p className="muted small" style={{ marginTop: 8 }}>Changes take effect when you save.</p>
         </div>
         <div className="card">
-          <h3 className="card-title"><Icon name="stop" size={16} />Prohibited topics</h3>
+          <h2 className="card-title"><Icon name="stop" size={16} />Prohibited topics</h2>
           <div>{(profile.policyRules?.prohibitedTopics ?? []).map((r, i) => <span key={i} className="chip">{r}</span>)}</div>
         </div>
       </div>

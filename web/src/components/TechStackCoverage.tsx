@@ -20,7 +20,7 @@ export function TechStackCoverage({ coverage }: Props) {
   const evidenced = coverage.filter((c) => c.evidenced).length;
   return (
     <section className="card" aria-labelledby="stack-coverage-title" data-testid="tech-stack-coverage">
-      <h3 id="stack-coverage-title" className="card-title">Tech stack coverage</h3>
+      <h2 id="stack-coverage-title" className="card-title">Tech stack coverage</h2>
       <p className="muted small">
         {evidenced} of {coverage.length} required {coverage.length === 1 ? 'technology' : 'technologies'} came up with evidence in this interview.
         A gap here is something to cover in the next round, not a finding about the candidate.

@@ -113,10 +113,14 @@ export function InterviewDetail() {
   }, [id]);
 
   if (loading) return <PageSkeleton label="Loading interview…" cards={3} />;
-  if (error && !data) return <Banner kind="error">{error}</Banner>;
+  // The page still says what it is when its data could not be read: a screen
+  // with an error and no heading announces nothing at all, and a person who
+  // arrived by a link has no way to tell which record failed.
+  if (error && !data) return <><PageHeader icon="interviews" title="Interview" /><Banner kind="error">{error}</Banner></>;
   if (!data) {
     return (
       <EmptyState
+        heading="page"
         icon="interviews"
         title="Interview not found"
         message="It may have been removed, or the link is out of date."

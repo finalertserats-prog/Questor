@@ -72,7 +72,7 @@ export function CompetencyEditor({ roleId, competencies, mustPassIds, historyIds
   return (
     <div className="card">
       <div className="row spread">
-        <h3 className="card-title"><Icon name="skills-assessment" size={16} />Competencies</h3>
+        <h2 className="card-title"><Icon name="skills-assessment" size={16} />Competencies</h2>
         {!adding && (
           <button type="button" className="btn secondary sm" onClick={() => setAdding(true)} disabled={structural} title={structuralHint} data-testid="add-competency">
             <Icon name="plus" size={14} />Add competency

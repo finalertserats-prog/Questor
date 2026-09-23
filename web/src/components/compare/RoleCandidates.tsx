@@ -96,7 +96,7 @@ export function RoleCandidates({ roleId }: { roleId: string }) {
   return (
     <section className="card cmp" aria-label="Candidates on this role">
       <div className="row spread cmp-head">
-        <h3 className="card-title"><Icon name="candidates" size={16} />Candidates on this role</h3>
+        <h2 className="card-title"><Icon name="candidates" size={16} />Candidates on this role</h2>
         <div className="cmp-views" role="group" aria-label="How to compare">
           <button
             type="button"

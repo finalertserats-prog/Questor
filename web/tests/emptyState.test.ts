@@ -7,9 +7,17 @@ import { Skeleton } from '../src/components/Skeleton';
 const render = (props: Parameters<typeof EmptyState>[0]) => renderToStaticMarkup(createElement(EmptyState, props));
 
 describe('EmptyState', () => {
-  it('renders the title as a heading', () => {
+  it('renders the title one level under the page it sits in', () => {
     expect(render({ icon: 'candidates', title: 'No candidates yet', message: 'Add one.' }))
-      .toContain('<h3 class="empty-title">No candidates yet</h3>');
+      .toContain('<h2 class="empty-title">No candidates yet</h2>');
+  });
+
+  // An h3 under the page's h1 skipped a level on 17 screens, and an empty state
+  // that IS the page -- a refusal, a record that is gone -- left the page with
+  // no h1 at all.
+  it('renders the title as the page heading when it is the whole page', () => {
+    expect(render({ icon: 'candidates', title: 'Add candidates', message: 'x', heading: 'page' }))
+      .toContain('<h1 class="empty-title">Add candidates</h1>');
   });
 
   it('renders the one-line guidance', () => {

@@ -414,6 +414,7 @@ export function CandidateDetail() {
   if (erasedNotice) {
     return (
       <EmptyState
+        heading="page"
         icon="user-x"
         title="Candidate erased"
         message={erasedNotice}
@@ -422,7 +423,10 @@ export function CandidateDetail() {
     );
   }
   if (loading) return <PageSkeleton label="Loading candidate…" cards={3} />;
-  if (error) return <Banner kind="error">{error}</Banner>;
+  // The page still says what it is when its data could not be read: a screen
+  // with an error and no heading announces nothing at all, and a person who
+  // arrived by a link has no way to tell which record failed.
+  if (error) return <><PageHeader icon="candidate-profile" title="Candidate" /><Banner kind="error">{error}</Banner></>;
   if (!data) {
     return (
       <EmptyState

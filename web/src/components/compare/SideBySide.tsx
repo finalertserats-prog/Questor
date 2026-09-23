@@ -146,7 +146,7 @@ export function SideBySide(props: {
   return (
     <section className="card cmp-sbs" aria-label="Candidates side by side">
       <div className="row spread">
-        <h3 className="card-title"><Icon name="shortlist" size={16} />Side by side</h3>
+        <h2 className="card-title"><Icon name="shortlist" size={16} />Side by side</h2>
         <button type="button" className="btn ghost sm" onClick={props.onClose}>
           <Icon name="close" size={15} />Close
         </button>

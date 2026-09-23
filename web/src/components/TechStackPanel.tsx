@@ -107,7 +107,7 @@ export function TechStackPanel({ roleId, initial, locked, onStored }: Props) {
 
   return (
     <div className="card" data-testid="tech-stack-panel">
-      <h3 className="card-title"><Icon name="list" size={16} />Tech stack</h3>
+      <h2 className="card-title"><Icon name="list" size={16} />Tech stack</h2>
       <p className="muted small">
         The technologies this role works with, and how deep the hire needs to be in each. The job description,
         the competencies and the interview follow what is set here.

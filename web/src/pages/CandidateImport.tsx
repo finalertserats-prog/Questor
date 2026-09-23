@@ -73,7 +73,7 @@ export function CandidateImport() {
   }, [requestedRoleId, mayImport]);
 
   if (!mayImport) {
-    return <EmptyState icon="add-candidate" title="Add candidates" message={onlyWhoCan('candidate:create', 'add candidates')} />;
+    return <EmptyState heading="page" icon="add-candidate" title="Add candidates" message={onlyWhoCan('candidate:create', 'add candidates')} />;
   }
   if (loading) return <PageSkeleton label="Loading roles…" cards={1} />;
 

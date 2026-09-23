@@ -16,12 +16,25 @@ interface EmptyStateProps {
   illustrationHeight?: number;
   action?: ReactNode;
   compact?: boolean;
+  /**
+   * Where this sits in the page's outline. Inside a page that has its own
+   * title it is a section heading (the default). When the empty state IS the
+   * page -- a refusal, a record that is gone, a role with no scorecard -- it is
+   * the page's heading, and saying so is the difference between a screen
+   * reader announcing what this screen is and announcing nothing at all.
+   */
+  heading?: 'page' | 'section';
 }
 
 /** What a list shows when there is nothing in it: what this is, what to do, and the button to do it. */
 export function EmptyState({
   icon, title, message, illustration, illustrationWidth = 360, illustrationHeight = 360, action, compact,
+  heading = 'section',
 }: EmptyStateProps) {
+  // h2, not h3: the title used to jump a level under the page's own h1, which
+  // axe caught as `heading-order` on 17 screens. A heading level is the outline
+  // a screen reader navigates by, not a size.
+  const Heading = heading === 'page' ? 'h1' : 'h2';
   const [artFailed, setArtFailed] = useState(false);
   // A previous illustration's failure must not hide a different one that may
   // load perfectly well.
@@ -42,7 +55,7 @@ export function EmptyState({
       ) : (
         <span className="empty-icon"><Icon name={icon} size={compact ? 22 : 28} /></span>
       )}
-      <h3 className="empty-title">{title}</h3>
+      <Heading className="empty-title">{title}</Heading>
       <p className="empty-message">{message}</p>
       {action && <div className="empty-action">{action}</div>}
     </div>
