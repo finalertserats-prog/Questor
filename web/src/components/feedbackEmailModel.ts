@@ -40,6 +40,12 @@ export interface FeedbackEmailState {
   readonly email: FeedbackEmailRecord | null;
   readonly canSendNow: boolean;
   readonly blockedReason: string | null;
+  /**
+   * Why no letter is going to this candidate at all — chiefly that they were
+   * asked whether they want feedback and have not answered. Absent on an older
+   * server.
+   */
+  readonly willNotSendReason?: string | null;
   /** The server will send again only if someone accepts the risk of a duplicate. */
   readonly needsDuplicateConfirmation?: boolean;
   /** This user may release a held email or keep it held (assessment:review). */
@@ -77,6 +83,20 @@ export function feedbackEmailSummary(state: FeedbackEmailState, formatDate: (iso
     canRelease: false,
     canKeepHolding: false,
   };
+  // Said before anything else, and for every status but a send that already
+  // happened: a queued letter whose candidate never answered the opt-in
+  // question is not "on its way", and a held one is not a decision anyone can
+  // take. Reading "Feedback email is on its way" for a letter that will never
+  // go is how a recruiter comes to believe a candidate was written to.
+  const willNotSend = state.willNotSendReason ?? null;
+  if (willNotSend && email?.status !== 'SENT' && email?.status !== 'SENT_UNVERIFIED') {
+    return {
+      ...base, tone: 'none', canSendNow: false,
+      headline: 'No feedback email will be sent to this candidate',
+      detail: willNotSend,
+      holdReasons: email?.status === 'HELD' ? email.hold?.reasonTexts ?? [] : [],
+    };
+  }
   if (!email || email.status === 'DRAFT') {
     return { ...base, tone: 'none', headline: NOT_SENT, detail: state.canSendNow ? null : state.blockedReason };
   }

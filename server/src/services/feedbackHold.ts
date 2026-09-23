@@ -4,6 +4,8 @@ import type { AuthClaims } from './auth.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateScope } from './access.js';
+import { candidateFeedbackEnabledForTenant } from './candidateFeedbackPolicy.js';
+import { OPT_IN_YES } from './candidateFeedback.js';
 import { feedbackHold, holdReasonTexts, trustSignals, type FeedbackHold, type TrustSignals } from './feedbackHoldModel.js';
 
 /**
@@ -94,9 +96,34 @@ export interface HeldFeedbackItem {
   readonly role: { readonly id: string; readonly title: string };
 }
 
-/** Awaiting a decision: held, and nobody has chosen to keep it so. */
-export function awaitingDecisionWhere(tenantId: string, candidate: Prisma.CandidateWhereInput): Prisma.CandidateFeedbackEmailWhereInput {
-  return { tenantId, candidate, status: 'HELD', holdKeptAt: null };
+/**
+ * Sessions whose letter the opt-in promise still allows.
+ *
+ * Where the organisation runs the opt-in flow every candidate is asked, and we
+ * told them "we only send feedback if you say yes" — so only a recorded yes
+ * gets through. Where it does not, a candidate who was emailed the question was
+ * promised the same thing; everyone else was promised nothing and is unaffected.
+ * The same rule as feedbackEligibility, expressed as a query
+ * (services/autoFeedbackModel.ts).
+ */
+export function optInAllowsSendingWhere(optInFlowOn: boolean): Prisma.InterviewSessionWhereInput {
+  const saidYes: Prisma.InterviewSessionWhereInput = { feedbackOptIn: { is: { choice: OPT_IN_YES } } };
+  if (optInFlowOn) return saidYes;
+  return { OR: [saidYes, { AND: [{ feedbackOptIn: { is: null } }, { feedbackOptInRequest: { is: null } }] }] };
+}
+
+/**
+ * Awaiting a decision: held, nobody has chosen to keep it so, and it is a
+ * letter that could still go. A held letter for a candidate who never answered
+ * the opt-in question can never be sent, so it is not a decision anyone has to
+ * make and it does not belong in the HR-Box queue or the daily digest.
+ */
+export async function awaitingDecisionWhere(
+  tenantId: string,
+  candidate: Prisma.CandidateWhereInput,
+): Promise<Prisma.CandidateFeedbackEmailWhereInput> {
+  const optInFlowOn = await candidateFeedbackEnabledForTenant(tenantId);
+  return { tenantId, candidate, status: 'HELD', holdKeptAt: null, session: optInAllowsSendingWhere(optInFlowOn) };
 }
 
 export const HELD_LIST_LIMIT = 50;
@@ -109,7 +136,7 @@ export async function listHeldFeedback(auth: AuthClaims, opts: { includeKept?: b
   const candidate = await candidateScope(auth) as Prisma.CandidateWhereInput;
   const where: Prisma.CandidateFeedbackEmailWhereInput = opts.includeKept
     ? { tenantId: auth.tenantId, candidate, status: 'HELD' }
-    : awaitingDecisionWhere(auth.tenantId, candidate);
+    : await awaitingDecisionWhere(auth.tenantId, candidate);
   const [total, rows] = await Promise.all([
     prisma.candidateFeedbackEmail.count({ where }),
     prisma.candidateFeedbackEmail.findMany({

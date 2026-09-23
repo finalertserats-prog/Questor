@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_REVIEW_WINDOW_HOURS, MAX_SEND_ATTEMPTS, afterFailedAttempt, autoCandidateFeedbackEnabled,
-  blindReviewRequired, feedbackDueAt, feedbackSignOff, feedbackEligibility, manualSendAllowed,
-  retryDelayMs, reviewWindowHours, type EligibilityInput,
+  SKIP_REASON_TEXT, blindReviewRequired, feedbackDueAt, feedbackSignOff, feedbackEligibility, manualSendAllowed,
+  optInAsked, retryDelayMs, reviewWindowHours, type EligibilityInput,
 } from '../src/services/autoFeedbackModel.js';
 
 /**
@@ -80,7 +80,7 @@ describe('tenant policy defaults', () => {
 
 const COMPLETED: EligibilityInput = {
   state: 'REVIEW_READY', completedAt: new Date('2026-09-19T10:00:00Z'), partial: false,
-  candidateEmail: 'priya@example.com', optInChoice: null, hasAssessment: true,
+  candidateEmail: 'priya@example.com', optInChoice: null, optInAsked: false, hasAssessment: true,
 };
 
 describe('which interviews get feedback', () => {
@@ -113,6 +113,68 @@ describe('which interviews get feedback', () => {
 
   it('sends to a candidate who said yes', () => {
     expect(feedbackEligibility({ ...COMPLETED, optInChoice: 'YES' })).toEqual({ eligible: true });
+  });
+});
+
+/**
+ * The promise wins.
+ *
+ * The opt-in request email and the consent copy tell the candidate, in these
+ * words, "If you do not answer, we will not send you any feedback" and "We only
+ * send feedback if you say yes". A candidate who was asked and stayed silent
+ * therefore gets nothing, whatever the automatic rule would otherwise do. A
+ * candidate who was never asked was promised nothing, so nothing changes for
+ * them.
+ */
+describe('the opt-in promise', () => {
+  const ASKED: EligibilityInput = { ...COMPLETED, optInAsked: true };
+
+  it('sends when they were asked and said yes', () => {
+    expect(feedbackEligibility({ ...ASKED, optInChoice: 'YES' })).toEqual({ eligible: true });
+  });
+
+  it('sends nothing when they were asked and said no', () => {
+    expect(feedbackEligibility({ ...ASKED, optInChoice: 'NO' })).toEqual({ eligible: false, reason: 'DECLINED' });
+  });
+
+  it('sends nothing when they were asked and never answered', () => {
+    expect(feedbackEligibility({ ...ASKED, optInChoice: null })).toEqual({ eligible: false, reason: 'NO_OPT_IN_ANSWER' });
+  });
+
+  it('still sends when they were never asked and never answered', () => {
+    expect(feedbackEligibility({ ...COMPLETED, optInAsked: false, optInChoice: null })).toEqual({ eligible: true });
+  });
+
+  it('honours a no even from a candidate the organisation never formally asked', () => {
+    expect(feedbackEligibility({ ...COMPLETED, optInAsked: false, optInChoice: 'NO' }))
+      .toEqual({ eligible: false, reason: 'DECLINED' });
+  });
+
+  it('treats an answer this code does not recognise as a no, asked or not', () => {
+    expect(feedbackEligibility({ ...ASKED, optInChoice: 'MAYBE' })).toEqual({ eligible: false, reason: 'DECLINED' });
+  });
+
+  it('leaves the reason a person can act on separate from a refusal', () => {
+    expect(SKIP_REASON_TEXT.NO_OPT_IN_ANSWER).toMatch(/only send/i);
+  });
+
+  it('is not a skip anyone may override with "send it anyway"', () => {
+    const row = { status: 'SKIPPED', skipReason: 'NO_OPT_IN_ANSWER' };
+    expect(manualSendAllowed(row)).toEqual({ allowed: false, reason: SKIP_REASON_TEXT.NO_OPT_IN_ANSWER });
+  });
+});
+
+describe('whether the candidate was asked', () => {
+  it('counts every candidate as asked while the organisation runs the opt-in flow', () => {
+    expect(optInAsked({ optInFlowOn: true, optInRequested: false })).toBe(true);
+  });
+
+  it('counts a candidate emailed the question as asked even after the flow was switched off', () => {
+    expect(optInAsked({ optInFlowOn: false, optInRequested: true })).toBe(true);
+  });
+
+  it('counts nobody as asked where the organisation does not use the flow', () => {
+    expect(optInAsked({ optInFlowOn: false, optInRequested: false })).toBe(false);
   });
 });
 

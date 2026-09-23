@@ -21,6 +21,7 @@ export type FeedbackSkipReason =
   | 'PARTIAL_INTERVIEW'
   | 'WITHDRAWN'
   | 'DECLINED'
+  | 'NO_OPT_IN_ANSWER'
   | 'NO_EMAIL'
   | 'DEMO_RECIPIENT'
   | 'NO_ASSESSMENT';
@@ -32,6 +33,8 @@ export const SKIP_REASON_TEXT: Readonly<Record<FeedbackSkipReason, string>> = {
   PARTIAL_INTERVIEW: 'Only part of the interview took place, so no feedback was sent.',
   WITHDRAWN: 'The candidate withdrew from the interview, so no feedback was sent.',
   DECLINED: 'The candidate said they did not want written feedback.',
+  NO_OPT_IN_ANSWER: 'The candidate was asked whether they want written feedback and has not answered. '
+    + 'We told them we only send feedback if they say yes, so nothing goes unless they do.',
   NO_EMAIL: 'The candidate has no email address on file.',
   DEMO_RECIPIENT: 'In the demo, email goes only to you, so nothing was sent to the candidate address.',
   NO_ASSESSMENT: 'There is no assessment for this interview to write feedback from.',
@@ -112,7 +115,26 @@ export interface EligibilityInput {
   readonly candidateEmail: string;
   /** The candidate's own answer about written feedback, when they gave one. */
   readonly optInChoice: string | null;
+  /** Whether the question was ever put to them (see optInAsked). */
+  readonly optInAsked: boolean;
   readonly hasAssessment: boolean;
+}
+
+/** The recorded answer that means "yes, send it" (services/candidateFeedback.ts). */
+const OPT_IN_YES = 'YES';
+
+/**
+ * Whether the candidate was asked whether they want written feedback.
+ *
+ * Both ways of asking are gated on the organisation running the opt-in flow
+ * (`candidateFeedbackEnabled`): while it is on, every candidate is put the
+ * question at the end of their interview, and the hiring team can also email it
+ * to one who never answered. An organisation that switches the flow off after
+ * emailing someone has still made them the promise, so a request on file counts
+ * on its own.
+ */
+export function optInAsked(f: { readonly optInFlowOn: boolean; readonly optInRequested: boolean }): boolean {
+  return f.optInFlowOn || f.optInRequested;
 }
 
 export type Eligibility = { eligible: true } | { eligible: false; reason: FeedbackSkipReason };
@@ -122,8 +144,19 @@ export type Eligibility = { eligible: true } | { eligible: false; reason: Feedba
  *
  * A recorded "no" is honoured even though sending is otherwise automatic: the
  * candidate told us, and that answer is final (services/candidateFeedback.ts).
- * No answer is not a no — the owner's decision is that feedback goes to
- * everyone who finishes an interview.
+ *
+ * Where the candidate was ASKED, no answer is also a no. The opt-in request
+ * email and the consent copy promise them, in these words, "If you do not
+ * answer, we will not send you any feedback" and "We only send feedback if you
+ * say yes" (providers/email/feedbackOptInRequestEmail.ts,
+ * web/src/components/feedbackOptInCopy.ts). The automatic rule used to read
+ * silence as consent and send anyway, which made that sentence untrue. The
+ * promise wins: we do not get to tell someone we will stay quiet unless they
+ * agree and then write to them because they never replied. This is the owner's
+ * decision of 23 September 2026.
+ *
+ * Where the candidate was never asked — an organisation that does not run the
+ * opt-in flow — no promise was made, and the automatic letter goes as before.
  */
 export function feedbackEligibility(i: EligibilityInput): Eligibility {
   if (i.state === 'CANDIDATE_WITHDREW') return { eligible: false, reason: 'WITHDRAWN' };
@@ -132,7 +165,9 @@ export function feedbackEligibility(i: EligibilityInput): Eligibility {
   if (!COMPLETED_STATES.has(i.state) || !i.completedAt) return { eligible: false, reason: 'NOT_COMPLETED' };
   if (i.partial) return { eligible: false, reason: 'PARTIAL_INTERVIEW' };
   if (!i.hasAssessment) return { eligible: false, reason: 'NO_ASSESSMENT' };
-  if (i.optInChoice !== null && i.optInChoice !== 'YES') return { eligible: false, reason: 'DECLINED' };
+  // An answer this code does not recognise is not a yes.
+  if (i.optInChoice !== null && i.optInChoice !== OPT_IN_YES) return { eligible: false, reason: 'DECLINED' };
+  if (i.optInChoice === null && i.optInAsked) return { eligible: false, reason: 'NO_OPT_IN_ANSWER' };
   if (!i.candidateEmail.trim()) return { eligible: false, reason: 'NO_EMAIL' };
   return { eligible: true };
 }
@@ -160,7 +195,9 @@ export function afterFailedAttempt(
 /**
  * Skips a person may override with "Send feedback now": the reason may no
  * longer hold (an email address added, the switch turned back on). A withdrawal,
- * a "no" or an unfinished interview is not something to override.
+ * a "no", an unanswered opt-in or an unfinished interview is not something to
+ * override: the first two are the candidate's own answer and the third is the
+ * promise we made them. "Send it anyway" does not reach any of them.
  */
 const OVERRIDABLE_SKIPS: ReadonlySet<string> = new Set<FeedbackSkipReason>(['POLICY_OFF', 'NO_EMAIL', 'DEMO_RECIPIENT', 'NO_ASSESSMENT']);
 

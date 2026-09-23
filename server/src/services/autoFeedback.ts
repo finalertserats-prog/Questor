@@ -11,7 +11,8 @@ import { logAudit } from './audit.js';
 import { tenantTimeZone } from './tenantTimeZone.js';
 import { issueHumanRequestToken } from './candidateFeedback.js';
 import {
-  autoCandidateFeedbackEnabledForTenant, feedbackReviewWindowHoursForTenant, feedbackSignOffForTenant,
+  autoCandidateFeedbackEnabledForTenant, candidateFeedbackEnabledForTenant,
+  feedbackReviewWindowHoursForTenant, feedbackSignOffForTenant,
 } from './candidateFeedbackPolicy.js';
 import { applyReviewOverrides, type CompletedReview } from '../domain/reviewedAssessment.js';
 import { completedReviewFor, scorecardProfileFor } from './assessmentReview.js';
@@ -21,7 +22,7 @@ import { generateFeedbackContent } from './autoFeedbackContent.js';
 import { feedbackContentSchema, type FeedbackContent, type FeedbackInput } from './feedbackContentModel.js';
 import {
   RELEASE_TEXT, SENT_UNVERIFIED_REASON, SKIP_REASON_TEXT, afterFailedAttempt, feedbackDueAt,
-  feedbackEligibility, manualSendAllowed, type FeedbackRelease, type FeedbackSkipReason,
+  feedbackEligibility, manualSendAllowed, optInAsked, type FeedbackRelease, type FeedbackSkipReason,
 } from './autoFeedbackModel.js';
 import { holdFor, holdJsonOf, holdView, type HoldView } from './feedbackHold.js';
 
@@ -408,9 +409,21 @@ async function loadClaimed(id: string) {
           role: { select: { title: true } },
           tenant: { select: { name: true } },
           feedbackOptIn: { select: { choice: true } },
+          feedbackOptInRequest: { select: { id: true } },
         },
       },
     },
+  });
+}
+
+/**
+ * Whether this candidate was ever put the question "do you want written
+ * feedback?". Where they were, silence means no (autoFeedbackModel.ts).
+ */
+async function wasAskedToOptIn(s: { tenantId: string; feedbackOptInRequest: { id: string } | null }): Promise<boolean> {
+  return optInAsked({
+    optInFlowOn: await candidateFeedbackEnabledForTenant(s.tenantId),
+    optInRequested: s.feedbackOptInRequest !== null,
   });
 }
 
@@ -420,7 +433,8 @@ async function skipReasonAtSend(row: ClaimedRow): Promise<FeedbackSkipReason | n
   const s = row.session;
   const eligibility = feedbackEligibility({
     state: s.state, completedAt: s.completedAt, partial: await wasScoredPartially(s.id),
-    candidateEmail: s.candidate.email, optInChoice: s.feedbackOptIn?.choice ?? null, hasAssessment: true,
+    candidateEmail: s.candidate.email, optInChoice: s.feedbackOptIn?.choice ?? null,
+    optInAsked: await wasAskedToOptIn(s), hasAssessment: true,
   });
   if (!eligibility.eligible) return eligibility.reason;
   // A person pressing "Send feedback now" overrides the switch; the job does not.
@@ -746,6 +760,13 @@ export interface FeedbackEmailView {
   /** Why "Send feedback now" is not offered, in words for the hiring team. */
   blockedReason: string | null;
   /**
+   * Why no letter is going to this candidate at all, whatever the row says — a
+   * queued letter whose candidate never answered the opt-in question is not on
+   * its way, and the page must not imply it is. Null when nothing stands in the
+   * way.
+   */
+  willNotSendReason: string | null;
+  /**
    * The one refusal a person may override: a send we could not confirm. The
    * page has to name the risk of a second copy before it offers the button.
    */
@@ -758,11 +779,13 @@ async function sessionEligibility(sessionId: string) {
     select: {
       id: true, state: true, completedAt: true, tenantId: true, candidateId: true,
       candidate: { select: { email: true } }, feedbackOptIn: { select: { choice: true } },
+      feedbackOptInRequest: { select: { id: true } },
     },
   });
   const eligibility = feedbackEligibility({
     state: s.state, completedAt: s.completedAt, partial: await wasScoredPartially(s.id),
-    candidateEmail: s.candidate.email, optInChoice: s.feedbackOptIn?.choice ?? null, hasAssessment: true,
+    candidateEmail: s.candidate.email, optInChoice: s.feedbackOptIn?.choice ?? null,
+    optInAsked: await wasAskedToOptIn(s), hasAssessment: true,
   });
   return { session: s, eligibility };
 }
@@ -776,7 +799,8 @@ export async function feedbackEmailState(
     sessionEligibility(sessionId),
   ]);
   const manual = manualSendAllowed(row, { ...opts, now: new Date() });
-  const blockedReason = !manual.allowed ? manual.reason : eligibility.eligible ? null : SKIP_REASON_TEXT[eligibility.reason];
+  const willNotSendReason = eligibility.eligible ? null : SKIP_REASON_TEXT[eligibility.reason];
+  const blockedReason = !manual.allowed ? manual.reason : willNotSendReason;
   return {
     email: row
       ? {
@@ -792,6 +816,7 @@ export async function feedbackEmailState(
       : null,
     canSendNow: blockedReason === null,
     blockedReason,
+    willNotSendReason,
     needsDuplicateConfirmation: !manual.allowed && manual.requiresConfirmation === true,
   };
 }

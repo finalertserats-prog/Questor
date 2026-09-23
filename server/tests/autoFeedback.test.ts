@@ -631,6 +631,91 @@ describe('skip rules, checked again when sending', () => {
     expect(await rowFor(ids.sessionId)).toMatchObject({ status: 'SKIPPED', skipReason: 'DECLINED' });
   });
 
+  /**
+   * The opt-in promise beats the automatic rule (owner, 23 September 2026).
+   *
+   * Where the organisation runs the opt-in flow, the request email and the
+   * consent copy tell the candidate "If you do not answer, we will not send you
+   * any feedback". Silence therefore has to mean no, or that sentence was never
+   * true. Where the organisation does not run the flow, no such promise was
+   * made and nothing about the automatic letter changes.
+   */
+  describe('the opt-in promise', () => {
+    it('sends nothing to a candidate who was asked and never answered', async () => {
+      const ids = await completedInterview();
+      await setPolicy(ids.tenantId, { candidateFeedbackEnabled: true });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(LATER());
+      expect({ row: await rowFor(ids.sessionId), sent: mail.sent.length })
+        .toMatchObject({ row: { status: 'SKIPPED', skipReason: 'NO_OPT_IN_ANSWER' }, sent: 0 });
+    });
+
+    it('sends to a candidate who was asked and said yes', async () => {
+      const ids = await completedInterview();
+      await setPolicy(ids.tenantId, { candidateFeedbackEnabled: true });
+      await prisma.candidateFeedbackOptIn.create({ data: { sessionId: ids.sessionId, candidateId: ids.candidateId, tenantId: ids.tenantId, choice: 'YES' } });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(LATER());
+      expect((await rowFor(ids.sessionId)).status).toBe('SENT');
+    });
+
+    it('still sends where the organisation never asks, so nothing was promised', async () => {
+      const ids = await completedInterview();
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(LATER());
+      expect((await rowFor(ids.sessionId)).status).toBe('SENT');
+    });
+
+    it('keeps the promise to a candidate emailed the question after the flow was switched off', async () => {
+      const ids = await completedInterview();
+      await prisma.candidateFeedbackOptInRequest.create({
+        data: {
+          sessionId: ids.sessionId, candidateId: ids.candidateId, tenantId: ids.tenantId,
+          tokenHash: 'hash-for-this-test', requestedByUserId: ids.userId,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+        },
+      });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(LATER());
+      expect(await rowFor(ids.sessionId)).toMatchObject({ status: 'SKIPPED', skipReason: 'NO_OPT_IN_ANSWER' });
+    });
+
+    it('writes the reason to the audit log', async () => {
+      const ids = await completedInterview();
+      await setPolicy(ids.tenantId, { candidateFeedbackEnabled: true });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(LATER());
+      const event = await prisma.auditEvent.findFirstOrThrow({
+        where: { action: 'feedback.email.skipped', entityId: ids.sessionId }, orderBy: { createdAt: 'desc' },
+      });
+      expect(JSON.parse(event.afterJson)).toEqual({ reason: 'NO_OPT_IN_ANSWER' });
+    });
+
+    it('refuses "Send feedback now" rather than letting a person override the promise', async () => {
+      const ids = await completedInterview();
+      await setPolicy(ids.tenantId, { candidateFeedbackEnabled: true });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      await deliverDueFeedbackEmails(LATER());
+      const res = await request(app).post(`/api/assessments/${ids.assessmentId}/feedback-email/send`).set(ids.auth).send({});
+      expect({ status: res.status, sent: mail.sent.length }).toEqual({ status: 409, sent: 0 });
+    });
+
+    it('tells the assessment page no letter will go, and why', async () => {
+      const ids = await completedInterview();
+      await setPolicy(ids.tenantId, { candidateFeedbackEnabled: true });
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      const res = await request(app).get(`/api/assessments/${ids.assessmentId}/feedback-email`).set(ids.auth);
+      expect(res.body.willNotSendReason).toMatch(/only send feedback if they say yes/);
+    });
+
+    it('says nothing stands in the way where the organisation never asks', async () => {
+      const ids = await completedInterview();
+      await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });
+      const res = await request(app).get(`/api/assessments/${ids.assessmentId}/feedback-email`).set(ids.auth);
+      expect(res.body.willNotSendReason).toBeNull();
+    });
+  });
+
   it('does not email a stranger from a demo', async () => {
     const ids = await completedInterview({ isDemo: true });
     await enqueueAutoFeedback({ sessionId: ids.sessionId, assessmentId: ids.assessmentId });

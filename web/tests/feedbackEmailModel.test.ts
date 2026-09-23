@@ -191,3 +191,54 @@ describe('a held email', () => {
     expect(feedbackEmailSummary(state(), DATE).holdReasons).toEqual([]);
   });
 });
+
+/**
+ * The opt-in promise, on the page the hiring team reads.
+ *
+ * A candidate who was asked and never answered gets no letter (server:
+ * services/autoFeedbackModel.ts). A queued row is not evidence to the contrary,
+ * so the page must say so plainly rather than "on its way to the candidate".
+ */
+describe('a candidate who never answered the opt-in question', () => {
+  const NO_ANSWER = 'The candidate was asked whether they want written feedback and has not answered. '
+    + 'We told them we only send feedback if they say yes, so nothing goes unless they do.';
+
+  const unanswered = (over: Partial<FeedbackEmailState> = {}) => state({
+    email: record({ status: 'QUEUED', sentAt: null, nextAttemptAt: '2026-09-19T22:00:00.000Z' }),
+    canSendNow: false, blockedReason: NO_ANSWER, willNotSendReason: NO_ANSWER, ...over,
+  });
+
+  it('says no letter will go rather than that one is on its way', () => {
+    expect(feedbackEmailSummary(unanswered(), DATE).headline).toBe('No feedback email will be sent to this candidate');
+  });
+
+  it('gives the promise as the reason', () => {
+    expect(feedbackEmailSummary(unanswered(), DATE).detail).toBe(NO_ANSWER);
+  });
+
+  it('does not offer to send it anyway', () => {
+    expect(feedbackEmailSummary(unanswered(), DATE).canSendNow).toBe(false);
+  });
+
+  it('says the same about a letter that was never queued at all', () => {
+    const s = feedbackEmailSummary(unanswered({ email: null }), DATE);
+    expect([s.headline, s.detail]).toEqual(['No feedback email will be sent to this candidate', NO_ANSWER]);
+  });
+
+  it('offers no hold decision on a held letter that can never be sent', () => {
+    const s = feedbackEmailSummary(unanswered({
+      email: record({ status: 'HELD', sentAt: null, hold: { reasons: ['short'], reasonTexts: ['The interview was very short.'], heldAt: '2026-09-19T10:00:00.000Z', keptAt: null, keptByUserId: null } }),
+      canDecideHold: true,
+    }), DATE);
+    expect([s.canRelease, s.canKeepHolding, s.holdReasons]).toEqual([false, false, ['The interview was very short.']]);
+  });
+
+  it('never contradicts a letter the candidate has already received', () => {
+    const s = feedbackEmailSummary(unanswered({ email: record({ status: 'SENT' }) }), DATE);
+    expect(s.tone).toBe('sent');
+  });
+
+  it('leaves every other interview alone', () => {
+    expect(feedbackEmailSummary(state({ willNotSendReason: null }), DATE).tone).toBe('sent');
+  });
+});

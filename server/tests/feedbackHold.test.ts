@@ -364,4 +364,51 @@ describe('needs attention and the held list', () => {
     const res = await request(app).get('/api/dashboard/held-feedback').set(await ids.tokenFor('auditor'));
     expect(res.status).toBe(403);
   });
+
+  /**
+   * A letter that can never be sent is not a decision anyone has to take. Where
+   * the organisation runs the opt-in flow and the candidate never answered, the
+   * promise settles it (services/autoFeedbackModel.ts), so asking the hiring
+   * team about it every morning in the digest would be asking for nothing.
+   */
+  describe('a candidate who never answered the opt-in question', () => {
+    async function heldWithOptInFlowOn(choice: string | null) {
+      const ids = await interview({ confidence: 0.25 });
+      const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: ids.tenantId }, select: { policyJson: true } });
+      await prisma.tenant.update({
+        where: { id: ids.tenantId },
+        data: { policyJson: JSON.stringify({ ...JSON.parse(tenant.policyJson), candidateFeedbackEnabled: true }) },
+      });
+      if (choice) {
+        await prisma.candidateFeedbackOptIn.create({ data: { sessionId: ids.sessionId, candidateId: ids.candidateId, tenantId: ids.tenantId, choice } });
+      }
+      await enqueue(ids);
+      return ids;
+    }
+
+    it('is not counted in needs-attention', async () => {
+      const ids = await heldWithOptInFlowOn(null);
+      const res = await request(app).get('/api/dashboard/metrics').set(ids.auth);
+      expect(res.body.needsAttention.counts.feedback_held).toBe(0);
+    });
+
+    it('is not in the held list the HR-Box and the digest read', async () => {
+      const ids = await heldWithOptInFlowOn(null);
+      const res = await request(app).get('/api/dashboard/held-feedback').set(ids.auth);
+      expect(res.body.total).toBe(0);
+    });
+
+    it('still asks about a candidate who said yes', async () => {
+      const ids = await heldWithOptInFlowOn('YES');
+      const res = await request(app).get('/api/dashboard/held-feedback').set(ids.auth);
+      expect(res.body.total).toBe(1);
+    });
+
+    it('still asks where the organisation does not run the opt-in flow', async () => {
+      const ids = await interview({ confidence: 0.25 });
+      await enqueue(ids);
+      const res = await request(app).get('/api/dashboard/held-feedback').set(ids.auth);
+      expect(res.body.total).toBe(1);
+    });
+  });
 });
