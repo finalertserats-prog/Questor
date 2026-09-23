@@ -53,7 +53,7 @@ CREATE TABLE "CalibrationObservation" (
 CREATE UNIQUE INDEX "CalibrationObservation_reviewId_competencyId_key" ON "CalibrationObservation"("reviewId", "competencyId");
 
 -- CreateIndex
-CREATE INDEX "CalibrationObservation_tenantId_roleKey_competencyKey_band_o_idx" ON "CalibrationObservation"("tenantId", "roleKey", "competencyKey", "band", "observedAt");
+CREATE INDEX "CalibrationObservation_tenantId_roleKey_competencyKey_band__idx" ON "CalibrationObservation"("tenantId", "roleKey", "competencyKey", "band", "observedAt");
 
 -- CreateIndex
 CREATE INDEX "CalibrationObservation_tenantId_reviewerId_observedAt_idx" ON "CalibrationObservation"("tenantId", "reviewerId", "observedAt");
@@ -85,7 +85,7 @@ CREATE TABLE "CalibrationGlobalObservation" (
 CREATE UNIQUE INDEX "CalibrationGlobalObservation_sourceHash_key" ON "CalibrationGlobalObservation"("sourceHash");
 
 -- CreateIndex
-CREATE INDEX "CalibrationGlobalObservation_roleKey_competencyKey_band_obse_idx" ON "CalibrationGlobalObservation"("roleKey", "competencyKey", "band", "observedMonth");
+CREATE INDEX "CalibrationGlobalObservation_roleKey_competencyKey_band_obs_idx" ON "CalibrationGlobalObservation"("roleKey", "competencyKey", "band", "observedMonth");
 
 -- CreateTable
 CREATE TABLE "CalibrationAdjustment" (
@@ -123,13 +123,13 @@ CREATE TABLE "CalibrationAdjustment" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CalibrationAdjustment_scope_tenantId_roleKey_competencyKey_b_key" ON "CalibrationAdjustment"("scope", "tenantId", "roleKey", "competencyKey", "band");
+CREATE UNIQUE INDEX "CalibrationAdjustment_scope_tenantId_roleKey_competencyKey__key" ON "CalibrationAdjustment"("scope", "tenantId", "roleKey", "competencyKey", "band");
 
 -- CreateIndex
 CREATE INDEX "CalibrationAdjustment_tenantId_status_computedAt_idx" ON "CalibrationAdjustment"("tenantId", "status", "computedAt");
 
 -- CreateIndex
-CREATE INDEX "CalibrationAdjustment_scope_roleKey_competencyKey_band_statu_idx" ON "CalibrationAdjustment"("scope", "roleKey", "competencyKey", "band", "status");
+CREATE INDEX "CalibrationAdjustment_scope_roleKey_competencyKey_band_stat_idx" ON "CalibrationAdjustment"("scope", "roleKey", "competencyKey", "band", "status");
 
 -- CreateTable
 CREATE TABLE "CalibrationAnchorProposal" (
