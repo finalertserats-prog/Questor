@@ -9,6 +9,7 @@ import { renderPasswordResetEmail, renderPasswordChangedEmail } from '../provide
 import { hashPassword, verifyPassword } from './auth.js';
 import { logAudit } from './audit.js';
 import { serverPepper } from './pepper.js';
+import { revokeAllTrustedDevices } from './trustedDevice.js';
 import { findUserByEmail, normalizeEmail } from './userEmail.js';
 
 // Password reset and password change for the hiring team.
@@ -321,9 +322,14 @@ export async function completePasswordReset(token: string, newPassword: string, 
     return { kind: 'invalid' };
   }
 
+  // The session generation moving on already makes every trusted-device grant
+  // fail its binding check, so this changes no outcome — it makes the list in
+  // Settings tell the truth, instead of showing devices that would silently
+  // stop working.
+  await revokeAllTrustedDevices(user.id, user.tenantId, { ip: ctx.ip, requestId: ctx.requestId, reason: 'password_reset' });
   await logAudit({
     tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'password.reset_completed',
-    entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, otherSessionsEnded: true },
+    entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, otherSessionsEnded: true, trustedDevicesRevoked: true },
   });
   await notifyPasswordChanged(user, 'reset', ctx, now);
   return { kind: 'done', userId: user.id, tenantId: user.tenantId };
@@ -370,9 +376,10 @@ export async function changeOwnPassword(userId: string, currentPassword: string,
     return updated.sessionsEpoch;
   });
 
+  await revokeAllTrustedDevices(user.id, user.tenantId, { ip: ctx.ip, requestId: ctx.requestId, reason: 'password_changed' });
   await logAudit({
     tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'password.changed',
-    entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, otherSessionsEnded: true },
+    entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, otherSessionsEnded: true, trustedDevicesRevoked: true },
   });
   await notifyPasswordChanged(user, 'change', ctx, now);
   return { kind: 'done', sessionsEpoch: epoch };

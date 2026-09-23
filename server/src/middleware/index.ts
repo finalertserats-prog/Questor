@@ -55,6 +55,11 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   if (!token) return res.status(401).json({ error: 'Missing authentication token' });
   const claims = verifyToken(token);
   if (!claims) return res.status(401).json({ error: 'Invalid or expired token' });
+  // A ticket for some other errand is not a session. The half-signed-in token
+  // handed out between a correct password and a correct code is signed with the
+  // same secret, so without this it would authenticate every route in the app —
+  // which would make the code step a formality anyone could walk past.
+  if (claims.purpose !== undefined) return res.status(401).json({ error: 'Invalid or expired token' });
   // The token proves who signed in; the database says what they are now. Role
   // used to be read from the token alone, so a demoted or deleted user kept
   // their old authority until the hour ran out. One indexed lookup per request
@@ -111,6 +116,9 @@ const CSRF_EXEMPT_PATHS = [
   // is locked out of their own login page with a 403 they cannot clear.
   // SameSite=Strict already blocks the forged-login variant in any current browser.
   /^\/api\/auth\/(?:login|register)\/?$/,
+  // The second half of the same session establishment. The ticket it carries
+  // is not a cookie, so a cross-site page cannot obtain one to forge with.
+  /^\/api\/auth\/code\/?$/,
   // Password recovery, for exactly the reason above and more sharply: these are
   // the routes a locked-out person reaches, often on a browser still holding a
   // stale session cookie whose paired CSRF cookie has already gone. Refusing

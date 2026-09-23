@@ -1,15 +1,18 @@
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
-import { prisma } from '../db.js';
+import { prisma, parseJsonOptional } from '../db.js';
 import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { isPlatformOperator, isReservedOperatorEmail } from '../middleware/platformOperator.js';
-import { hashPassword, verifyPassword, issueSession, clearSession } from '../services/auth.js';
+import { hashPassword, verifyPassword, issueSession, clearSession, signPendingToken, verifyPendingToken } from '../services/auth.js';
 import { logAudit } from '../services/audit.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
 import { capabilitiesOf } from '../domain/capabilities.js';
 import { passwordSchema } from '../domain/passwordPolicy.js';
+import { mfaPolicyOf, codeRequired, deviceMayStandIn } from '../domain/mfaPolicy.js';
+import { issueSignInCode, verifySignInCode, consumeMfaBypass } from '../services/signInCode.js';
+import { trustDevice, deviceIsTrusted, clearTrustCookie, listTrustedDevices, revokeTrustedDevice } from '../services/trustedDevice.js';
 import {
   startPasswordResetRequest, resetTokenUsable, completePasswordReset, changeOwnPassword, RESET_TTL_MS,
 } from '../services/passwordReset.js';
@@ -21,14 +24,25 @@ const loginSchema = z.object({
   password: z.string().min(6),
   // Present when signing in through an organisation's own link (/o/:slug).
   orgSlug: z.string().max(64).optional(),
+  /** "Keep me signed in on this device for a week." Opt-in, never assumed. */
+  rememberDevice: z.boolean().optional(),
 });
 
 // Compared against when no account matches, so the response takes as long as
 // a wrong password does and the timing does not say which addresses exist.
 const NO_SUCH_USER_HASH = hashPassword('placeholder-compared-only-when-no-account-matches');
 
+/**
+ * Sign-in, step one: the password.
+ *
+ * Answers one of two things when the password is right — a session, or a
+ * ticket saying a code is on its way. Which one depends on the organisation's
+ * policy, the person's role and whether this browser holds a live trusted-
+ * device grant. A wrong password, or an address with no account, answers
+ * "Invalid credentials" either way, and takes the same time doing it.
+ */
 authRouter.post('/login', asyncHandler(async (req, res) => {
-  const { email, password, orgSlug } = loginSchema.parse(req.body);
+  const { email, password, orgSlug, rememberDevice } = loginSchema.parse(req.body);
   // Case-insensitive: accounts created before addresses were normalised may
   // be stored in whatever case an admin typed.
   const user = await findUserByEmail(email);
@@ -37,24 +51,142 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
     // Sign-ins were absent from the audit trail entirely. A failed attempt on
     // a known account is recorded against that account; an unknown address is
     // not, since recording it would store whatever a stranger typed.
-    if (user) await logAudit({ tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login_failed', entityType: 'User', entityId: user.id });
+    if (user) await logAudit({ tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login_failed', entityType: 'User', entityId: user.id, after: { ip: req.ip ?? 'unknown' } });
     throw new HttpError(401, 'Invalid credentials');
   }
   // Through an organisation link, sign-in is held to that organisation. The
   // error matches a wrong password so a link cannot be used to learn which
   // organisation an email address belongs to.
-  if (orgSlug !== undefined) {
-    const tenant = await prisma.tenant.findUnique({ where: { slug: orgSlug }, select: { id: true } });
-    if (!tenant || tenant.id !== user.tenantId) throw new HttpError(401, 'Invalid credentials');
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: user.tenantId },
+    select: { id: true, slug: true, policyJson: true, mfaEpoch: true },
+  });
+  if (orgSlug !== undefined && tenant?.slug !== orgSlug) throw new HttpError(401, 'Invalid credentials');
+
+  const policy = mfaPolicyOf(parseJsonOptional<Record<string, unknown>>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: user.tenantId, field: 'policyJson' }));
+  const requirement = codeRequired({
+    policy,
+    role: user.role,
+    platformOperator: isPlatformOperator({ userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email }),
+  });
+  const ctx = { ip: req.ip ?? 'unknown', requestId: req.requestId, reason: requirement.reason };
+  const binding = {
+    userId: user.id, tenantId: user.tenantId, sessionsEpoch: user.sessionsEpoch,
+    role: user.role, mfaEpoch: tenant?.mfaEpoch ?? 0,
+  };
+
+  if (requirement.required) {
+    // A device the person already asked us to trust, under conditions that
+    // still hold. Never for the platform operator, and never for an escalation.
+    const trusted = deviceMayStandIn(requirement.reason) && await deviceIsTrusted(req, binding, ctx);
+    // Break-glass: a one-time, time-boxed permission the platform operator
+    // grants when email is down and the code therefore cannot arrive.
+    const bypassed = !trusted && await consumeMfaBypass(user, ctx);
+
+    if (!trusted && !bypassed) {
+      const issued = await issueSignInCode(user, ctx);
+      if (issued.kind === 'wait') {
+        throw new HttpError(429, issued.reason === 'locked'
+          ? 'Too many wrong codes. Try again in a few minutes.'
+          : 'A code has already been sent. Give it a moment before asking for another.', { retryAfterSeconds: issued.retryAfterSeconds });
+      }
+      if (issued.kind === 'not_delivered') {
+        // Said plainly rather than pretending a code is coming. Somebody
+        // staring at an empty inbox is the worst possible failure here.
+        throw new HttpError(503, 'We could not email your sign-in code. Try again shortly, or ask your administrator.');
+      }
+      const pending = signPendingToken({
+        userId: user.id, tenantId: user.tenantId, challengeId: issued.challengeId, remember: rememberDevice === true,
+      });
+      res.json({
+        mfa: 'code_sent',
+        pending,
+        destination: issued.destination,
+        expiresAt: issued.expiresAt.toISOString(),
+        resendAfterSeconds: issued.resendAfterSeconds,
+      });
+      return;
+    }
+    // Recorded as its own thing, so "signed in without a code" is visible in
+    // the trail rather than looking like a sign-in from an organisation with
+    // no policy at all.
+    await logAudit({
+      tenantId: user.tenantId, actorType: 'user', actorId: user.id,
+      action: trusted ? 'auth.code_skipped_trusted_device' : 'auth.mfa_bypass_used_signin',
+      entityType: 'User', entityId: user.id, requestId: req.requestId, after: { ip: ctx.ip },
+    });
   }
+
+  // A device becomes trusted only by passing a real code ON it, in
+  // /login/code. Not here: trusting it on a sign-in that needed no code grants
+  // nothing, and trusting it on a break-glass sign-in would turn a thirty
+  // minute emergency permission into a week of skipped codes.
+  res.json(await completeSignIn(res, req, user, binding, ctx, { remember: false, withCode: false }));
+}));
+
+/**
+ * The last step of every way in: mint the session, remember the device if a
+ * code was just passed on it, and say who just signed in.
+ */
+async function completeSignIn(
+  res: Response,
+  req: Request,
+  user: { id: string; tenantId: string; role: string; email: string; name: string; sessionsEpoch: number; tourCompletedAt: Date | null; digestOptOut: boolean },
+  binding: { userId: string; tenantId: string; sessionsEpoch: number; role: string; mfaEpoch: number },
+  ctx: { ip: string; requestId?: string },
+  opts: { remember: boolean; withCode: boolean },
+) {
+  if (opts.remember) await trustDevice(res, req, binding, ctx);
+  await logAudit({
+    tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login',
+    entityType: 'User', entityId: user.id, requestId: ctx.requestId,
+    after: { ip: ctx.ip, withCode: opts.withCode },
+  });
   // Sets the httpOnly session cookie + CSRF cookie. The token is also returned
   // for non-browser clients; the web app ignores it and uses the cookie.
   // `pv` stamps the session generation this token belongs to. Setting a
   // password increments it, and everything minted under an earlier one is
   // refused from its next request — see authenticate().
   const token = issueSession(res, { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, pv: user.sessionsEpoch });
-  await logAudit({ tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login', entityType: 'User', entityId: user.id });
-  res.json({ token, user: { ...publicUser(user), tenantId: user.tenantId } });
+  return { token, user: { ...publicUser(user), tenantId: user.tenantId } };
+}
+
+const codeSchema = z.object({
+  pending: z.string().min(16).max(4096),
+  // Trimmed of the spaces and dashes people paste; judged in the service.
+  code: z.string().trim().min(1).max(32),
+});
+
+/**
+ * Sign-in, step two: the code.
+ *
+ * Mounted at /api/auth/code rather than under /api/auth/login, so it does not
+ * draw on the sign-in limiter. A person who mistypes a code twice must not find
+ * they have spent the budget for entering their password.
+ *
+ * The challenge is named by the ticket from step one, never searched for, so an
+ * entry cannot be aimed at a challenge the caller was not handed. Five wrong
+ * entries kill the code and start a lockout.
+ */
+authRouter.post('/code', asyncHandler(async (req, res) => {
+  const body = codeSchema.parse(req.body);
+  const claims = verifyPendingToken(body.pending);
+  // A ticket that has expired is the same answer as one that was never real:
+  // start again, which is the only thing either caller can do.
+  if (!claims) throw new HttpError(401, 'That sign-in has expired. Enter your password again.');
+
+  const user = await prisma.user.findUnique({ where: { id: claims.userId } });
+  if (!user || user.tenantId !== claims.tenantId) throw new HttpError(401, 'That sign-in has expired. Enter your password again.');
+
+  const ctx = { ip: req.ip ?? 'unknown', requestId: req.requestId, reason: 'code' };
+  const outcome = await verifySignInCode(claims.challengeId, user, body.code, ctx);
+  if (outcome.kind === 'locked') throw new HttpError(429, 'Too many wrong codes. Try again in a few minutes.', { retryAfterSeconds: outcome.retryAfterSeconds });
+  if (outcome.kind === 'expired') throw new HttpError(401, 'That code has expired. Enter your password again to get a new one.');
+  if (outcome.kind === 'wrong') throw new HttpError(401, `That code is not right. ${outcome.attemptsLeft} ${outcome.attemptsLeft === 1 ? 'try' : 'tries'} left.`);
+
+  const tenant = await prisma.tenant.findUnique({ where: { id: user.tenantId }, select: { mfaEpoch: true } });
+  const binding = { userId: user.id, tenantId: user.tenantId, sessionsEpoch: user.sessionsEpoch, role: user.role, mfaEpoch: tenant?.mfaEpoch ?? 0 };
+  res.json(await completeSignIn(res, req, user, binding, ctx, { remember: claims.remember, withCode: true }));
 }));
 
 /** The fields of a user the signed-in user themselves may see. */
@@ -205,6 +337,29 @@ authRouter.post('/password/change', authenticate, changeLimit, asyncHandler(asyn
   // person who made the change is not signed out of the tab they made it in.
   issueSession(res, { userId: req.auth!.userId, tenantId: req.auth!.tenantId, role: req.auth!.role, email: req.auth!.email, pv: outcome.sessionsEpoch });
   res.json({ ok: true, message: 'Password changed. You have been signed out everywhere else.' });
+}));
+
+// ---------------------------------------------------------------------------
+// Trusted devices.
+//
+// Yours and nobody else's: every route below is scoped to req.auth.userId, so
+// there is no id an admin could pass to reach into someone else's list.
+// ---------------------------------------------------------------------------
+
+authRouter.get('/devices', authenticate, asyncHandler(async (req, res) => {
+  res.json({ devices: await listTrustedDevices(req, req.auth!.userId) });
+}));
+
+authRouter.delete('/devices/:id', authenticate, asyncHandler(async (req, res) => {
+  const revoked = await revokeTrustedDevice(req.auth!.userId, req.auth!.tenantId, req.params.id, {
+    ip: req.ip ?? 'unknown', requestId: req.requestId,
+  });
+  if (!revoked) throw new HttpError(404, 'That device is not on your list.');
+  // Revoking the browser you are sitting at should also stop it presenting a
+  // cookie for a grant that no longer exists.
+  const devices = await listTrustedDevices(req, req.auth!.userId);
+  if (!devices.some((d) => d.thisDevice)) clearTrustCookie(res);
+  res.json({ ok: true, devices });
 }));
 
 // Not behind `authenticate`: ending a session must work even once the token has

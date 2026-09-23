@@ -24,6 +24,14 @@ model Tenant {
   createdAt    DateTime @default(now())
   isDemo       Boolean  @default(false)
   demoExpiresAt DateTime?
+  // Whether this organisation appears in the sign-in page's name search. Some
+  // enterprise customers do not want to be findable that way; their people
+  // arrive through /o/<slug>, which keeps working either way.
+  listed       Boolean  @default(true)
+  // Bumped whenever the organisation's sign-in code policy changes. Trusted
+  // devices record the value they were granted under, so tightening the policy
+  // retires every grant made under the looser one without a sweep.
+  mfaEpoch     Int      @default(0)
   users        User[]
   roles        Role[]
   candidates   Candidate[]
@@ -97,7 +105,64 @@ model User {
   // "signed out everywhere else" would be true except for a window an attacker
   // gets to choose the start of. A counter has no window.
   sessionsEpoch Int    @default(0)
+  // Break-glass. Set by the platform operator, for a named person, for a short
+  // window, when email is down or a mailbox is unreachable and the sign-in code
+  // therefore cannot arrive. Cleared the moment it is used. Both the granting
+  // and the using are audited; see services/signInCode.ts.
+  mfaBypassUntil DateTime?
   passwordResetTokens PasswordResetToken[]
+  signInChallenges    SignInChallenge[]
+  trustedDevices      TrustedDevice[]
+}
+
+/// A six-digit code emailed after a correct password, before any session
+/// exists. Stored as an HMAC under the server pepper, like every other one-time
+/// secret here (services/pepper.ts).
+model SignInChallenge {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash     String
+  expiresAt    DateTime
+  // Entries against this code, right or wrong.
+  attempts     Int      @default(0)
+  // Set at the last wrong entry allowed; the code is dead and a new one waits.
+  lockedAt     DateTime?
+  // Set when a newer code replaces this one.
+  supersededAt DateTime?
+  // Set once, when the right code is entered. Its presence is the sign-in.
+  consumedAt   DateTime?
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// "Keep me signed in on this device for a week." Opt-in, per device, and
+/// revocable from Settings. Only an HMAC of the device secret is stored.
+model TrustedDevice {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String   @unique
+  /// What the person sees in Settings: "Chrome on Windows", derived from the
+  /// user agent at the moment the grant was made. Never a fingerprint.
+  label         String   @default("")
+  expiresAt     DateTime
+  lastUsedAt    DateTime?
+  /// Coarse origin of the last use, so an unexpected one is visible.
+  lastUsedIp    String   @default("")
+  revokedAt     DateTime?
+  /// The session generation and role this grant was made under, and the
+  /// organisation's policy generation. Any of the three moving on kills the
+  /// grant — that is how a password change, a role change and a policy change
+  /// each invalidate it without anything having to go and find it.
+  sessionsEpoch Int      @default(0)
+  role          String   @default("")
+  mfaEpoch      Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 /// A single-use link that lets one person set a new password.

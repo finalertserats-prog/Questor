@@ -6,6 +6,8 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { isPlatformOperator, isReservedOperatorEmail, requirePlatformOperator } from '../middleware/platformOperator.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { startPasswordResetRequest } from '../services/passwordReset.js';
+import { grantMfaBypass, BYPASS_WINDOW_MS } from '../services/signInCode.js';
+import { revokeAllTrustedDevices } from '../services/trustedDevice.js';
 import { config } from '../config.js';
 import { hashPassword } from '../services/auth.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
@@ -13,6 +15,7 @@ import { isKnownTimeZone } from '../services/roundTime.js';
 import { ASSURANCE_LEVELS, assuranceLevelOf, isSelectableLevel } from '../domain/identityAssurance.js';
 import { capabilitiesOf, isRoleName, ROLES } from '../domain/capabilities.js';
 import { passwordSchema } from '../domain/passwordPolicy.js';
+import { MFA_POLICIES, mfaPolicyOf } from '../domain/mfaPolicy.js';
 import { assignRole, assignCandidate, candidateScope } from '../services/access.js';
 import { sttCapability, ttsCapability } from '../providers/speech.js';
 import { getLlm } from '../providers/llm/index.js';
@@ -678,6 +681,63 @@ adminRouter.get('/identity-assurance', requireCapability('admin:manage'), asyncH
   res.json({ level: assuranceLevelOf(policy), levels: ASSURANCE_LEVELS });
 }));
 
+/**
+ * How this organisation signs in: who has to enter a code, and whether the
+ * organisation appears in the sign-in page's name search.
+ *
+ * Separate from PUT /policy because changing the code rule has to do one thing
+ * that a policy merge cannot: bump the organisation's policy generation, which
+ * is what retires every trusted device granted under the looser rule. Tightening
+ * the policy and leaving a week of remembered devices standing would be the
+ * change appearing to happen without happening.
+ */
+adminRouter.get('/signin-policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true, listed: true } });
+  const policy = parseJsonOptional<Record<string, unknown>>(tenant.policyJson, {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
+  res.json({ mfaPolicy: mfaPolicyOf(policy), policies: MFA_POLICIES, listed: tenant.listed });
+}));
+
+const signInPolicySchema = z.object({
+  mfaPolicy: z.enum(MFA_POLICIES).optional(),
+  listed: z.boolean().optional(),
+}).strict();
+
+adminRouter.put('/signin-policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const patch = signInPolicySchema.parse(req.body);
+  const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true, listed: true, mfaEpoch: true } });
+  const before = parseJsonStrict<Record<string, unknown>>(tenant.policyJson, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
+  const wasPolicy = mfaPolicyOf(before);
+  const nowPolicy = patch.mfaPolicy ?? wasPolicy;
+  const changed = nowPolicy !== wasPolicy;
+
+  const updated = await prisma.tenant.update({
+    where: { id: req.auth!.tenantId },
+    data: {
+      policyJson: JSON.stringify({ ...before, mfaPolicy: nowPolicy }),
+      ...(patch.listed === undefined ? {} : { listed: patch.listed }),
+      // Only on a real change. Bumping it on every save would sign everyone's
+      // remembered devices out whenever an admin opened the page and pressed
+      // save without changing anything.
+      ...(changed ? { mfaEpoch: { increment: 1 } } : {}),
+    },
+    select: { listed: true, mfaEpoch: true },
+  });
+
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'tenant.signin_policy_updated',
+    entityType: 'Tenant', entityId: req.auth!.tenantId, requestId: req.requestId,
+    before: { mfaPolicy: wasPolicy, listed: tenant.listed },
+    after: { mfaPolicy: nowPolicy, listed: updated.listed, ip: req.ip ?? 'unknown', trustedDevicesRetired: changed },
+  });
+
+  res.json({
+    mfaPolicy: nowPolicy, policies: MFA_POLICIES, listed: updated.listed,
+    note: changed
+      ? 'Saved. Devices people asked to be remembered on will be asked for a code again the next time they sign in.'
+      : 'Saved.',
+  });
+}));
+
 adminRouter.put('/policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   const patch = z.object({ policy: policySchema }).strict().parse(req.body).policy;
   const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true } });
@@ -854,6 +914,27 @@ adminRouter.post('/users/:id/password-reset', requireCapability('admin:manage'),
 }));
 
 /**
+ * Forget every device a colleague asked to be remembered on.
+ *
+ * What an admin reaches for when someone says their laptop is gone. It does not
+ * touch the password or the session — those have their own answers — it removes
+ * the standing permission to skip the code step, which is the thing a lost
+ * laptop carries and a lost password does not.
+ */
+adminRouter.post('/users/:id/revoke-devices', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+  const target = await tenantUser(req.auth!.tenantId, req.params.id);
+  const count = await revokeAllTrustedDevices(target.id, req.auth!.tenantId, {
+    ip: req.ip ?? 'unknown', requestId: req.requestId, actorId: req.auth!.userId, reason: 'admin_revoked',
+  });
+  res.json({
+    ok: true, revoked: count,
+    message: count === 0
+      ? `${target.name} has no remembered devices.`
+      : `${target.name} will be asked for a sign-in code on ${count === 1 ? 'that device' : 'all their devices'} again.`,
+  });
+}));
+
+/**
  * The same, for an organisation that has nobody left who can do it.
  *
  * An admin locked out of an organisation with other admins is helped by one of
@@ -872,6 +953,39 @@ adminRouter.post('/users/:id/password-reset', requireCapability('admin:manage'),
  * an endpoint, because no automated proof of "this really is the company" fits
  * in an HTTP request.
  */
+/**
+ * Break-glass: let one named person sign in without a code, once, for half an
+ * hour.
+ *
+ * The second factor here is email, and email breaks. Without a way out, a mail
+ * outage or a mailbox that has stopped accepting our messages locks an
+ * organisation's admins out of their own product — and the remedy would then be
+ * invented during the incident by whoever has database access. This is that
+ * remedy, decided in daylight: bounded, single use, granted only by the
+ * platform operator, and written into the organisation's own audit trail both
+ * when it is granted and when it is spent.
+ *
+ * It skips the CODE, never the PASSWORD. A grant handed to the wrong person is
+ * not on its own a way into anything.
+ */
+const bypassSchema = z.object({ reason: z.string().trim().min(10).max(500) }).strict();
+
+adminRouter.post('/tenants/:tenantId/users/:id/mfa-bypass', requirePlatformOperator, passwordResetSendLimit, asyncHandler(async (req, res) => {
+  // A reason is required, and it is required to be a sentence. This is the one
+  // route in the app that weakens someone's sign-in, and "why" is the whole
+  // record of whether it should have been used.
+  const { reason } = bypassSchema.parse(req.body);
+  const target = await prisma.user.findFirst({
+    where: { id: req.params.id, tenantId: req.params.tenantId }, select: { id: true, tenantId: true, email: true },
+  });
+  if (!target) throw new HttpError(404, 'User not found');
+  const until = await grantMfaBypass(target, { id: req.auth!.userId }, { ip: req.ip ?? 'unknown', requestId: req.requestId, reason });
+  res.status(202).json({
+    ok: true, until: until.toISOString(), minutes: BYPASS_WINDOW_MS / 60_000,
+    message: `${target.email} can sign in with their password alone, once, until ${until.toISOString()}. They still need the password.`,
+  });
+}));
+
 adminRouter.post('/tenants/:tenantId/users/:id/password-reset', requirePlatformOperator, passwordResetSendLimit, asyncHandler(async (req, res) => {
   const target = await prisma.user.findFirst({
     where: { id: req.params.id, tenantId: req.params.tenantId }, select: { id: true, email: true, role: true },

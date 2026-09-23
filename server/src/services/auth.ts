@@ -20,6 +20,49 @@ export interface AuthClaims {
    * is what a User row that has never had a password change still holds.
    */
   pv?: number;
+  /**
+   * Set on a token that is NOT a session.
+   *
+   * The half-signed-in state between a correct password and a correct code
+   * needs something to carry it across two requests, and the obvious thing to
+   * reach for is the token machinery that is already here. That is also how a
+   * half-signed-in state becomes a whole one by accident, so every token with a
+   * purpose is refused by `authenticate` outright: a session has no purpose
+   * claim, and anything that does is some other errand's ticket.
+   */
+  purpose?: 'signin-code';
+}
+
+/**
+ * The ticket handed out after a correct password, to be presented with the
+ * code. Short-lived, because it is the window an attacker who has guessed a
+ * password gets to work in.
+ */
+export const PENDING_TTL_SECONDS = 10 * 60;
+
+export interface PendingClaims {
+  userId: string;
+  tenantId: string;
+  challengeId: string;
+  /** Whether "keep me signed in on this device" was ticked on the password step. */
+  remember: boolean;
+  purpose: 'signin-code';
+}
+
+export function signPendingToken(claims: Omit<PendingClaims, 'purpose'>): string {
+  return jwt.sign({ ...claims, purpose: 'signin-code' }, config.authSecret, { expiresIn: PENDING_TTL_SECONDS });
+}
+
+export function verifyPendingToken(token: string): PendingClaims | null {
+  try {
+    const claims = jwt.verify(token, config.authSecret, { algorithms: ['HS256'] }) as PendingClaims;
+    // Checked here as well as in `authenticate`: a session token presented as a
+    // pending one would otherwise let someone skip straight past the code step
+    // with a ticket they already held.
+    return claims.purpose === 'signin-code' ? claims : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

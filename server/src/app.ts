@@ -159,6 +159,12 @@ export function createApp() {
   // already holds.
   app.use('/api/auth/register', rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true }));
 
+  // The code step. Its own budget, because it is a different guess: the code
+  // is six digits, and the per-challenge attempt limit in the database is the
+  // real bound. This one stops a script working through challenges rather than
+  // through one challenge's five tries. Fails closed, like the password step.
+  app.use('/api/auth/code', rateLimit({ name: 'login-code', windowMs: 15 * 60_000, max: 30, failClosed: true }));
+
   // Password recovery. Its own limiters rather than a share of the sign-in
   // budget: a person who cannot sign in must not find that their failed
   // attempts have also used up the way to recover.

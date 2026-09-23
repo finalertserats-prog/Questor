@@ -18,6 +18,8 @@ import { asyncHandler, HttpError } from '../middleware/index.js';
  *     ScaleHealthTech to someone fishing for sector words.
  *   - A handful of results, and only organisations that have a sign-in link at
  *     all; one without a slug cannot be signed into and is nobody's business.
+ *   - An organisation may ask not to appear at all (Tenant.listed), which some
+ *     enterprise customers will; their own link still works.
  *   - Rate limited with the rest of this router in app.ts.
  *
  * It remains a disclosure, and an accepted one: someone who already knows a name
@@ -30,7 +32,10 @@ export const ORG_SLUG = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 
 /** The shortest prefix worth answering. Two letters matches far too much. */
 const MIN_SEARCH = 3;
-const MAX_RESULTS = 8;
+// Five. The step exists so someone can find their own employer, and anyone
+// who cannot see it in five close matches types another letter. A longer list
+// is a longer answer to a fishing question.
+const MAX_RESULTS = 5;
 
 orgsRouter.get('/', asyncHandler(async (req, res) => {
   const parsed = z.string().trim().min(MIN_SEARCH).max(64).safeParse(req.query.q);
@@ -49,7 +54,10 @@ orgsRouter.get('/', asyncHandler(async (req, res) => {
   const candidates = await prisma.tenant.findMany({
     // Demo sandboxes are nobody's organisation to sign in to, and their names
     // ("<company> (demo)") would disclose who asked for a demo.
-    where: { slug: { not: null }, isDemo: false },
+    // `listed: false` is an organisation that asked not to appear here. Their
+    // people arrive through /o/<slug>, which keeps working — the setting hides
+    // the name from the search, it does not close the door.
+    where: { slug: { not: null }, isDemo: false, listed: true },
     select: { name: true, slug: true },
     orderBy: { name: 'asc' },
   });
