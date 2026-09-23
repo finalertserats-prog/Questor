@@ -12,6 +12,46 @@ const MODES: ReadonlyArray<{ mode: ComposerMode; label: string; icon: 'mic' | 'k
 
 const KEY_NAMES = /(Ctrl\+Enter|Tab|Esc)/;
 
+/**
+ * How long the recognizer's words must stop changing before the read-back
+ * says them.
+ *
+ * HOW A BLIND CANDIDATE CONFIRMS WHAT WE HEARD — a deliberate choice.
+ *
+ * Interim recognition results arrive several times a second and are rewritten
+ * as the recognizer changes its mind. Putting that stream in a live region
+ * would bury the candidate under half-words for the whole of their answer,
+ * which is worse than saying nothing. Never exposing it at all is worse still:
+ * a sighted candidate can glance at the box and see "we ran both side by side"
+ * and know they are being heard, and a blind candidate had no equivalent.
+ *
+ * So there are two paths, and the candidate picks:
+ *
+ *   1. ALWAYS, silently — the words sit in a labelled region ("What we heard
+ *      you say") a screen reader can jump to at any moment, and focus is put
+ *      there the instant the candidate presses "Done answering", so the last
+ *      thing they hear before the answer goes is what we think they said.
+ *   2. ON REQUEST — "Read back what I say" turns on a polite live region that
+ *      speaks only text that has stopped changing for READ_BACK_SETTLE_MS,
+ *      i.e. finished phrases rather than every partial guess.
+ *
+ * Off by default, because an interview is stressful enough without a second
+ * voice over your own; reachable always, because being unable to check is
+ * worse than being interrupted.
+ */
+export const READ_BACK_SETTLE_MS = 1_200;
+
+/** Text that has stopped changing for `ms`; empty until it settles. */
+function useSettledText(text: string, ms: number): string {
+  const [settled, setSettled] = useState('');
+  useEffect(() => {
+    if (!text) { setSettled(''); return undefined; }
+    const timer = window.setTimeout(() => setSettled(text), ms);
+    return () => window.clearTimeout(timer);
+  }, [text, ms]);
+  return settled;
+}
+
 /** The hint with its key names set as keys. */
 function Hint({ text, id }: { text: string; id: string }) {
   return (
@@ -66,15 +106,35 @@ export function Composer(props: ComposerProps) {
   const tabReleasedRef = useRef(false);
   const caretRef = useRef<number | null>(null);
   const segRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const heardRef = useRef<HTMLElement>(null);
+  const resumeRef = useRef<HTMLButtonElement>(null);
   // Whether the answer box had focus. When it is replaced (the room switched
   // back to speaking) focus would fall to the page; it goes to the mode
   // switch instead, so a keyboard user is not dropped at the top.
   const textFocusedRef = useRef(false);
   const [questionOpen, setQuestionOpen] = useState(false);
+  const [readBack, setReadBack] = useState(false);
+  const settled = useSettledText(props.interim, READ_BACK_SETTLE_MS);
   useVoiceFrames(props.getCandidateLevel, () => ({ wave: waveRef.current }));
 
   // A new question starts clamped again.
   useEffect(() => { setQuestionOpen(false); }, [props.currentQuestion]);
+
+  // The composer appears in place of the Join button the candidate has just
+  // pressed. Without this, focus is left on an element that no longer exists
+  // and a keyboard or screen-reader user is dropped at the top of the page.
+  useEffect(() => { rootRef.current?.focus(); }, []);
+
+  // "Need a moment?" disables itself the instant it is pressed, so focus goes
+  // to the control that now matters — and comes back when the pause is over.
+  const wasPaused = useRef(paused);
+  useEffect(() => {
+    if (paused === wasPaused.current) return;
+    wasPaused.current = paused;
+    if (paused) resumeRef.current?.focus();
+    else rootRef.current?.focus();
+  }, [paused]);
 
   const typing = mode !== 'speak';
   useEffect(() => {
@@ -122,11 +182,17 @@ export function Composer(props: ComposerProps) {
   const onMic = () => {
     if (speakUnavailable) { noteRef.current?.focus(); return; }
     if (typing) { props.onSelectMode('speak'); return; }
-    if (props.capturing) props.onDoneSpeaking();
+    if (!props.capturing) return;
+    props.onDoneSpeaking();
+    // The microphone button disables itself once the answer is closed, which
+    // would drop focus to the page. It goes to what we heard instead, so the
+    // last thing a blind candidate is told before the answer is sent is the
+    // text we are sending.
+    heardRef.current?.focus();
   };
 
   return (
-    <div className="room-composer">
+    <div className="room-composer" ref={rootRef} role="group" aria-label="Your answer" tabIndex={-1}>
       {(props.currentQuestion || props.questionPrefix) && (
         <div className="room-current">
           <div>
@@ -161,7 +227,7 @@ export function Composer(props: ComposerProps) {
       {paused && (
         <div className="room-paused" role="status">
           <span>Paused — {props.interviewerName} will wait. Take the time you need.</span>
-          <button type="button" className="room-ghost" onClick={props.onResume}>I’m ready</button>
+          <button type="button" className="room-ghost" ref={resumeRef} onClick={props.onResume}>I’m ready</button>
         </div>
       )}
 
@@ -188,6 +254,17 @@ export function Composer(props: ComposerProps) {
           </button>
         )}
         {props.nudge && <span className="room-nudge">{props.nudge}</span>}
+        {!typing && (
+          <button
+            type="button"
+            className="room-ghost room-readback"
+            aria-pressed={readBack}
+            title="Have your own words read back to you as you speak"
+            onClick={() => setReadBack((on) => !on)}
+          >
+            <Icon name="speaker" size={14} />Read back what I say
+          </button>
+        )}
         <Hint text={composerHint(mode)} id="room-composer-hint" />
       </div>
 
@@ -210,9 +287,22 @@ export function Composer(props: ComposerProps) {
         ) : (
           <div className={`room-voice-box${props.capturing && !paused ? ' is-live' : ''}`}>
             <canvas ref={waveRef} className="room-wave" width={240} height={56} aria-hidden="true" />
-            <span className={props.interim ? 'room-interim' : undefined}>
+            {/* A named region, not a live one: reachable whenever the candidate
+                wants to check what we heard, silent until they ask. */}
+            <span
+              ref={heardRef}
+              className={props.interim ? 'room-interim' : undefined}
+              role="region"
+              aria-label="What we heard you say"
+              tabIndex={-1}
+            >
               {paused ? 'Paused.' : voicePrompt(phase, props.interim)}
             </span>
+            {readBack && (
+              <span className="visually-hidden" data-testid="room-read-back" aria-live="polite" aria-atomic="true">
+                {settled}
+              </span>
+            )}
           </div>
         )}
         <button

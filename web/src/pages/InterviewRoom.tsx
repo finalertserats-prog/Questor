@@ -14,7 +14,9 @@ import type { StartResponse } from '../components/roomResumeModel';
 import { AiVoiceLevel } from '../components/room/aiVoiceLevel';
 import { Composer } from '../components/room/Composer';
 import { ConversationPanel, type RevealingMessage } from '../components/room/Conversation';
-import { ParticipantsRail } from '../components/room/ParticipantsRail';
+import { ParticipantsRail, type RoomObserver } from '../components/room/ParticipantsRail';
+import { RoomAnnouncer, useAnnouncer } from '../components/room/RoomAnnouncer';
+import { useRoomAnnouncements } from '../components/room/useRoomAnnouncements';
 import { DonePanel, JoinPanel, LeaveDialog, RoomLoading, RoomPrivacy } from '../components/room/RoomPanels';
 import { RoomTopBar } from '../components/room/RoomTopBar';
 import { LEAVE_MARKER, joinAnswer, speakAvailability } from '../components/room/roomComposerModel';
@@ -89,7 +91,18 @@ export function InterviewRoom() {
   // rather than whether we asked for it. A candidate who denied permission is
   // not being captured and must not be shown a badge saying they are.
   const [micOpen, setMicOpen] = useState(false);
+  // The browser says the network has gone. Shown in the bar and announced.
+  const [offline, setOffline] = useState(false);
   const [err, setErr] = useState('');
+
+  // What the room says to a screen reader. The rule, and the whole permitted
+  // vocabulary, live in roomAnnouncements.ts: only events that make no sound.
+  // Anything the candidate can hear — the interviewer speaking, her words, the
+  // check-ins, the voice ring — is never announced.
+  const { state: announcerState, announce } = useAnnouncer();
+  // Nobody is watching until the server says so. Presence is not wired for the
+  // AI room yet; when it is, an observer arriving is announced (it is silent).
+  const observers: readonly RoomObserver[] = useMemo(() => [], []);
 
   // Whether this interview may listen at all. A candidate who declined voice
   // capture is interviewed by typing: the microphone is never requested, and the
@@ -162,12 +175,21 @@ export function InterviewRoom() {
   useVisualViewport();
   const feedback = useFeedbackOptIn(token, info?.feedbackOptIn?.offered === true, info?.feedbackOptIn?.choice ?? null);
 
+  // Numbers each answer so "Got it" is said again after a retry, and not twice
+  // for the same send.
+  const answerSeqRef = useRef(0);
+
   const submitAnswer = async (text: string, opts: { code?: boolean } = {}) => {
     if (!text.trim()) return;
     voice.detachRecognizer();
     setInterim('');
     setPaused(false);
     setPhase('thinking');
+    // Sending is silent: nothing plays, and the interviewer's reply is a model
+    // call away. Without this the candidate cannot tell a sent answer from a
+    // page that ignored them.
+    answerSeqRef.current += 1;
+    announce({ kind: 'heard', turn: `${currentTurnRef.current?.turnId ?? ''}#${answerSeqRef.current}` });
     const now = Date.now();
     // The real moment this answer began, not "twenty-five seconds ago". These
     // become the timestamps quoted as evidence beside the transcript, and a
@@ -244,6 +266,14 @@ export function InterviewRoom() {
         // A repeat or a leave replaced this speech; its end is not ours.
         if (seq !== speechSeqRef.current) return;
         setRevealing(null);
+        // Nothing was heard for this turn — no server voice answered and this
+        // browser has none — so its words are the only signal there is. The
+        // one audible-looking announcement in the room, and only when the
+        // "audible" part turned out to be false. A sign-off is left to the
+        // ending announcement, which says what happens now as well.
+        if (!turn.done && !aiVoice.spokeAloud(turn.text)) {
+          announce({ kind: 'unspoken-turn', id: turn.turnId, interviewer: interviewerName(info?.persona?.name), text: turn.text });
+        }
         if (turn.done) {
           // Close the microphone at the end rather than at unmount. The capture
           // indicator disappears here, and it must disappear because capture has
@@ -275,12 +305,17 @@ export function InterviewRoom() {
     // Inside the Join click: browsers only let audio analysis start from a
     // user gesture.
     aiVoice.prime();
+    // The wait between pressing Join and the first question is silent.
+    announce({ kind: 'joined' });
     // Requested here rather than on load: a permission prompt that appears
     // before the candidate has chosen to start reads as the page grabbing the
     // mic, and gets denied. Not requested at all without consent to capture.
     if (canCapture) {
       meterRef.current = await createMicMeter();
       setMicOpen(meterRef.current !== null);
+      // Refused, or no device. The capture pill simply does not appear, which
+      // tells a sighted candidate and nobody else.
+      if (!meterRef.current) announce({ kind: 'mic-unavailable' });
     }
     try {
       // A rejoin on a live session also returns the conversation so far.
@@ -394,6 +429,41 @@ export function InterviewRoom() {
   const getCandidateLevel = useCallback(() => (capturingRef.current && meterRef.current ? meterRef.current.level() : 0), []);
   const getAiLevel = useCallback(() => aiVoice.level(), [aiVoice]);
 
+  const live = phase !== 'ready' && phase !== 'done';
+
+  // The ending. The sign-off itself is spoken, but "your microphone is off and
+  // this is what happens now" is not, and it is the part that matters.
+  useEffect(() => {
+    if (phase === 'done') announce({ kind: 'ended', withdrawn });
+  }, [phase, withdrawn, announce]);
+
+  // A connection that drops mid-answer makes no sound at all, and carrying on
+  // talking into it wastes the answer. Shown in the bar and said out loud, so
+  // neither kind of candidate is the one left guessing.
+  useEffect(() => {
+    if (!live) return undefined;
+    const down = () => { setOffline(true); announce({ kind: 'offline' }); };
+    const up = () => { setOffline(false); announce({ kind: 'online' }); };
+    window.addEventListener('offline', down);
+    window.addEventListener('online', up);
+    return () => {
+      window.removeEventListener('offline', down);
+      window.removeEventListener('online', up);
+    };
+  }, [live, announce]);
+
+  useRoomAnnouncements({
+    announce,
+    live,
+    capturing: capturing && micOpen,
+    interim,
+    getCandidateLevel,
+    durationMinutes: info?.durationMinutes ?? 0,
+    startedAtRef: startTimeRef,
+    turnKey: currentTurnRef.current?.turnId ?? '',
+    observers,
+  });
+
   if (!info) return <RoomLoading err={err} />;
 
   // The name on screen is the interviewer this candidate was introduced to on
@@ -403,12 +473,12 @@ export function InterviewRoom() {
   const interviewer = interviewerName(info.persona?.name);
   const interviewerBadge = { name: header.name, initial: header.initial };
   const aiFact = roomAiFact(info.persona?.name);
-  const live = phase !== 'ready' && phase !== 'done';
   const canSend = phase === 'listening' && (textMode ? typed.trim().length > 0 : !paused && interim.trim().length > 0);
 
   return (
     <div className="room">
       <h1 className="visually-hidden">Your interview</h1>
+      <RoomAnnouncer state={announcerState} />
       <RoomTopBar
         roleTitle={info.roleTitle}
         durationMinutes={info.durationMinutes}
@@ -417,6 +487,7 @@ export function InterviewRoom() {
         question={questionNumber(msgs)}
         capture={live && micOpen ? { mode: textMode ? 'mic' : 'transcribing', stt: info.speech.stt, aiFact } : null}
         privacy={<RoomPrivacy aiFact={aiFact} stt={info.speech.stt} canCapture={canCapture} />}
+        offline={offline}
         showActions={live}
         paused={paused}
         pauseAvailable={phase === 'listening'}
@@ -434,7 +505,7 @@ export function InterviewRoom() {
           getAiLevel={getAiLevel}
           getCandidateLevel={getCandidateLevel}
           candidateStatus={(speakingNow) => candidateStatus({ phase, textMode, speakingNow })}
-          observers={[]}
+          observers={observers}
           privacy={<RoomPrivacy aiFact={aiFact} stt={info.speech.stt} canCapture={canCapture} />}
         />
         <ConversationPanel

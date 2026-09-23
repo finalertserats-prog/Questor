@@ -41,11 +41,18 @@ describe('Conversation', () => {
     expect(html).toContain('room-word is-pending');
   });
 
-  it('has a polite live region for what is newly said', () => {
+  /**
+   * It used to. A blind candidate HEARS the interviewer, so announcing her
+   * newest line captioned words they were listening to at that moment — the
+   * owner's "why do you need 'Maya is speaking', it feels so artificial".
+   * The transcript is now read on request; the room announces only what makes
+   * no sound (roomAnnouncements.ts, roomAnnouncer.test.ts).
+   */
+  it('never announces the interviewer line the candidate can hear', () => {
     const html = renderToStaticMarkup(createElement(Conversation, {
-      messages: [], interviewer, candidateInitials: 'PS', revealing: null,
+      messages: [{ id: 'a', speaker: 'agent', text: 'Hello' }], interviewer, candidateInitials: 'PS', revealing: null,
     }));
-    expect(html).toContain('role="status"');
+    expect(html).not.toContain('role="status"');
   });
 
   it('does not make the whole history a live region, so a rejoin is not read out in full', () => {

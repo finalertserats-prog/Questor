@@ -50,20 +50,14 @@ export function Conversation({ messages, interviewer, candidateInitials, reveali
   const followRef = useRef(true);
   const seenCountRef = useRef(messages.length);
   const [unseen, setUnseen] = useState(false);
-  // What a screen reader hears: only the interviewer's newest line, when it
-  // is added. The list itself is not live, so a rejoin that fills in the whole
-  // conversation at once is not read out from the top.
-  const [announcement, setAnnouncement] = useState('');
-  const shownIdsRef = useRef<readonly string[]>([]);
 
-  useEffect(() => {
-    const before = shownIdsRef.current;
-    shownIdsRef.current = messages.map((m) => m.id);
-    const appended = messages.length > before.length && before.every((id, i) => messages[i]?.id === id);
-    if (!appended) return;
-    const newest = [...messages.slice(before.length)].reverse().find((m) => m.speaker === 'agent');
-    if (newest) setAnnouncement(`${interviewer.name}: ${newest.text}`);
-  }, [messages, interviewer.name]);
+  // NOT a live region, deliberately. The transcript used to announce the
+  // interviewer's newest line as it arrived — a caption of words the candidate
+  // was hearing at that very moment. A blind candidate hears the interviewer;
+  // repeating her in text is noise over noise, and it reads as artificial
+  // because it is. The list is a labelled list a screen reader can read at
+  // will, and the room announces only what makes no sound (roomAnnouncements.ts
+  // — including the one case where a turn genuinely was silent).
 
   // Follow new messages only while the reader is at the bottom: someone who
   // scrolled up to re-read an answer must not be pulled away from it.
@@ -131,7 +125,6 @@ export function Conversation({ messages, interviewer, candidateInitials, reveali
           );
         })}
       </ol>
-      <div className="visually-hidden" role="status" aria-live="polite">{announcement}</div>
       {unseen && (
         <button type="button" className="room-jump" onClick={jumpToLatest}>Jump to latest</button>
       )}

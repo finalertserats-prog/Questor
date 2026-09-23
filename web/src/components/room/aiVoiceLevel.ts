@@ -19,6 +19,8 @@ import { rmsLevel, spokenWords, voiceTarget, type VoiceState } from './roomLevel
 export class AiVoiceLevel {
   private state: VoiceState | null = null;
   private utteranceId = 0;
+  /** The text of the last utterance that actually STARTED making sound. */
+  private startedText: string | null = null;
   private context: AudioContext | null = null;
   private routingBroken = false;
   private source: MediaElementAudioSourceNode | null = null;
@@ -61,6 +63,18 @@ export class AiVoiceLevel {
     return voiceTarget(this.withAudio(this.state), now);
   }
 
+  /**
+   * Whether this text was the last thing the voice actually started saying.
+   *
+   * False means nothing was heard: no server voice answered and the browser
+   * has none (or synthesis failed silently). The room needs to know, because a
+   * turn that made no sound is the one case where its words have to be
+   * announced — everything else the candidate can simply hear.
+   */
+  spokeAloud(text: string): boolean {
+    return this.startedText === text;
+  }
+
   /** Words of `text` spoken so far, or null when that text is not being spoken. */
   spoken(text: string, now = performance.now()): number | null {
     if (!this.state || this.state.text !== text) return null;
@@ -84,6 +98,8 @@ export class AiVoiceLevel {
     if (event.type === 'start') {
       this.release();
       this.utteranceId = event.id;
+      // Kept past the utterance's end: the room asks once the speech is over.
+      this.startedText = event.text;
       this.audio = event.audio;
       this.analyser = event.audio ? this.attach(event.audio) : null;
       this.state = {

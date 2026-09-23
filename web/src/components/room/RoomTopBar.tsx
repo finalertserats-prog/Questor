@@ -107,6 +107,8 @@ export interface RoomTopBarProps {
    * the candidate consented to capture.
    */
   readonly privacy?: ReactNode;
+  /** The browser has lost the network. Announced separately; this is the same fact on screen. */
+  readonly offline?: boolean;
   readonly showActions: boolean;
   readonly paused: boolean;
   readonly pauseAvailable: boolean;
@@ -127,15 +129,20 @@ export function RoomTopBar(props: RoomTopBarProps) {
       {/* The room is dark in both themes, so it always takes the dark cut. */}
       <BrandLogo variant="lockup" size={22} surfaceTone="dark" className="candidate-logo" />
       <span className="room-role">{props.roleTitle}</span>
-      <div className="room-progress" aria-label="Interview progress">
+      {/* A group, so the name below is a name and not decoration: aria-label on
+          a plain div is ignored, and the bar then had an unnamed cluster. */}
+      <div className="room-progress" role="group" aria-label="Interview progress">
         <span className="room-track" aria-hidden="true">
           {timeTrack(elapsedMs, props.durationMinutes).map((state, i) => <i key={i} className={`room-track-${state}`} />)}
         </span>
         <span className="room-progress-label">{label}</span>
       </div>
+      {props.offline && <span className="room-offline">Offline — reconnecting</span>}
       {props.capture && <CaptureIndicator mode={props.capture.mode} stt={props.capture.stt} aiFact={props.capture.aiFact} />}
       {privacy && <CapturedFacts>{privacy}</CapturedFacts>}
-      <span className="room-timer" aria-label="Elapsed time">{formatElapsed(elapsedMs)}</span>
+      {/* The label went on the span itself, which replaced the time with the
+          word "Elapsed time" — the one thing this is for. Prefixed instead. */}
+      <span className="room-timer"><span className="visually-hidden">Elapsed time </span>{formatElapsed(elapsedMs)}</span>
       {props.showActions && (
         <div className="room-bar-actions">
           <button

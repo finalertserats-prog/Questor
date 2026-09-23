@@ -163,6 +163,22 @@
   padding: 4px 9px;
   border-radius: var(--radius);
 }
+/* Losing the network is silent and invisible. The announcer says it; this is
+   the same fact for anyone watching the screen. Marked with a rule and a
+   label, never a tinted fill. */
+.room-offline {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--room-ink-2);
+  border: var(--hair) dashed var(--room-line-2);
+  padding: 4px 9px;
+  border-radius: var(--radius);
+}
 .room-capture i {
   width: 7px;
   height: 7px;
@@ -764,6 +780,22 @@
 }
 .room-interim {
   font-style: italic;
+}
+/* Focused only from code — when "Done answering" is pressed, so the words
+   about to be sent are the last thing a screen reader reads. The ring is for
+   the sighted keyboard user who lands there at the same moment. */
+.room-voice-box span:focus {
+  outline: 2px solid var(--room-you);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+/* The read-back toggle sits with the hint, quieter than the mode switch. */
+.room-readback {
+  font-size: 12px;
+}
+.room-readback[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--room-you) 55%, transparent);
+  color: var(--room-ink);
 }
 .room-round {
   width: 48px;

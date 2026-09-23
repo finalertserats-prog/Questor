@@ -21,15 +21,21 @@ export function IdentityCodeForm(props: {
   onSubmit: () => void;
   onResend: () => void;
 }) {
+  // The step swaps in where the consent button was, so the control the
+  // candidate just pressed has gone. Focus goes to the heading: a screen
+  // reader then says what this step is before asking for six digits, and a
+  // keyboard user tabs straight into the code box.
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { headingRef.current?.focus(); }, []);
   return (
     <form
       data-testid="identity-code-step"
       onSubmit={(e) => { e.preventDefault(); props.onSubmit(); }}
     >
-      <h3>{IDENTITY_HEADING}</h3>
+      <h3 ref={headingRef} tabIndex={-1}>{IDENTITY_HEADING}</h3>
       <p className="small">{IDENTITY_WHY}</p>
       <p className="small" role="status">{props.sent ? codeSentMessage(props.destination) : SENDING_MESSAGE}</p>
-      {props.error && <Banner kind="error">{props.error}</Banner>}
+      {props.error && <Banner kind="error"><span id="identity-code-error">{props.error}</span></Banner>}
       <label htmlFor="identity-code">{`${CODE_LENGTH}-digit code`}</label>
       <input
         id="identity-code"
@@ -40,7 +46,10 @@ export function IdentityCodeForm(props: {
         pattern="[0-9]*"
         maxLength={CODE_LENGTH + 2}
         placeholder="123456"
-        aria-describedby="identity-code-help"
+        // The refusal is tied to the field, so a screen reader reaching the box
+        // is told what went wrong rather than only that it is invalid.
+        aria-invalid={props.error ? true : undefined}
+        aria-describedby={props.error ? 'identity-code-error identity-code-help' : 'identity-code-help'}
         style={{ fontSize: 22, letterSpacing: 6, textAlign: 'center' }}
       />
       <button className="btn" style={{ width: '100%', marginTop: 12 }} disabled={!canSubmitCode(props.code, props.busy)}>
