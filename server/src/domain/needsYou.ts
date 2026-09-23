@@ -34,11 +34,9 @@ export function isUrgent(kind: NeedsYouKind): boolean {
 }
 
 /**
- * Who may act on each kind. A row is only listed for someone whose account can
- * do its action — the server would refuse anyone else — so a hiring manager's
- * queue holds reviews and a recruiter's holds invitations, and nobody is shown
- * work they cannot do. `operator` and `platformOperator` are the deployment's
- * own roles (middleware/operator.ts, middleware/platformOperator.ts), not an
+ * Who a row of each kind is shown to. Nobody is shown work they have no
+ * business seeing; `operator` and `platformOperator` are the deployment's own
+ * roles (middleware/operator.ts, middleware/platformOperator.ts), not an
  * organisation role.
  */
 export type NeedsYouGate =
@@ -50,7 +48,9 @@ export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
   human_request: { capability: 'candidate:read' },
   // Reopening a paused interview is POST /interviews/:id/reopen.
   accommodation: { capability: 'interview:invite' },
-  review: { capability: 'assessment:review' },
+  // Seen by everyone who may read the assessment, signed off by fewer; see
+  // KIND_ACTION_GATE.
+  review: { capability: 'assessment:read' },
   // Sending or keeping a held letter is POST /assessments/:id/feedback-email/*.
   feedback_held: { capability: 'assessment:review' },
   // Resending is POST /interviews/:id/resend.
@@ -61,16 +61,41 @@ export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
   demo_request: { operator: 'operator' },
 };
 
+/**
+ * Where doing a row's work is narrower than seeing it. Unlisted kinds are the
+ * ordinary case: whoever is shown the row may do its action.
+ *
+ * A finished assessment is the one thing the recruiter who ran the interview
+ * has to know about and cannot sign off. Gating the row on
+ * `assessment:review` left them with no sign at all that the interview was
+ * done — the very thing they are waiting on — so the row is shown to everyone
+ * holding `assessment:read`, and what it offers changes instead: the person
+ * who can record a verdict is asked to review, the person who cannot is
+ * offered the assessment to read. Never a button the server would refuse.
+ */
+export const KIND_ACTION_GATE: Readonly<Partial<Record<NeedsYouKind, NeedsYouGate>>> = {
+  review: { capability: 'assessment:review' },
+};
+
 export interface GateContext {
   readonly capabilities: readonly string[];
   readonly operator: boolean;
   readonly platformOperator: boolean;
 }
 
-export function mayActOn(kind: NeedsYouKind, ctx: GateContext): boolean {
-  const gate = KIND_GATE[kind];
+function passes(gate: NeedsYouGate, ctx: GateContext): boolean {
   if ('capability' in gate) return ctx.capabilities.includes(gate.capability);
   return gate.operator === 'operator' ? ctx.operator : ctx.platformOperator;
+}
+
+/** Whether a row of this kind belongs in this person's queue at all. */
+export function maySee(kind: NeedsYouKind, ctx: GateContext): boolean {
+  return passes(KIND_GATE[kind], ctx);
+}
+
+/** Whether they may do the row's work, which for some kinds is a narrower set. */
+export function mayActOn(kind: NeedsYouKind, ctx: GateContext): boolean {
+  return passes(KIND_ACTION_GATE[kind] ?? KIND_GATE[kind], ctx);
 }
 
 export interface ActionTarget {
@@ -83,8 +108,12 @@ export interface ActionTarget {
  * The one thing a row offers, and where it goes: the page where the person
  * acts. A demo re-access request is decided from the operator's email (its
  * link carries the decision credential), so it has no page to open.
+ *
+ * `canAct` is false for someone the row is shown to who cannot do its work
+ * (KIND_ACTION_GATE). The label then says what they CAN do, so the queue never
+ * offers a button the server would refuse.
  */
-export function actionFor(kind: NeedsYouKind, target: ActionTarget): { readonly label: string; readonly to: string | null } {
+export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: boolean = true): { readonly label: string; readonly to: string | null } {
   const interview = target.sessionId ? `/interviews/${target.sessionId}` : null;
   const assessment = target.assessmentId ? `/assessments/${target.assessmentId}` : interview;
   switch (kind) {
@@ -93,7 +122,7 @@ export function actionFor(kind: NeedsYouKind, target: ActionTarget): { readonly 
     case 'accommodation':
       return { label: 'Read the request', to: interview };
     case 'review':
-      return { label: 'Review', to: assessment };
+      return canAct ? { label: 'Review', to: assessment } : { label: 'Open the assessment', to: assessment };
     case 'feedback_held':
       return { label: 'Read and decide', to: assessment };
     case 'invitation_expiring':

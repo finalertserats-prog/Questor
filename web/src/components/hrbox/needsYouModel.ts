@@ -23,6 +23,14 @@ export interface NeedsYouRow {
   readonly assessmentId: string | null;
   readonly facts: { readonly interviewerName?: string | null; readonly expiresAt?: string; readonly opened?: boolean; readonly count?: number };
   readonly openedBy: readonly Looker[];
+  /**
+   * Whether this reader may do the row's work or only look at it. A recruiter
+   * sees a finished assessment on their candidate and cannot sign it off, so
+   * the row reads as ready for review rather than as their read to give.
+   * Older responses did not carry it; absent means "may act", which is what
+   * every kind but `review` is for everyone shown it.
+   */
+  readonly canAct?: boolean;
   readonly action: { readonly label: string; readonly to: string | null };
 }
 
@@ -141,6 +149,11 @@ export function whyLine(row: NeedsYouRow): string {
     case 'accommodation':
       return 'Paused the interview to ask for an adjustment. It waits for you.';
     case 'review':
+      if (row.canAct === false) {
+        return by
+          ? `${by}'s assessment is in. Ready for review: you can read it, someone else signs it off.`
+          : 'The assessment is in. Ready for review: you can read it, someone else signs it off.';
+      }
       return by ? `${by}'s assessment is in. Your read comes first.` : 'The assessment is in. Your read comes first.';
     case 'feedback_held':
       return 'The feedback email was held back. Read it before it goes.';
@@ -198,8 +211,11 @@ export function crewSentence(crew: readonly CrewMember[], queue: { readonly tota
   const parts: string[] = [];
   if (live.length === 1) parts.push(`${live[0].name} is mid-interview with ${live[0].candidateFirstName ?? 'a candidate'}.`);
   else if (live.length > 1) parts.push(`${joinNames(live.map((m) => m.name))} are interviewing right now.`);
+  // Only for a reader who can actually give that read: a recruiter sees the
+  // review row but does not sign it off, so telling them an interviewer is
+  // waiting on THEIR read would be wrong.
   const waitingOnRead = done.find((m) => queue.items.some((r) =>
-    r.kind === 'review' && r.facts.interviewerName === m.name && !!r.candidate && firstWord(r.candidate.name) === m.candidateFirstName));
+    r.kind === 'review' && r.canAct !== false && r.facts.interviewerName === m.name && !!r.candidate && firstWord(r.candidate.name) === m.candidateFirstName));
   if (waitingOnRead) parts.push(`${waitingOnRead.name} finished with ${waitingOnRead.candidateFirstName} and is waiting on your read.`);
   else if (done.length === 1) parts.push(`${done[0].name} finished with ${done[0].candidateFirstName ?? 'a candidate'} today.`);
   if (parts.length === 0) {

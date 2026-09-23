@@ -69,11 +69,39 @@ describe('needs-you queue', () => {
     expect(kindsOf(res.body)).toEqual(['review']);
   });
 
-  it('leaves a review off a recruiter queue, who cannot sign it off', async () => {
+  it('shows the same review to the recruiter who owns the candidate', async () => {
     const s = await setup();
     await reviewReady(s);
     const res = await feed(s.recruiter.token);
-    expect(kindsOf(res.body)).toEqual([]);
+    expect(kindsOf(res.body)).toEqual(['review']);
+  });
+
+  it('offers the recruiter the assessment to read, not a verdict they could not record', async () => {
+    const s = await setup();
+    const { assessment } = await reviewReady(s);
+    const res = await feed(s.recruiter.token);
+    expect([res.body.needsYou.items[0].canAct, res.body.needsYou.items[0].action])
+      .toEqual([false, { label: 'Open the assessment', to: `/assessments/${assessment.id}` }]);
+  });
+
+  it('still leaves a review off an auditor queue, who may not read assessments', async () => {
+    const s = await setup();
+    await reviewReady(s);
+    const res = await feed(s.auditor.token);
+    expect(res.status).toBe(403);
+  });
+
+  it('tells neither role what the AI recommended', async () => {
+    const s = await setup();
+    await reviewReady(s);
+    const [asRecruiter, asManager] = await Promise.all([feed(s.recruiter.token), feed(s.manager.token)]);
+    // The assessment's own recommendation is CONSIDER, and a blind-review
+    // organisation withholds it until the reviewer has judged. The queue row
+    // never carried it and must not start: it says an assessment is ready, not
+    // what it concluded.
+    const rows = JSON.stringify([asRecruiter.body.needsYou.items[0], asManager.body.needsYou.items[0]]);
+    expect([/CONSIDER|PROCEED|DO_NOT_PROGRESS|recommendation|confidence|score/i.test(rows), asRecruiter.body.needsYou.items.length])
+      .toEqual([false, 1]);
   });
 
   it('lists an invitation that closes within two days for the recruiter', async () => {
@@ -144,11 +172,12 @@ describe('needs-you queue', () => {
     expect([res.body.needsYou.total, res.body.needsYou.items.length]).toEqual([27, 2]);
   });
 
-  it('points a review at its assessment', async () => {
+  it('points a review at its assessment, and asks the manager to review it', async () => {
     const s = await setup();
     const { assessment } = await reviewReady(s);
     const res = await feed(s.manager.token);
-    expect(res.body.needsYou.items[0].action).toEqual({ label: 'Review', to: `/assessments/${assessment.id}` });
+    expect([res.body.needsYou.items[0].canAct, res.body.needsYou.items[0].action])
+      .toEqual([true, { label: 'Review', to: `/assessments/${assessment.id}` }]);
   });
 
   it('names the interviewer who ran it', async () => {

@@ -68,6 +68,11 @@ describe('row copy', () => {
     expect(whyLine(row({ facts: { interviewerName: 'Avery' } }))).toBe("Avery's assessment is in. Your read comes first.");
   });
 
+  it('tells a reader who cannot sign it off that the review is ready for someone else', () => {
+    expect(whyLine(row({ canAct: false, facts: { interviewerName: 'Avery' } })))
+      .toBe("Avery's assessment is in. Ready for review: you can read it, someone else signs it off.");
+  });
+
   it('says whether an expiring invitation was opened', () => {
     expect(whyLine(row({ kind: 'invitation_expiring', facts: { opened: true } }))).toBe('Opened the link, not started yet.');
   });
@@ -96,6 +101,12 @@ describe('the greeting', () => {
   it('says what the live interviewer is doing and who waits on a read', () => {
     const crew = [member({ id: 'maya', name: 'Maya', status: 'live', candidateFirstName: 'Priya' }), member({ id: 'avery', name: 'Avery', status: 'done', candidateFirstName: 'Arjun' })];
     expect(crewSentence(crew, { total: 1, items: [row({ facts: { interviewerName: 'Avery' } })] })).toBe('Maya is mid-interview with Priya. Avery finished with Arjun and is waiting on your read.');
+  });
+
+  it('does not tell a recruiter an interviewer waits on their read, when the sign-off is not theirs', () => {
+    const crew = [member({ id: 'avery', name: 'Avery', status: 'done', candidateFirstName: 'Arjun' })];
+    expect(crewSentence(crew, { total: 1, items: [row({ canAct: false, facts: { interviewerName: 'Avery' } })] }))
+      .toBe('Avery finished with Arjun today.');
   });
 
   it('counts what needs you when the interviewers are quiet', () => {

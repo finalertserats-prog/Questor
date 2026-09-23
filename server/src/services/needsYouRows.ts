@@ -8,7 +8,7 @@ import { isOperator } from '../middleware/operator.js';
 import { isPlatformOperator } from '../middleware/platformOperator.js';
 import type { AuthClaims } from './auth.js';
 import {
-  actionFor, compareNeedsYou, isUrgent, mayActOn, NEEDS_YOU_KINDS, NOT_STARTED_STATES,
+  actionFor, compareNeedsYou, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, NOT_STARTED_STATES,
   type GateContext, type NeedsYouKind,
 } from '../domain/needsYou.js';
 
@@ -56,6 +56,13 @@ export interface NeedsYouRow {
   };
   /** Colleagues who have already opened it, most recent first. */
   readonly openedBy: readonly Looker[];
+  /**
+   * Whether this reader may do the row's work, or only look. False on a review
+   * row for a recruiter: they own the candidate and need to know the
+   * assessment landed, but signing it off is somebody else's. The action below
+   * already says so; this is what lets the page word the row honestly too.
+   */
+  readonly canAct: boolean;
   readonly action: { readonly label: string; readonly to: string | null };
 }
 
@@ -75,7 +82,7 @@ export function gateContextOf(auth: AuthClaims): GateContext {
 /** The kinds the dashboard's own needs-attention query already reads. */
 const ATTENTION_KINDS = ['review', 'accommodation', 'human_request', 'feedback_held'] as const;
 
-type Draft = Omit<NeedsYouRow, 'urgent' | 'openedBy' | 'action'>;
+type Draft = Omit<NeedsYouRow, 'urgent' | 'openedBy' | 'canAct' | 'action'>;
 
 const sessionSelect = {
   id: true,
@@ -194,7 +201,8 @@ async function demoDrafts(now: Date, limit: number): Promise<{ count: number; dr
  */
 export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number = PER_KIND_SCAN): Promise<NeedsYouRows> {
   const gate = gateContextOf(auth);
-  const may = (kind: NeedsYouKind) => mayActOn(kind, gate);
+  const may = (kind: NeedsYouKind) => maySee(kind, gate);
+  const canAct = (kind: NeedsYouKind) => mayActOn(kind, gate);
   const candidate = (await candidateScope(auth)) as Prisma.CandidateWhereInput;
   const { tenantId } = auth;
   const none = Promise.resolve({ count: 0, drafts: [] as Draft[] });
@@ -222,7 +230,10 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   drafts.push(...expiring.drafts, ...stalled.drafts, ...catalog.drafts, ...demo.drafts);
 
   const rows = drafts
-    .map((d): NeedsYouRow => ({ ...d, urgent: isUrgent(d.kind), openedBy: [], action: actionFor(d.kind, { ...d, candidateId: d.candidate?.id }) }))
+    .map((d): NeedsYouRow => ({
+      ...d, urgent: isUrgent(d.kind), openedBy: [], canAct: canAct(d.kind),
+      action: actionFor(d.kind, { ...d, candidateId: d.candidate?.id }, canAct(d.kind)),
+    }))
     .sort(compareNeedsYou);
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
   return { counts, total, rows };

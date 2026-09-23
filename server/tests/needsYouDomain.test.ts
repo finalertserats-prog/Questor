@@ -1,20 +1,38 @@
 import { describe, it, expect } from 'vitest';
-import { actionFor, compareNeedsYou, initialsOf, isUrgent, mayActOn, NEEDS_YOU_KINDS, type NeedsYouKind } from '../src/domain/needsYou.js';
+import { actionFor, compareNeedsYou, initialsOf, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, type NeedsYouKind } from '../src/domain/needsYou.js';
 import { capabilitiesOf } from '../src/domain/capabilities.js';
 
 const ctxFor = (role: string, extra: { operator?: boolean; platformOperator?: boolean } = {}) => ({
   capabilities: capabilitiesOf(role), operator: extra.operator ?? false, platformOperator: extra.platformOperator ?? false,
 });
 const kindsFor = (role: string, extra: { operator?: boolean; platformOperator?: boolean } = {}) =>
-  NEEDS_YOU_KINDS.filter((kind) => mayActOn(kind, ctxFor(role, extra)));
+  NEEDS_YOU_KINDS.filter((kind) => maySee(kind, ctxFor(role, extra)));
 
 describe('needs-you gating', () => {
   it('gives a hiring manager reviews but not invitation chores it cannot do', () => {
     expect(kindsFor('manager')).toEqual(['human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled']);
   });
 
-  it('gives a recruiter the invitation chores but not reviews it cannot sign off', () => {
-    expect(kindsFor('recruiter')).toEqual(['human_request', 'accommodation', 'invitation_expiring', 'stalled']);
+  it('gives a recruiter the invitation chores and the reviews that landed on their candidates', () => {
+    expect(kindsFor('recruiter')).toEqual(['human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled']);
+  });
+
+  it('does not let the recruiter sign a review off, only see it', () => {
+    const recruiter = ctxFor('recruiter');
+    expect([maySee('review', recruiter), mayActOn('review', recruiter)]).toEqual([true, false]);
+  });
+
+  it('lets a hiring manager both see and sign off a review', () => {
+    const manager = ctxFor('manager');
+    expect([maySee('review', manager), mayActOn('review', manager)]).toEqual([true, true]);
+  });
+
+  it('keeps a review from an auditor, who may not read assessments at all', () => {
+    expect(maySee('review', ctxFor('auditor'))).toBe(false);
+  });
+
+  it('keeps the held feedback letter to whoever may sign it off', () => {
+    expect([maySee('feedback_held', ctxFor('recruiter')), maySee('feedback_held', ctxFor('manager'))]).toEqual([false, true]);
   });
 
   it('gives a reviewer only reviews and people asking for someone', () => {
@@ -64,7 +82,11 @@ describe('needs-you ordering', () => {
 
 describe('needs-you actions', () => {
   it('sends a review to its assessment', () => {
-    expect(actionFor('review', { sessionId: 's1', assessmentId: 'a1' }).to).toBe('/assessments/a1');
+    expect(actionFor('review', { sessionId: 's1', assessmentId: 'a1' })).toEqual({ label: 'Review', to: '/assessments/a1' });
+  });
+
+  it('offers the assessment to read, not a verdict to record, to someone who cannot sign it off', () => {
+    expect(actionFor('review', { sessionId: 's1', assessmentId: 'a1' }, false)).toEqual({ label: 'Open the assessment', to: '/assessments/a1' });
   });
 
   it('falls back to the interview when a review has no assessment id', () => {
