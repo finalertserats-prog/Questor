@@ -42,6 +42,8 @@ model Tenant {
   atsRequisitions AtsRequisitionImport[]
   atsLinks        CandidateAtsLink[]
   demoGrants     DemoGrant[]
+  demoInterviewRuns DemoInterviewRun[]
+  demoFeedback      DemoFeedback[]
   competencies   OrgCompetency[]
   outcomeSnapshots OutcomeSnapshot[]
   // The business areas this organisation hires in, and how many it may hold.
@@ -2078,4 +2080,83 @@ model ReviewerPatternAlert {
 
   @@unique([tenantId, reviewerId, kind])
   @@index([tenantId, status, lastSeenAt])
+}
+
+// One sitting of the demo interview, in either mode.
+//
+// The demo is time-boxed, and the box has to be held on this side: a timer in
+// the page is a suggestion, and a prospect who opens the console and clears it
+// would run the interview — and our model budget — for as long as they liked.
+// `capAt` is the server's clock, written once when the sitting starts.
+//
+// It lives in the demo tenant so that the existing purge takes it with
+// everything else the visitor's sandbox holds.
+model DemoInterviewRun {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  // Which visitor. Nullable because the purge detaches a grant from its
+  // sandbox before the sandbox goes, exactly as it does for every other row.
+  demoGrantId String?
+  sessionId   String   @unique
+  // 'candidate' — the visitor answers. 'observer' — the visitor watches the
+  // interviewer question a scripted candidate from the simulation harness.
+  mode        String
+  // Observer mode: which harness script is playing the candidate. Recorded so
+  // a transcript can always be traced back to the words it was driven with.
+  scriptId    String   @default("")
+  startedAt   DateTime @default(now())
+  // When the interviewer must have stopped asking. Not a display value: the
+  // server refuses to produce another question past it.
+  capAt       DateTime
+  // A single extension anyone may take without saying why. Held here rather
+  // than folded into capAt so the console can tell an extended demo from a
+  // long one.
+  extendedMs  Int      @default(0)
+  endedAt     DateTime?
+  // cap | completed | withdrawn | abandoned | demo_ended | engine_unavailable
+  endReason   String?
+  // The furthest point the visitor reached, for the owner's console.
+  stage       String   @default("chose_mode")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId, startedAt])
+  @@index([demoGrantId])
+  @@index([endedAt, capAt])
+}
+
+// What a visitor said about the demo, and the ticket that let them say it.
+//
+// One row is created unsubmitted when the visitor is offered the feedback
+// step, and filled in when they send it. The ticket exists because "End demo"
+// clears the session: without a credential of its own the feedback form would
+// be asking an signed-out browser to prove who it was.
+//
+// `body` is a stranger's free text. It is screened for injection on the way in
+// exactly as organisation text is, stored as text, rendered as text, and never
+// placed in a model prompt.
+model DemoFeedback {
+  id               String   @id @default(cuid())
+  tenantId         String
+  tenant           Tenant   @relation(fields: [tenantId], references: [id])
+  demoGrantId      String?
+  runId            String?
+  // The mode the visitor chose, or 'none' when they never started one.
+  mode             String   @default("none")
+  stage            String   @default("chose_mode")
+  body             String   @default("")
+  // 'typed' | 'spoken' — spoken means the browser transcribed it; the words
+  // stored are the transcript, never audio.
+  source           String   @default("typed")
+  injectionFlagged Boolean  @default(false)
+  // JSON array of the patterns that fired, kept as the audit trail.
+  injectionMatched String   @default("[]")
+  ticketHash       String   @unique
+  ticketExpiresAt  DateTime
+  submittedAt      DateTime?
+  createdAt        DateTime @default(now())
+
+  @@index([tenantId, submittedAt])
+  @@index([demoGrantId])
 }
