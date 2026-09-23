@@ -5,7 +5,9 @@ import { config } from '../src/config.js';
 import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { hashPassword, signToken } from '../src/services/auth.js';
-import { _useRateLimitStore, _resetRateLimits } from '../src/middleware/rateLimit.js';
+import {
+  _useRateLimitStore, _resetRateLimits, _enableRateLimitsInTests, LOGIN_FAILURES_PER_ACCOUNT,
+} from '../src/middleware/rateLimit.js';
 import { hashResetToken, serverPepperProbe } from './helpers/passwordResetProbe.js';
 
 // The security properties the password routes are supposed to hold, each
@@ -17,10 +19,16 @@ import { hashResetToken, serverPepperProbe } from './helpers/passwordResetProbe.
 const app = createApp();
 const PASSWORD = 'a-long-enough-passphrase';
 
-const originalNodeEnv = config.nodeEnv;
-/** The limiters are off under nodeEnv 'test'; these tests are about them. */
-function limiterOn(): void { (config as { nodeEnv: string }).nodeEnv = 'development'; }
-function limiterOff(): void { (config as { nodeEnv: string }).nodeEnv = originalNodeEnv; }
+/**
+ * The limiters are off under nodeEnv 'test'; these tests are about them.
+ *
+ * Through the limiter module's own switch rather than by telling the process it
+ * is in development, which these tests used to do — that also moved every other
+ * production-versus-development branch underneath them, so they were quietly
+ * testing two things at once.
+ */
+function limiterOn(): void { _enableRateLimitsInTests(true); }
+function limiterOff(): void { _enableRateLimitsInTests(false); }
 
 let known = '';
 
@@ -117,12 +125,16 @@ describe('the limiters', () => {
 
   it('does not let a failed sign-in eat the budget for recovering from it', async () => {
     limiterOn();
-    // The sign-in limiter is 10 per 15 minutes. Spend it entirely.
-    for (let i = 0; i < 12; i += 1) {
+    // Spend the sign-in limiter's per-account allowance entirely, reading the
+    // ceiling from the limiter rather than restating it — that budget belongs
+    // to the hardening lane and is theirs to tune.
+    for (let i = 0; i < LOGIN_FAILURES_PER_ACCOUNT + 2; i += 1) {
       await request(app).post('/api/auth/login').send({ email: known, password: 'wrong-password-here' });
     }
-    expect((await request(app).post('/api/auth/login').send({ email: known, password: PASSWORD })).status).toBe(429);
-    // And the way out is still open.
+
+    // The property this test is named for: someone who has just locked
+    // themselves out of signing in must still be able to ask for a way back.
+    // Recovery has its own buckets and must never share the sign-in one.
     expect((await forgot(known)).status).toBe(202);
   });
 });

@@ -9,6 +9,7 @@ import { renderPasswordResetEmail, renderPasswordChangedEmail } from '../provide
 import { hashPassword, verifyPassword } from './auth.js';
 import { logAudit } from './audit.js';
 import { serverPepper } from './pepper.js';
+import { lockUser } from './sessionLock.js';
 import { revokeAllTrustedDevices } from './trustedDevice.js';
 import { findUserByEmail, normalizeEmail } from './userEmail.js';
 
@@ -106,11 +107,17 @@ type Decision =
   | { kind: 'wait'; reason: 'cooldown' | 'hourly' };
 
 /**
- * Decide and write in one transaction, so two presses at once cannot both pass
- * the cooldown and mail two live links.
+ * Decide and write under the account's row lock, so two presses at once cannot
+ * both pass the cooldown and mail two live links.
  */
 async function decideIssue(userId: string, ctx: RequestContext, now: Date): Promise<Decision> {
   return prisma.$transaction(async (tx) => {
+    // "In one transaction" is not enough on its own. Postgres runs two of these
+    // side by side under read-committed: both read no recent row, both pass the
+    // cooldown, both retire nothing, and both write — so the account ends up
+    // holding two live links when the design says only the newest works. The
+    // row lock makes the second wait and then read what the first committed.
+    await lockUser(tx, userId);
     const recent = await tx.passwordResetToken.findMany({
       where: { userId, createdAt: { gt: new Date(now.getTime() - HOUR_MS) } },
       orderBy: { createdAt: 'desc' }, select: { createdAt: true },

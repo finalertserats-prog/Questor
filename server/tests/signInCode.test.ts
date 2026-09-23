@@ -209,6 +209,20 @@ describe('the code step', () => {
     expect((await enterCode(second.body.pending, secondCode)).status).toBe(200);
   });
 
+  it('sends one code, not two, when two sign-ins arrive together', async () => {
+    // Same race as the reset path, closed the same way: without the account's
+    // row lock both attempts read no recent challenge and both write, so two
+    // live codes exist and the resend cooldown never fires.
+    const both = await Promise.all([signIn(fx.adminEmail), signIn(fx.adminEmail)]);
+
+    expect(both.filter((r) => r.body.mfa === 'code_sent')).toHaveLength(1);
+    expect(both.filter((r) => r.status === 429)).toHaveLength(1);
+    const live = await prisma.signInChallenge.count({
+      where: { userId: fx.adminId, consumedAt: null, supersededAt: null, lockedAt: null },
+    });
+    expect(live).toBe(1);
+  });
+
   it('makes a second send wait out a cooldown', async () => {
     expect((await signIn(fx.adminEmail)).body.mfa).toBe('code_sent');
     const again = await signIn(fx.adminEmail);

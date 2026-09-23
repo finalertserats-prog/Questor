@@ -6,6 +6,7 @@ import { getEmail } from '../providers/email/index.js';
 import { renderSignInCodeEmail } from '../providers/email/signInCodeEmail.js';
 import { logAudit } from './audit.js';
 import { serverPepper } from './pepper.js';
+import { lockUser } from './sessionLock.js';
 
 // The six digits a person enters after their password.
 //
@@ -114,11 +115,17 @@ type Decision =
   | Exclude<IssueOutcome, { kind: 'sent' } | { kind: 'not_delivered' }>;
 
 /**
- * Decide and write in one transaction, so two sign-in attempts at once cannot
- * both pass the cooldown and mail two live codes.
+ * Decide and write under the account's row lock, so two sign-in attempts at
+ * once cannot both pass the cooldown and mail two live codes.
  */
 async function decideIssue(userId: string, now: Date): Promise<Decision> {
   return prisma.$transaction(async (tx) => {
+    // The same reason the reset path takes this lock: a transaction alone does
+    // not serialise these on Postgres, so two attempts both read no recent
+    // challenge, both retire nothing and both write — and the account holds two
+    // live codes while the resend cooldown it was supposed to be bounded by
+    // never fired.
+    await lockUser(tx, userId);
     const locked = await tx.signInChallenge.findFirst({
       where: { userId, lockedAt: { gt: new Date(now.getTime() - LOCKOUT_MS) } },
       orderBy: { lockedAt: 'desc' }, select: { lockedAt: true },

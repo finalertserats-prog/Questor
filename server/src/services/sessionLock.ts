@@ -16,3 +16,27 @@ export async function lockSession(tx: TransactionClient, sessionId: string): Pro
   if (!/^postgres(ql)?:/.test(process.env.DATABASE_URL ?? '')) return;
   await tx.$queryRaw`SELECT "id" FROM "InterviewSession" WHERE "id" = ${sessionId} FOR UPDATE`;
 }
+
+/**
+ * The same, for one account's one-time secrets.
+ *
+ * Issuing a reset link or a sign-in code is a read-then-write: count what was
+ * sent recently, decide the cooldown, retire what is still live, write the new
+ * one. Under Postgres's read-committed default two requests for the same
+ * account run that side by side — both read no recent row, both pass the
+ * cooldown, both retire nothing, and both write. The account ends up with two
+ * live links (or two live codes) when the whole design says only the newest
+ * one works, and the cooldown that is supposed to bound how much mail one
+ * address can be sent does not hold.
+ *
+ * Each token is still single-use, so this is not a way to spend one twice. It
+ * is the account-level invariant that breaks, which matters most in the case
+ * the invariant exists for: someone asks for a second link because they think
+ * the first was intercepted, and the first quietly keeps working.
+ *
+ * SQLite serialises writers, so it is already safe there and this is a no-op.
+ */
+export async function lockUser(tx: TransactionClient, userId: string): Promise<void> {
+  if (!/^postgres(ql)?:/.test(process.env.DATABASE_URL ?? '')) return;
+  await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+}

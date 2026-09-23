@@ -145,6 +145,25 @@ describe('asking for a reset link', () => {
     expect(await reset(secondToken, ANOTHER).then((r) => r.status)).toBe(200);
   });
 
+  it('issues one link, not two, when two requests arrive together', async () => {
+    // The cooldown and "the newest link retires the rest" are decided by a
+    // read-then-write. A transaction alone does not serialise that on Postgres,
+    // so both requests read no recent row and both write — and the account ends
+    // up holding two live links while the cooldown never fires. The account's
+    // row lock is what closes it.
+    const both = await Promise.all([
+      requestPasswordReset(fx.userEmail, { ip: '1.2.3.4' }),
+      requestPasswordReset(fx.userEmail, { ip: '1.2.3.4' }),
+    ]);
+
+    expect(both.filter((r) => r.kind === 'sent')).toHaveLength(1);
+    expect(both.filter((r) => r.kind === 'wait')).toHaveLength(1);
+    const live = await prisma.passwordResetToken.count({
+      where: { userId: fx.userId, consumedAt: null, supersededAt: null },
+    });
+    expect(live).toBe(1);
+  });
+
   it('makes a second request wait out a cooldown', async () => {
     expect((await requestPasswordReset(fx.userEmail, { ip: '1.2.3.4' })).kind).toBe('sent');
     expect(await requestPasswordReset(fx.userEmail, { ip: '1.2.3.4' })).toEqual({ kind: 'wait', reason: 'cooldown' });
