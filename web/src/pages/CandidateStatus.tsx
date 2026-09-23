@@ -40,10 +40,13 @@ interface LetterResponse {
 
 type TalkState = 'idle' | 'sending' | 'recorded' | 'failed';
 type Dead = 'expired' | 'unknown' | 'not_yet' | 'failed';
+/** Whether the letter itself has been fetched, separately from whether it exists. */
+type LetterState = 'idle' | 'loading' | 'ready' | 'missing';
 
 export function CandidateStatus({ token, takeFocus = false }: { token: string; takeFocus?: boolean }) {
   const [view, setView] = useState<StatusView | null>(null);
   const [letter, setLetter] = useState<LetterResponse | null>(null);
+  const [letterState, setLetterState] = useState<LetterState>('idle');
   const [dead, setDead] = useState<Dead | null>(null);
   const [talk, setTalk] = useState<TalkState>('idle');
   // Set when this page replaced a form the candidate had just pressed a button
@@ -55,6 +58,16 @@ export function CandidateStatus({ token, takeFocus = false }: { token: string; t
 
   useEffect(() => {
     let cancelled = false;
+    // Everything on screen belongs to the token that is going away. React keeps
+    // this component instance across a change of the :token param, so without
+    // this one candidate's name, timeline and letter would stay on screen while
+    // another's token loaded — and an old letter could even render under a new
+    // view. Cleared first, so the page shows nothing rather than somebody else.
+    setView(null);
+    setLetter(null);
+    setLetterState('idle');
+    setDead(null);
+    setTalk('idle');
     api.get<StatusView>(`/portal/${token}/status`)
       .then((loaded) => { if (!cancelled) setView(loaded); })
       .catch((err: unknown) => {
@@ -77,11 +90,15 @@ export function CandidateStatus({ token, takeFocus = false }: { token: string; t
   useEffect(() => {
     if (view?.feedback.outlook !== 'arrived') return;
     let cancelled = false;
-    // A 404 here is ordinary: the outlook and the letter are two reads, and the
-    // letter can land between them. The waiting wording stays until it does.
+    setLetterState('loading');
+    // A 404 here is ordinary rather than a fault: the outlook and the letter
+    // are two reads and the letter can land between them. It is still recorded
+    // as `missing` rather than swallowed, because a heading that says "Feedback
+    // from your conversation" over an empty box is the one thing this section
+    // must never do — the page says instead that the words are in their inbox.
     api.get<LetterResponse>(`/portal/${token}/feedback`)
-      .then((got) => { if (!cancelled) setLetter(got); })
-      .catch(() => undefined);
+      .then((got) => { if (!cancelled) { setLetter(got); setLetterState('ready'); } })
+      .catch(() => { if (!cancelled) setLetterState('missing'); });
     return () => { cancelled = true; };
   }, [token, view?.feedback.outlook]);
 
@@ -156,7 +173,7 @@ export function CandidateStatus({ token, takeFocus = false }: { token: string; t
                 <p className="cstatus-provenance">{FEEDBACK_PROVENANCE}</p>
               </>
             )
-            : <p data-testid="cstatus-feedback-note">{feedbackNote(view)}</p>}
+            : <p data-testid="cstatus-feedback-note">{feedbackNote(view, letterState === 'loading')}</p>}
         </section>
 
         <section className="cstatus-box" aria-labelledby="cstatus-talk">

@@ -174,8 +174,17 @@ describe('what the page says about written feedback', () => {
     expect(note).not.toMatch(/\d{1,2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/);
   });
 
-  it('says nothing about waiting once the feedback has arrived', () => {
-    expect(feedbackNote(view({ feedback: { outlook: 'arrived', dueAt: null, sentAt: '2026-09-24T06:00:00Z' } }))).toBe('');
+  it('says it is loading while the letter itself is still being fetched', () => {
+    const note = feedbackNote(view({ feedback: { outlook: 'arrived', dueAt: null, sentAt: '2026-09-24T06:00:00Z' } }), true);
+
+    expect(note).toBe('Loading your feedback…');
+  });
+
+  it('never leaves an empty box under "feedback from your conversation"', () => {
+    const note = feedbackNote(view({ feedback: { outlook: 'arrived', dueAt: null, sentAt: '2026-09-24T06:00:00Z' } }));
+
+    expect(note).toContain('sent to you by email');
+    expect(note).not.toBe('');
   });
 
   it('changes the heading once the words are there to read', () => {

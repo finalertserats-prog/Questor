@@ -158,13 +158,13 @@ describe('written feedback', () => {
     expect(screen.getByText(/Decisions are always made by people/)).toBeTruthy();
   });
 
-  it('keeps the waiting wording while the letter has not loaded', async () => {
+  it('points at the inbox rather than leaving an empty box when the letter will not load', async () => {
     server.status = statusView({ feedback: { outlook: 'arrived', dueAt: null, sentAt: '2026-09-24T06:00:00Z' } });
     server.letter = null;
     show();
 
-    await screen.findByRole('heading', { level: 1 });
-    expect(screen.getByTestId('cstatus-feedback-note')).toBeTruthy();
+    await waitFor(() => expect(screen.getByTestId('cstatus-feedback-note').textContent)
+      .toMatch(/sent to you by email/));
   });
 
   it('says plainly when the employer does not send written feedback', async () => {
@@ -211,6 +211,21 @@ describe('asking to speak to a person', () => {
     (await screen.findByRole('button', { name: /speak to someone/ })).click();
 
     await waitFor(() => expect(screen.getByText(/could not record that just now/)).toBeTruthy());
+  });
+});
+
+describe('when the link in the address bar changes', () => {
+  it('shows nobody rather than the last candidate while the next one loads', async () => {
+    const { rerender } = render(createElement(MemoryRouter, null, createElement(CandidateStatus, { token: 'abc' })));
+    await screen.findByText(/You talked with Maya/);
+
+    // The next token never answers, so whatever is on screen is what a viewer
+    // would see for the whole of that wait.
+    server.status = new Promise(() => undefined);
+    rerender(createElement(MemoryRouter, null, createElement(CandidateStatus, { token: 'xyz' })));
+
+    await waitFor(() => expect(screen.queryByText(/You talked with Maya/)).toBeNull());
+    expect(screen.queryByText('Priya Sharma')).toBeNull();
   });
 });
 

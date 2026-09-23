@@ -82,6 +82,16 @@ const STILL_AN_INVITATION: readonly string[] = [
  * refuse while this is true rather than telling someone who has not interviewed
  * yet that "this link has done its job". `completedAt` wins: an interview that
  * finished is over whatever state the row was left in.
+ *
+ * CANDIDATE_WITHDREW is deliberately NOT here, and two reviews have now asked
+ * why. Withdrawing from an interview is not withdrawing consent to exist: the
+ * candidate stopped a conversation, and they are precisely the person most
+ * likely to want to know what happens now and to ask for a human interviewer
+ * instead — which is the one button this page offers. A candidate who withdraws
+ * their DATA is erased, their invitation row goes with it, and the link then
+ * 404s on its own (services/dataRights.ts); that is the case the rule about a
+ * withdrawn candidate's link is about, and it is handled by the row not
+ * existing rather than by a state check here.
  */
 export function linkStillLeadsToInterview(state: string, completedAt: Date | null): boolean {
   return !completedAt && STILL_AN_INVITATION.includes(state);

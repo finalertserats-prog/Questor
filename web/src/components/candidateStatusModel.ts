@@ -131,8 +131,13 @@ export function statusHeading(v: StatusView): string {
  * for this, and "it can't start another interview, but it will always show you
  * where things stand" is the whole change, in one sentence.
  */
+// "Will keep showing you", not "will always show you": the link stops working
+// when the invitation is erased at the candidate's own request, and when what
+// we keep about the interview reaches the end of its retention (the date is in
+// the foot of this page). Promising "always" would be a promise the product
+// deliberately does not keep.
 export const LINK_IS_SPENT = 'This link has done its job. It can’t start another interview, '
-  + 'but it will always show you where things stand.';
+  + 'but it will keep showing you where things stand.';
 
 /** How the conversation is described back to them: only facts we actually hold. */
 export function conversationLine(v: StatusView): string {
@@ -343,9 +348,19 @@ export function feedbackHeading(outlook: FeedbackOutlook): string {
  * that does not write to candidates should say so on the candidate's own page,
  * today, rather than letting them check it every morning for a fortnight.
  */
-export function feedbackNote(v: StatusView): string {
+export function feedbackNote(v: StatusView, stillLoading = false): string {
   const { outlook, dueAt } = v.feedback;
-  if (outlook === 'arrived') return '';
+  // `arrived` with no letter beside it. The page has already committed to the
+  // heading "Feedback from your conversation", so the one thing it must not do
+  // is leave an empty box under it. While the read is in flight it says so;
+  // once the read has failed or found nothing it points at the inbox, which is
+  // where the words certainly are — they were emailed before this page knew
+  // about them.
+  if (outlook === 'arrived') {
+    if (stillLoading) return 'Loading your feedback…';
+    return 'Your written feedback has been sent to you by email. '
+      + 'We could not load it on this page just now — try again in a moment, or read it in your inbox.';
+  }
   if (outlook === 'not_offered') {
     return `${v.organisation} does not send written feedback on interviews. `
       + 'That is their policy rather than a delay, so there is nothing to wait for — '
