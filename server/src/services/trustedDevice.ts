@@ -137,15 +137,29 @@ export async function deviceIsTrusted(
   });
   if (!row || !sameHash(hash, row.tokenHash)) return false;
   if (row.userId !== binding.userId) return false;
-  if (row.revokedAt || row.expiresAt.getTime() <= now.getTime()) return false;
-  // The three bindings. Any of them having moved on means the grant was agreed
-  // to under conditions that no longer hold.
-  if (row.sessionsEpoch !== binding.sessionsEpoch) return false;
-  if (row.role !== binding.role) return false;
-  if (row.mfaEpoch !== binding.mfaEpoch) return false;
 
-  await prisma.trustedDevice.update({ where: { id: row.id }, data: { lastUsedAt: now, lastUsedIp: ctx.ip } });
-  return true;
+  // Re-stated as conditions on the write rather than trusted from the read.
+  // A revoke landing between the two — the person pressing "Forget" on their
+  // phone while a sign-in is in flight — would otherwise stamp the revoked row
+  // as just used and let the sign-in past the code step on a grant that no
+  // longer exists. The route that revoked it had already answered "done".
+  //
+  // The three bindings are here for the same reason they are checked at all:
+  // any of them having moved on means the grant was agreed to under conditions
+  // that no longer hold.
+  const used = await prisma.trustedDevice.updateMany({
+    where: {
+      id: row.id,
+      userId: binding.userId,
+      revokedAt: null,
+      expiresAt: { gt: now },
+      sessionsEpoch: binding.sessionsEpoch,
+      role: binding.role,
+      mfaEpoch: binding.mfaEpoch,
+    },
+    data: { lastUsedAt: now, lastUsedIp: ctx.ip },
+  });
+  return used.count === 1;
 }
 
 function readTrustCookie(req: Request): string {

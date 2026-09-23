@@ -44,6 +44,18 @@ export interface PendingClaims {
   userId: string;
   tenantId: string;
   challengeId: string;
+  /**
+   * The session generation the password was accepted under.
+   *
+   * A sign-in is two requests with up to ten minutes between them, and the
+   * password can be reset in that gap — which is exactly what an admin does
+   * to an account they think is compromised. Without this the attacker who
+   * had the old password and the emailed code would still complete, and the
+   * session they got would be stamped with the NEW generation and therefore
+   * perfectly valid. The reset revoked their sessions and their devices and
+   * left their sign-in in flight.
+   */
+  sessionsEpoch: number;
   /** Whether "keep me signed in on this device" was ticked on the password step. */
   remember: boolean;
   purpose: 'signin-code';

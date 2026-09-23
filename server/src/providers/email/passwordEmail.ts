@@ -1,4 +1,4 @@
-import { brandedEmail, emailButton, escapeHtml, headerSafe } from './branding.js';
+import { brandedEmail, emailButton, escapeHtml } from './branding.js';
 import type { EmailMessage } from './index.js';
 
 // The two mails the password routes send.
@@ -52,7 +52,9 @@ export function renderPasswordResetEmail(opts: {
 
   return brandedEmail({
     to: opts.to,
-    subject: `Set a new Questor password for ${headerSafe(opts.to)}`,
+    // No address in the subject: it is a header, retained and logged far more
+    // widely than a body, and the message is already addressed to them.
+    subject: 'Set a new Questor password',
     text,
     html: [
       p(greeting),

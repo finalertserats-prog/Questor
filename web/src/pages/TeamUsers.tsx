@@ -58,11 +58,19 @@ export function TeamUsers() {
     setActingId(member.id);
     setError('');
     try {
-      await api.post(`/admin/users/${member.id}/password-reset`);
+      const res = await api.post<{ ok: boolean; message: string }>(`/admin/users/${member.id}/password-reset`);
       setPendingId(null);
-      // Done, and nothing left for the admin to do — the person's inbox is
-      // where the rest happens.
-      toast.show(`A reset link is on its way to ${member.email}.`, { testId: 'reset-sent' });
+      if (res.ok) {
+        // Done, and nothing left for the admin to do — the person's inbox is
+        // where the rest happens.
+        toast.show(res.message, { testId: 'reset-sent' });
+      } else {
+        // Nothing was sent. Usually because the colleague already pressed
+        // "Forgot password" themselves in the last minute — they have a link,
+        // and a second one would only retire it. Something to act on, so a
+        // banner, not a toast that says "done".
+        setError(res.message);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not send a reset link.');
     } finally {

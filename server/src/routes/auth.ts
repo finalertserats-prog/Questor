@@ -7,11 +7,12 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { isPlatformOperator, isReservedOperatorEmail } from '../middleware/platformOperator.js';
 import { hashPassword, verifyPassword, issueSession, clearSession, signPendingToken, verifyPendingToken } from '../services/auth.js';
 import { logAudit } from '../services/audit.js';
+import { logger } from '../logger.js';
 import { findUserByEmail, normalizeEmail } from '../services/userEmail.js';
 import { capabilitiesOf } from '../domain/capabilities.js';
 import { passwordSchema } from '../domain/passwordPolicy.js';
 import { mfaPolicyOf, codeRequired, deviceMayStandIn } from '../domain/mfaPolicy.js';
-import { issueSignInCode, verifySignInCode, consumeMfaBypass } from '../services/signInCode.js';
+import { issueSignInCode, verifySignInCode, consumeMfaBypass, codeDeliverability } from '../services/signInCode.js';
 import { trustDevice, deviceIsTrusted, clearTrustCookie, listTrustedDevices, revokeTrustedDevice } from '../services/trustedDevice.js';
 import {
   startPasswordResetRequest, resetTokenUsable, completePasswordReset, changeOwnPassword, RESET_TTL_MS,
@@ -61,9 +62,23 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
     where: { id: user.tenantId },
     select: { id: true, slug: true, policyJson: true, mfaEpoch: true },
   });
-  if (orgSlug !== undefined && tenant?.slug !== orgSlug) throw new HttpError(401, 'Invalid credentials');
+  // A user row whose tenant has gone is not something to sign in "with
+  // defaults": the organisation is what the policy, the code rule and every
+  // scoping check are read from, and guessing at it is how an account ends up
+  // held to a rule nobody chose.
+  if (!tenant) throw new HttpError(401, 'Invalid credentials');
+  if (orgSlug !== undefined && tenant.slug !== orgSlug) {
+    // The one attempt that proves somebody holds real credentials. It was the
+    // only failure path here with no trail at all — a wrong password is
+    // recorded, and a right password aimed at the wrong organisation was not.
+    await logAudit({
+      tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.login_wrong_org',
+      entityType: 'User', entityId: user.id, requestId: req.requestId, after: { ip: req.ip ?? 'unknown', triedSlug: orgSlug },
+    });
+    throw new HttpError(401, 'Invalid credentials');
+  }
 
-  const policy = mfaPolicyOf(parseJsonOptional<Record<string, unknown>>(tenant?.policyJson ?? '{}', {}, { model: 'Tenant', id: user.tenantId, field: 'policyJson' }));
+  const policy = mfaPolicyOf(parseJsonOptional<Record<string, unknown>>(tenant.policyJson, {}, { model: 'Tenant', id: user.tenantId, field: 'policyJson' }));
   const requirement = codeRequired({
     policy,
     role: user.role,
@@ -72,18 +87,24 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
   const ctx = { ip: req.ip ?? 'unknown', requestId: req.requestId, reason: requirement.reason };
   const binding = {
     userId: user.id, tenantId: user.tenantId, sessionsEpoch: user.sessionsEpoch,
-    role: user.role, mfaEpoch: tenant?.mfaEpoch ?? 0,
+    role: user.role, mfaEpoch: tenant.mfaEpoch,
   };
 
   if (requirement.required) {
     // A device the person already asked us to trust, under conditions that
-    // still hold. Never for the platform operator, and never for an escalation.
+    // still hold. Never for the platform operator.
     const trusted = deviceMayStandIn(requirement.reason) && await deviceIsTrusted(req, binding, ctx);
-    // Break-glass: a one-time, time-boxed permission the platform operator
-    // grants when email is down and the code therefore cannot arrive.
+    // Break-glass: a one-time, time-boxed permission another platform operator
+    // granted when email is down and the code therefore cannot arrive.
     const bypassed = !trusted && await consumeMfaBypass(user, ctx);
+    // Can this deployment put a code in front of anyone at all?
+    const reachable = trusted || bypassed ? 'ok' : codeDeliverability();
 
-    if (!trusted && !bypassed) {
+    if (reachable === 'refuse') {
+      throw new HttpError(503, 'Signing in here needs a code emailed to you, and this deployment cannot send email. Ask your administrator.');
+    }
+
+    if (!trusted && !bypassed && reachable === 'ok') {
       const issued = await issueSignInCode(user, ctx);
       if (issued.kind === 'wait') {
         throw new HttpError(429, issued.reason === 'locked'
@@ -96,7 +117,8 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
         throw new HttpError(503, 'We could not email your sign-in code. Try again shortly, or ask your administrator.');
       }
       const pending = signPendingToken({
-        userId: user.id, tenantId: user.tenantId, challengeId: issued.challengeId, remember: rememberDevice === true,
+        userId: user.id, tenantId: user.tenantId, challengeId: issued.challengeId,
+        sessionsEpoch: user.sessionsEpoch, remember: rememberDevice === true,
       });
       res.json({
         mfa: 'code_sent',
@@ -107,14 +129,21 @@ authRouter.post('/login', asyncHandler(async (req, res) => {
       });
       return;
     }
+
     // Recorded as its own thing, so "signed in without a code" is visible in
     // the trail rather than looking like a sign-in from an organisation with
-    // no policy at all.
+    // no policy at all. Each of the three is a different story and gets a
+    // different word.
     await logAudit({
       tenantId: user.tenantId, actorType: 'user', actorId: user.id,
-      action: trusted ? 'auth.code_skipped_trusted_device' : 'auth.mfa_bypass_used_signin',
+      action: trusted ? 'auth.code_skipped_trusted_device'
+        : bypassed ? 'auth.mfa_bypass_used_signin'
+          : 'auth.code_skipped_undeliverable',
       entityType: 'User', entityId: user.id, requestId: req.requestId, after: { ip: ctx.ip },
     });
+    if (!trusted && !bypassed) {
+      logger.warn({ userId: user.id, tenantId: user.tenantId }, 'Signed in without a code: this deployment cannot send email');
+    }
   }
 
   // A device becomes trusted only by passing a real code ON it, in
@@ -177,6 +206,15 @@ authRouter.post('/code', asyncHandler(async (req, res) => {
 
   const user = await prisma.user.findUnique({ where: { id: claims.userId } });
   if (!user || user.tenantId !== claims.tenantId) throw new HttpError(401, 'That sign-in has expired. Enter your password again.');
+  // The password may have been set again in the ten minutes since it was
+  // accepted — which is exactly what an admin does to an account they believe
+  // is compromised. Without this the attacker holding the old password and the
+  // emailed code still completes, and the session they get is stamped with the
+  // NEW generation and therefore perfectly valid: the reset would have revoked
+  // their sessions and their devices and left their sign-in in flight.
+  if (claims.sessionsEpoch !== user.sessionsEpoch) {
+    throw new HttpError(401, 'That sign-in has expired. Enter your password again.');
+  }
 
   const ctx = { ip: req.ip ?? 'unknown', requestId: req.requestId, reason: 'code' };
   const outcome = await verifySignInCode(claims.challengeId, user, body.code, ctx);
@@ -330,6 +368,10 @@ authRouter.post('/password/change', authenticate, changeLimit, asyncHandler(asyn
     ip: req.ip ?? 'unknown', requestId: req.requestId,
   });
   if (outcome.kind === 'wrong_current') throw new HttpError(400, 'That is not your current password.');
+  // The account went between the session check and here, or it is not one that
+  // holds a password of its own. Said as itself rather than as "wrong
+  // password", which would send someone hunting for a typo that is not there.
+  if (outcome.kind === 'gone') throw new HttpError(409, 'This account cannot change its password here.');
   if (outcome.kind === 'weak') throw new HttpError(400, outcome.message);
   if (outcome.kind === 'same') throw new HttpError(400, 'Your new password must be different from your current one.');
   // Every session for this account has just been invalidated, including the one

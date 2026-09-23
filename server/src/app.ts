@@ -191,9 +191,18 @@ export function createApp() {
   // Following a link is not guessing a password, but a token IS guessable in
   // principle, so the attempts are bounded. 30 an hour against 256 bits is a
   // formality; it is here so the ceiling exists rather than because anyone
-  // could reach it. `/reset/check` sits under this mount too, deliberately: it
-  // answers whether a token is real, so it is the cheaper oracle of the two.
-  app.use('/api/auth/password/reset', rateLimit({ name: 'password-reset', windowMs: 60 * 60_000, max: 30, failClosed: true }));
+  // could reach it.
+  //
+  // `/reset/check` gets its own budget rather than sharing this one. The page
+  // calls it on every mount, so one honest recovery costs two of the thirty —
+  // and behind an office NAT fifteen recoveries an hour would then close the
+  // recovery path for everybody on that address, which is the exact failure
+  // the sign-in limiter above already had to be rescued from once. It is also
+  // the cheaper oracle of the two, so it gets the looser number, not the
+  // shared one.
+  const isResetCheck = (req: Request) => /^\/api\/auth\/password\/reset\/check(?:[/?]|$)/.test(req.originalUrl);
+  app.use('/api/auth/password/reset', rateLimit({ name: 'password-reset', windowMs: 60 * 60_000, max: 30, failClosed: true, skip: isResetCheck }));
+  app.use('/api/auth/password/reset/check', rateLimit({ name: 'password-reset-check', windowMs: 60 * 60_000, max: 120, failClosed: true }));
   // Changing your own password is limited in routes/auth.ts instead, where it
   // can sit after `authenticate` and key on the user. Mounted here it would run
   // before the session is resolved, fall back to the IP, and throttle a whole

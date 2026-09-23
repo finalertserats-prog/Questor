@@ -18,9 +18,13 @@ const PASSWORD = 'a-long-enough-passphrase';
 interface Sent { to: string; subject: string; text: string }
 let outbox: Sent[] = [];
 let sendFailsOnce = false;
+/** Stands in for a deployment whose mail provider delivers nothing. */
+let undeliverable = false;
 
 const captureProvider = {
-  name: 'capture', configured: true, delivers: true,
+  name: 'capture',
+  configured: true,
+  get delivers() { return !undeliverable; },
   send: async (msg: EmailMessage) => {
     if (sendFailsOnce) { sendFailsOnce = false; throw new Error('the mail server is down'); }
     outbox.push({ to: msg.to, subject: msg.subject, text: msg.text });
@@ -38,7 +42,7 @@ let fx: Fx;
 
 /** The six digits out of the newest sign-in mail. */
 function mailedCode(): string {
-  const mail = [...outbox].reverse().find((m) => m.subject.endsWith('is your Questor sign-in code'));
+  const mail = [...outbox].reverse().find((m) => m.subject === 'Your Questor sign-in code');
   if (!mail) throw new Error('no sign-in code was emailed');
   const m = /\b(\d{6})\b/.exec(mail.text);
   if (!m) throw new Error('the code email carried no code');
@@ -61,6 +65,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   outbox = [];
   sendFailsOnce = false;
+  undeliverable = false;
   await prisma.signInChallenge.deleteMany({});
   await prisma.trustedDevice.deleteMany({});
   await prisma.auditEvent.deleteMany({});
@@ -183,6 +188,21 @@ describe('the code step', () => {
     expect((await signIn(fx.adminEmail)).body.mfa).toBe('code_sent');
   });
 
+  it('leaves the code the person already has alone when a resend fails', async () => {
+    const first = await signIn(fx.adminEmail);
+    const firstCode = mailedCode();
+    await prisma.signInChallenge.updateMany({ data: { createdAt: new Date(Date.now() - RESEND_COOLDOWN_MS - 1000) } });
+
+    // The resend is attempted and the mail does not go. The code the person is
+    // holding must not have been killed by the attempt that failed to replace
+    // it — otherwise a mail wobble leaves them with nothing to enter.
+    sendFailsOnce = true;
+    const second = await signIn(fx.adminEmail);
+    expect(second.status).toBe(503);
+
+    expect((await enterCode(first.body.pending, firstCode)).status).toBe(200);
+  });
+
   it('never puts the code anywhere but the email', async () => {
     const started = await signIn(fx.adminEmail);
     const code = mailedCode();
@@ -217,6 +237,22 @@ describe('the half-signed-in ticket', () => {
     const started = await signIn(fx.adminEmail);
     const { _currentStaffClaims } = await import('../src/realtime/socket.js');
     expect(await _currentStaffClaims(started.body.pending)).toBeNull();
+  });
+
+  it('is dead once the password has been set again', async () => {
+    // The gap between the password and the code is up to ten minutes, and
+    // resetting the password is exactly what an admin does to an account they
+    // believe is compromised. Without this the attacker holding the old
+    // password and the emailed code still completes.
+    const started = await signIn(fx.adminEmail);
+    const code = mailedCode();
+
+    const { changeOwnPassword } = await import('../src/services/passwordReset.js');
+    expect((await changeOwnPassword(fx.adminId, PASSWORD, 'another-long-enough-phrase', { ip: '1.2.3.4' })).kind).toBe('done');
+
+    const res = await enterCode(started.body.pending, code);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toContain('expired');
   });
 
   it('will not let a real session stand in for it', async () => {
@@ -351,6 +387,40 @@ describe('remembering a device', () => {
 
     const again = await request(app).post('/api/auth/login').set('Cookie', [cookie]).send({ email: fx.adminEmail, password: PASSWORD });
     expect(again.body.mfa).toBe('code_sent');
+  });
+});
+
+describe('when this deployment cannot send email at all', () => {
+  it('skips the code rather than locking everyone out, and writes the skip down', async () => {
+    const { _resetEmail: _unused } = await import('../src/providers/email/index.js');
+    expect(_unused).toBeTypeOf('function');
+    undeliverable = true;
+    try {
+      const res = await signIn(fx.adminEmail);
+      expect(res.status).toBe(200);
+      expect(res.body.mfa).toBeUndefined();
+      expect(typeof res.body.token).toBe('string');
+      // Visible, not assumed: "signed in without a code" has its own word in
+      // the trail rather than looking like an organisation with no policy.
+      const actions = (await prisma.auditEvent.findMany({ orderBy: { createdAt: 'asc' } })).map((e) => e.action);
+      expect(actions).toEqual(['auth.code_skipped_undeliverable', 'auth.login']);
+    } finally {
+      undeliverable = false;
+    }
+  });
+
+  it('refuses instead, in production, where somebody chose to run without mail', async () => {
+    undeliverable = true;
+    const before = config.nodeEnv;
+    (config as { nodeEnv: string }).nodeEnv = 'production';
+    try {
+      const res = await signIn(fx.adminEmail);
+      expect(res.status).toBe(503);
+      expect(res.body.error).toContain('cannot send email');
+    } finally {
+      (config as { nodeEnv: string }).nodeEnv = before;
+      undeliverable = false;
+    }
   });
 });
 

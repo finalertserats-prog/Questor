@@ -45,6 +45,9 @@ CREATE TABLE "TrustedDevice" (
 CREATE INDEX "SignInChallenge_userId_createdAt_idx" ON "SignInChallenge"("userId", "createdAt");
 
 -- CreateIndex
+CREATE INDEX "SignInChallenge_expiresAt_idx" ON "SignInChallenge"("expiresAt");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "TrustedDevice_tokenHash_key" ON "TrustedDevice"("tokenHash");
 
 -- CreateIndex

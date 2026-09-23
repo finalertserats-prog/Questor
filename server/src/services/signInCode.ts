@@ -1,5 +1,6 @@
 import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
 import { prisma } from '../db.js';
+import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { getEmail } from '../providers/email/index.js';
 import { renderSignInCodeEmail } from '../providers/email/signInCodeEmail.js';
@@ -78,8 +79,38 @@ export type IssueOutcome =
   | { kind: 'wait'; reason: 'cooldown' | 'locked' | 'hourly'; retryAfterSeconds: number }
   | { kind: 'not_delivered' };
 
+/**
+ * What to do about a code step on a deployment that cannot send email.
+ *
+ * `configured` is not the question — the console provider is perfectly
+ * configured and delivers nothing, which is why the provider interface carries
+ * `delivers` separately and why services/identityAssurance.ts already gates the
+ * analogous candidate code on it. Answering "a code is on its way" where none
+ * can be is how every account under the policy gets locked out with an
+ * info-level log line as the only evidence.
+ *
+ * The two honest answers are different in the two places this can happen:
+ *
+ *  - Development, the test suite and the e2e stack run the console provider by
+ *    design. Refusing there would mean nobody can sign in to their own
+ *    checkout, which is not more secure, only broken. The step is skipped and
+ *    the skip is written into the audit trail and the log, so it is visible
+ *    rather than assumed.
+ *
+ *  - Production reaches this only when somebody set ALLOW_UNDELIVERED_EMAIL
+ *    deliberately, having been told by preflight what it means. There, quietly
+ *    dropping a control the organisation switched on is the worse failure of
+ *    the two, so the sign-in is refused and says why.
+ */
+export type Deliverability = 'ok' | 'skip' | 'refuse';
+
+export function codeDeliverability(env: { nodeEnv: string } = { nodeEnv: config.nodeEnv }): Deliverability {
+  if (getEmail().delivers) return 'ok';
+  return env.nodeEnv === 'production' ? 'refuse' : 'skip';
+}
+
 type Decision =
-  | { kind: 'issue'; challengeId: string; code: string }
+  | { kind: 'issue'; challengeId: string; code: string; retired: string[] }
   | Exclude<IssueOutcome, { kind: 'sent' } | { kind: 'not_delivered' }>;
 
 /**
@@ -114,8 +145,12 @@ async function decideIssue(userId: string, now: Date): Promise<Decision> {
     }
 
     // A new code retires every earlier one: whoever asked twice uses the newest
-    // mail, and the older code must not stay live in an inbox.
-    await tx.signInChallenge.updateMany({ where: { userId, consumedAt: null, supersededAt: null }, data: { supersededAt: now } });
+    // mail, and the older code must not stay live in an inbox. Which ones were
+    // retired is carried back, so a send that fails can put them back rather
+    // than leaving the person with no working code at all.
+    const live = await tx.signInChallenge.findMany({ where: { userId, consumedAt: null, supersededAt: null }, select: { id: true } });
+    const retired = live.map((r) => r.id);
+    if (retired.length) await tx.signInChallenge.updateMany({ where: { id: { in: retired } }, data: { supersededAt: now } });
 
     const code = generateCode();
     // Created first, hashed against its own id — so the row exists before the
@@ -125,7 +160,26 @@ async function decideIssue(userId: string, now: Date): Promise<Decision> {
       select: { id: true },
     });
     await tx.signInChallenge.update({ where: { id: row.id }, data: { codeHash: hashCode(row.id, code) } });
-    return { kind: 'issue', challengeId: row.id, code };
+    return { kind: 'issue', challengeId: row.id, code, retired };
+  });
+}
+
+/**
+ * Take back a code whose email never went.
+ *
+ * The codes it retired come back only if nothing newer was issued meanwhile —
+ * a second attempt whose send succeeded — so a stale code can never be revived
+ * over a live one. The same shape as services/identityCode.ts's undoIssue, for
+ * the same reason: without it, a failed send leaves the person holding a code
+ * that was quietly killed by the attempt that failed to replace it.
+ */
+async function undoIssue(userId: string, challengeId: string, retired: string[], issuedAt: Date): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.signInChallenge.deleteMany({ where: { id: challengeId } });
+    const newer = await tx.signInChallenge.count({ where: { userId, createdAt: { gte: issuedAt } } });
+    if (newer === 0 && retired.length) {
+      await tx.signInChallenge.updateMany({ where: { id: { in: retired }, supersededAt: issuedAt }, data: { supersededAt: null } });
+    }
   });
 }
 
@@ -148,8 +202,12 @@ export async function issueSignInCode(
       validMinutes: CODE_TTL_MS / 60_000, ip: ctx.ip,
     }));
   } catch (err) {
+    // A send that timed out may still have gone (see providers/email), so this
+    // is "we do not know it arrived" rather than "it did not". Taking the new
+    // code back is still right: the person cannot be told to enter a code we
+    // cannot promise, and the one they held before is restored.
     logger.error({ userId: user.id, err: err instanceof Error ? err.message : String(err) }, 'Sign-in code email was not sent');
-    await prisma.signInChallenge.deleteMany({ where: { id: decision.challengeId } });
+    await undoIssue(user.id, decision.challengeId, decision.retired, now);
     return { kind: 'not_delivered' };
   }
 
@@ -204,8 +262,12 @@ async function checkEntry(challengeId: string, userId: string, code: string, now
       return consumed.count === 1 ? { kind: 'verified' } : { kind: 'expired' };
     }
 
+    // The row was just updated in this transaction, so it is there; falling
+    // back to `live.attempts + 1` rather than to MAX keeps a lost read from
+    // silently reporting "no tries left" and locking a challenge that had
+    // three left.
     const after = await tx.signInChallenge.findUnique({ where: { id: live.id }, select: { attempts: true } });
-    const attemptsLeft = MAX_ATTEMPTS - (after?.attempts ?? MAX_ATTEMPTS);
+    const attemptsLeft = MAX_ATTEMPTS - (after?.attempts ?? live.attempts + 1);
     if (attemptsLeft > 0) return { kind: 'wrong', attemptsLeft };
     await tx.signInChallenge.updateMany({ where: { id: live.id, consumedAt: null, lockedAt: null }, data: { lockedAt: now } });
     return { kind: 'locked', retryAfterSeconds: LOCKOUT_MS / 1000, event: 'locked' };
@@ -220,10 +282,18 @@ export async function verifySignInCode(
   now = new Date(),
 ): Promise<VerifyOutcome> {
   const code = normalizeCode(rawCode);
-  // A code that is not six digits is not compared against anything, and is
-  // still counted as a wrong entry by the caller's rate limiter — otherwise
-  // "aaaaaa" would be a free probe.
-  if (!code) return { kind: 'wrong', attemptsLeft: MAX_ATTEMPTS };
+  // A code that is not six digits is not compared against anything: it cannot
+  // be right, and running it through the attempt counter would let anyone burn
+  // a person's five tries with nonsense. The route's limiter is what bounds
+  // it, and the attempt is still written down — otherwise the one shape of
+  // guessing that leaves no trace is the cheapest one to make.
+  if (!code) {
+    await logAudit({
+      tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'auth.code_failed',
+      entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, outcome: 'malformed' },
+    });
+    return { kind: 'wrong', attemptsLeft: MAX_ATTEMPTS };
+  }
 
   const { event, ...outcome } = await checkEntry(challengeId, user.id, code, now);
   if (outcome.kind === 'verified') {

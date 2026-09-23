@@ -491,6 +491,40 @@ describe('an admin sending a colleague a link', () => {
     expect(JSON.stringify(res.body)).not.toContain(linkToken());
   });
 
+  it('tells the admin what actually happened, rather than always "on its way"', async () => {
+    // No enumeration question here — the admin is looking at the row — and the
+    // cooldown is shared with the colleague's own "Forgot password", so
+    // "nothing was sent" is a thing an admin needs to be told.
+    await adminSend(fx.adminToken, fx.userId);
+    await settlePasswordResets();
+    outbox = [];
+
+    const second = await adminSend(fx.adminToken, fx.userId);
+    expect(second.status).toBe(200);
+    expect(second.body.ok).toBe(false);
+    expect(second.body.outcome).toBe('wait');
+    expect(second.body.message).toContain('in the last minute');
+    expect(outbox).toEqual([]);
+  });
+
+  it('says so when the mail could not go, rather than claiming it did', async () => {
+    sendFailsOnce = true;
+    const res = await adminSend(fx.adminToken, fx.userId);
+    expect(res.body.ok).toBe(false);
+    expect(res.body.message).toContain('Nothing was sent');
+  });
+
+  it('leaves a link the colleague already holds alone when a send fails', async () => {
+    await requestPasswordReset(fx.userEmail, { ip: '1.2.3.4' }, new Date(Date.now() - RESEND_COOLDOWN_MS - 1000));
+    const held = linkToken();
+
+    sendFailsOnce = true;
+    expect((await adminSend(fx.adminToken, fx.userId)).body.ok).toBe(false);
+
+    // The attempt that failed to replace it must not have killed it.
+    expect((await reset(held, ANOTHER)).status).toBe(200);
+  });
+
   it('is recorded as an admin having sent it', async () => {
     await adminSend(fx.adminToken, fx.userId);
     await settlePasswordResets();

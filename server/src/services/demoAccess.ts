@@ -232,7 +232,12 @@ export async function redeemDemoAccess(token: string, res: import('express').Res
   // The sample interview's candidate link lives exactly as long as the demo:
   // a copied link must not keep a sandbox interview (and its speech) running.
   await expireDemoInterviewLinks(grant.tenant.id, grant.sessionEndsAt);
-  const claims: AuthClaims = { userId: grant.user.id, tenantId: grant.tenant.id, role: DEMO_ROLE, email: grant.user.email, demo: true, demoGrantId: grant.id };
+  // `pv` stamps the session generation, as every other issued session does.
+  // A demo account's is always 0 — nothing ever changes its password — so
+  // leaving it out happened to work; stating it means this does not quietly
+  // become the one session that survives a revocation.
+  const holder = await prisma.user.findUniqueOrThrow({ where: { id: grant.user.id }, select: { sessionsEpoch: true } });
+  const claims: AuthClaims = { userId: grant.user.id, tenantId: grant.tenant.id, role: DEMO_ROLE, email: grant.user.email, demo: true, demoGrantId: grant.id, pv: holder.sessionsEpoch };
   // Cookie only: a bearer token in the body is readable by any script on the page.
   issueSession(res, claims, { ttlSeconds: SESSION_TTL_SECONDS });
   await logAudit({ tenantId: grant.tenant.id, actorType: 'system', actorId: grant.user.id, action: 'demo.redeemed', entityType: 'DemoGrant', entityId: grant.id });

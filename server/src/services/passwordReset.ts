@@ -102,7 +102,7 @@ function eligible(user: { role: string }): boolean {
 }
 
 type Decision =
-  | { kind: 'issue'; tokenId: string; token: string }
+  | { kind: 'issue'; tokenId: string; token: string; retired: string[] }
   | { kind: 'wait'; reason: 'cooldown' | 'hourly' };
 
 /**
@@ -121,10 +121,13 @@ async function decideIssue(userId: string, ctx: RequestContext, now: Date): Prom
 
     // Asking again invalidates every earlier link: a person who requests twice
     // uses the newest mail, and the older one must not stay live in an inbox.
-    await tx.passwordResetToken.updateMany({
-      where: { userId, consumedAt: null, supersededAt: null },
-      data: { supersededAt: now },
+    // Which ones were retired is carried back, so a send that fails can put
+    // them back rather than leaving the person with no working link at all.
+    const live = await tx.passwordResetToken.findMany({
+      where: { userId, consumedAt: null, supersededAt: null }, select: { id: true },
     });
+    const retired = live.map((r) => r.id);
+    if (retired.length) await tx.passwordResetToken.updateMany({ where: { id: { in: retired } }, data: { supersededAt: now } });
 
     const token = generateResetToken();
     const row = await tx.passwordResetToken.create({
@@ -138,7 +141,26 @@ async function decideIssue(userId: string, ctx: RequestContext, now: Date): Prom
       },
       select: { id: true },
     });
-    return { kind: 'issue', tokenId: row.id, token };
+    return { kind: 'issue', tokenId: row.id, token, retired };
+  });
+}
+
+/**
+ * Take back a link whose email never went.
+ *
+ * The links it retired come back only if nothing newer was issued meanwhile —
+ * a second press whose send succeeded — so a stale link can never be revived
+ * over a live one. The same shape as services/identityCode.ts's undoIssue, for
+ * the same reason: without it, a failed send leaves the person holding a link
+ * that was quietly killed by the attempt that failed to replace it.
+ */
+async function undoIssue(userId: string, tokenId: string, retired: string[], issuedAt: Date): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    await tx.passwordResetToken.deleteMany({ where: { id: tokenId } });
+    const newer = await tx.passwordResetToken.count({ where: { userId, createdAt: { gte: issuedAt } } });
+    if (newer === 0 && retired.length) {
+      await tx.passwordResetToken.updateMany({ where: { id: { in: retired }, supersededAt: issuedAt }, data: { supersededAt: null } });
+    }
   });
 }
 
@@ -172,9 +194,13 @@ export async function requestPasswordReset(rawEmail: string, ctx: RequestContext
       sentByAdmin: ctx.requestedBy === 'admin' || ctx.requestedBy === 'operator',
     }));
   } catch (err) {
-    // A link nobody received must not hold the cooldown against the next try.
+    // A link nobody received must not hold the cooldown against the next try,
+    // and must not have killed the link the person may already be holding. A
+    // send that timed out may still have gone (see providers/email), so this
+    // is "we cannot promise it arrived" rather than "it did not" — taking the
+    // new one back is right either way.
     logger.error({ userId: user.id, err: err instanceof Error ? err.message : String(err) }, 'Password reset email was not sent');
-    await prisma.passwordResetToken.deleteMany({ where: { id: decision.tokenId } });
+    await undoIssue(user.id, decision.tokenId, decision.retired, now);
     return { kind: 'not_delivered' };
   }
   return { kind: 'sent' };
@@ -313,6 +339,13 @@ export async function completePasswordReset(token: string, newPassword: string, 
       where: { userId: user.id, consumedAt: null, supersededAt: null },
       data: { supersededAt: now },
     });
+    // And so does any sign-in half-finished on the old password. Without this,
+    // someone holding the old password and an emailed code completes their
+    // sign-in after the reset that was meant to stop them.
+    await tx.signInChallenge.updateMany({
+      where: { userId: user.id, consumedAt: null, supersededAt: null },
+      data: { supersededAt: now },
+    });
     return true;
   });
   if (!consumed) {
@@ -322,22 +355,31 @@ export async function completePasswordReset(token: string, newPassword: string, 
     return { kind: 'invalid' };
   }
 
-  // The session generation moving on already makes every trusted-device grant
-  // fail its binding check, so this changes no outcome — it makes the list in
-  // Settings tell the truth, instead of showing devices that would silently
-  // stop working.
-  await revokeAllTrustedDevices(user.id, user.tenantId, { ip: ctx.ip, requestId: ctx.requestId, reason: 'password_reset' });
-  await logAudit({
-    tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'password.reset_completed',
-    entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, otherSessionsEnded: true, trustedDevicesRevoked: true },
+  // Everything from here is after the fact. The password HAS changed and the
+  // link HAS been spent, so none of it may turn into a failure the caller
+  // sees: telling someone their reset did not work, when it did, sends them
+  // back to a link that is now dead with a password they do not know they have.
+  await afterTheFact('password reset', async () => {
+    // The session generation moving on already makes every trusted-device
+    // grant fail its binding check, so this changes no outcome — it makes the
+    // list in Settings tell the truth, instead of showing devices that would
+    // silently stop working.
+    const devices = await revokeAllTrustedDevices(user.id, user.tenantId, { ip: ctx.ip, requestId: ctx.requestId, reason: 'password_reset' });
+    await logAudit({
+      tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'password.reset_completed',
+      entityType: 'User', entityId: user.id, requestId: ctx.requestId,
+      after: { ip: ctx.ip, otherSessionsEnded: true, trustedDevicesRevoked: devices },
+    });
+    await notifyPasswordChanged(user, 'reset', ctx, now);
   });
-  await notifyPasswordChanged(user, 'reset', ctx, now);
   return { kind: 'done', userId: user.id, tenantId: user.tenantId };
 }
 
 export type ChangeOutcome =
   | { kind: 'done'; sessionsEpoch: number }
   | { kind: 'wrong_current' }
+  /** The account went, or is not one that holds a password of its own. */
+  | { kind: 'gone' }
   | { kind: 'same' }
   | { kind: 'weak'; message: string };
 
@@ -352,7 +394,11 @@ export async function changeOwnPassword(userId: string, currentPassword: string,
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, tenantId: true, email: true, name: true, role: true, passwordHash: true } });
   // The session middleware already refused an unknown user, so this is a
   // deleted-mid-request edge rather than a path anyone reaches by asking.
-  if (!user) return { kind: 'wrong_current' };
+  if (!user) return { kind: 'gone' };
+  // The same eligibility the reset path applies, so the two cannot drift: a
+  // demo visitor's account is a throwaway with a random password and an
+  // expiry, and there is nothing there to change.
+  if (!eligible(user)) return { kind: 'gone' };
 
   if (!verifyPassword(currentPassword, user.passwordHash)) {
     await logAudit({
@@ -373,16 +419,46 @@ export async function changeOwnPassword(userId: string, currentPassword: string,
     // A password the owner has just replaced must not still be reachable
     // through a link somebody asked for earlier.
     await tx.passwordResetToken.updateMany({ where: { userId: user.id, consumedAt: null, supersededAt: null }, data: { supersededAt: now } });
+    // And any sign-in half-finished on the password that has just been
+    // replaced — the same reason the reset path kills them.
+    await tx.signInChallenge.updateMany({ where: { userId: user.id, consumedAt: null, supersededAt: null }, data: { supersededAt: now } });
     return updated.sessionsEpoch;
   });
 
-  await revokeAllTrustedDevices(user.id, user.tenantId, { ip: ctx.ip, requestId: ctx.requestId, reason: 'password_changed' });
-  await logAudit({
-    tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'password.changed',
-    entityType: 'User', entityId: user.id, requestId: ctx.requestId, after: { ip: ctx.ip, otherSessionsEnded: true, trustedDevicesRevoked: true },
+  // After the fact, and never a reason to fail the caller — the password has
+  // already changed, and the epoch bump has already ended the caller's own
+  // session. A throw here would sign them out of the tab they made the change
+  // in while telling them it did not happen.
+  await afterTheFact('password change', async () => {
+    const devices = await revokeAllTrustedDevices(user.id, user.tenantId, { ip: ctx.ip, requestId: ctx.requestId, reason: 'password_changed' });
+    await logAudit({
+      tenantId: user.tenantId, actorType: 'user', actorId: user.id, action: 'password.changed',
+      entityType: 'User', entityId: user.id, requestId: ctx.requestId,
+      after: { ip: ctx.ip, otherSessionsEnded: true, trustedDevicesRevoked: devices },
+    });
+    await notifyPasswordChanged(user, 'change', ctx, now);
   });
-  await notifyPasswordChanged(user, 'change', ctx, now);
   return { kind: 'done', sessionsEpoch: epoch };
+}
+
+/**
+ * Work that happens after a password has already changed.
+ *
+ * It is bookkeeping and notification: revoking devices the epoch bump has
+ * already neutered, writing the audit row, sending the "your password changed"
+ * mail. None of it can undo the change, so none of it may be reported as the
+ * change having failed — a person told their reset did not work goes back to a
+ * link that is now spent, holding a password they do not know is theirs.
+ *
+ * It is still loud in the log, because an audit row that silently went missing
+ * is the one thing here nobody would ever notice.
+ */
+async function afterTheFact(what: string, work: () => Promise<void>): Promise<void> {
+  try {
+    await work();
+  } catch (err) {
+    logger.error({ what, err: err instanceof Error ? err.message : String(err) }, 'Bookkeeping after a password change failed; the password itself did change');
+  }
 }
 
 /**

@@ -29,6 +29,8 @@ import { reportMissingOperatorAccounts } from './middleware/platformOperator.js'
 import { markDraining } from './services/drainState.js';
 import { countLiveSessions, inFlightRequests } from './realtime/liveSessions.js';
 import { createShutdown } from './services/shutdown.js';
+import { startCredentialPurge } from './services/credentialPurgeJob.js';
+import { settlePasswordResets } from './services/passwordReset.js';
 
 preflight();
 startRetentionSweep();
@@ -53,6 +55,8 @@ await rescheduleLegacyFeedbackEmails().catch((err: unknown) => {
 startFeedbackEmailDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();
+// Spent reset links, spent sign-in codes and ended device grants.
+startCredentialPurge();
 startJob({ name: JD_DRAFT_JOB.name, intervalMs: JD_DRAFT_JOB.intervalMs, ttlMs: JD_DRAFT_JOB.ttlMs, fn: runJdDraftJob });
 startCatalogRefreshSchedule();
 // HR-Box emails, each behind its own switch (both off by default): candidate
@@ -134,6 +138,13 @@ const shutdown = createShutdown({
         setTimeout(() => httpServer.closeAllConnections(), HTTP_CLOSE_GRACE_MS).unref();
       }),
     },
+    // A reset asked for a moment ago is still finding its account and handing
+    // its mail to a sender. The public route answered 202 before any of that
+    // happened — deliberately, so the reply cannot be timed — which means
+    // nothing else in this list can see the work. Without this step a deploy
+    // drops the link and the person waits at an inbox for one that is never
+    // coming. Before smtp-senders, which kills senders rather than waiting.
+    { name: 'password-resets', run: () => settlePasswordResets() },
     // Sender processes still running are killed, not waited for: a message
     // cut off mid-conversation is never accepted, and a review can be
     // released once the lock expires.

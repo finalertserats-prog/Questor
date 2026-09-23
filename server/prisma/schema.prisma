@@ -135,6 +135,9 @@ model SignInChallenge {
   createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])
+  // The hourly purge sweeps by expiry; without this it reads the whole table,
+  // which is one row per sign-in since the deployment started.
+  @@index([expiresAt])
 }
 
 /// "Keep me signed in on this device for a week." Opt-in, per device, and

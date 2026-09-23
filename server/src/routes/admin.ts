@@ -5,7 +5,7 @@ import { prisma, parseJsonStrict, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { isPlatformOperator, isReservedOperatorEmail, requirePlatformOperator } from '../middleware/platformOperator.js';
 import { rateLimit } from '../middleware/rateLimit.js';
-import { startPasswordResetRequest } from '../services/passwordReset.js';
+import { startPasswordResetRequest, requestPasswordReset, type RequestOutcome as ResetRequestOutcome } from '../services/passwordReset.js';
 import { grantMfaBypass, BYPASS_WINDOW_MS } from '../services/signInCode.js';
 import { revokeAllTrustedDevices } from '../services/trustedDevice.js';
 import { config } from '../config.js';
@@ -66,7 +66,11 @@ adminRouter.get('/providers', requireCapability('admin:manage'), asyncHandler(as
     llm: { provider: llm.name, enabled: llm.enabled, configured: llm.enabled, mode: llm.enabled ? 'remote' : 'built-in heuristic' },
     stt: sttCapability(),
     tts: ttsCapability(),
-    email: { provider: getEmail().name, configured: getEmail().configured },
+    // `delivers` as well as `configured`: the console provider is perfectly
+    // configured and sends nothing, and that is the difference between a
+    // sign-in code arriving and every account under the policy being locked
+    // out. Shown so the console can say so rather than leaving it to be found.
+    email: { provider: getEmail().name, configured: getEmail().configured, delivers: getEmail().delivers },
     // This organisation's own ATS, not a deployment-wide one.
     ats: { provider: (await findConnection(req.auth!.tenantId))?.provider ?? 'none', configured: await tenantAtsReady(req.auth!.tenantId) },
     meeting,
@@ -702,31 +706,59 @@ const signInPolicySchema = z.object({
   listed: z.boolean().optional(),
 }).strict();
 
-adminRouter.put('/signin-policy', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
-  const patch = signInPolicySchema.parse(req.body);
-  const tenant = await prisma.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true, listed: true, mfaEpoch: true } });
-  const before = parseJsonStrict<Record<string, unknown>>(tenant.policyJson, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
-  const wasPolicy = mfaPolicyOf(before);
-  const nowPolicy = patch.mfaPolicy ?? wasPolicy;
-  const changed = nowPolicy !== wasPolicy;
+// Changing the code rule retires every remembered device in the organisation,
+// so flipping it back and forth is a way for one admin to keep every colleague
+// entering codes all day. Generous — an admin settling on a policy might save
+// three or four times — and a ceiling on using it as a weapon.
+const signInPolicyLimit = rateLimit({
+  name: 'admin-signin-policy', windowMs: 60 * 60_000, max: 20,
+  keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
+});
 
-  const updated = await prisma.tenant.update({
-    where: { id: req.auth!.tenantId },
-    data: {
-      policyJson: JSON.stringify({ ...before, mfaPolicy: nowPolicy }),
-      ...(patch.listed === undefined ? {} : { listed: patch.listed }),
-      // Only on a real change. Bumping it on every save would sign everyone's
-      // remembered devices out whenever an admin opened the page and pressed
-      // save without changing anything.
-      ...(changed ? { mfaEpoch: { increment: 1 } } : {}),
-    },
-    select: { listed: true, mfaEpoch: true },
+// Forgetting a colleague's devices is cheap for the admin and expensive for
+// the colleague, who then enters a code on every device they own.
+const revokeDevicesLimit = rateLimit({
+  name: 'admin-revoke-devices', windowMs: 60 * 60_000, max: 30,
+  keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
+});
+
+adminRouter.put('/signin-policy', requireCapability('admin:manage'), signInPolicyLimit, asyncHandler(async (req, res) => {
+  const patch = signInPolicySchema.parse(req.body);
+  // Read and write in one serialised transaction. policyJson is one column
+  // holding every organisation setting, so a read-modify-write outside a
+  // transaction silently drops whichever of two concurrent saves finishes
+  // first — and here one of the two is a security control.
+  const { before, wasPolicy, nowPolicy, changed, updated } = await prisma.$transaction(async (tx) => {
+    const tenant = await tx.tenant.findUniqueOrThrow({ where: { id: req.auth!.tenantId }, select: { policyJson: true, listed: true, mfaEpoch: true } });
+    // Lenient on read, like the GET beside it: a policyJson that cannot be
+    // parsed should not make the page that fixes it impossible to save.
+    const current = parseJsonOptional<Record<string, unknown>>(tenant.policyJson, {}, { model: 'Tenant', id: req.auth!.tenantId, field: 'policyJson' });
+    const was = mfaPolicyOf(current);
+    const next = patch.mfaPolicy ?? was;
+    const row = await tx.tenant.update({
+      where: { id: req.auth!.tenantId },
+      data: {
+        policyJson: JSON.stringify({ ...current, mfaPolicy: next }),
+        ...(patch.listed === undefined ? {} : { listed: patch.listed }),
+        // Only on a real change. Bumping it on every save would sign everyone's
+        // remembered devices out whenever an admin opened the page and pressed
+        // save without changing anything.
+        ...(next !== was ? { mfaEpoch: { increment: 1 } } : {}),
+      },
+      select: { listed: true, mfaEpoch: true },
+    });
+    return { before: { mfaPolicy: was, listed: tenant.listed }, wasPolicy: was, nowPolicy: next, changed: next !== was, updated: row };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch((err: unknown) => {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034') {
+      throw new HttpError(409, 'Another change to this organisation happened at the same moment. Try again.');
+    }
+    throw err;
   });
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'tenant.signin_policy_updated',
     entityType: 'Tenant', entityId: req.auth!.tenantId, requestId: req.requestId,
-    before: { mfaPolicy: wasPolicy, listed: tenant.listed },
+    before,
     after: { mfaPolicy: nowPolicy, listed: updated.listed, ip: req.ip ?? 'unknown', trustedDevicesRetired: changed },
   });
 
@@ -902,16 +934,38 @@ adminRouter.patch('/users/:id/role', requireCapability('admin:manage'), asyncHan
  */
 adminRouter.post('/users/:id/password-reset', requireCapability('admin:manage'), passwordResetSendLimit, asyncHandler(async (req, res) => {
   const target = await tenantUser(req.auth!.tenantId, req.params.id);
-  // Sending is fire-and-forget for the same reason the public route is: the
-  // admin is told what will happen, not what the mail server said.
-  startPasswordResetRequest(target.email, {
+  // Awaited, unlike the public route. The reason that one answers before doing
+  // the work is enumeration — it must not say whether the address has an
+  // account — and there is no such question here: the admin is looking at the
+  // row. So they are told what actually happened, which matters, because the
+  // cooldown and the hourly ceiling are shared with the colleague's own
+  // "Forgot password" and "nothing was sent" is a thing an admin needs to know.
+  const outcome = await requestPasswordReset(target.email, {
     ip: req.ip ?? 'unknown', requestId: req.requestId, requestedBy: 'admin', requestedById: req.auth!.userId,
   });
-  res.status(202).json({
-    ok: true,
-    message: `A link to set a new password is on its way to ${target.email}. It works once and expires in an hour.`,
+  res.status(outcome.kind === 'sent' ? 202 : 200).json({
+    ok: outcome.kind === 'sent',
+    outcome: outcome.kind,
+    message: messageForAdmin(outcome, target.email),
   });
 }));
+
+function messageForAdmin(outcome: ResetRequestOutcome, email: string): string {
+  switch (outcome.kind) {
+    case 'sent':
+      return `A link to set a new password is on its way to ${email}. It works once and expires in an hour.`;
+    case 'wait':
+      return outcome.reason === 'cooldown'
+        ? `A link was sent to ${email} in the last minute — they should have it. Wait a moment before sending another.`
+        : `${email} has been sent several links in the last hour. Ask them to check their spam folder before sending more.`;
+    case 'not_delivered':
+      return `We could not email ${email}. Nothing was sent; try again shortly.`;
+    default:
+      // 'no_account': the row exists in this tenant, so this is a demo visitor
+      // or an account that cannot hold a password of its own.
+      return `${email} does not sign in with a password, so there is nothing to reset.`;
+  }
+}
 
 /**
  * Forget every device a colleague asked to be remembered on.
@@ -921,7 +975,7 @@ adminRouter.post('/users/:id/password-reset', requireCapability('admin:manage'),
  * the standing permission to skip the code step, which is the thing a lost
  * laptop carries and a lost password does not.
  */
-adminRouter.post('/users/:id/revoke-devices', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
+adminRouter.post('/users/:id/revoke-devices', requireCapability('admin:manage'), revokeDevicesLimit, asyncHandler(async (req, res) => {
   const target = await tenantUser(req.auth!.tenantId, req.params.id);
   const count = await revokeAllTrustedDevices(target.id, req.auth!.tenantId, {
     ip: req.ip ?? 'unknown', requestId: req.requestId, actorId: req.auth!.userId, reason: 'admin_revoked',
@@ -979,6 +1033,22 @@ adminRouter.post('/tenants/:tenantId/users/:id/mfa-bypass', requirePlatformOpera
     where: { id: req.params.id, tenantId: req.params.tenantId }, select: { id: true, tenantId: true, email: true },
   });
   if (!target) throw new HttpError(404, 'User not found');
+  // Never to yourself.
+  //
+  // domain/mfaPolicy.ts says the platform owner is asked for a code whatever
+  // an organisation has chosen, and deviceMayStandIn is careful to refuse a
+  // trusted device for exactly that account. A self-grant walks around both:
+  // grant, spend, grant again, and the strongest account on the platform is
+  // password-only for as long as its holder likes — with the record of it
+  // written by the person being watched.
+  //
+  // Another operator can still grant it, which is the shape this should have:
+  // a second pair of hands. A deployment with one operator recovers a mail
+  // outage by fixing mail or by naming a second operator, both of which are
+  // decisions at the right level rather than a button.
+  if (target.id === req.auth!.userId) {
+    throw new HttpError(403, 'A platform owner cannot grant themselves a sign-in bypass. Ask another platform owner.');
+  }
   const until = await grantMfaBypass(target, { id: req.auth!.userId }, { ip: req.ip ?? 'unknown', requestId: req.requestId, reason });
   res.status(202).json({
     ok: true, until: until.toISOString(), minutes: BYPASS_WINDOW_MS / 60_000,

@@ -29,7 +29,13 @@ export function renderSignInCodeEmail(opts: {
 
   return brandedEmail({
     to: opts.to,
-    subject: `${opts.code} is your Questor sign-in code`,
+    // The code is deliberately NOT in the subject. A subject line is retained
+    // and logged far more widely than a body — SMTP relays, anti-spam
+    // gateways, mailbox search indexes, and the lock screen of a phone sitting
+    // face-up on a desk. Several large providers do put it there; the
+    // convenience is not worth a second factor readable without unlocking
+    // anything.
+    subject: 'Your Questor sign-in code',
     text,
     html: [
       `<p style="margin:0 0 14px">${escapeHtml(greeting)}</p>`,

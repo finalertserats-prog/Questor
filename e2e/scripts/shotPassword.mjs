@@ -75,14 +75,10 @@ await shoot('reset', `/reset-password#${seeded.token}`, {
 await shoot('reset-dead', '/reset-password#a-link-that-was-never-issued-at-all', {
   prepare: async (page) => { await page.getByText(/This link is no longer valid/).waitFor({ timeout: 10_000 }); },
 });
-await shoot('signin-code', `/o/${signin.slug}`, {
-  prepare: async (page) => {
-    await page.getByLabel('Email').fill(signin.email);
-    await page.getByLabel('Password').fill(signin.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
-    await page.getByLabel('Sign-in code').waitFor({ timeout: 15_000 });
-  },
-});
+// The code step is not photographed here: this stack runs the console mail
+// provider, so the server skips the code rather than asking for one nobody
+// could receive. The password step, which carries the remembered-device offer,
+// is the part of the new sign-in a browser can show.
 await shoot('signin-password', `/o/${signin.slug}`, {
   prepare: async (page) => { await page.getByLabel(/Keep me signed in on this device/).waitFor({ timeout: 10_000 }); },
 });
