@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { createElement } from 'react';
+import { createElement, StrictMode } from 'react';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../src/components/Toast';
@@ -124,6 +124,23 @@ describe('the set-a-new-password page', () => {
     // And it went to the server in a body, never in the request line.
     expect(posts[0].path).toBe('/auth/password/reset/check');
     expect(posts[0].body).toEqual({ token: 'a-token-value-long-enough' });
+  });
+
+  it('survives the effect running twice, which is what React does in development', async () => {
+    // The first pass read the token and cleared the hash; the second found an
+    // empty hash and called a perfectly good link expired — so the person was
+    // sent to spend one of their five links an hour while the real one sat in
+    // their inbox looking broken. Only reproducible under StrictMode, which is
+    // how it reached e2e without any unit test noticing.
+    window.location.hash = '#a-token-value-long-enough';
+    postResult = () => ({ usable: true });
+    const { ResetPassword } = await import('../src/pages/ResetPassword');
+
+    render(createElement(StrictMode, null, createElement(MemoryRouter, null, createElement(ToastProvider, null, createElement(ResetPassword)))));
+
+    expect(await screen.findByLabelText('New password')).toBeTruthy();
+    expect(screen.queryByText(/This link is no longer valid/i)).toBeNull();
+    expect(window.location.hash).toBe('');
   });
 
   it('shows the dead-link wording for a link with no token at all', async () => {

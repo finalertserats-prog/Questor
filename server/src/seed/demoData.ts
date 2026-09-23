@@ -161,6 +161,14 @@ export async function createDemoData(): Promise<DemoIds> {
         disclosureText: "So you know how this works: while you speak, your voice is captured and sent to a speech-to-text service to be written down. No recording of your voice is stored — the written transcript is what is kept, and it is what our hiring team reviews. I'll ask about your relevant experience — take your time, and feel free to ask me to repeat anything or request a short pause.",
         recordingDefault: true, retentionDaysRecording: 90, retentionDaysTranscript: 180,
         allowedModules: ['coding', 'case'], languages: ['en'], humanReviewRequired: true,
+        // The sandbox does not ask for a sign-in code. A real organisation
+        // defaults to asking its admins (domain/mfaPolicy.ts) and this account
+        // is an admin — but the seed exists for development, the test suite
+        // and the e2e stack, none of which can deliver an email, so a code
+        // here would be one nobody could ever receive. Stated rather than
+        // inherited, so the fixture says what it is instead of depending on a
+        // provider check somewhere else to rescue it.
+        mfaPolicy: 'off',
       }),
     },
   });

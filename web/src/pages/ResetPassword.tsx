@@ -23,7 +23,21 @@ type Check = 'checking' | 'usable' | 'dead' | 'unreachable';
 export function ResetPassword() {
   const nav = useNavigate();
   const toast = useToast();
-  const [token, setToken] = useState('');
+  /**
+   * Read once, during the first render, before anything can take it away.
+   *
+   * It used to be read inside the effect that clears it — and React runs an
+   * effect twice on mount in development. The first pass read the token and
+   * wiped the hash; the second pass found an empty hash and declared a
+   * perfectly good link expired. The person was then told to ask for another,
+   * spending one of the five they get an hour, and the real link stayed live
+   * in their inbox looking broken.
+   *
+   * A useState initialiser runs once per mounted component, so the token
+   * survives the second pass. Reading a value and destroying its source in the
+   * same breath is the shape of the bug; this separates them.
+   */
+  const [token] = useState(() => tokenFromHash(window.location.hash));
   const [check, setCheck] = useState<Check>('checking');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -31,16 +45,15 @@ export function ResetPassword() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const found = tokenFromHash(window.location.hash);
-    setToken(found);
-    if (!found) { setCheck('dead'); return; }
-    // Cleared from the address bar once it is in memory. replaceState rather
-    // than a navigation, so the page is not remounted and the token is not
-    // pushed onto the history stack a second time.
+    if (!token) { setCheck('dead'); return undefined; }
+    // Cleared from the address bar once it is in memory, so it does not sit in
+    // browser history on a shared machine. replaceState rather than a
+    // navigation, so the page is not remounted and the token is not pushed
+    // onto the history stack a second time.
     window.history.replaceState(null, '', window.location.pathname);
 
     let active = true;
-    api.post<{ usable: boolean }>('/auth/password/reset/check', { token: found })
+    api.post<{ usable: boolean }>('/auth/password/reset/check', { token })
       .then((data) => { if (active) setCheck(data.usable ? 'usable' : 'dead'); })
       // An outage is not a dead link, and saying it is sends the person to
       // burn one of the five links they get an hour on a link that was fine.

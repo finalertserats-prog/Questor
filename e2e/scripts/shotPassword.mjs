@@ -23,7 +23,7 @@ const themes = ['light', 'dark'];
 const seeded = JSON.parse(
   execFileSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'e2e/scripts/seedPasswordReset.ts', `shot${Date.now()}`], {
     cwd: root, env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL ?? 'file:./data/questor.db' },
-  }).toString().trim().split('\n').pop(),
+  }).toString().trim().split(/\r?\n/).pop(),
 );
 
 // An organisation whose policy asks for a code, so the code step can be
@@ -70,7 +70,7 @@ await shoot('forgot-sent', '/forgot-password', {
   },
 });
 await shoot('reset', `/reset-password#${seeded.token}`, {
-  prepare: async (page) => { await page.getByLabel('New password').waitFor({ timeout: 10_000 }); },
+  prepare: async (page) => { await page.getByLabel('New password', { exact: true }).waitFor({ timeout: 10_000 }); },
 });
 await shoot('reset-dead', '/reset-password#a-link-that-was-never-issued-at-all', {
   prepare: async (page) => { await page.getByText(/This link is no longer valid/).waitFor({ timeout: 10_000 }); },
