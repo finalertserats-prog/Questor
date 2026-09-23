@@ -66,9 +66,16 @@ export function unseenIndexes(all: readonly number[], seen: readonly number[]): 
   return all.filter((index) => !reported.has(index));
 }
 
+/** Indexes the report claims that this interview does not have. */
+export function inventedIndexes(all: readonly number[], seen: readonly number[]): number[] {
+  const real = new Set(all);
+  return [...new Set(seen)].filter((index) => !real.has(index));
+}
+
 export type ReadRefusal =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: 'incomplete'; readonly unseen: readonly number[]; readonly total: number }
+  | { readonly ok: false; readonly reason: 'invented'; readonly invented: readonly number[] }
   | { readonly ok: false; readonly reason: 'no_attestation' };
 
 /**
@@ -90,11 +97,23 @@ export function checkReadReport(report: ReadReport, allIndexes: readonly number[
     const written = length >= ATTESTATION_MIN && length <= ATTESTATION_MAX;
     return written ? { ok: true } : { ok: false, reason: 'no_attestation' };
   }
+  // Covering every real turn is not enough on its own: a caller that never
+  // loaded the transcript could cover them all by reporting a range wide
+  // enough to contain them ([0..4999] satisfies any ordinary interview). So
+  // the report has to match the interview exactly — nothing missing, and
+  // nothing that is not there. What is left is a claim only a client that has
+  // the transcript can make.
+  const invented = inventedIndexes(allIndexes, report.seenIndexes);
+  if (invented.length > 0) return { ok: false, reason: 'invented', invented };
   const unseen = unseenIndexes(allIndexes, report.seenIndexes);
   return unseen.length === 0 ? { ok: true } : { ok: false, reason: 'incomplete', unseen, total: allIndexes.length };
 }
 
 export function readRefusalMessage(refusal: Extract<ReadRefusal, { ok: false }>): string {
+  if (refusal.reason === 'invented') {
+    return 'That report names turns this interview does not have, so it cannot be a record of reading it. '
+      + 'Reload the assessment and read the transcript there.';
+  }
   if (refusal.reason === 'no_attestation') {
     return `Say where you read the transcript — at least ${ATTESTATION_MIN} characters. This is recorded with your name against the review.`;
   }

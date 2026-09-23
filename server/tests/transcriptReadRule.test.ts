@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ATTESTATION_MAX, ATTESTATION_MIN, checkReadReport, readRefusalMessage, unseenIndexes, type ReadReport,
+  ATTESTATION_MAX, ATTESTATION_MIN, checkReadReport, inventedIndexes, readRefusalMessage, unseenIndexes,
+  type ReadReport,
 } from '../src/domain/transcriptRead.js';
 
 /**
@@ -110,5 +111,30 @@ describe('what the reviewer is told', () => {
   it('says how long an attestation has to be', () => {
     const refusal = checkReadReport(elsewhere(''), []);
     expect(readRefusalMessage(refusal as Extract<typeof refusal, { ok: false }>)).toContain(String(ATTESTATION_MIN));
+  });
+});
+
+describe('a report that names turns the interview does not have', () => {
+  it('is refused, however completely it covers the real ones', () => {
+    // The hole this closes: a caller that never loaded the transcript can
+    // cover every real turn by reporting a range wide enough to contain them.
+    const wide = Array.from({ length: 5000 }, (_, i) => i);
+    const verdict = checkReadReport({ method: 'in_app', seenIndexes: wide, attestation: '' }, [0, 1, 2]);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok === false && verdict.reason).toBe('invented');
+  });
+
+  it('names what it did not recognise, rather than saying "incomplete"', () => {
+    expect(inventedIndexes([0, 1], [0, 1, 7])).toEqual([7]);
+  });
+
+  it('still accepts a report that matches the interview exactly, in any order', () => {
+    expect(checkReadReport({ method: 'in_app', seenIndexes: [2, 0, 1, 1], attestation: '' }, [0, 1, 2]).ok).toBe(true);
+  });
+
+  it('tells the reader what to do about it', () => {
+    const verdict = checkReadReport({ method: 'in_app', seenIndexes: [9], attestation: '' }, [0]);
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok === false) expect(readRefusalMessage(verdict)).toContain('does not have');
   });
 });
