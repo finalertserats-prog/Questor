@@ -12,7 +12,10 @@ import type { AuthClaims } from '../services/auth.js';
 import { assertCanAccessCandidate, candidateScope, roleScope } from '../services/access.js';
 import { MAX_RESUME_TEXT_CHARS, isResumeMimeType } from '../engines/resumeParser.js';
 import { RESUME_MAX_BYTES, readResumeFile, sanitizeFilename } from '../services/resumeFile.js';
-import { computeFitScore } from '../engines/fitScoring.js';
+import { FIT_ENGINE_VERSION, scoreFit } from '../engines/fitScoring.js';
+import { storedCvFacts } from '../services/resumeProfile.js';
+import { FIT_CAVEAT } from '../domain/fitVocabulary.js';
+import type { FitScore } from '../domain/types.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { listCandidates } from '../services/candidateList.js';
 import { pagingQuerySchema } from '../services/listPaging.js';
@@ -154,6 +157,15 @@ const candidateIdParams = z.object({ id: z.string().min(1) });
 const MAX_ALTERNATIVE_ROLES_CONSIDERED = 50;
 const MAX_ALTERNATIVE_ROLES_RETURNED = 5;
 
+/**
+ * The fit as the browser receives it.
+ *
+ * `excludedSignals` is stripped, as it always has been: the endpoint does not
+ * echo protected-signal vocabulary back beside a named candidate. The panel
+ * still shows the list — it reads it from `components/fit/fitVocabulary.ts`,
+ * which a server test keeps identical to the engine's own, so the promise on
+ * the screen cannot drift from what the engine refuses to read.
+ */
 function publicFit(fit: any) {
   if (!fit) return null;
   const { excludedSignals: _excludedSignals, ...rest } = fit;
@@ -164,26 +176,41 @@ function publicFit(fit: any) {
       label: c.label,
       weight: c.weight,
       score: c.score,
-      evidence: (c.evidence ?? []).slice(0, 3),
+      evidence: (c.evidence ?? []).slice(0, 4),
+      evidenceDetail: (c.evidenceDetail ?? []).slice(0, 4),
       rule: c.rule,
+      explanation: c.explanation,
     })),
   };
 }
 
-function fitTextFromProfile(profile: any): string {
-  const parts: string[] = [];
-  if (Array.isArray(profile?.skills)) parts.push(...profile.skills);
-  if (Array.isArray(profile?.employment)) {
-    for (const job of profile.employment) {
-      parts.push(job?.title, job?.company);
-      if (Array.isArray(job?.bullets)) parts.push(...job.bullets);
-    }
+/**
+ * What changed under a stored fit since it was written.
+ *
+ * A stored fit is the record of what HR was shown on the day. It is never
+ * silently overwritten — the panel re-scores on read against the role as it is
+ * NOW, and this says whether that differs from the stored reading and why. That
+ * keeps the candidate comparison honest: it reads stored assessments and warns
+ * when two candidates were measured against different scorecard versions, and a
+ * fit that had been rewritten underneath it would make that warning a lie.
+ */
+function stalenessOf(stored: Partial<FitScore> | null, fresh: FitScore): { stale: boolean; reason: string } | null {
+  if (!stored || typeof stored.overall !== 'number') return null;
+  const reasons: string[] = [];
+  if ((stored.engineVersion ?? 'fit-v1') !== fresh.engineVersion) {
+    reasons.push('the fit engine has changed since this CV was scored');
   }
-  if (Array.isArray(profile?.projects)) {
-    for (const project of profile.projects) parts.push(project?.name, project?.summary);
+  if (stored.scorecardVersion != null && fresh.scorecardVersion != null && stored.scorecardVersion !== fresh.scorecardVersion) {
+    reasons.push(`the role moved from scorecard v${stored.scorecardVersion} to v${fresh.scorecardVersion}`);
   }
-  if (Array.isArray(profile?.certifications)) parts.push(...profile.certifications);
-  return parts.filter((part) => typeof part === 'string' && part.trim()).join('\n');
+  if (stored.techStackFingerprint !== undefined && stored.techStackFingerprint !== fresh.techStackFingerprint) {
+    reasons.push("the role's technologies have changed");
+  }
+  if (reasons.length === 0) return null;
+  return {
+    stale: true,
+    reason: `Re-scored just now because ${reasons.join(', and ')}. The stored reading (${Math.round(stored.overall)}) is kept as the record of what was shown at the time.`,
+  };
 }
 
 function explainAlternative(score: number, current: number | null, fit: any): string {
@@ -233,14 +260,19 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
       alternativeRoles: [],
       consideredRoleCount: 0,
       betterFitMessage: 'No resume profile has been parsed yet, so Questor cannot compare this candidate to other roles.',
-      caveat: 'Fit scores are heuristic and have not been validated against human judgement. Use them as prompts for review, not as hiring verdicts.',
+      caveat: FIT_CAVEAT,
+      rescored: null,
     });
     return;
   }
 
   const profile = parseJsonStrict<NormalizedProfile>(profileVersion.profileJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'profileJson' });
-  const currentStoredFit = publicFit(parseJsonStrict<Record<string, unknown>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' }));
-  const fitText = fitTextFromProfile(profile);
+  const storedFit = parseJsonStrict<Partial<FitScore>>(profileVersion.fitScoreJson, { model: 'CandidateProfileVersion', id: profileVersion.id, field: 'fitScoreJson' });
+  const currentStoredFit = publicFit(storedFit);
+  // The same CV text the stored score was built from. Reading the parsed
+  // profile back instead, as this used to, scored a DIFFERENT document from the
+  // one on file: the panel and the stored number disagreed, and neither said so.
+  const facts = storedCvFacts(profileVersion);
 
   const scopedRoles = await prisma.role.findMany({
     where: { AND: [await roleScope(req.auth!), { status: 'approved' }] },
@@ -257,15 +289,22 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
 
   const currentRoleWithScorecard = scopedRoles.find((r) => r.id === candidate.roleId) ?? null;
   const currentScorecard = currentRoleWithScorecard?.scorecards[0] ?? null;
-  const currentFit = currentScorecard
-    ? publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(currentScorecard.profileJson, { model: 'RoleScorecardVersion', id: currentScorecard.id, field: 'profileJson' }), currentRoleWithScorecard ? roleTechStack(currentRoleWithScorecard) : []).fit)
-    : currentStoredFit;
+  const freshFit = currentScorecard
+    ? scoreFit(
+        facts,
+        parseJsonStrict<RoleSuccessProfile>(currentScorecard.profileJson, { model: 'RoleScorecardVersion', id: currentScorecard.id, field: 'profileJson' }),
+        currentRoleWithScorecard ? roleTechStack(currentRoleWithScorecard) : [],
+        { scorecardVersion: currentScorecard.version },
+      ).fit
+    : null;
+  const currentFit = freshFit ? publicFit(freshFit) : currentStoredFit;
+  const rescored = freshFit ? stalenessOf(storedFit, freshFit) : null;
   const currentOverall: number | null = typeof currentFit?.overall === 'number' ? currentFit.overall : null;
 
   const alternatives = scopedRoles
     .filter((r) => r.id !== candidate.roleId && r.scorecards[0])
     .map((r) => {
-      const fit = publicFit(computeFitScore(profile ?? {}, fitText, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' }), roleTechStack(r)).fit)!;
+      const fit = publicFit(scoreFit(facts, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' }), roleTechStack(r), { scorecardVersion: r.scorecards[0].version }).fit)!;
       return {
         roleId: r.id,
         title: r.title,
@@ -297,7 +336,8 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
     alternativeRoles: alternatives,
     consideredRoleCount: scopedRoles.length,
     betterFitMessage,
-    caveat: 'Fit scores are heuristic and have not been validated against human judgement. Use them as prompts for review, not as hiring verdicts.',
+    caveat: FIT_CAVEAT,
+    rescored,
   });
 }));
 

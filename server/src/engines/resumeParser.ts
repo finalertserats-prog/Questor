@@ -1,6 +1,7 @@
 import mammoth from 'mammoth';
 import { HttpError } from '../middleware/index.js';
 import type { NormalizedProfile } from '../domain/types.js';
+import { extractCvFacts } from './cvFacts.js';
 
 export const PDF_MIME = 'application/pdf';
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -103,7 +104,15 @@ function sectionBody(text: string, headers: string[]): string {
   return out.join('\n');
 }
 
-/** Heuristic normalization of resume text into a structured profile. */
+/**
+ * Heuristic normalization of resume text into a structured profile.
+ *
+ * This shape is what the interview plan reads: the CV-anchored identity
+ * questions quote its bullets, and band calibration counts its jobs. The fit
+ * score no longer reads it at all — that goes through `engines/cvFacts.ts`,
+ * which carries provenance and has protected detail removed first — so the two
+ * are deliberately separate things with separate jobs.
+ */
 export function normalizeProfile(text: string): NormalizedProfile {
   const clean = text.replace(/\r/g, '');
   const lower = clean.toLowerCase();
@@ -180,5 +189,25 @@ export function normalizeProfile(text: string): NormalizedProfile {
   if (/\b(present|current|now|to date|ongoing|till date)\b/i.test(clean) && years.length) years.push(thisYear);
   const totalYears = years.length >= 2 ? Math.min(45, Math.max(...years) - Math.min(...years)) : undefined;
 
-  return { employment: employment.slice(0, 12), education, projects, certifications, skills, totalYears };
+  return {
+    // A CV this parser could not find a single job in still has jobs. The
+    // evidence parser reads role headings that carry their dates on the line
+    // below, and headings written "Acme Corp — Senior Engineer", both of which
+    // this one misses — and an empty employment list means the identity check
+    // has no CV line to ask about and band calibration has nothing to count.
+    // It is only ever a fallback: where this parser found anything, its own
+    // answer stands, so nothing that worked before changes.
+    employment: employment.length > 0 ? employment.slice(0, 12) : employmentFromFacts(text),
+    education, projects, certifications, skills, totalYears,
+  };
+}
+
+function employmentFromFacts(text: string): NormalizedProfile['employment'] {
+  return extractCvFacts(text).roles.slice(0, 12).map((role) => ({
+    title: role.title,
+    company: role.employer,
+    ...(role.startYear ? { start: String(role.startYear) } : {}),
+    ...(role.endYear ? { end: role.current ? 'Present' : String(role.endYear) } : {}),
+    bullets: role.bullets.map((b) => b.quote),
+  }));
 }

@@ -2,6 +2,9 @@
 // DB's *Json columns and passed between engines. (BRD Sections 7, 10, 15, 16.)
 
 import type { BandId } from '../engines/experienceBands.js';
+import type { CvEvidence, RedactionReport } from './cvFacts.js';
+import type { FitBand, FitStrength } from './fitVocabulary.js';
+import type { TechLevel } from './techStack.js';
 
 export type Proficiency = 0 | 1 | 2 | 3 | 4 | 5;
 
@@ -64,6 +67,45 @@ export interface FitScoreComponent {
   score: number;       // 0..100
   evidence: string[];  // resume spans supporting the score
   rule: string;        // human-readable rule applied
+  /** This component's score said in one sentence, with the evidence behind it. */
+  explanation?: string;
+  /** The same evidence with its provenance, for a panel that quotes the CV. */
+  evidenceDetail?: CvEvidence[];
+}
+
+/** One competency read off the CV: how strongly, from which lines, and why. */
+export interface FitCompetencyRead {
+  competencyId: string;
+  name: string;
+  classification: Competency['classification'];
+  /** Named in `scoringRules.mustPassCompetencyIds`. */
+  mustHave: boolean;
+  strength: FitStrength;
+  /** 0..100, or null when the CV does not evidence it — never 0 as a stand-in. */
+  score: number | null;
+  evidence: CvEvidence[];
+  explanation: string;
+}
+
+/** One of the role's technologies read off the CV, with how recently it was used. */
+export interface FitTechnologyRead {
+  name: string;
+  required: boolean;
+  level: TechLevel;
+  strength: FitStrength;
+  /** Years since the CV last shows it in a dated role; null when undated. */
+  recencyYears: number | null;
+  monthsUsed: number | null;
+  evidence: CvEvidence[];
+  explanation: string;
+}
+
+/** Something worth asking about, and why it is worth asking. */
+export interface FitProbe {
+  text: string;
+  reason: string;
+  competencyId?: string;
+  technology?: string;
 }
 
 export interface FitScore {
@@ -73,6 +115,35 @@ export interface FitScore {
   missing: string[];            // competencies with no resume evidence
   probes: string[];             // neutral interview probes for validation
   excludedSignals: string[];    // protected/irrelevant signals deliberately ignored
+
+  // ---- Added with the evidence-backed scorer. Absent on rows written before it,
+  // so every reader treats them as optional.
+
+  /** What the overall number means, in the fit vocabulary (never a verdict word). */
+  band?: FitBand;
+  meaning?: string;
+  /** The share of the scorecard's weight the CV actually speaks to, 0..1. */
+  coverage?: number;
+  competencies?: FitCompetencyRead[];
+  technologies?: FitTechnologyRead[];
+  /** Must-haves the CV does not evidence, by name. */
+  mustHaveGaps?: string[];
+  /** Preferred competencies and optional technologies the CV does evidence. */
+  niceToHavesPresent?: string[];
+  /** Everything the CV is silent on, said as silence rather than as a failure. */
+  notEvidenced?: string[];
+  probeDetail?: FitProbe[];
+  experience?: { roleBand: BandId; explanation: string };
+  /** What was taken out of the CV before scoring, and any injection attempt. */
+  redaction?: RedactionReport;
+
+  // ---- Staleness stamp. A stored fit is a record of what HR was shown; these
+  // say what it was measured against so a later reader can tell.
+  engineVersion?: string;
+  scorecardVersion?: number | null;
+  /** Changes whenever the role's technologies change. */
+  techStackFingerprint?: string;
+  scoredAt?: string;
 }
 
 // ---- Interview plan ----

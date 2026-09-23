@@ -124,10 +124,14 @@ describe('candidate profile analysis endpoint', () => {
     expect(res.body.candidate.id).toBe(candidateId);
     expect(res.body.currentRole.id).toBe(currentRoleId);
     expect(res.body.currentFit.overall).toBeGreaterThan(0);
-    expect(res.body.currentFit.components[0].rule).toMatch(/essential competencies/i);
+    expect(res.body.currentFit.components[0].rule).toMatch(/must-have/i);
+    expect(res.body.currentFit.components[0].explanation).toBeTruthy();
     expect(res.body.alternativeRoles[0]).toMatchObject({ roleId: betterRoleId, title: 'Data Platform Engineer' });
     expect(res.body.alternativeRoles[0].score).toBeGreaterThan(res.body.currentFit.overall);
-    expect(res.body.alternativeRoles[0].components[0].evidence.length).toBeGreaterThan(0);
+    // Some part of the score has to carry the CV lines behind it. Not
+    // necessarily the first: a role that names no must-have has nothing to
+    // quote under "must-haves met", and says so rather than padding it.
+    expect(res.body.alternativeRoles[0].components.some((c: { evidence: string[] }) => c.evidence.length > 0)).toBe(true);
     expect(res.body.alternativeRoles[0].why).toMatch(/Python|Spark|Airflow|stronger/i);
   });
 

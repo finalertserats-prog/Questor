@@ -331,6 +331,15 @@ model CandidateProfileVersion {
   profileJson   String   @default("{}")
   // JSON fit score: overall, confidence, components[], missing[], probes[]
   fitScoreJson  String   @default("{}")
+  // JSON CvFacts (domain/cvFacts.ts): the evidence-backed reading of the CV,
+  // with protected detail already removed and every fact carrying its line.
+  //
+  // Stored rather than re-derived because a re-score has to be built from the
+  // SAME facts the stored score was, or the panel and the record disagree with
+  // nobody able to say why. It also keeps re-scoring free: the model pass that
+  // may have sharpened this parse runs once, at upload, not on every page load.
+  // "{}" on rows written before the evidence-backed engine.
+  cvFactsJson   String   @default("{}")
   createdAt     DateTime @default(now())
   evidenceNodes EvidenceNode[]
 }

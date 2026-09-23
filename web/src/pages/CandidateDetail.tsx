@@ -28,6 +28,9 @@ import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
 import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
 import { EraseCandidateCard } from '../components/EraseCandidateCard';
 import { useToast } from '../components/Toast';
+import { FitPanel } from '../components/fit/FitPanel';
+import { FitVsInterview } from '../components/fit/FitVsInterview';
+import type { Fit as FitShape, InterviewCompetency } from '../components/fit/fitModel';
 
 interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
 interface Education { degree: string; institution: string; year?: string; }
@@ -36,11 +39,13 @@ interface Profile {
   employment: Employment[]; education: Education[]; projects: Project[];
   certifications: string[]; skills: string[]; totalYears?: number;
 }
-interface FitComponent { key: string; label: string; weight: number; score: number; evidence: string[]; rule: string; }
-interface Fit {
-  overall: number; confidence: number; components: FitComponent[];
-  missing: string[]; probes: string[]; excludedSignals: string[];
-}
+/**
+ * The fit shapes live with the panel that reads them
+ * (components/fit/fitModel.ts), so the page and the panel cannot disagree about
+ * what a fit is.
+ */
+type Fit = FitShape;
+type FitComponent = FitShape['components'][number];
 interface Interview { id: string; state: string; scheduledAt: string | null; scheduledTimeZone?: string | null; createdAt: string; }
 interface CandidateResp {
   // A candidate can exist before anyone has put them against a role.
@@ -140,6 +145,12 @@ interface ProfileAnalysisResp {
   consideredRoleCount: number;
   betterFitMessage: string;
   caveat: string;
+  /**
+   * Set when the role changed under the stored reading and the panel is showing
+   * a fresh one. Null when the stored reading is still current, and absent on an
+   * older server.
+   */
+  rescored?: { stale: boolean; reason: string } | null;
 }
 
 
@@ -185,6 +196,9 @@ export function CandidateDetail() {
   const [missingEvidence, setMissingEvidence] = useState<string[]>([]);
   const [assessment, setAssessment] = useState<JourneyAssessment | null>(null);
   const [assessmentBlockedReason, setAssessmentBlockedReason] = useState<string | null>(null);
+  // The graded competencies with their ids, kept apart from the journey's copy
+  // because the CV comparison joins on id and the journey board does not carry one.
+  const [interviewCompetencies, setInterviewCompetencies] = useState<InterviewCompetency[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // The reads that only enrich the journey fail on their own, without costing
@@ -347,6 +361,7 @@ export function CandidateDetail() {
     if (!assessmentId) {
       setAssessment(null);
       setAssessmentBlockedReason(null);
+      setInterviewCompetencies([]);
       return;
     }
     let cancelled = false;
@@ -361,11 +376,13 @@ export function CandidateDetail() {
           summary: resp.result?.summary ?? '',
           competencies: resp.result?.competencies ?? [],
         });
+        setInterviewCompetencies((resp.result?.competencies ?? []) as unknown as InterviewCompetency[]);
         setAssessmentBlockedReason(null);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
         setAssessment(null);
+        setInterviewCompetencies([]);
         // 409 is the blind-review gate: this reviewer has not recorded their own
         // verdict yet. The server's sentence is carried through verbatim, so the
         // board cannot describe that gate more softly than the gate does.
@@ -525,6 +542,9 @@ export function CandidateDetail() {
           fallbackProfile={profile}
           fallbackFit={fit}
           onResumeUploaded={refresh}
+          interviewCompetencies={interviewCompetencies}
+          assessmentBlockedReason={assessmentBlockedReason}
+          hasAssessment={Boolean(assessmentId)}
         />
       </section>
 
@@ -791,13 +811,9 @@ export function CandidateDetail() {
 }
 
 
-const STATIC_IGNORED_SIGNALS = [
-  'name', 'age', 'address', 'marital status', 'caste', 'religion', 'nationality',
-  'school prestige', 'employment gaps', 'accent/grammar artefacts',
-];
-
 function CandidateProfileTab({
   fallbackCandidate, analysis, error, fallbackProfile, fallbackFit, onResumeUploaded,
+  interviewCompetencies, assessmentBlockedReason, hasAssessment,
 }: {
   fallbackCandidate: CandidateResp['candidate'];
   analysis: ProfileAnalysisResp | null;
@@ -805,12 +821,14 @@ function CandidateProfileTab({
   fallbackProfile: Profile | null;
   fallbackFit: Fit | null;
   onResumeUploaded: () => void;
+  interviewCompetencies: readonly InterviewCompetency[];
+  assessmentBlockedReason: string | null;
+  hasAssessment: boolean;
 }) {
   const candidate = analysis?.candidate ?? fallbackCandidate;
   const profile = analysis?.profile ?? fallbackProfile;
   const fit = analysis?.currentFit ?? fallbackFit;
   const role = analysis?.currentRole;
-  const caveat = analysis?.caveat ?? 'Fit scores are heuristic and have not been validated against human judgement. Use them as prompts for review, not as hiring verdicts.';
 
   return (
     <div className="candidate-profile-tab">
@@ -884,18 +902,27 @@ function CandidateProfileTab({
       )}
 
       <div className="card">
-        <h2 className="card-title"><Icon name="role-match" />Resume fit for applied role</h2>
+        <h2 className="card-title"><Icon name="role-match" />What the CV says about this role</h2>
         <p className="muted small">
-          Scored from the resume against the role's scorecard. It says nothing about the interview, which is
-          assessed separately from what the candidate actually said.
+          Read from the resume against {role ? `the approved scorecard for ${role.title}` : "the role's approved scorecard"}, line by line.
+          It says nothing about the interview, which is assessed separately from what the candidate actually said.
         </p>
-        <Banner kind="info">{caveat}</Banner>
-        {fit ? <FitScoreBlock fit={fit} /> : <p className="muted">No resume fit is available until a resume has been parsed against an approved scorecard.</p>}
-        <div style={{ marginTop: 12 }}>
-          <div className="muted small" style={{ marginBottom: 4 }}>Deliberately ignored by the fit engine:</div>
-          <div>{STATIC_IGNORED_SIGNALS.map((s) => <span key={s} className="chip muted">{s}</span>)}</div>
-        </div>
+        <FitPanel fit={fit} rescoredNote={analysis?.rescored?.reason ?? null} />
       </div>
+
+      {/* After an interview, the two readings side by side. This is the claim the
+          product is actually making, so it is on the candidate's own page rather
+          than buried in the assessment. */}
+      {hasAssessment && (
+        <div className="card">
+          <h2 className="card-title"><Icon name="evidence-review" />The CV against the interview</h2>
+          <p className="muted small">
+            Where the resume pointed at something the conversation did not reach, and where the conversation
+            found something the resume never mentioned.
+          </p>
+          <FitVsInterview fit={fit} interview={interviewCompetencies} blockedReason={assessmentBlockedReason} />
+        </div>
+      )}
 
       <div className="card">
         <h2 className="card-title"><Icon name="role-match" />Other visible roles that may fit</h2>
@@ -928,59 +955,5 @@ function CandidateProfileTab({
         )}
       </div>
     </div>
-  );
-}
-
-function FitScoreBlock({ fit }: { fit: Fit }) {
-  return (
-    <>
-      <div className="grid cols-2" style={{ marginTop: 14 }}>
-        <div>
-          <div className="row spread">
-            <span className="muted small">Overall resume fit</span>
-            <b>{formatScoreOutOf100(fit.overall)}</b>
-          </div>
-          <Meter value={roundScore(fit.overall) ?? 0} />
-        </div>
-        <Stat label="Confidence" value={formatPercent(fit.confidence)} />
-      </div>
-
-      <div className="table-scroll" style={{ marginTop: 14 }} tabIndex={0} role="region" aria-label="Fit score components and reasons">
-        <table>
-          <thead>
-            <tr><th>Component</th><th>Weight</th><th>Score</th><th>Reason and evidence</th></tr>
-          </thead>
-          <tbody>
-            {(fit.components ?? []).map((c) => (
-              <tr key={c.key}>
-                <td>{c.label}</td>
-                <td>{Math.round(c.weight * 100)}%</td>
-                <td style={{ minWidth: 140 }}>
-                  <div className="row" style={{ gap: 8 }}>
-                    <span style={{ width: 34 }}>{Math.round(c.score)}</span>
-                    <div style={{ flex: 1 }}><Meter value={c.score} /></div>
-                  </div>
-                </td>
-                <td className="muted small">
-                  <div>{c.rule}</div>
-                  {(c.evidence ?? []).length > 0 && <ul>{c.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="grid cols-2" style={{ marginTop: 14 }}>
-        <div>
-          <h3>Missing signals</h3>
-          {(fit.missing ?? []).length === 0 ? <div className="muted small">None flagged.</div> : <ul>{fit.missing.map((m, i) => <li key={i}>{m}</li>)}</ul>}
-        </div>
-        <div>
-          <h3>Suggested probes</h3>
-          {(fit.probes ?? []).length === 0 ? <div className="muted small">None.</div> : <ul>{fit.probes.map((pr, i) => <li key={i}>{pr}</li>)}</ul>}
-        </div>
-      </div>
-    </>
   );
 }

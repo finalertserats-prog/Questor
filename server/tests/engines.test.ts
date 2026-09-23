@@ -45,8 +45,13 @@ describe('resumeParser + fitScoring', () => {
     const { fit } = computeFitScore(profile, DEMO_RESUME, role);
     expect(fit.overall).toBeGreaterThan(0);
     expect(fit.overall).toBeLessThanOrEqual(100);
-    expect(fit.components.length).toBe(6);
+    // Four parts for a role with no technology list; the stack adds a fifth.
+    expect(fit.components.length).toBe(4);
     expect(fit.excludedSignals).toContain('age');
+  });
+  it('explains every part of the score in a sentence', () => {
+    const { fit } = computeFitScore(profile, DEMO_RESUME, role);
+    for (const c of fit.components) expect(c.explanation?.length ?? 0).toBeGreaterThan(20);
   });
   it('gives a strong resume a solid score', () => {
     const { fit } = computeFitScore(profile, DEMO_RESUME, role);
