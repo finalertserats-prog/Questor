@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { createRoleAndCandidate, instrumentCandidateBrowser, runId } from './helpers';
+import { assessmentIdFromUrl, readTranscriptForReview } from './transcriptRead';
 
 /**
  * A typed interview from invitation to assessment, and what the hiring team
@@ -112,6 +113,9 @@ test('a completed typed interview shows its assessment at once and records the f
 
   // A reviewer records their verdict, changing one level along the way. The
   // consequence is on screen before the button is pressed.
+  // The server refuses a verdict from a reviewer who has not read the
+  // interview; see tests/transcriptRead.ts.
+  await readTranscriptForReview(page, assessmentIdFromUrl(assessmentUrl));
   await page.getByTestId('verdict-CONSIDER').click();
   await expect(page.getByTestId('verdict-consequence')).toContainText(/Consider/);
   await page.getByTestId('levels-fold').getByText('Change a level where you read it differently').click();

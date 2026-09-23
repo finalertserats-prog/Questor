@@ -1,5 +1,6 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
 import { createRoleAndCandidate, instrumentCandidateBrowser, runId } from './helpers';
+import { assessmentIdFromUrl, readTranscriptForReview } from './transcriptRead';
 
 /**
  * Decisions move the hiring pipeline and the candidate journey on their own.
@@ -119,6 +120,10 @@ async function assessedInterview(page: Page, browser: Browser, id: string) {
  * detail of it.
  */
 async function submitReview(page: Page, verdict: 'PROCEED' | 'DO_NOT_PROGRESS', reason: string, consequence: RegExp) {
+  // The server refuses a verdict from a reviewer who has not read the
+  // interview. See tests/transcriptRead.ts: this stands in for the control the
+  // review page will carry, and makes the same request it will.
+  await readTranscriptForReview(page, assessmentIdFromUrl(page.url()));
   await page.getByTestId(`verdict-${verdict}`).click();
   await expect(page.getByTestId('verdict-consequence')).toContainText(consequence);
   await page.getByLabel('Why (required)').fill(reason);
