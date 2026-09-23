@@ -77,7 +77,7 @@ export const TRUST_FRAMEWORKS: readonly TrustFramework[] = [
         key: 'ai-act-fairness',
         topic: 'Bias and data quality (Art. 10)',
         asks: 'The data behind the system must be relevant and checked for discriminatory bias.',
-        questor: 'Selection-rate and adverse-impact monitoring is being built. Today the analytics page says plainly that it is not computed, rather than showing a number it cannot stand behind.',
+        questor: 'The Reports page measures outcomes: the funnel from invitation to decision, score and competency distributions, and how those differ by AI interviewer, scorecard version, experience band, region and month — every rate with the sample it was computed from, and marked unreadable below 20. Group-level adverse impact is still not computed and cannot be: it needs demographic attributes we do not collect. The page says so on itself rather than letting outcome rates be mistaken for a bias audit.',
         status: 'in-progress',
       },
       {

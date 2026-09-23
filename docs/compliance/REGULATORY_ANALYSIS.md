@@ -30,6 +30,55 @@ As a "deployer" of a High-Risk AI system under **Article 26**, the employer must
 5. **Fundamental Rights Impact Assessment - FRIA (Article 27):** Conduct a detailed impact assessment on how the system affects candidates' fundamental rights (e.g., non-discrimination) prior to deployment.
 6. **Consult Worker Representatives (Article 26(7)):** Prior to deploying the system in the workplace, the employer must inform and consult workers' representatives (unions/works councils) where applicable.
 
+### What Questor implements today against Article 10
+
+> This subsection describes the product, not the law, and is the one part of this document
+> that must be kept true as the code changes. If it ever overstates what exists, it is a
+> compliance claim nobody can support — correct it before the next release.
+
+**In place — outcome statistics (the measurement layer).** `GET /api/reports/outcomes` and the
+console's **Reports** page compute, per organisation and optionally per role, over a chosen
+period:
+
+* the funnel — invited → started → completed → assessed → reviewed by a person → Proceed /
+  Consider / Do not progress → hired — with each step read both against the step before it and
+  against the whole intake;
+* distributions rather than averages: the overall competency score by ten-point band and each
+  competency's levels, with median and quartiles;
+* the same outcomes cut by **AI interviewer, experience band, region, scorecard version and
+  month**, every cut carrying its sample size;
+* interview health — duration, non-answer rate, evidence coverage, rejoined interviews, held
+  feedback emails and turns served below the primary model — because a period whose interviews
+  ran badly is a period whose scores should not be read;
+* where reviewers changed the AI's verdict, kept deliberately separate from, and subordinate
+  to, the blind-verdict agreement harness (`docs/VALIDATION.md`), which is the only statistic
+  here that says anything about scoring validity.
+
+**The small-sample rule.** No rate is presented anywhere — in the UI or the CSV export —
+without its numerator and denominator, and a rate computed on fewer than **20** observations is
+marked as too few to read. The threshold is a conventional floor for reading a proportion, not
+a power calculation, and it does not make a difference between two 20-sample groups
+significant.
+
+**Retention of the measurement.** An optional monthly snapshot (`OUTCOME_SNAPSHOT_ENABLED`, off
+by default) stores each organisation-month's aggregate counts so a trend survives the candidate
+data it was computed from being erased. A snapshot holds no candidate id, no session id and no
+group smaller than five (those are summed into one "other" row), so it is not personal data and
+a candidate's erasure neither reads nor writes it.
+
+**NOT in place — group-level adverse impact (the part Article 10 and NYC LL 144 §5-301 actually
+turn on).** Adverse impact is measured across protected groups. Questor does not collect a
+candidate's race, sex, age or disability, and nothing above is a proxy for them: every cut is by
+a property of the **job or the system**, not of the person. An impact-ratio analysis therefore
+cannot be produced from this data at all, and the Reports page states that on itself so its
+selection rates are not mistaken for a bias audit. Building it would require a separate, prior
+decision about collecting group attributes lawfully — self-reported, optional, separated from
+the hiring record, and lawful in each jurisdiction — which has not been taken.
+
+**Also still outstanding under Article 10:** the training and validation data behind the scoring
+engine has not been assessed for representativeness, and the scoring itself has not been
+validated against human judgement (`docs/VALIDATION.md`).
+
 ### Compliance Deadlines (Post-Digital Omnibus, July 2026)
 Following the entry into force of the **Digital Omnibus on AI** in July 2026 (which amended the timeline to address implementation and standards gaps):
 * **Annex III High-Risk AI Systems (Recruitment):** The compliance deadline is **December 2, 2027** (extended from the original August 2, 2026 date).
