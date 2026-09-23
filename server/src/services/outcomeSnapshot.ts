@@ -15,10 +15,14 @@ import { startJob } from './jobs.js';
  * point.
  *
  * WHAT IS STORED. Counts and rates over a whole organisation-month, and
- * nothing else. No candidate id, no session id, no name, no one person's
- * score, no cut small enough to be one person — a group below the minimum
- * sample is written as "other", so no month can be intersected with another to
- * isolate an individual.
+ * nothing else. No candidate id, no session id, no name, and nothing small
+ * enough to be one person: a cut below SNAPSHOT_MIN_GROUP keeps its size and
+ * loses its outcome rate (including the folded "other" row when the fold is
+ * itself that small), and a MONTH below it keeps only how many interviews it
+ * had — no funnel, no distribution, no median. In a one-interview month the
+ * verdict, the hire, the median score and the median duration are all that
+ * person's interview, so none of them is kept and no month can be intersected
+ * with another to isolate anybody.
  *
  * ERASURE. A snapshot is not personal data and holds no key back to a person,
  * so erasing a candidate neither reads nor writes this table. That is a
@@ -30,7 +34,13 @@ import { startJob } from './jobs.js';
 
 export const OUTCOME_SNAPSHOT_JOB = { name: 'outcome-snapshot', intervalMs: 6 * 3_600_000, ttlMs: 30 * 60_000 } as const;
 
-/** Cuts smaller than this are folded into "other" so no stored group can be one person. */
+/**
+ * The floor for keeping anything but a count. A cut below it is folded into
+ * "other" and keeps no rate; a month below it keeps only its interview count.
+ * Deliberately lower than the page's OUTCOME_MIN_SAMPLE of 20, because the two
+ * answer different questions: 20 is where a rate becomes worth READING, 5 is
+ * where a stored figure stops being about one person.
+ */
 export const SNAPSHOT_MIN_GROUP = 5;
 /**
  * Organisations read per query. Every organisation is snapshotted on every
