@@ -22,6 +22,7 @@ import type { RoleSuccessProfile } from '../src/domain/types.js';
 import { buildInterviewPlan } from '../src/engines/interviewPlanner.js';
 import type { BandId } from '../src/engines/experienceBands.js';
 import { detectCandidateIntent } from '../src/engines/candidateIntent.js';
+import { detectInjection } from '../src/engines/policyEngine.js';
 import { topicsOf } from '../src/engines/conversationModel.js';
 import {
   endReasonFor, startInterview, submitCandidateTurn, withdrawInterview, type AgentTurnOut,
@@ -193,30 +194,185 @@ export interface ScriptedAudit {
   repeatedTopics: string[];
   /** Candidate non-answers ("Oh", "No", "Nothing") that were followed up as if answered. */
   followedUpNonAnswers: string[];
+  /**
+   * A request to speak to a person that was answered with another question.
+   * The worst thing in the simulated-interview report, and the mechanical
+   * audit called every one of those runs clean.
+   */
+  ignoredHumanRequests: string[];
+  /**
+   * A "say that again" whose reply neither put the question again nor stayed
+   * on its subject — the topic was simply abandoned, and the plea was then
+   * quoted to the reviewer as the candidate's evidence for the competency.
+   */
+  abandonedRepeats: string[];
+  /**
+   * One question template used twice in an interview with only the competency
+   * name changed. `repeatedTopics` cannot see these: the two read as different
+   * topics precisely because the swapped name is the only difference.
+   */
+  reusedTemplates: string[];
+  /**
+   * An acknowledgement that names something the INTERVIEWER introduced — the
+   * role title, the company, a competency label — as though the candidate had
+   * just told us about it.
+   */
+  echoedOurOwnWords: string[];
+  /** A question the candidate asked at the close that the sign-off did not answer. */
+  unansweredClosingQuestions: string[];
+  /** A turn that tried to instruct the interviewer and was not flagged as one. */
+  unflaggedInjections: string[];
 }
 
-/** The production failures, checked mechanically on a transcript. */
-export function auditScriptedTranscript(lines: readonly ScriptedLine[]): ScriptedAudit {
+/** Agent turns that put a new question to the candidate. */
+const ASKING_KINDS: readonly string[] = ['question', 'followup', 'transition', 'work_sample'];
+
+/**
+ * A question's TEMPLATE: its wording with the variable parts removed.
+ *
+ * Competency names are what the bank substitutes in, and they are exactly what
+ * makes two renderings of one template look like two questions. Stripping
+ * capitalised names, quoted fragments and digits leaves the sentence the
+ * template actually is, so "Something in your SQL & Data Warehousing area
+ * worked yesterday…" and "Something in your Data Engineering & Pipelines area
+ * worked yesterday…" collapse onto each other.
+ */
+export function questionTemplate(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    // Proper nouns and competency labels, including the "A & B" shape.
+    .replace(/\b(?:[a-z][\w-]*|&)(?:\s+(?:[a-z][\w-]*|&)){0,6}(?=\s+(?:area|work|competency)\b)/g, '<name>')
+    .replace(/["'][^"']{2,60}["']/g, '<quote>')
+    .replace(/\d+/g, '<n>')
+    .replace(/[^a-z<>\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Words shared with the template, as a share of the shorter one. */
+function templateOverlap(a: string, b: string): number {
+  const wa = new Set(a.split(' ').filter((w) => w.length > 3));
+  const wb = new Set(b.split(' ').filter((w) => w.length > 3));
+  const [small, large] = wa.size <= wb.size ? [wa, wb] : [wb, wa];
+  if (small.size < 5) return 0;
+  let shared = 0;
+  for (const w of small) if (large.has(w)) shared += 1;
+  return shared / small.size;
+}
+
+/** Above this, two questions are the same form with the subject swapped. */
+const SAME_TEMPLATE = 0.75;
+
+/**
+ * Above this, a reply is still about the question that was just asked.
+ *
+ * Deliberately high. A handful of shared function words ("when", "have",
+ * "you") is what one interview question has in common with every other one,
+ * and reading that as "stayed on topic" is how a transcript where the
+ * clarification plea was answered by moving to the next competency reported
+ * clean.
+ */
+const STAYED_ON_TOPIC = 0.5;
+
+/** Acknowledgement openings the built-in writer uses, and the phrase each names. */
+const ACK_NAMES = [
+  /^thanks — that'?s useful context on (.+?)\./i,
+  /^okay, that helps me picture (.+?)\./i,
+  /^thanks for the detail on (.+?)\./i,
+  /^got it — (.+?), understood\./i,
+];
+
+/**
+ * The production failures, checked mechanically on a transcript.
+ *
+ * Everything here is deterministic and free. That is the point: the simulated
+ * interviews that found these defects cost two shared model subscriptions and
+ * two hours a run, and this function looks at the same transcripts in
+ * milliseconds. It reported CLEAN on the run where five requests for a person
+ * were talked over — which is what these checks are for.
+ *
+ * @param context names the interviewer introduced itself (role title, company,
+ *   competency labels). An acknowledgement built on one of these is echoing us
+ *   back to ourselves; without the list that check is simply skipped.
+ */
+export function auditScriptedTranscript(lines: readonly ScriptedLine[], context: readonly string[] = []): ScriptedAudit {
   const seen = new Map<string, number>();
   const followedUpNonAnswers: string[] = [];
+  const ignoredHumanRequests: string[] = [];
+  const abandonedRepeats: string[] = [];
+  const reusedTemplates: string[] = [];
+  const echoedOurOwnWords: string[] = [];
+  const unansweredClosingQuestions: string[] = [];
+  const unflaggedInjections: string[] = [];
+  const templates: string[] = [];
   let askedAfterEnding = false;
   let ended = false;
+
   lines.forEach((line, i) => {
     if (line.speaker === 'candidate') {
       const intent = detectCandidateIntent(line.text).intent;
-      if (intent === 'stop' || intent === 'postpone') ended = true;
+      if (intent === 'stop' || intent === 'postpone' || intent === 'human_request') ended = true;
       const reply = lines[i + 1];
       if (intent === 'non_answer' && reply?.kind === 'followup') followedUpNonAnswers.push(line.text);
+
+      // 1. A request for a person, answered with another question. The reply
+      //    must END the interview — anything that asks something is the failure.
+      if (intent === 'human_request' && reply?.speaker === 'interviewer' && ASKING_KINDS.includes(reply.kind ?? '')) {
+        ignoredHumanRequests.push(line.text);
+      }
+
+      // 2. A "say it again" whose reply neither re-asked nor stayed on topic.
+      if (intent === 'repeat' && reply?.speaker === 'interviewer') {
+        const putAgain = ['reask', 'rephrase', 'clarify'].includes(reply.kind ?? '');
+        const question = [...lines.slice(0, i)].reverse().find((l) => l.speaker === 'interviewer' && ASKING_KINDS.includes(l.kind ?? ''));
+        const onTopic = !!question && templateOverlap(questionTemplate(question.text), questionTemplate(reply.text)) >= STAYED_ON_TOPIC;
+        if (!putAgain && !onTopic) abandonedRepeats.push(line.text);
+      }
+
+      // 3. Prompt injection that reached the record unflagged. The transcript
+      //    carries no meta, so this reports what a flag SHOULD exist for.
+      if (detectInjection(line.text).injection) unflaggedInjections.push(line.text.slice(0, 120));
+
+      // 4. A question asked at the close and never answered.
+      const closeBefore = [...lines.slice(0, i)].reverse().find((l) => l.speaker === 'interviewer');
+      if (closeBefore?.kind === 'close' && line.text.includes('?') && reply?.kind === 'signoff') {
+        const answered = reply.text.replace(/Thank you — that'?s everything from my side[\s\S]*$/i, '').trim();
+        if (!answered) unansweredClosingQuestions.push(line.text);
+      }
       return;
     }
-    const asking = ['question', 'followup', 'transition', 'work_sample'].includes(line.kind ?? '');
+
+    const asking = ASKING_KINDS.includes(line.kind ?? '');
     if (ended && asking) askedAfterEnding = true;
     // Only new questions: a re-ask of the same question is not a repeated topic.
-    if (asking) for (const t of topicsOf(line.text)) seen.set(t, (seen.get(t) ?? 0) + 1);
+    if (asking) {
+      for (const t of topicsOf(line.text)) seen.set(t, (seen.get(t) ?? 0) + 1);
+      // 5. One template, used twice with the subject swapped.
+      const template = questionTemplate(line.text);
+      if (templates.some((prior) => templateOverlap(prior, template) >= SAME_TEMPLATE)) reusedTemplates.push(line.text.slice(0, 120));
+      templates.push(template);
+    }
+
+    // 6. An acknowledgement that names something we introduced.
+    for (const re of ACK_NAMES) {
+      const m = re.exec(line.text.trim());
+      if (!m) continue;
+      const named = m[1].trim().toLowerCase();
+      if (context.some((c) => { const t = c.trim().toLowerCase(); return !!t && (t === named || t.includes(named) || named.includes(t)); })) {
+        echoedOurOwnWords.push(m[1].trim());
+      }
+    }
   });
+
   return {
     askedAfterEnding,
     repeatedTopics: [...seen].filter(([, count]) => count > 1).map(([topic]) => topic),
     followedUpNonAnswers,
+    ignoredHumanRequests,
+    abandonedRepeats,
+    reusedTemplates,
+    echoedOurOwnWords,
+    unansweredClosingQuestions,
+    unflaggedInjections,
   };
 }
