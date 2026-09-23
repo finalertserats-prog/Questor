@@ -182,11 +182,17 @@ td.report-rate--unreadable {
   margin-bottom: var(--space-2);
 }
 /* The selected cut is marked by weight and an underline rule, so it is still
-   the selected one in high-contrast mode and on paper. */
+   the selected one in high-contrast mode and on paper.
+
+   Both markers used to be drawn as though the tab sat on the page: body ink on
+   the accent fill these buttons actually carry measured 2.03:1, the worst
+   contrast anywhere in the product, and an accent rule on an accent fill was
+   invisible. Both now use the token for ink on an accent surface, which is the
+   pairing the button itself is built from. */
 .report-tabs .is-current {
   font-weight: 650;
-  color: var(--ink);
-  box-shadow: inset 0 -2px 0 0 var(--accent);
+  color: var(--accent-on);
+  box-shadow: inset 0 -2px 0 0 var(--accent-on);
 }
 
 .report-kpis {

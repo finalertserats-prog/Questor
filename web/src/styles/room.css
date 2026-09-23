@@ -219,7 +219,10 @@
   font-weight: 600;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--room-ink-3);
+  /* The dimmest room ink read 3.63:1 against the panel behind it, below AA for
+     text this small. The secondary ink is the token for a label that is still
+     meant to recede, and clears 4.5:1 on both room surfaces. */
+  color: var(--room-ink-2);
 }
 
 .room-tile {
