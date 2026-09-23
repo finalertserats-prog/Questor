@@ -26,8 +26,18 @@ export function budgetFor(purpose: LlmPurpose, tighterMs?: number): number {
   // budget rather than no budget. Silence mid-interview is the failure this
   // whole mechanism exists to prevent; defaulting loose would reintroduce it.
   const budget = config.llm.budgets[purpose] ?? config.llm.budgets.live_turn;
-  return tighterMs && tighterMs > 0 ? Math.min(budget, tighterMs) : budget;
+  if (!tighterMs || tighterMs <= 0) return budget;
+  // A call site can only shorten. Said out loud when it would have lengthened,
+  // once per purpose, so an operator who raised a per-call setting past its
+  // purpose's budget finds out rather than quietly getting the budget.
+  if (tighterMs > budget && !clampWarned.has(purpose)) {
+    clampWarned.add(purpose);
+    logger.warn({ purpose, askedMs: tighterMs, budgetMs: budget }, 'Model call asked for longer than its purpose allows; using the purpose budget');
+  }
+  return Math.min(budget, tighterMs);
 }
+
+const clampWarned = new Set<LlmPurpose>();
 
 let cached: LlmProvider | null = null;
 

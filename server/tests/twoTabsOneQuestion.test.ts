@@ -124,6 +124,51 @@ describe('the interleaving itself', () => {
     expect(JSON.parse(answer.metaJson || '{}').submissions).toBe(2);
   }, 60_000);
 
+  it('keeps a shorter second answer that happens to be a substring of the first', async () => {
+    // Raised by Codex on the first pass: substring containment dropped "Java"
+    // because the first answer said "JavaScript". Whole texts are compared.
+    const ids = await liveInterview();
+    const question = await currentQuestion(ids.sessionId);
+    await answerLanded(ids.sessionId, 'I worked mostly in JavaScript on that team.');
+
+    await submitCandidateAnswer(ids.sessionId, 'Java', undefined, { inReplyTo: question.id });
+
+    const answer = (await transcript(ids.sessionId)).find((t) => t.speaker === 'candidate' && t.index > question.index)!;
+    expect(answer.text.endsWith('Java')).toBe(true);
+  }, 60_000);
+
+  it('records what each submission said, not only how many there were', async () => {
+    const ids = await liveInterview();
+    const question = await currentQuestion(ids.sessionId);
+    await answerLanded(ids.sessionId, TAB_A);
+
+    await submitCandidateAnswer(ids.sessionId, TAB_B, undefined, { inReplyTo: question.id });
+
+    const answer = (await transcript(ids.sessionId)).find((t) => t.speaker === 'candidate' && t.index > question.index)!;
+    expect(JSON.parse(answer.metaJson || '{}').submissionTexts).toEqual([TAB_A, TAB_B]);
+  }, 60_000);
+
+  it('keeps what the first submission recorded when a second one folds in', async () => {
+    // Raised by Codex on the first pass: the incoming meta spread over the
+    // existing one, so a second submission could overwrite what the first
+    // recorded about itself.
+    const ids = await liveInterview();
+    const question = await currentQuestion(ids.sessionId);
+    const tail = await prisma.turn.findFirstOrThrow({ where: { sessionId: ids.sessionId }, orderBy: { index: 'desc' }, select: { index: true, endMs: true } });
+    await prisma.turn.create({
+      data: {
+        id: nanoid(10), sessionId: ids.sessionId, index: tail.index + 1, speaker: 'candidate', text: TAB_A,
+        startMs: tail.endMs + 1000, endMs: tail.endMs + 30_000, confidence: 0.9, competencyId: '',
+        metaJson: JSON.stringify({ source: 'first_tab', flags: ['prompt_injection'] }),
+      },
+    });
+
+    await submitCandidateAnswer(ids.sessionId, TAB_B, undefined, { inReplyTo: question.id });
+
+    const meta = JSON.parse((await transcript(ids.sessionId)).find((t) => t.speaker === 'candidate' && t.index > question.index)!.metaJson);
+    expect([meta.source, meta.flags]).toEqual(['first_tab', ['prompt_injection']]);
+  }, 60_000);
+
   it('is idempotent when the same submission is retried', async () => {
     const ids = await liveInterview();
     const question = await currentQuestion(ids.sessionId);

@@ -67,9 +67,12 @@ function sweep(now: number): void {
   for (const [id, job] of jobs) {
     if (job.finished && job.endedAt !== null && now - job.endedAt > JOB_RETENTION_MS) jobs.delete(id);
   }
-  for (const id of jobs.keys()) {
+  // Finished jobs only. Evicting a job that is still sending would leave it
+  // running while GET /bulk-invite/:jobId answered 404 — the recruiter would
+  // not know which rows went, which is the whole thing this exists to fix.
+  for (const [id, job] of jobs) {
     if (jobs.size <= MAX_JOBS) break;
-    jobs.delete(id);
+    if (job.finished) jobs.delete(id);
   }
 }
 

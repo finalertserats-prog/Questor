@@ -195,7 +195,11 @@ export async function issueIdentityCode(sessionId: string, now = new Date()): Pr
     // can read off their screen has expired.
     if (failure.certainty === 'not_delivered') {
       await undoIssue(sessionId, decision.challengeId, decision.retired, now);
-      return failure.reason === 'refused' ? { kind: 'refused' } : { kind: 'deferred' };
+      // Only a 4xx deferral is worth trying again in a moment. A refusal and
+      // an unreachable provider (bad credentials, DNS, no connection) will
+      // both fail the same way for as long as they last, and telling the
+      // candidate to retry sends them round a loop that cannot end.
+      return failure.reason === 'deferred' ? { kind: 'deferred' } : { kind: 'refused' };
     }
     return { kind: 'unconfirmed', ...live };
   }

@@ -228,7 +228,16 @@ async function appendTurn(sessionId: string, turn: Omit<TurnRecord, 'id' | 'inde
  *                   the transcript still alternates.
  *
  * Leave is excluded: it is an action, not an answer, and "answered, then
- * left" is a true and useful pair of records. A repeated Leave has its own
+ * left" is a true and useful pair of records.
+ *
+ * ONE CONSEQUENCE, ACCEPTED. The fold can only happen while no agent turn has
+ * landed after the answer — once one has, `inReplyTo` refuses the second tab
+ * as stale and nothing is folded. But the reply may be IN FLIGHT, in which
+ * case the interviewer's next question was composed from the first
+ * submission's words alone while the stored answer ends up carrying both.
+ * The alternative is a transcript the grader misreads, which is worse; the
+ * per-submission texts are kept on the turn so a reviewer can see exactly
+ * what happened. A repeated Leave has its own
  * idempotence in submitCandidateAnswer.
  */
 async function recordCandidateAnswer(
@@ -275,6 +284,12 @@ async function recordCandidateAnswer(
   throw lastErr;
 }
 
+/** The distinct texts already folded into this turn, from its own record. */
+function submissionTexts(answered: { id: string; metaJson: string }): string[] {
+  const meta = parseJsonOptional<Record<string, unknown>>(answered.metaJson, {}, { model: 'Turn', id: answered.id, field: 'metaJson' });
+  return Array.isArray(meta.submissionTexts) ? (meta.submissionTexts as unknown[]).filter((v): v is string => typeof v === 'string') : [];
+}
+
 /** What the already-answered slot becomes once a second submission is folded in. */
 function foldedAnswer(
   answered: { id: string; text: string; endMs: number; metaJson: string },
@@ -282,9 +297,11 @@ function foldedAnswer(
   incomingMeta: Record<string, unknown> | undefined,
 ): { text: string; endMs: number; metaJson: string } {
   const addition = incoming.text.trim();
-  // A retry of the same words adds nothing. Substring rather than equality,
-  // because a re-send may carry the earlier fold as well.
-  const repeat = !addition || answered.text.includes(addition);
+  // A retry of the same words adds nothing. Compared as whole texts, never by
+  // substring: "Java" is a substring of "JavaScript", and a second answer of
+  // "Java" would have been silently dropped.
+  const already = new Set([answered.text.trim(), ...submissionTexts(answered)]);
+  const repeat = !addition || already.has(addition);
   const text = repeat ? answered.text : `${answered.text} ${addition}`.slice(0, MAX_ANSWER_CHARS);
   const existingMeta = parseJsonOptional<Record<string, unknown>>(answered.metaJson, {}, { model: 'Turn', id: answered.id, field: 'metaJson' });
   const flags = new Set([
@@ -292,15 +309,20 @@ function foldedAnswer(
     ...(Array.isArray(incomingMeta?.flags) ? incomingMeta.flags as string[] : []),
   ]);
   const submissions = typeof existingMeta.submissions === 'number' ? existingMeta.submissions + 1 : 2;
+  // The first submission's own fields win. The second arrived against a slot
+  // that was already answered, and letting it overwrite `source` or a
+  // timestamp would rewrite what the first one recorded.
+  const merged: Record<string, unknown> = { ...(incomingMeta ?? {}), ...existingMeta };
   return {
     text,
     endMs: Math.max(answered.endMs, incoming.endMs),
     metaJson: JSON.stringify({
-      ...existingMeta,
-      ...(incomingMeta ? { ...incomingMeta } : {}),
-      // How many times this one slot was answered. A reviewer seeing an odd
-      // answer can tell "said twice in two tabs" from "said once".
+      ...merged,
+      // How many times this one slot was answered, and what each submission
+      // said, so a reviewer (and evidence attribution) can tell "said twice in
+      // two tabs" from "said once" and see which words came from which.
       submissions,
+      submissionTexts: repeat ? [...already].filter(Boolean) : [...already, addition].filter(Boolean),
       ...(flags.size ? { flags: [...flags] } : {}),
     }),
   };

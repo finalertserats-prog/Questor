@@ -135,6 +135,19 @@ describe('collecting a job', () => {
   });
 });
 
+describe('a job that is still running', () => {
+  it('survives a flood of newer jobs', async () => {
+    // Raised by Codex on the first pass: the size trim deleted the oldest
+    // entries whether or not they had finished, so a job could vanish from
+    // the map while it was still sending — and the recruiter would get 404
+    // for the one thing they needed.
+    const live = await runBulkInvite(owner, 30, slow(40), 1);
+    for (let i = 0; i < 400; i++) await runBulkInvite(owner, 1, async (n) => ok(n));
+    expect(bulkInviteJob(live.jobId, owner)).not.toBeNull();
+    await vi.waitFor(() => expect(bulkInviteJob(live.jobId, owner)?.finished).toBe(true), { timeout: 20_000, interval: 50 });
+  }, 60_000);
+});
+
 describe('an empty batch', () => {
   it('finishes immediately with nothing', async () => {
     const view = await runBulkInvite(owner, 0, async (i) => ok(i));

@@ -194,6 +194,27 @@ export interface FailureRateLimitOptions {
 }
 
 /**
+ * Attempts this process has let through and not yet charged for.
+ *
+ * Without it the pre-check would be a pure read, so a burst that arrives
+ * together all passes one check before any of them has failed — and the
+ * attacker chooses the size of that burst, which is not a bound at all. An
+ * in-flight attempt counts against the ceiling exactly as a landed failure
+ * does, so concurrency buys nothing.
+ */
+const inFlight = new Map<string, number>();
+
+function claim(key: string): void {
+  inFlight.set(key, (inFlight.get(key) ?? 0) + 1);
+}
+
+function release(key: string): void {
+  const left = (inFlight.get(key) ?? 1) - 1;
+  if (left <= 0) inFlight.delete(key);
+  else inFlight.set(key, left);
+}
+
+/**
  * A limiter that charges for FAILURES rather than for requests.
  *
  * The login limiter used to consume a unit before the handler ran, so ten
@@ -209,45 +230,100 @@ export interface FailureRateLimitOptions {
  *   address  a much looser ceiling for one address working through many
  *            accounts, which no per-account bucket can see.
  *
- * HONEST LIMIT: the check does not consume, so N requests that arrive
- * together can all pass one check before any of them has failed. The
- * overshoot is bounded by concurrency, not by the window, and the bucket
- * still closes once those failures land. A guess is only ever worth making
- * serially, so this costs an attacker nothing they did not already have.
+ * The address bucket refuses outright. The subject bucket does NOT: an
+ * exhausted account bucket would otherwise be a lockout button, since anyone
+ * who knows an address could spend it. Instead the request runs, and only an
+ * answer that would have been a refusal anyway becomes 429 — so a guess still
+ * gains nothing past the ceiling, and the real person with the real password
+ * still gets in.
  */
 export function failureRateLimit(opts: FailureRateLimitOptions) {
   return async function failureRateLimiter(req: Request, res: Response, next: NextFunction): Promise<void> {
     if (!limitersActive()) return next();
 
     const subject = opts.subjectOf(req);
-    const buckets: Array<{ key: string; max: number; charges: (status: number) => boolean }> = [
-      { key: `ip:${req.ip ?? 'unknown'}`, max: opts.addressMax, charges: ADDRESS_FAILURE },
-      ...(subject ? [{ key: subject, max: opts.max, charges: SUBJECT_FAILURE }] : []),
-    ];
+    const address = { key: `ip:${req.ip ?? 'unknown'}`, max: opts.addressMax, charges: ADDRESS_FAILURE };
+    const buckets = [address, ...(subject ? [{ key: subject, max: opts.max, charges: SUBJECT_FAILURE }] : [])];
 
-    for (const bucket of buckets) {
-      const verdict = await inspect(opts.name, bucket.key, opts.windowMs, bucket.max, { failClosed: opts.failClosed });
-      if (verdict.allowed) continue;
-      res.setHeader('Retry-After', String(verdict.retryAfter));
-      if (verdict.reason === 'unavailable') {
-        res.status(503).json({ error: 'This service is briefly unavailable. Please try again shortly.', retryAfterSeconds: verdict.retryAfter });
+    // Claimed BEFORE the first await, or the reservation buys nothing: every
+    // request in a burst reaches its check before any of them has claimed, and
+    // they all see an empty bucket. Released on every exit below.
+    for (const bucket of buckets) claim(bucket.key);
+    let released = false;
+    const releaseAll = () => {
+      if (released) return;
+      released = true;
+      for (const bucket of buckets) release(bucket.key);
+    };
+
+    const verdictFor = async (bucket: { key: string; max: number }): Promise<RateVerdict> => {
+      // Everyone else in flight counts against the ceiling; this request's own
+      // claim does not, because `inspect` refuses at `count >= max` already.
+      const others = Math.max(0, (inFlight.get(bucket.key) ?? 1) - 1);
+      // Not clamped at 1. `inspect` refuses at `count >= effective`, and what
+      // has to be true is `count + others >= max`; flooring the effective
+      // ceiling would let a burst of 40 through against a limit of 10 with an
+      // empty bucket, which is exactly the hole this closes.
+      return inspect(opts.name, bucket.key, opts.windowMs, bucket.max - others, { failClosed: opts.failClosed });
+    };
+
+    // The address bucket is the one that can refuse before the handler: it is
+    // loose enough that reaching it is abuse, and there is no account to lock.
+    const addressVerdict = await verdictFor(address);
+    if (!addressVerdict.allowed) {
+      releaseAll();
+      res.setHeader('Retry-After', String(addressVerdict.retryAfter));
+      if (addressVerdict.reason === 'unavailable') {
+        res.status(503).json({ error: 'This service is briefly unavailable. Please try again shortly.', retryAfterSeconds: addressVerdict.retryAfter });
         return;
       }
-      logger.warn({ limiter: opts.name, key: fingerprint(bucket.key), max: bucket.max }, 'Rate limit exceeded');
-      // Deliberately generic: do not confirm whether an account exists.
-      res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.', retryAfterSeconds: verdict.retryAfter });
+      logger.warn({ limiter: opts.name, key: fingerprint(address.key), max: address.max }, 'Rate limit exceeded');
+      res.status(429).json({ error: 'Too many requests. Please wait a moment and try again.', retryAfterSeconds: addressVerdict.retryAfter });
       return;
     }
 
+    const subjectBucket = buckets[1];
+    const subjectVerdict = subjectBucket ? await verdictFor(subjectBucket) : { allowed: true as const };
+    if (!subjectVerdict.allowed && subjectVerdict.reason === 'unavailable') {
+      // The store is down. This limiter fails closed, and there is no way to
+      // tell a guess from a sign-in without it.
+      releaseAll();
+      res.setHeader('Retry-After', String(subjectVerdict.retryAfter));
+      res.status(503).json({ error: 'This service is briefly unavailable. Please try again shortly.', retryAfterSeconds: subjectVerdict.retryAfter });
+      return;
+    }
+    if (!subjectVerdict.allowed) {
+      // Over the account's ceiling. The handler still runs — a correct
+      // password must not be refused because someone else spent the bucket —
+      // but a refusal is answered as the limit rather than as a credential,
+      // so a guess past the ceiling learns nothing and gains nothing.
+      logger.warn({ limiter: opts.name, key: fingerprint(subjectBucket!.key), max: subjectBucket!.max }, 'Rate limit exceeded');
+      const retryAfter = subjectVerdict.retryAfter;
+      const send = res.json.bind(res);
+      res.json = (body: unknown) => {
+        if (!SUBJECT_FAILURE(res.statusCode)) return send(body);
+        res.setHeader('Retry-After', String(retryAfter));
+        res.status(429);
+        return send({ error: 'Too many requests. Please wait a moment and try again.', retryAfterSeconds: retryAfter });
+      };
+    }
+
     // Charged once the answer is known. 'finish' fires for every response the
-    // server completes, including one an error handler wrote.
-    res.once('finish', () => {
+    // server completes, including one an error handler wrote; 'close' covers a
+    // client that hung up, so a claim is never left behind.
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      releaseAll();
       for (const bucket of buckets) {
         if (!bucket.charges(res.statusCode)) continue;
         consume(opts.name, bucket.key, opts.windowMs, bucket.max, { failClosed: opts.failClosed })
           .catch((err: unknown) => logger.warn({ limiter: opts.name, err: String(err) }, 'Could not record a failed attempt'));
       }
-    });
+    };
+    res.once('finish', settle);
+    res.once('close', settle);
     next();
   };
 }
@@ -286,4 +362,5 @@ export function _useRateLimitStore(store: RateLimitStore | null): void {
 export function _resetRateLimits(): void {
   memoryStore.clear();
   lastStoreWarning.clear();
+  inFlight.clear();
 }

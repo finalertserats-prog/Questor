@@ -919,7 +919,16 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   if (rungChoice) {
     const drawn = await drawOnRung(opts, competency?.name ?? block?.competencyName ?? 'the role', block, rungChoice, { lastText, turns, correction, movedOn, lead });
     if (drawn.utterance) return drawn.utterance;
-    if (drawn.degraded) rungAsPlanned = rungChoice;
+    // Asking the stored rung word for word is the RIGHT answer when a model
+    // outage means nobody can put it in the interviewer's own voice — but only
+    // while the library is switched on. With LIBRARY_ENABLED off, a plan built
+    // when it was on must never surface a stored question to a candidate.
+    //
+    // That property used to hold by accident: with the local fallback off
+    // nothing recorded a serving layer, so `degraded` was never true and this
+    // line never ran. Recording the outage (R2) made it reachable, which is
+    // how the accident showed up. The guard is explicit now.
+    if (drawn.degraded && config.library.enabled) rungAsPlanned = rungChoice;
   }
 
   // The built-in writer's question for this turn, decided before any model is

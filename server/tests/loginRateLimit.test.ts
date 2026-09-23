@@ -102,11 +102,34 @@ describe('guessing one account', () => {
     expect((await signIn(app, staff[4], 'wrong-password-entirely', ELSEWHERE)).status).toBe(429);
   });
 
-  it('refuses the right password too, once the account is over its limit', async () => {
+  it('still lets the real person in with the real password', async () => {
+    // Raised by Codex on the first pass: refusing before the handler makes an
+    // exhausted account bucket a lockout button — anyone who knows an address
+    // could spend it. Only an answer that would have been a refusal anyway
+    // becomes 429, so a guess past the ceiling gains nothing and the person
+    // whose account it is still signs in.
     const app = createApp();
     for (let i = 0; i < LOGIN_FAILURES_PER_ACCOUNT; i++) await signIn(app, staff[5], 'wrong-password-entirely');
-    expect((await signIn(app, staff[5], PASSWORD)).status).toBe(429);
+    expect((await signIn(app, staff[5], PASSWORD)).status).toBe(200);
   });
+
+  it('answers a wrong password past the ceiling as the limit, not as a credential', async () => {
+    const app = createApp();
+    for (let i = 0; i < LOGIN_FAILURES_PER_ACCOUNT; i++) await signIn(app, staff[10], 'wrong-password-entirely');
+    const res = await signIn(app, staff[10], 'wrong-password-entirely');
+    expect([res.status, res.body.error]).toEqual([429, 'Too many requests. Please wait a moment and try again.']);
+  });
+
+  it('bounds a burst that arrives all at once, not only a serial run', async () => {
+    // Raised by Codex on the first pass: a check that does not consume lets a
+    // burst all pass before any of it has failed, and the attacker chooses the
+    // burst size. An attempt in flight now counts against the ceiling.
+    const app = createApp();
+    const wrong = Array.from({ length: LOGIN_FAILURES_PER_ACCOUNT * 4 }, () => signIn(app, staff[11], 'wrong-password-entirely'));
+    const statuses = (await Promise.all(wrong)).map((r) => r.status);
+    expect(statuses.filter((s) => s === 401).length).toBeLessThanOrEqual(LOGIN_FAILURES_PER_ACCOUNT);
+    expect(statuses.filter((s) => s === 429).length).toBeGreaterThan(0);
+  }, 60_000);
 
   it('says how long to wait', async () => {
     const app = createApp();

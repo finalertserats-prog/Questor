@@ -174,6 +174,27 @@ describe('a deferral', () => {
   });
 });
 
+describe('a provider we could not reach at all', () => {
+  // Raised by Codex on the first pass: bad SMTP credentials or no connection
+  // were reported to the candidate as "try again in a minute", which sends
+  // them round a loop that cannot end until someone changes a setting.
+  beforeEach(() => { fail.mode = 'unreachable'; });
+
+  it('does not tell the candidate to try again in a minute', async () => {
+    expect((await issueIdentityCode(demo.sessionId)).kind).toBe('refused');
+  });
+
+  it('takes the code back, because nothing left us', async () => {
+    await issueIdentityCode(demo.sessionId);
+    expect(await challenges()).toBe(0);
+  });
+
+  it('tells HR what actually went wrong', async () => {
+    await issueIdentityCode(demo.sessionId);
+    expect(JSON.parse((await identityAudit())[0].afterJson)).toMatchObject({ certainty: 'not_delivered', reason: 'unreachable' });
+  });
+});
+
 describe('a successful send is still audited exactly once', () => {
   it('writes identity.code_sent and nothing else', async () => {
     await issueIdentityCode(demo.sessionId);

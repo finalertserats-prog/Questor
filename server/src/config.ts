@@ -181,8 +181,16 @@ export type LlmPurpose = (typeof LLM_PURPOSES)[number];
 export const DEFAULT_LLM_LIVE_TURN_TIMEOUT_MS = DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS;
 /** A person is watching a spinner on an HR screen (a JD draft, a competency). Patient, but not indefinitely. */
 export const DEFAULT_LLM_AUTHORING_TIMEOUT_MS = 30_000;
-/** Nobody is waiting: grading, the report, evidence attribution, the feedback letter. The most patient budget. */
-export const DEFAULT_LLM_FINALISATION_TIMEOUT_MS = 60_000;
+/**
+ * Nobody is waiting: grading, the report, evidence attribution, the feedback
+ * letter, the catalog classifier. The most patient budget.
+ *
+ * Above every per-call setting that exists (CATALOG_CLASSIFY_TIMEOUT_MS
+ * defaults to 60 s), because a call site's own timeoutMs can only SHORTEN a
+ * call — so a budget equal to a setting's default would silently clamp an
+ * operator who raised it. `budgetFor` says so in the log if it ever does.
+ */
+export const DEFAULT_LLM_FINALISATION_TIMEOUT_MS = 90_000;
 
 export type LlmBudgets = Readonly<Record<LlmPurpose, number>>;
 

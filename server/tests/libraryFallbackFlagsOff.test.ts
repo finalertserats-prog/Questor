@@ -84,16 +84,33 @@ describe('both flags off', () => {
     expect(config.llm.local.enabled).toBe(false);
   });
 
-  it('stores only kind and question on an agent turn', async () => {
+  // These two pinned the ABSENCE of a serving note with the flags off, which
+  // is the defect R2 recorded: a total provider outage answered every turn
+  // with a built-in question, wrote nothing on the turn, and left
+  // /api/health saying `llm.layer: "primary"`. A recruiter read a plainer
+  // interview as a worse candidate and no uptime check saw a thing. The note
+  // is now written on this path too; everything else about it is unchanged,
+  // which the rest of this file and llmFailoverOff.test.ts still pin.
+  it('records on the agent turn that the primary could not serve it', async () => {
     const { result, served } = await ask();
-    expect(Object.keys(agentTurnMeta(result, served)).sort()).toEqual(['kind', 'question']);
+    expect(Object.keys(agentTurnMeta(result, served)).sort()).toEqual(['kind', 'question', 'serving']);
   });
 
-  it('records no serving trace when the primary fails', async () => {
+  it('names the layer that did serve it, and why', async () => {
+    const { result, served } = await ask();
+    expect((agentTurnMeta(result, served) as { serving: unknown }).serving)
+      .toEqual({ layer: 'built-in', degraded: true, failure: 'quota' });
+  });
+
+  it('records the serving trace when the primary fails', async () => {
     const { served } = await ask();
-    expect(served).toEqual([]);
+    expect(served).toEqual([{ fn: 'live_interviewer', layer: 'built-in', provider: 'built-in', failure: 'quota' }]);
   });
 
+  // The one that matters most here: with LIBRARY_ENABLED off, no stored
+  // question may reach a candidate, whatever the model is doing. That used to
+  // hold by accident — nothing recorded an outage, so the "ask the rung as
+  // planned" branch was unreachable. conversationRuntime.ts now says so.
   it('asks the built-in bank, not a stored rung, when the primary fails on a plan that still carries a ladder', async () => {
     const { result } = await ask(true);
     expect({ rung: result.question === RUNG, entry: result.libraryEntryId }).toEqual({ rung: false, entry: undefined });
