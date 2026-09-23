@@ -39,7 +39,9 @@ export function OrganisationLimits() {
   const load = useCallback(async () => {
     try {
       const data = await api.get<{ organisations: readonly Organisation[] }>('/admin/organisations');
-      setOrgs(data.organisations);
+      // A server that answers without the list must not blank the whole page:
+      // this panel sits beside the account-requests queue an operator is working.
+      setOrgs(Array.isArray(data?.organisations) ? data.organisations : []);
       setError('');
     } catch (err: unknown) {
       if (err instanceof ApiError && (err.status === 403 || err.status === 503)) {
@@ -68,7 +70,7 @@ export function OrganisationLimits() {
     }
   };
 
-  if (!allowed || orgs.length === 0) return null;
+  if (!allowed || !orgs || orgs.length === 0) return null;
 
   return (
     <div className="card" style={{ marginTop: 18 }}>
