@@ -76,6 +76,41 @@ describe('what the model is not allowed to do', () => {
     expect(facts.roles.map((r) => r.title)).not.toContain('Chief Technology Officer');
   });
 
+  it('cannot turn a bullet into a job', async () => {
+    const cv = `Experience
+
+Northwind Analytics
+Senior Data Engineer | 2021 - 2024
+- Built the Kafka ingestion in 2021 and owned it since.
+`;
+    const prepared = prepareCvForScoring(cv);
+    const bullet = prepared.lines.find((l) => l.text.startsWith('- Built the Kafka'))!;
+    _setLlmForTests(fakeLlm({ roles: [{ line: bullet.index, title: 'Built the Kafka ingestion', employer: '', startYear: 2021, endYear: null, current: false }], scope: [] }));
+
+    const facts = await refineCvFacts(prepared, cv, { today: new Date('2026-09-23T00:00:00Z') });
+
+    expect(facts.roles.map((r) => r.title)).not.toContain('Built the Kafka ingestion');
+  });
+
+  it('cannot turn a line outside the experience section into a job', async () => {
+    const cv = `Experience
+
+Northwind Analytics
+Senior Data Engineer | 2021 - 2024
+Owned the Kafka ingestion.
+
+Skills
+Lead Engineer 2019 Kafka Airflow
+`;
+    const prepared = prepareCvForScoring(cv);
+    const skill = prepared.lines.find((l) => l.section === 'skills' && l.text.includes('Lead Engineer'))!;
+    _setLlmForTests(fakeLlm({ roles: [{ line: skill.index, title: 'Lead Engineer', employer: '', startYear: 2019, endYear: null, current: false }], scope: [] }));
+
+    const facts = await refineCvFacts(prepared, cv, { today: new Date('2026-09-23T00:00:00Z') });
+
+    expect(facts.roles.map((r) => r.title)).not.toContain('Lead Engineer');
+  });
+
   it('cannot cite a line that does not exist', async () => {
     _setLlmForTests(fakeLlm({ roles: [{ line: 9999, title: 'Anything', employer: '', current: false }], scope: [] }));
 

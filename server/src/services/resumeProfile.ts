@@ -85,7 +85,24 @@ function completeFacts(parsed: Partial<CvFacts>): CvFacts | null {
   if (!parsed.tenure || typeof parsed.tenure.roleCount !== 'number') return null;
   const redaction = parsed.redaction;
   if (!redaction || !Array.isArray(redaction.kinds) || !Array.isArray(redaction.injectionLines) || typeof redaction.linesRemoved !== 'number') return null;
+  // The elements too, not just the arrays. `lines: [{}]` satisfies every check
+  // above and then takes the request down on `line.text.toLowerCase()`, which
+  // is the first thing the scorer does with each one.
+  if (!parsed.lines!.every(isReadableLine)) return null;
+  if (!parsed.technologies!.every((t) => typeof t?.name === 'string' && Array.isArray(t.evidence) && t.evidence.every(isEvidence))) return null;
+  if (!parsed.roles!.every((r) => typeof r?.title === 'string' && isEvidence(r.evidence) && Array.isArray(r.bullets) && r.bullets.every(isEvidence))) return null;
+  if (!parsed.scope!.every((s) => typeof s?.value === 'string' && isEvidence(s.evidence))) return null;
   return { ...(parsed as CvFacts), source: parsed.source === 'model_assisted' ? 'model_assisted' : 'deterministic' };
+}
+
+function isReadableLine(line: unknown): boolean {
+  const l = line as { index?: unknown; text?: unknown; section?: unknown };
+  return typeof l?.text === 'string' && typeof l.index === 'number' && typeof l.section === 'string';
+}
+
+function isEvidence(value: unknown): boolean {
+  const e = value as { line?: unknown; quote?: unknown; section?: unknown };
+  return typeof e?.quote === 'string' && typeof e.line === 'number' && typeof e.section === 'string';
 }
 
 export interface StoreResumeInput {

@@ -205,6 +205,117 @@ describe('protected detail', () => {
   });
 });
 
+describe('a name the pattern-matchers would have missed', () => {
+  const cvFor = (name: string) => `${name}
+Senior Data Engineer
+
+Experience
+
+Data Engineer, Acme Data (2019 - 2022)
+- Built the Kafka ingestion and owned the Airflow DAGs.
+`;
+
+  it.each([
+    ['a lowercase name', 'jane okonkwo'],
+    ['a name with a lowercase particle', 'van der Meer'],
+    ['a name in a non-Latin script', '张伟'],
+    ['a name that is also a job word', 'Will Developer'],
+    ['a name with no case at all', 'MARIA DE SOUSA'],
+  ])('is removed by position, not by shape: %s', (_label, name) => {
+    const readable = prepareCvForScoring(cvFor(name)).lines.map((l) => l.text).join(' ');
+    expect(readable).not.toContain(name);
+  });
+
+  it('keeps a real summary sentence that happens to sit above the first heading', () => {
+    const cv = `Priya Raman
+Data engineer with nine years of experience building streaming pipelines that run unattended.
+
+Experience
+
+Data Engineer, Acme (2019 - 2022)
+- Built Kafka ingestion.
+`;
+    const readable = prepareCvForScoring(cv).lines.map((l) => l.text).join(' ');
+    expect(readable).toContain('streaming pipelines that run unattended');
+    expect(readable).not.toContain('Priya Raman');
+  });
+});
+
+describe('an education line with no degree word in it', () => {
+  const cv = `Experience
+
+Data Engineer, Acme (2019 - 2022)
+- Built Kafka ingestion.
+
+Education
+Computer Science, University of Oxford, 2013
+`;
+  const facts = extractCvFacts(cv, { today: TODAY });
+  const readable = facts.lines.map((l) => l.text).join(' ');
+
+  it('still loses the institution', () => {
+    expect(readable).not.toContain('University of Oxford');
+  });
+
+  it('still loses the year', () => {
+    expect(readable).not.toContain('2013');
+  });
+
+  it('keeps the subject, which is the job-related part', () => {
+    expect(readable).toContain('Computer Science');
+  });
+});
+
+describe('figures that are not phone numbers', () => {
+  it('survive in a summary above the first heading', () => {
+    const cv = `Priya Raman
+Processed 40000000 events per day across the Kafka estate for three years.
+
+Experience
+
+Data Engineer, Acme (2019 - 2022)
+- Built the ingestion.
+`;
+    const readable = prepareCvForScoring(cv).lines.map((l) => l.text).join(' ');
+    expect(readable).toContain('40000000');
+  });
+
+  it('while a real phone number in the same block does not', () => {
+    const cv = `Priya Raman
++91 98765 43210
+
+Experience
+
+Data Engineer, Acme (2019 - 2022)
+- Built the ingestion.
+`;
+    expect(prepareCvForScoring(cv).lines.map((l) => l.text).join(' ')).not.toContain('98765');
+  });
+});
+
+describe('the word "married" in ordinary work English', () => {
+  it('does not delete the line it appears in', () => {
+    const cv = `Experience
+
+Data Engineer, Acme (2019 - 2022)
+- Married the Kafka streams to the Snowflake warehouse loads so both recovered together.
+`;
+    expect(extractCvFacts(cv, { today: TODAY }).lines.map((l) => l.text).join(' ')).toContain('Kafka streams');
+  });
+
+  it('while a marital-status field still goes', () => {
+    const cv = `Priya Raman
+Marital Status: Married
+
+Experience
+
+Data Engineer, Acme (2019 - 2022)
+- Built the ingestion.
+`;
+    expect(prepareCvForScoring(cv).lines.map((l) => l.text).join(' ')).not.toContain('Marital');
+  });
+});
+
 describe('stated location and work authorisation', () => {
   const facts = extractCvFacts('Summary\nBased in Berlin and authorised to work in the EU without sponsorship.\n\nExperience\nData Engineer, Acme (2020 - 2023)\n- Built pipelines in Airflow.\n', { today: TODAY });
 

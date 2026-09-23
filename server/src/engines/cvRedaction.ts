@@ -60,7 +60,10 @@ const DROP_LINE: ReadonlyArray<{ readonly kind: ProtectedKind; readonly re: RegE
   { kind: 'age', re: /^\s*age\s*[:\-–]|\b(age|aged)\s*[:\-–]?\s*\d{1,2}\s*(years?|yrs?)?\s*$/i },
   { kind: 'gender', re: /\b(gender|sex)\s*[:\-–]/i },
   { kind: 'gender', re: /^\s*(male|female|man|woman|non[- ]?binary)\s*$/i },
-  { kind: 'marital_status', re: /\b(marital status|civil status|married|unmarried|spouse|dependents?|number of children)\b/i },
+  // Labelled, or a short identity-block line on its own. "Married" as a bare
+  // word is also ordinary English ("married two systems together"), and losing
+  // a whole bullet to that false positive costs real work evidence.
+  { kind: 'marital_status', re: /\b(marital status|civil status|spouse|dependents?|number of children)\b|^\s*(married|unmarried|single|widowed|divorced)\s*$/i },
   { kind: 'nationality', re: /\b(nationality|citizenship|country of (birth|origin)|passport (no|number|details)|visa (status|type)|mother tongue|native (language|of)|ethnicity|race\s*[:\-–]|place of birth)\b/i },
   { kind: 'religion', re: /\b(religion|religious|faith|caste|community category)\b/i },
   { kind: 'caste', re: /\b(caste|sub[- ]?caste|category\s*[:\-]\s*(sc|st|obc|general))\b/i },
@@ -102,9 +105,20 @@ const MASK_INLINE: ReadonlyArray<{ readonly kind: ProtectedKind; readonly re: Re
  */
 const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)[\s.-]?)?\d(?:[\s.-]?\d){6,14}(?=\D|$)/g;
 const PHONE_LABEL = /\b(phone|mobile|tel|telephone|cell|contact no|whatsapp)\b/i;
+/** A number a person could dial: grouped with separators, or country-prefixed. */
+const PHONE_SHAPE = /\+\d{1,3}[\s.-]?\d|\(\d{2,4}\)|\d[\s.-]\d{3}/;
 
+/**
+ * A long run of digits is not a phone number just because it is long.
+ * "Processed 40000000 events/day", written in a summary above the first
+ * heading, was being deleted as one — destroying exactly the scale evidence
+ * this feature exists to find. A phone number is labelled, country-prefixed,
+ * or grouped with separators.
+ */
 function looksLikeContactLine(line: string, inHeader: boolean): boolean {
-  return inHeader || PHONE_LABEL.test(line) || /\+\d{1,3}[\s.-]?\d/.test(line);
+  if (PHONE_LABEL.test(line)) return true;
+  if (/\+\d{1,3}[\s.-]?\d/.test(line)) return true;
+  return inHeader && PHONE_SHAPE.test(line);
 }
 
 /**
@@ -137,20 +151,32 @@ function maskInline(line: string, inHeader: boolean): { text: string; kinds: Pro
 }
 
 /**
- * The header block: the lines above the first section heading that name the
- * person rather than the work. A name is not detectable by pattern — it is
- * detected by position, which is why only the block above the first heading is
- * treated this way, and only while the lines look like an identity block.
+ * The header block: the lines above the first section heading.
+ *
+ * A name cannot be recognised by pattern. "van der Meer" is not capitalised
+ * the way a matcher expects, 张伟 has no case at all, and a person really can
+ * be called Will Developer — so a name-shaped test both misses names and, worse,
+ * misses them in a way that correlates with where the person is from, which is
+ * precisely the thing this module exists to keep out of a score.
+ *
+ * So the header block is judged by POSITION, not by shape: above the first
+ * section heading, a line is identity unless it is long enough to be prose or
+ * plainly describes work. Over-removing a job title costs nothing — the title
+ * appears again in the experience section. Keeping a name costs the guarantee.
  */
 const HEADER_MAX_LINES = 6;
-const NAME_LIKE = /^[\p{Lu}][\p{L}'.-]*(?:\s+[\p{Lu}][\p{L}'.-]*){0,3}$/u;
-const JOB_WORDS = /\b(engineer|developer|manager|analyst|designer|scientist|architect|consultant|director|lead|head|officer|specialist|administrator|product|data|software|senior|principal|staff|intern)\b/i;
 
-function looksLikeAName(line: string): boolean {
+/** Long enough that it is a summary sentence rather than a header field. */
+const HEADER_PROSE_CHARS = 60;
+
+/** A header line that is unmistakably about work rather than about a person. */
+const HEADER_WORK_SIGNAL = /\b(years?|experience|built|building|led|leading|specialis|specializ|focus(?:ed|ing)?|working|works|owns?|owned|delivering|delivered)\b/i;
+
+function isIdentityHeaderLine(line: string): boolean {
   const t = line.trim();
-  if (!t || t.length > 48 || /\d/.test(t)) return false;
-  if (JOB_WORDS.test(t)) return false;
-  return NAME_LIKE.test(t) || /^[\p{Lu}\s.'-]{4,40}$/u.test(t);
+  if (!t) return false;
+  if (t.length >= HEADER_PROSE_CHARS) return false;
+  return !HEADER_WORK_SIGNAL.test(t);
 }
 
 function stripControl(text: string): string {
@@ -204,21 +230,10 @@ export function prepareCvForScoring(rawText: string): ScoreableCv {
       continue;
     }
 
-    // The identity block at the top, before any heading.
-    if (!seenHeading && headerLines < HEADER_MAX_LINES) {
-      headerLines++;
-      if (looksLikeAName(trimmed)) {
-        removed++;
-        kinds.add('name');
-        continue;
-      }
-      if (ADDRESS_SHAPE.test(trimmed)) {
-        removed++;
-        kinds.add('contact');
-        continue;
-      }
-    }
-
+    // A line that names what it is comes out for that reason. This runs before
+    // the positional header rule below, so "Gender: Male" at the top of a CV is
+    // reported as a gender field rather than swept up as an unnamed identity
+    // line — the report exists to tell a person what was taken out and why.
     const drop = DROP_LINE.find(({ re }) => re.test(trimmed));
     if (drop) {
       removed++;
@@ -226,12 +241,33 @@ export function prepareCvForScoring(rawText: string): ScoreableCv {
       continue;
     }
 
+    // The identity block at the top, before any heading: whatever is left up
+    // there is the person rather than the work.
+    if (!seenHeading && headerLines < HEADER_MAX_LINES) {
+      headerLines++;
+      if (ADDRESS_SHAPE.test(trimmed)) {
+        removed++;
+        kinds.add('contact');
+        continue;
+      }
+      if (isIdentityHeaderLine(trimmed)) {
+        removed++;
+        kinds.add('name');
+        continue;
+      }
+    }
+
     let { text, kinds: inline } = maskInline(trimmed, !seenHeading);
     for (const k of inline) kinds.add(k);
 
     if (section === 'education') {
       const degree = DEGREE_PHRASE.exec(text)?.[0];
-      const reduced = (degree ?? text).replace(YEAR_RE, '').replace(/\s{2,}/g, ' ').replace(/[,;|]\s*$/, '').trim();
+      // No recognised degree token: "Computer Science, University of Oxford,
+      // 2013" would otherwise keep the university, because only the year was
+      // being stripped. An education line is written subject-first, so the
+      // first comma-separated part is the subject and the rest is provenance.
+      const subject = text.split(/[,;|]/)[0];
+      const reduced = (degree ?? subject).replace(YEAR_RE, '').replace(/\s{2,}/g, ' ').replace(/[,;|]\s*$/, '').trim();
       if (reduced !== text) {
         kinds.add('education_provenance');
         educationOriginals.set(index, trimmed);

@@ -128,6 +128,21 @@ export async function refineCvFacts(cv: ScoreableCv, rawText: string, opts: Refi
 /** The wordings that actually mean "and I am still there". */
 const ONGOING = /\b(present|current|now|to date|till date|ongoing)\b/i;
 
+const BULLET_START = /^[-–•*●▪·]/;
+const JOB_TITLE_WORD = /\b(engineer|developer|manager|analyst|designer|scientist|architect|consultant|director|lead|head|officer|specialist|administrator|associate|executive|coordinator|technician|researcher|intern|principal|partner|founder|owner|president|vp|cto|cio|ceo)\b/i;
+const MAX_ROLE_HEADING_CHARS = 140;
+
+/**
+ * Could this line be a job heading at all? In the experience section, short
+ * enough to be a heading, not a bullet, and naming either a job or a year.
+ */
+function couldBeARole(line: CvLine): boolean {
+  if (line.section !== 'experience') return false;
+  if (!line.text || line.text.length > MAX_ROLE_HEADING_CHARS) return false;
+  if (BULLET_START.test(line.text)) return false;
+  return JOB_TITLE_WORD.test(line.text) || /\b(19|20)\d{2}\b/.test(line.text);
+}
+
 function mergeRoles(
   base: readonly CvRoleHeld[],
   offered: readonly CvFactsReply['roles'][number][],
@@ -139,6 +154,12 @@ function mergeRoles(
   for (const r of offered) {
     const line = byIndex.get(r.line);
     if (!line || held.has(r.line)) continue;
+    // A role is a heading in the experience section, not any line the model
+    // decides to call one. Without this, "Built Kafka ingestion in 2021" comes
+    // back as a job titled "Built Kafka ingestion" — and because tenure, gaps
+    // and every technology's recency hang off the roles, one mislabelled bullet
+    // rewrites the whole reading of a career.
+    if (!couldBeARole(line)) continue;
     if (!saysIt(line, r.title) || !saysIt(line, r.employer) || !saysIt(line, r.employerContext ?? null)) continue;
     if (!yearOnLine(line, r.startYear) || !yearOnLine(line, r.endYear)) continue;
     // "Still there" is a claim like any other and has to be on the line too.
