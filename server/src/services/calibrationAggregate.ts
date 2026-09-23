@@ -190,9 +190,15 @@ export async function clusterReasons(opts: {
 
   const themes = await generateJson<ReasonTheme[]>({
     fn: 'calibration_reason_themes',
-    // Nobody is waiting: this runs while a role's calibration is aggregated,
-    // and an empty list is a perfectly good answer.
+    // Nobody is waiting on the nightly sweep, but POST /api/calibration/run is
+    // an admin pressing "recompute now", and runCalibration walks the groups
+    // SEQUENTIALLY with one of these per group — so the purpose budget would
+    // multiply by the number of roles x competencies x bands. Themes are
+    // optional polish (an empty list is a perfectly good answer, and the
+    // caller already renders it as "no summary"), so this one is bounded well
+    // inside its purpose rather than at it. It can only ever shorten.
     purpose: 'finalisation',
+    timeoutMs: 15_000,
     temperature: 0.1,
     reasoningEffort: 'low',
     // Grouping notes is not a job for a 3B model on a CPU, and it is not spoken.
