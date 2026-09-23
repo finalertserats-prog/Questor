@@ -23,6 +23,8 @@ import {
 } from '../domain/pipelineStages.js';
 import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
 import { decidePipeline } from '../services/pipelineAutonomy.js';
+import { humanReviewCheck } from '../services/humanReviewGate.js';
+import { humanReviewRefusal, HUMAN_REVIEW_REQUIRED } from '../domain/humanReviewRule.js';
 import {
   createMeeting, initialMeetingFields, isStaleCreation, tenantMeetingProvider, MEETING_STATUS, type MeetingOutcome,
 } from '../services/roundMeeting.js';
@@ -469,6 +471,21 @@ pipelinesRouter.post('/:id/finalize', requireCapability('assessment:review'), as
   const transition = resolveTransition(stages, pipeline.currentStageKey, 'candidate.finalized');
   if (!transition) throw new HttpError(409, 'This candidate is already at the final stage.');
 
+  // Finalising writes no outcome, so the rule in decidePipeline does not reach
+  // it — but it is the one move that carries a candidate past every remaining
+  // stage, the AI round's review among them, and leaving it open would make it
+  // the way around the promise rather than an exception to it. Same check, same
+  // refusal; a candidate with no AI interview is untouched, as everywhere else.
+  const review = await humanReviewCheck({ tenantId: req.auth!.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId });
+  if (review.missing) {
+    await logAudit({
+      tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
+      action: 'pipeline.finalize_refused', entityType: 'CandidatePipeline', entityId: pipeline.id,
+      after: { stage: pipeline.currentStageKey, because: HUMAN_REVIEW_REQUIRED, assessmentId: review.missing.assessmentId },
+    });
+    throw new HttpError(409, humanReviewRefusal(review.missing), HUMAN_REVIEW_REQUIRED);
+  }
+
   const moved = await prisma.candidatePipeline.updateMany({
     where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: transition.from },
     data: { currentStageKey: transition.to },
@@ -478,7 +495,7 @@ pipelinesRouter.post('/:id/finalize', requireCapability('assessment:review'), as
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.finalized', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    before: { stage: transition.from }, after: { stage: transition.to },
+    before: { stage: transition.from }, after: { stage: transition.to, humanReview: review.record },
   });
   res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
 }));
@@ -513,6 +530,17 @@ pipelinesRouter.post('/:id/decision', requireCapability('assessment:review'), as
   });
   if (!result.applied) {
     if (result.because === 'already_decided') throw new HttpError(409, DECIDED);
+    if (result.because === 'human_review_required') {
+      // Recorded as well as refused. An attempt to decide an interview nobody
+      // read is exactly the event an Art. 14 oversight audit asks about, and a
+      // refusal that leaves no trace answers it with silence.
+      await logAudit({
+        tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
+        action: 'pipeline.decision_refused', entityType: 'CandidatePipeline', entityId: pipeline.id,
+        after: { decision: body.decision, stage: pipeline.currentStageKey, because: HUMAN_REVIEW_REQUIRED, assessmentId: result.missing.assessmentId },
+      });
+      throw new HttpError(409, humanReviewRefusal(result.missing), HUMAN_REVIEW_REQUIRED);
+    }
     // "Nothing to do" here means a concurrent move carried the candidate past
     // the stage this decision was about: the same answer as a contended write.
     throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');

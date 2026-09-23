@@ -8,6 +8,8 @@ import {
   type DecisionEffect, type DecisionOutcome, type PipelineEvent, type StageTransition,
 } from '../domain/pipelineAutonomy.js';
 import { decisionOfVerdict, type Verdict } from '../domain/verdict.js';
+import { outcomeNeedsHumanReview, type UnreviewedInterview } from '../domain/humanReviewRule.js';
+import { humanReviewCheck, type HumanReviewRecord } from './humanReviewGate.js';
 
 /**
  * Applies the autonomous journey (domain/pipelineAutonomy.ts) to the database.
@@ -130,15 +132,25 @@ export interface PipelineDecisionInput {
 }
 
 export type DecisionResult =
-  | { readonly applied: true; readonly effect: DecisionEffect }
-  | { readonly applied: false; readonly because: 'already_decided' | 'nothing_to_do' | 'contended' };
+  | { readonly applied: true; readonly effect: DecisionEffect; readonly humanReview: HumanReviewRecord }
+  | { readonly applied: false; readonly because: 'already_decided' | 'nothing_to_do' | 'contended' }
+  // The candidate was promised a person would review their interview and none
+  // has. Reported rather than thrown so every caller has to answer it: the
+  // endpoint turns it into a refusal the reviewer can act on, and the verdict
+  // path records that the journey did not move.
+  | { readonly applied: false; readonly because: 'human_review_required'; readonly missing: UnreviewedInterview };
 
-async function auditDecision(pipeline: CandidatePipeline, o: PipelineDecisionInput, effect: DecisionEffect, about: string): Promise<void> {
+async function auditDecision(
+  pipeline: CandidatePipeline, o: PipelineDecisionInput, effect: DecisionEffect, about: string, humanReview: HumanReviewRecord,
+): Promise<void> {
   const actor = { tenantId: o.tenantId, actorType: 'user' as const, actorId: o.actorId, entityType: 'CandidatePipeline', entityId: pipeline.id };
   if (effect.kind === 'close') {
     await logAudit({
       ...actor, action: 'pipeline.decided',
-      after: { decision: effect.outcome, stage: effect.atStageKey, about, source: o.source, trigger: o.trigger, reasonRecorded: true },
+      // humanReview is the record the candidate's consent screen is about: it
+      // says whether a person was required to read their interview and whether
+      // one had, at the moment this outcome was written.
+      after: { decision: effect.outcome, stage: effect.atStageKey, about, source: o.source, trigger: o.trigger, reasonRecorded: true, humanReview },
     });
     return;
   }
@@ -146,7 +158,7 @@ async function auditDecision(pipeline: CandidatePipeline, o: PipelineDecisionInp
   // trail reads the same as the Finalise endpoint's.
   await logAudit({
     ...actor, action: effect.final ? 'pipeline.finalized' : 'pipeline.advanced',
-    before: { stage: effect.from }, after: { stage: effect.to, decision: o.outcome, source: o.source, trigger: o.trigger },
+    before: { stage: effect.from }, after: { stage: effect.to, decision: o.outcome, source: o.source, trigger: o.trigger, humanReview },
   });
 }
 
@@ -160,6 +172,30 @@ async function auditDecision(pipeline: CandidatePipeline, o: PipelineDecisionInp
  */
 export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecisionInput): Promise<DecisionResult> {
   let pipeline = loaded;
+
+  // The promise, checked once before the loop.
+  //
+  // Here rather than in the endpoint because this is the only function in the
+  // server that writes a hiring outcome. Putting the rule at the single write
+  // means a new way to record a decision inherits it instead of having to
+  // remember it — which is exactly how `humanReviewRequired` came to be stored
+  // by one route and read by none.
+  //
+  // Deliberately outside the retry loop: the answer cannot change from a
+  // contended stage move, and re-reading the candidate's whole interview
+  // history on every attempt would pay for a fact we already have.
+  const review = await humanReviewCheck({ tenantId: o.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId });
+  if (review.missing && outcomeNeedsHumanReview(o.outcome)) {
+    return { applied: false, because: 'human_review_required', missing: review.missing };
+  }
+  // A withdrawal is recorded whatever the review says, and the record says so:
+  // "the promise applied, and this decision was exempt from it" is a different
+  // fact from "the promise was kept", and a year from now only one of them is
+  // true of this candidate.
+  const humanReview: HumanReviewRecord = review.missing
+    ? { required: true, missingFor: review.missing.assessmentId }
+    : review.record;
+
   for (let attempt = 0; attempt < RETRIES; attempt++) {
     if (pipeline.status !== 'ACTIVE') return { applied: false, because: 'already_decided' };
     const wanted = o.about;
@@ -187,8 +223,8 @@ export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecis
         },
       });
     if (written.count === 1) {
-      await auditDecision(pipeline, o, effect, about);
-      return { applied: true, effect };
+      await auditDecision(pipeline, o, effect, about, humanReview);
+      return { applied: true, effect, humanReview };
     }
     pipeline = await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipeline.id } });
   }
@@ -225,6 +261,17 @@ export async function noteReviewDecision(o: ReviewDecisionInput): Promise<Decisi
       // A superseding verdict cannot reopen a closed pipeline: the earlier
       // decision stands until a person records otherwise.
       logger.warn({ pipelineId: pipeline.id, verdict: o.verdict }, 'Review verdict arrived for a pipeline already decided; left as it is');
+    }
+    if (!result.applied && result.because === 'human_review_required') {
+      // This review IS a human review, so the usual case passes. What is left
+      // is a candidate with a SECOND AI interview nobody has read — a real
+      // thing the reviewer should know about, not a bug. The verdict stands as
+      // a review; the journey waits for the other interview to be read, and
+      // the caller reports that to the page rather than claiming a move.
+      logger.warn(
+        { pipelineId: pipeline.id, verdict: o.verdict, assessmentId: result.missing.assessmentId },
+        'Review verdict could not move the candidate: another AI interview of theirs still has no human review',
+      );
     }
     return result;
   } catch (err) {

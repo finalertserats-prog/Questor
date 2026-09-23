@@ -148,6 +148,11 @@ async function deleteSessionCascade(
     // no foreign key onto the assessment, so this is a plain delete that an
     // erasure can always complete rather than a constraint that could block it.
     await count('calibrationObservations', () => tx.calibrationObservation.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
+    // Who read this candidate's transcript, and any sentence saying where they
+    // read it. It names the candidate's interview and holds a required key onto
+    // the assessment, so it goes with the rest — the audit event that the
+    // reading happened survives, as consent and decision events do.
+    await count('transcriptReads', () => tx.transcriptRead.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('humanReviews', () => tx.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('assessments', () => tx.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
   }

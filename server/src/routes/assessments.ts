@@ -38,6 +38,10 @@ import { recordAssessmentOpened } from '../services/assessmentViews.js';
 import { VERDICTS, decisionOfVerdict } from '../domain/verdict.js';
 import { journeyFor, journeyMove, journeyStanding, type JourneyMove } from '../services/verdictJourney.js';
 import { DEFAULT_STAGES, parseStages } from '../domain/pipelineStages.js';
+import { assessmentReviewRequirement } from '../services/humanReviewGate.js';
+import { humanReviewRefusal, HUMAN_REVIEW_REQUIRED } from '../domain/humanReviewRule.js';
+import { assertTranscriptRead, recordTranscriptRead, transcriptReadBy } from '../services/transcriptReadGate.js';
+import { ATTESTATION_MAX, ATTESTATION_MIN, READ_METHODS } from '../domain/transcriptRead.js';
 
 export const assessmentsRouter = Router();
 assessmentsRouter.use(authenticate);
@@ -675,9 +679,72 @@ const reviewSchema = z.object({
   // a verdict nobody carried out was the thing that needed fixing.
   applyToJourney: z.boolean().default(true),
 }).strict();
+/**
+ * "I have read the transcript" — the record the verdict is refused without.
+ *
+ * Two shapes, because there are two honest ways to have read it:
+ *
+ *   in_app     the page names the turn indexes it put in front of the
+ *              reviewer, and the server checks the list against the turns the
+ *              session actually has. Counting turns rather than scroll
+ *              distance is what makes this reachable with a keyboard and with
+ *              a screen reader: a percentage is a fact about a scrollbar, and
+ *              a reviewer who never touches one would fail it having read
+ *              every word.
+ *
+ *   elsewhere  the reviewer downloaded the transcript and read it in a
+ *              document, and says so in a sentence. An explicit, audited path
+ *              rather than a dead end — the alternative to naming it is that
+ *              they page to the bottom without reading, and we learn nothing.
+ */
+const transcriptReadSchema = z.discriminatedUnion('method', [
+  z.object({
+    method: z.literal(READ_METHODS[0]),
+    // Bounded so a client cannot post a megabyte of indexes; a real interview
+    // is tens of turns and the cap is far above any of them.
+    seenIndexes: z.array(z.number().int().min(0).max(100_000)).max(5_000),
+  }).strict(),
+  z.object({
+    method: z.literal(READ_METHODS[1]),
+    attestation: z.string().trim().min(ATTESTATION_MIN, 'Say where you read the transcript.').max(ATTESTATION_MAX),
+  }).strict(),
+]);
+
+assessmentsRouter.post('/:id/transcript-read', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
+  const body = transcriptReadSchema.parse(req.body);
+  const stored = await recordTranscriptRead({
+    tenantId: req.auth!.tenantId, reviewerId: req.auth!.userId, assessmentId: a.id, sessionId: a.sessionId,
+    report: body.method === 'elsewhere'
+      ? { method: 'elsewhere', seenIndexes: [], attestation: body.attestation }
+      : { method: 'in_app', seenIndexes: body.seenIndexes, attestation: '' },
+  });
+  res.status(201).json({ transcriptRead: { method: stored.method, turnsSeen: stored.turnsSeen, turnsTotal: stored.turnsTotal, at: stored.createdAt } });
+}));
+
+/** Whether this reviewer has already met the requirement, so the page can say so. */
+assessmentsRouter.get('/:id/transcript-read', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
+  const a = await getAssessment(req.auth!, req.params.id);
+  const stored = await transcriptReadBy(a.id, req.auth!.userId);
+  res.json({
+    transcriptRead: stored
+      ? { method: stored.method, turnsSeen: stored.turnsSeen, turnsTotal: stored.turnsTotal, at: stored.createdAt }
+      : null,
+  });
+}));
+
 assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), asyncHandler(async (req, res) => {
   const a = await getAssessment(req.auth!, req.params.id);
   const body = reviewSchema.parse(req.body);
+  // The transcript first, before anything is written.
+  //
+  // The page has always asked for this and always said, truthfully, that it
+  // was asking rather than requiring. It is required now: a verdict recorded
+  // from the AI's summary is a review of the summary, and that is not what the
+  // candidate was told would happen to their interview. A reviewer who read it
+  // outside the app records that instead (POST /:id/transcript-read) — the
+  // point is a record with a name and a time on it, not a scrollbar.
+  const transcriptRead = await assertTranscriptRead(a.id, req.auth!.userId);
   const scored = readAssessmentResult(a).overallScore !== null;
   const offer = exportOffer({ mayExport: hasCapability(req.auth!, 'assessment:export'), scored });
 
@@ -852,7 +919,16 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'review.completed',
     entityType: 'AssessmentVersion', entityId: a.id,
     before: { recommendation: a.recommendation },
-    after: { verdict: body.verdict, reason: body.reason, selfReview, applyToJourney: body.applyToJourney },
+    after: {
+      verdict: body.verdict, reason: body.reason, selfReview, applyToJourney: body.applyToJourney,
+      // How this reviewer met the transcript requirement, on the record of the
+      // verdict itself: an auditor asking "did a person read it?" should not
+      // have to join two tables to find out.
+      transcriptRead: {
+        method: transcriptRead.method, turnsSeen: transcriptRead.turnsSeen,
+        turnsTotal: transcriptRead.turnsTotal, at: transcriptRead.createdAt.toISOString(),
+      },
+    },
   });
   await emitEvent(req.auth!.tenantId, 'review.completed', { assessmentId: a.id, verdict: body.verdict });
   const move = await carryJourney(review.id);
@@ -914,6 +990,19 @@ assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), as
   // can trace back to our vendor being down.
   if (result.overallScore === null) {
     throw new HttpError(409, 'This assessment could not be scored, so there is nothing to export. It needs a human assessment first.');
+  }
+  // The ATS is the system of record: once the AI's reading is in it, it is a
+  // hiring signal that outlives this application and that nobody downstream can
+  // trace back to whether a person ever read the interview. So the promise
+  // holds here too — the recommendation leaves Questor only after the review
+  // the candidate was told about has happened.
+  const promise = await assessmentReviewRequirement({ tenantId: req.auth!.tenantId, assessmentId: a.id });
+  if (promise.required && !promise.satisfied) {
+    await logAudit({
+      tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'assessment.export_refused',
+      entityType: 'AssessmentVersion', entityId: a.id, after: { because: HUMAN_REVIEW_REQUIRED },
+    });
+    throw new HttpError(409, humanReviewRefusal(promise), HUMAN_REVIEW_REQUIRED);
   }
   const { connection, client } = await requireTenantAts(req.auth!.tenantId);
   const link = await findCandidateLink(req.auth!.tenantId, a.session.candidateId, connection.id);
