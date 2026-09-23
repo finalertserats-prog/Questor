@@ -26,7 +26,7 @@ describe('what the room is allowed to announce', () => {
 
 describe('the words themselves', () => {
   it('confirms a finished answer was heard', () => {
-    expect(announcementFor({ kind: 'heard', turn: 't1' }).message).toBe('Got it — one moment.');
+    expect(announcementFor({ kind: 'heard', turn: 't1' }).message).toBe('Got it — sending your answer.');
   });
 
   it('says a microphone we could not open needs attention now', () => {
@@ -78,7 +78,7 @@ describe('not saying the same thing twice', () => {
   });
 
   it('says it once', () => {
-    expect(politeText(say(EMPTY_ANNOUNCER, heard('t1')))).toBe('Got it — one moment.');
+    expect(politeText(say(EMPTY_ANNOUNCER, heard('t1')))).toBe('Got it — sending your answer.');
   });
 
   it('ignores the same event repeated', () => {
@@ -89,7 +89,7 @@ describe('not saying the same thing twice', () => {
   it('says it again for a later answer, in the other slot so it is read again', () => {
     const first = say(EMPTY_ANNOUNCER, heard('t1'));
     const second = say(first, heard('t2'));
-    expect(politeText(second)).toBe('Got it — one moment.');
+    expect(politeText(second)).toBe('Got it — sending your answer.');
     expect(second.polite).not.toEqual(first.polite);
   });
 
@@ -97,11 +97,18 @@ describe('not saying the same thing twice', () => {
     expect(assertiveText(say(EMPTY_ANNOUNCER, heard('t1')))).toBe('');
   });
 
-  it('keeps the polite channel clear while it is being urgent', () => {
-    const polite = say(EMPTY_ANNOUNCER, heard('t1'));
-    const urgent = say(polite, { kind: 'offline' });
-    expect(politeText(urgent)).toBe('');
-    expect(assertiveText(urgent)).toContain('offline');
+  it('does not let a polite message wipe an urgent one off the page', () => {
+    const urgent = say(EMPTY_ANNOUNCER, { kind: 'offline' });
+    const then = say(urgent, heard('t1'));
+    expect(assertiveText(then)).toContain('offline');
+  });
+
+  it('says the urgent thing again after something polite came between', () => {
+    const urgent = say(EMPTY_ANNOUNCER, { kind: 'offline' });
+    const between = say(urgent, heard('t1'));
+    const again = say(between, { kind: 'offline' });
+    // A different slot, so the identical words are a real change and are read.
+    expect(again.assertive).not.toEqual(urgent.assertive);
   });
 
   it('says it again when the connection drops a second time', () => {

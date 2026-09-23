@@ -80,7 +80,10 @@ export function announcementFor(event: RoomEvent): Announcement {
     case 'joined':
       return { key: 'joined', message: "You're in the interview room. Your answer controls are below the conversation.", assertive: false };
     case 'heard':
-      return { key: `heard:${event.turn}`, message: 'Got it — one moment.', assertive: false };
+      // Only what we actually know at that moment: we have the words and we
+      // are sending them. Not "your answer was received" — a send can still
+      // fail, and the room's error alert is what says so.
+      return { key: `heard:${event.turn}`, message: 'Got it — sending your answer.', assertive: false };
     case 'mic-unavailable':
       return {
         key: 'mic-unavailable',
@@ -141,27 +144,40 @@ export function announcementFor(event: RoomEvent): Announcement {
 export interface AnnouncerState {
   readonly lastKey: string;
   readonly polite: readonly [string, string];
+  readonly politeSlot: 0 | 1;
   readonly assertive: readonly [string, string];
-  readonly slot: 0 | 1;
+  readonly assertiveSlot: 0 | 1;
 }
 
-export const EMPTY_ANNOUNCER: AnnouncerState = { lastKey: '', polite: ['', ''], assertive: ['', ''], slot: 1 };
-
-const EMPTY_PAIR: readonly [string, string] = ['', ''];
+export const EMPTY_ANNOUNCER: AnnouncerState = {
+  lastKey: '', polite: ['', ''], politeSlot: 1, assertive: ['', ''], assertiveSlot: 1,
+};
 
 function fill(text: string, slot: 0 | 1): readonly [string, string] {
   return slot === 0 ? [text, ''] : ['', text];
 }
 
-/** Add an event to what is being announced, dropping one that is already being said. */
+/**
+ * Add an event to what is being announced, dropping one that is already being
+ * said.
+ *
+ * The two channels are kept independently, and a write never clears the other
+ * one. Clearing looked tidy and was a bug: "we're sending your answer" landing
+ * a moment after "you've gone offline" wiped the urgent line off the page
+ * before a screen reader had finished with it. Leaving it costs nothing —
+ * a live region only speaks when its text CHANGES — and each channel takes
+ * its own slot so a repeat within a channel is still a change.
+ */
 export function say(state: AnnouncerState, event: RoomEvent | null): AnnouncerState {
   if (!event) return state;
   const next = announcementFor(event);
   if (next.key === state.lastKey) return state;
-  const slot: 0 | 1 = state.slot === 0 ? 1 : 0;
-  return next.assertive
-    ? { lastKey: next.key, polite: EMPTY_PAIR, assertive: fill(next.message, slot), slot }
-    : { lastKey: next.key, polite: fill(next.message, slot), assertive: EMPTY_PAIR, slot };
+  if (next.assertive) {
+    const slot: 0 | 1 = state.assertiveSlot === 0 ? 1 : 0;
+    return { ...state, lastKey: next.key, assertive: fill(next.message, slot), assertiveSlot: slot };
+  }
+  const slot: 0 | 1 = state.politeSlot === 0 ? 1 : 0;
+  return { ...state, lastKey: next.key, polite: fill(next.message, slot), politeSlot: slot };
 }
 
 export function politeText(state: AnnouncerState): string {

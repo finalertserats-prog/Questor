@@ -21,7 +21,7 @@ describe('the room announcer', () => {
   it('puts an ordinary message in a polite region', () => {
     render(createElement(RoomAnnouncer, { state: say(EMPTY_ANNOUNCER, { kind: 'heard', turn: 't1' }) }));
     const polite = screen.getAllByRole('status').map((n) => n.textContent).join('');
-    expect(polite).toBe('Got it — one moment.');
+    expect(polite).toBe('Got it — sending your answer.');
   });
 
   it('leaves the interrupting region empty for an ordinary message', () => {

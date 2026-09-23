@@ -191,7 +191,33 @@ describe('the end of the interview', () => {
   });
 });
 
+describe('a question that repeats words an earlier one said out loud', () => {
+  it('is still announced when this time nothing was heard', async () => {
+    await openRoom();
+    await join();
+    // The same words again, and this time the voice never starts.
+    voice.state.audible = false;
+    http.post.mockResolvedValue({ turn: { turnId: 't2', text: QUESTION, done: false } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Your answer' }), { target: { value: 'Sorry, could you repeat?' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
+    expect(politely()).toContain(`Maya: ${QUESTION}`);
+  });
+});
+
 describe('a connection that comes and goes', () => {
+  it('says so when the room opens on a connection that is already down', async () => {
+    const onLine = Object.getOwnPropertyDescriptor(Navigator.prototype, 'onLine');
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    try {
+      await openRoom();
+      await join();
+      expect(urgently()).toContain('offline');
+    } finally {
+      if (onLine) Object.defineProperty(Navigator.prototype, 'onLine', onLine);
+      Reflect.deleteProperty(navigator, 'onLine');
+    }
+  });
+
   it('interrupts when it drops, because talking on is pointless', async () => {
     await openRoom();
     await join();
@@ -214,5 +240,22 @@ describe('a connection that comes and goes', () => {
     const once = urgently();
     await act(async () => { window.dispatchEvent(new Event('offline')); });
     expect(urgently()).toBe(once);
+  });
+
+  it('is not wiped off the page by the next ordinary announcement', async () => {
+    await openRoom();
+    await join();
+    await act(async () => { window.dispatchEvent(new Event('offline')); });
+    http.post.mockResolvedValue({ turn: { turnId: 't2', text: 'And after that?', done: false } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Your answer' }), { target: { value: 'Still here.' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send' })); });
+    expect(urgently()).toContain('offline');
+  });
+
+  it('shows the same fact on screen for anyone watching it', async () => {
+    await openRoom();
+    await join();
+    await act(async () => { window.dispatchEvent(new Event('offline')); });
+    expect(document.querySelector('.room-offline')?.textContent).toContain('Offline');
   });
 });

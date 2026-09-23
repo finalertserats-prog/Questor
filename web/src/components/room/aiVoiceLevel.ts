@@ -19,8 +19,8 @@ import { rmsLevel, spokenWords, voiceTarget, type VoiceState } from './roomLevel
 export class AiVoiceLevel {
   private state: VoiceState | null = null;
   private utteranceId = 0;
-  /** The text of the last utterance that actually STARTED making sound. */
-  private startedText: string | null = null;
+  /** How many utterances have actually STARTED making sound, ever. */
+  private started = 0;
   private context: AudioContext | null = null;
   private routingBroken = false;
   private source: MediaElementAudioSourceNode | null = null;
@@ -64,15 +64,19 @@ export class AiVoiceLevel {
   }
 
   /**
-   * Whether this text was the last thing the voice actually started saying.
+   * How many utterances have begun making sound.
    *
-   * False means nothing was heard: no server voice answered and the browser
-   * has none (or synthesis failed silently). The room needs to know, because a
-   * turn that made no sound is the one case where its words have to be
-   * announced — everything else the candidate can simply hear.
+   * The room reads it before asking for a turn to be spoken and again when
+   * the speech is over: unchanged means nothing was heard — no server voice
+   * answered and the browser has none, or synthesis failed silently. That is
+   * the one case where a turn's words have to be announced, everything else
+   * being something the candidate can simply hear.
+   *
+   * A count rather than the text, because two turns can carry the same words
+   * (a repeat, a rejoin replaying a question) and one of them may be silent.
    */
-  spokeAloud(text: string): boolean {
-    return this.startedText === text;
+  startedUtterances(): number {
+    return this.started;
   }
 
   /** Words of `text` spoken so far, or null when that text is not being spoken. */
@@ -98,8 +102,8 @@ export class AiVoiceLevel {
     if (event.type === 'start') {
       this.release();
       this.utteranceId = event.id;
-      // Kept past the utterance's end: the room asks once the speech is over.
-      this.startedText = event.text;
+      // Counted here and never reset: the room compares before and after.
+      this.started += 1;
       this.audio = event.audio;
       this.analyser = event.audio ? this.attach(event.audio) : null;
       this.state = {

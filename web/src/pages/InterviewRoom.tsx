@@ -255,6 +255,10 @@ export function InterviewRoom() {
   function sayAndListen(turn: AgentTurn, opts: { reveal?: string; resume?: boolean; prefix?: string } = {}) {
     speechSeqRef.current += 1;
     const seq = speechSeqRef.current;
+    // Read before and after, so "did this turn make a sound" is about THIS
+    // utterance. Comparing its text would call a silent repeat of an
+    // already-spoken question audible.
+    const utterancesBefore = aiVoice.startedUtterances();
     // A new question ends the previous answer; a repeat continues it.
     if (!opts.resume) voice.endAnswer();
     showQuestion(turn, opts.prefix ?? '');
@@ -271,7 +275,7 @@ export function InterviewRoom() {
         // one audible-looking announcement in the room, and only when the
         // "audible" part turned out to be false. A sign-off is left to the
         // ending announcement, which says what happens now as well.
-        if (!turn.done && !aiVoice.spokeAloud(turn.text)) {
+        if (!turn.done && aiVoice.startedUtterances() === utterancesBefore) {
           announce({ kind: 'unspoken-turn', id: turn.turnId, interviewer: interviewerName(info?.persona?.name), text: turn.text });
         }
         if (turn.done) {
@@ -444,6 +448,9 @@ export function InterviewRoom() {
     if (!live) return undefined;
     const down = () => { setOffline(true); announce({ kind: 'offline' }); };
     const up = () => { setOffline(false); announce({ kind: 'online' }); };
+    // Already offline when the room went live (a rejoin on a dead connection):
+    // the events only fire on a CHANGE, so nothing would ever have said so.
+    if (navigator.onLine === false) down();
     window.addEventListener('offline', down);
     window.addEventListener('online', up);
     return () => {
