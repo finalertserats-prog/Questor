@@ -7,7 +7,7 @@ import { AnthropicLlmProvider } from './anthropic.js';
 import { OpenAiLlmProvider } from './openai.js';
 import { OllamaLlmProvider } from './ollama.js';
 import { classifyLlmFailure, cooldownKindFor, shouldFailOver, type LlmFailureClass } from './failures.js';
-import { admitLayer, layerTooSlow, recordLayerFailure, recordLayerReachable, recordStepDown, servingState, type LayerState, type ServingLayer } from './serving.js';
+import { admitLayer, layerTooSlow, noteLayerFailureForReport, recentServing, recordLayerFailure, recordLayerReachable, recordServedLayer, recordStepDown, servingState, type LayerState, type ServingLayer } from './serving.js';
 import { noteServed as recordServed } from './servingTrace.js';
 import { alertLlmOutage, noteLlmRecovered } from './outageAlert.js';
 import { inDemoContext, isHeuristicOnlySession } from '../../services/demoPolicy.js';
@@ -175,6 +175,8 @@ export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T |
   // below it. A call reaching a provider without one is not representable.
   const timeoutMs = budgetFor(opts.purpose, opts.timeoutMs);
   if (local) return generateJsonWithFailover(opts, messages, llm, local, timeoutMs);
+  // Only what is spoken is recorded on the turn, the same rule the chain uses.
+  const noteServed = SPOKEN_FUNCTIONS.has(opts.fn) ? recordServed : () => {};
   try {
     const result = await withDeadline(
       llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens, timeoutMs, reasoningEffort: opts.reasoningEffort }),
@@ -192,9 +194,21 @@ export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T |
       latencyMs: result.latencyMs,
       safety: { ok: true },
     });
+    noteServed({ fn: opts.fn, layer: 'primary', provider: llm.name });
+    recordServedLayer('primary', Date.now(), null);
     return validated;
   } catch (err) {
-    logger.warn({ err: String(err), fn: opts.fn }, 'LLM generateJson failed; using heuristic fallback');
+    // Classified, recorded and reported even here. With LOCAL_LLM_ENABLED off
+    // there is no chain, and this path had none of the chain's
+    // instrumentation: a total provider outage answered every turn with a
+    // built-in question, wrote no `serving` note, and left /api/health saying
+    // `llm.layer: "primary"`. HR read a plainer interview as a worse candidate
+    // and no uptime check saw a thing (docs/qa/resilience-2026-09-23.md, R2).
+    //
+    // What is recorded changes; what HAPPENS does not. No cooldown is set, so
+    // the next turn still tries the primary, and no outage email goes out.
+    const failure = classifyLlmFailure(err);
+    logger.warn({ err: String(err), fn: opts.fn, provider: llm.name, failure }, 'LLM generateJson failed; using heuristic fallback');
     await logModelExecution({
       sessionId: opts.sessionId ?? '',
       provider: llm.name,
@@ -203,8 +217,15 @@ export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T |
       inputTokens: 0,
       outputTokens: 0,
       latencyMs: 0,
-      safety: { ok: false, error: String(err) },
+      safety: { ok: false, error: String(err), failureClass: failure },
     });
+    // A reply we could not use is not an outage: the provider answered. Only
+    // a failure another layer could have avoided marks the turn degraded.
+    const outage = shouldFailOver(failure);
+    noteServed({ fn: opts.fn, layer: 'built-in', provider: 'built-in', ...(outage ? { failure } : {}) });
+    const at = Date.now();
+    recordServedLayer('built-in', at, outage ? failure : null);
+    if (outage) noteLayerFailureForReport('primary', failure, at);
     return null;
   }
 }
@@ -366,9 +387,17 @@ export function llmServingStatus(now = Date.now()): LlmServingStatus {
   const { layers, stepDowns } = servingState();
   const primaryStatus = layerStatus(layers.primary, now);
   const localStatus = layerStatus(layers.local, now);
-  const layer: ServingLayerName = primary.enabled && !primaryStatus.coolingDown
+  const wouldServe: ServingLayerName = primary.enabled && !primaryStatus.coolingDown
     ? 'primary'
     : localEnabled && !localStatus.coolingDown ? 'local' : 'built-in';
+  // What the chain WOULD do, unless something already did otherwise. With the
+  // local fallback off nothing rests the primary, so the cooldown above can
+  // never say a provider is down and health reported "primary" through a total
+  // outage (R2). The last actual outcome settles it.
+  const recent = recentServing(now);
+  const layer: ServingLayerName = wouldServe === 'primary' && recent && recent.layer !== 'primary' && recent.failure
+    ? recent.layer
+    : wouldServe;
   return {
     layer,
     primary: { provider: primary.name, configured: primary.enabled, ...primaryStatus },

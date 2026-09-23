@@ -62,6 +62,18 @@ export function recordLayerFailure(layer: ServingLayer, cls: LlmFailureClass, no
 }
 
 /**
+ * Note a failure for REPORTING only: no cooldown, no backoff, nothing skipped.
+ *
+ * What the flag-off path needs. There is no chain there to rest a layer, and
+ * resting one would change behaviour rather than only what is visible — but
+ * the admin health view still has to be able to say what went wrong
+ * (docs/qa/resilience-2026-09-23.md, R2).
+ */
+export function noteLayerFailureForReport(layer: ServingLayer, cls: LlmFailureClass, now: number): void {
+  update(layer, { ...layers[layer], lastFailureClass: cls, lastFailureAt: now });
+}
+
+/**
  * The layer answered (even with a reply we could not use: it is reachable).
  * True when this ends an outage, so the caller can log the recovery.
  */
@@ -90,8 +102,47 @@ export function servingState(): { readonly layers: Readonly<Record<ServingLayer,
   return { layers, stepDowns };
 }
 
+/**
+ * What actually served the last model call, and why it was not the primary.
+ *
+ * The cooldowns above are the failover chain's memory, and with
+ * LOCAL_LLM_ENABLED off there is no chain — so nothing rested the primary and
+ * `/api/health` reported `llm.layer: "primary"` straight through a total
+ * outage (docs/qa/resilience-2026-09-23.md, R2). This is the other half of the
+ * answer: not "which layer would we use", but "which layer did we just use".
+ *
+ * Kept separate on purpose. It records; it never skips a layer, never rests
+ * one, and never changes which provider a call reaches — so the flag-off path
+ * still tries the primary on every single turn, exactly as it did.
+ */
+export interface RecentServing {
+  readonly layer: 'primary' | 'local' | 'built-in';
+  readonly at: number;
+  readonly failure: LlmFailureClass | null;
+}
+
+/**
+ * How long the last outcome is still worth reporting. Long enough that an
+ * uptime check between interviews still sees an outage, short enough that a
+ * recovered provider stops being described as down.
+ */
+export const SERVING_RECENCY_MS = 5 * 60_000;
+
+let lastServed: RecentServing | null = null;
+
+export function recordServedLayer(layer: RecentServing['layer'], at: number, failure: LlmFailureClass | null): void {
+  lastServed = { layer, at, failure };
+}
+
+/** The last outcome, while it is still recent. */
+export function recentServing(now: number): RecentServing | null {
+  if (!lastServed || now - lastServed.at > SERVING_RECENCY_MS) return null;
+  return lastServed;
+}
+
 /** Test hook: forget every failure and count. */
 export function _resetServingState(): void {
   layers = { primary: FRESH, local: FRESH };
   stepDowns = { local: 0, builtIn: 0 };
+  lastServed = null;
 }
