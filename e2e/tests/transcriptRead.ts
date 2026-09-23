@@ -9,17 +9,21 @@ import { expect, type Page } from '@playwright/test';
  * does now, so these specs press it — which is the only version of this helper
  * that proves a real reviewer can get through the gate at all.
  *
- * It reaches the end marker by FOCUS rather than by scrolling. That is the
- * path a keyboard or screen-reader user takes, it is the one that does not
- * depend on an intersection observer, and if it works the scrolling path is a
+ * It PRESSES the end marker rather than scrolling to it. That is the path a
+ * keyboard or screen-reader user takes, it is the one that does not depend on
+ * an intersection observer, and if it works the scrolling path is a
  * convenience rather than the only way in.
+ *
+ * Pressing, not focusing: focus alone no longer counts, because the "skip to
+ * the end" control lands focus here and a skip must not stand in for having
+ * read the thing.
  */
 export async function readTranscriptForReview(page: Page, _assessmentId?: string): Promise<void> {
   const end = page.getByTestId('transcript-end');
   await end.waitFor({ state: 'attached', timeout: 30_000 });
-  // focus(), not click(): a click would also scroll, and then a regression in
-  // the keyboard path would still pass here.
+  // The control's own press, reached the way a keyboard user reaches it.
   await end.focus();
+  await end.press('Enter');
   // The page records the read as soon as everything has been shown, so the
   // note is what says the server accepted it.
   await expect(page.getByTestId('transcript-read-note')).toContainText(/You have read this transcript/, { timeout: 30_000 });

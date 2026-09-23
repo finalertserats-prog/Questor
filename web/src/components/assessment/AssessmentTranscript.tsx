@@ -125,9 +125,14 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
         {ready && props.rows.length > 0 && (
           /* Every turn is a tab stop, which is what makes tabbing through the
              transcript report it — and on a long interview that is a long run
-             of them before anything else on the page. So the run has a way
-             out at the top of it, one Tab from the column itself. It is the
-             same control the end of the list carries, reached early. */
+             of them before anything else on the page. So the run has a way out
+             at the top of it, one Tab from the column itself.
+        
+             It moves focus and nothing else. A control labelled "skip" that
+             also certified the transcript had been read would be the easiest
+             way in the product to not read it, which is the one thing this
+             column exists to prevent. What it lands on is the button that
+             makes that claim; pressing that is a separate act. */
           <button
             type="button"
             className="tx-skip"
@@ -173,19 +178,23 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
 
         {ready && props.rows.length > 0 && (
           /* A real focusable element, not a sentinel: for a reviewer who does
-             not scroll, this is the one control that says "I have reached the
-             end", and it must be reachable by Tab and announceable. */
+             not scroll, pressing this is how they say they have reached the
+             end, so it must be reachable by Tab and announceable.
+        
+             Pressed, not merely focused. Focus arrives here by the skip
+             control above as well as by tabbing, and marking on focus would
+             let one press of "skip" stand in for the whole transcript. The
+             observer still marks it for anyone who actually scrolls to it. */
           <button
             type="button"
             ref={endRef}
             className="tx-end"
             data-end-marker="true"
             data-testid="transcript-end"
-            onFocus={() => onEndReached?.()}
             onClick={() => onEndReached?.()}
           >
             <Icon name="check-circle" size={15} />
-            End of transcript
+            I have reached the end of the transcript
           </button>
         )}
       </div>

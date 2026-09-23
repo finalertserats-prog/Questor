@@ -66,14 +66,17 @@ describe('reaching the transcript without a scrollbar', () => {
     transcript();
     const end = screen.getByTestId('transcript-end');
     expect(end.tagName).toBe('BUTTON');
-    expect(end.textContent).toContain('End of transcript');
+    expect(end.textContent).toContain('reached the end');
   });
 
-  it('reports the end when that control takes focus', () => {
+  it('does NOT report the end merely because that control took focus', () => {
+    // Focus arrives here from the skip control as well as from tabbing, so
+    // marking on focus would let one press of "skip" stand in for the whole
+    // transcript — the easiest way in the product to not read it.
     const ends: number[] = [];
     transcript({ onEndReached: () => ends.push(1) });
     fireEvent.focus(screen.getByTestId('transcript-end'));
-    expect(ends).toHaveLength(1);
+    expect(ends).toEqual([]);
   });
 
   it('reports the end when that control is pressed', () => {
@@ -90,12 +93,12 @@ describe('reaching the transcript without a scrollbar', () => {
     expect(skip.textContent).toContain('Skip to the end');
   });
 
-  it('sends that way out straight to the end marker', () => {
+  it('sends that way out to the end marker, and claims nothing on the way', () => {
     const ends: number[] = [];
     transcript({ onEndReached: () => ends.push(1) });
     fireEvent.click(screen.getByTestId('transcript-skip'));
     expect(document.activeElement).toBe(screen.getByTestId('transcript-end'));
-    expect(ends).toHaveLength(1);
+    expect(ends).toEqual([]);
   });
 
   it('offers no end marker while there is nothing to read', () => {
@@ -144,14 +147,14 @@ describe('driving the whole thing by keyboard only', () => {
     });
     // What Tab does: each turn in order, then the control after them.
     for (const turn of screen.getAllByTestId('transcript-turn')) fireEvent.focus(turn);
-    fireEvent.focus(screen.getByTestId('transcript-end'));
+    // The turns alone are enough; the end control is not needed to get there.
     expect(hasReadAll(state, [0, 1, 2])).toBe(true);
   });
 
-  it('reaches "read" from the end marker alone, which is how a screen reader arrives', () => {
+  it('reaches "read" by pressing the end marker, which is how a screen reader arrives', () => {
     let state = noTurnsSeen('k1');
     transcript({ onEndReached: () => { state = markEndReached(state); } });
-    fireEvent.focus(screen.getByTestId('transcript-end'));
+    fireEvent.click(screen.getByTestId('transcript-end'));
     expect(hasReadAll(state, [0, 1, 2])).toBe(true);
   });
 });

@@ -3,8 +3,8 @@
 //
 // Three states: before anything has been read, after the end of the
 // transcript has been reached, and the audited "I read it elsewhere" control.
-// The end is reached by FOCUS, not by scrolling, because that is the path that
-// has to work for a keyboard or screen-reader user.
+// The end control is reached and PRESSED by keyboard, not scrolled to, because
+// that is the path that has to work for a keyboard or screen-reader user.
 import { chromium } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -83,6 +83,7 @@ for (const [width, widthName] of [[1440, '1440'], [375, '375']]) {
     await page.goto(`${base}/assessments/${assessmentId}`, { waitUntil: 'networkidle' });
     await page.waitForSelector('[data-testid="transcript-end"]', { timeout: 30_000 });
     await page.getByTestId('transcript-end').focus();
+    await page.getByTestId('transcript-end').press('Enter');
     await page.waitForFunction(
       () => (document.querySelector('[data-testid="transcript-read-note"]')?.textContent ?? '').includes('You have read'),
       undefined,
