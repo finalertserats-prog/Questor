@@ -127,11 +127,13 @@ test('a completed typed interview shows its assessment at once and records the f
   await expect(page.getByTestId('verdict-recorded')).toBeVisible({ timeout: 20_000 });
 
   // The reviewer's verdict is now what the page leads with, and the comparison
-  // with the AI is kept in its fold.
+  // with the AI is a part of the page rather than a fold under it.
   await expect(page.getByText("reviewer's verdict")).toBeVisible();
-  await page.getByText('Where the reviewer and the AI differ').click();
+  await expect(page.getByTestId('assessment-part-3')).toContainText('Where they differ');
   await expect(page.getByText(/The reviewer changed 1 of/)).toBeVisible();
-  await expect(page.getByText('Read the transcript differently.')).toBeVisible();
+  await expect(page.getByTestId('differences-table')).toContainText('Read the transcript differently.');
+  // And it states both readings without taking a view on either.
+  await expect(page.getByTestId('differences-neutral')).toContainText('does not comment');
 
   // The completed review releases the candidate's feedback at once. The letter
   // is reference rather than the work, so it lives in a fold that has to be

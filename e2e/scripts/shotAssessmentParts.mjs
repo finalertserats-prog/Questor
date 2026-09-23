@@ -12,11 +12,33 @@
 // Reports the page's horizontal overflow per capture, because a phone width
 // with a table on it is where that breaks first.
 import { chromium } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const [out = '.', openId, reviewedId] = process.argv.slice(2);
 const base = process.env.SHOT_BASE ?? 'http://localhost:5173';
-const state = resolve(import.meta.dirname, '../.auth/recruiter.json');
+
+/**
+ * Sign in here rather than reuse e2e/.auth: a captured session is only good
+ * for as long as its token, and a run of this length outlives one. The
+ * password is read from the seed source, as the e2e global setup does, so it
+ * is never written down here.
+ */
+async function signedInState(browser) {
+  const seed = readFileSync(resolve(import.meta.dirname, '../../server/src/seed/demoData.ts'), 'utf8');
+  const found = seed.match(/const password\s*=\s*'([^']+)'/);
+  if (!found) throw new Error('Could not read the demo password from the seed source.');
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${base}/o/acme`, { waitUntil: 'networkidle' });
+  await page.getByLabel('Email').fill('demo@questor.local');
+  await page.getByLabel('Password').fill(found[1]);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await page.waitForSelector('[role="tab"]', { timeout: 30_000 });
+  const state = await ctx.storageState();
+  await ctx.close();
+  return state;
+}
 
 const DRAFT = 'A senior engineer on the payments platform, owning the services that move money end to end. '
   + 'You will design for failure — retries, idempotency, circuit breakers — and be on call for what you build.';
@@ -24,6 +46,7 @@ const TIDIED = 'Arjun is not available before 11:00 IST. He would like the syste
   + 'Payments rather than Platform, and prefers a single 90-minute session to two 45-minute ones.';
 
 const browser = await chromium.launch();
+const state = await signedInState(browser);
 
 async function shot(page, name, width, theme) {
   await page.waitForTimeout(700);
@@ -80,7 +103,7 @@ for (const [width, widthName] of [[1440, '1440'], [375, '375']]) {
       await page.locator('[data-testid="verdict-PROCEED"]').click();
       const reason = page.locator('#verdict-reason');
       await reason.fill('he gave the whole diagnosis at 18:40, thats a 4 not a 2, worth the next round');
-      await page.locator('[data-testid="no-draft-note"]').scrollIntoViewIfNeeded();
+      await page.locator('[data-testid="no-draft-note"]').first().scrollIntoViewIfNeeded();
       await shot(page, 'verdict-no-draft', widthName, theme);
       await page.locator('[data-testid="tidy-run"]').click();
       await page.waitForSelector('[data-testid="tidy-panel"]', { timeout: 20_000 });
