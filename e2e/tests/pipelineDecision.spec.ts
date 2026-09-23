@@ -168,8 +168,8 @@ test('a decision is refused until a person has reviewed the interview, and goes 
  */
 async function submitReview(page: Page, verdict: 'PROCEED' | 'DO_NOT_PROGRESS', reason: string, consequence: RegExp) {
   // The server refuses a verdict from a reviewer who has not read the
-  // interview. See tests/transcriptRead.ts: this stands in for the control the
-  // review page will carry, and makes the same request it will.
+  // interview. See tests/transcriptRead.ts: this presses the page's own
+  // control, by focus, the way a keyboard user reaches it.
   await readTranscriptForReview(page, assessmentIdFromUrl(page.url()));
   await page.getByTestId(`verdict-${verdict}`).click();
   await expect(page.getByTestId('verdict-consequence')).toContainText(consequence);

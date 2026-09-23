@@ -1,55 +1,28 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 /**
- * Satisfy the transcript requirement the way the review page will.
+ * Satisfy the transcript requirement the way a reviewer does.
  *
  * The server refuses a verdict from a reviewer with no record of having read
- * the interview (POST /assessments/:id/transcript-read). The model and hook
- * the page needs are built — web/src/components/review/transcriptReadGate.ts
- * and useTranscriptReadGate.ts — but the control that calls them belongs to
- * the lane that owns AssessmentView and components/assessment, so it is not on
- * screen yet.
+ * the interview. This used to fake that record by calling the endpoint from
+ * the test session, because the control that makes it did not exist yet. It
+ * does now, so these specs press it — which is the only version of this helper
+ * that proves a real reviewer can get through the gate at all.
  *
- * Until it is, these specs do from the page what the page itself will do: read
- * the turns the interview has and report them, through the real endpoint, from
- * the reviewer's own authenticated session. When the control lands, this file
- * is replaced by clicking it — the request it makes is the same one.
+ * It reaches the end marker by FOCUS rather than by scrolling. That is the
+ * path a keyboard or screen-reader user takes, it is the one that does not
+ * depend on an intersection observer, and if it works the scrolling path is a
+ * convenience rather than the only way in.
  */
-export async function readTranscriptForReview(page: Page, assessmentId: string): Promise<void> {
-  const problem = await page.evaluate(async (id: string) => {
-    const csrf = document.cookie.split(';')
-      .map((part) => part.trim())
-      .find((part) => part.startsWith('questor_csrf='))
-      ?.slice('questor_csrf='.length) ?? '';
-    const get = async (path: string) => {
-      const res = await fetch(`/api${path}`, { credentials: 'include' });
-      if (!res.ok) throw new Error(`GET ${path} -> ${res.status}`);
-      return res.json() as Promise<Record<string, unknown>>;
-    };
-
-    try {
-      const assessment = await get(`/assessments/${id}`);
-      const sessionId = assessment.sessionId as string | undefined;
-      if (!sessionId) return 'no session id on the assessment';
-      const transcript = await get(`/interviews/${sessionId}/transcript`);
-      const turns = (transcript.transcript ?? []) as Array<{ index?: unknown }>;
-      // Checked here so a transcript that arrives without indexes fails saying
-      // that, rather than posting nulls and failing as a bare status code.
-      if (!turns.every((turn) => Number.isInteger(turn.index))) return 'transcript turns carried no numeric index';
-
-      const res = await fetch(`/api/assessments/${id}/transcript-read`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json', 'X-CSRF-Token': decodeURIComponent(csrf) },
-        body: JSON.stringify({ method: 'in_app', seenIndexes: turns.map((turn) => turn.index) }),
-      });
-      if (!res.ok) return `transcript-read -> ${res.status} ${await res.text()}`;
-      return '';
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
-  }, assessmentId);
-  if (problem) throw new Error(`Could not record the transcript as read: ${problem}`);
+export async function readTranscriptForReview(page: Page, _assessmentId?: string): Promise<void> {
+  const end = page.getByTestId('transcript-end');
+  await end.waitFor({ state: 'attached', timeout: 30_000 });
+  // focus(), not click(): a click would also scroll, and then a regression in
+  // the keyboard path would still pass here.
+  await end.focus();
+  // The page records the read as soon as everything has been shown, so the
+  // note is what says the server accepted it.
+  await expect(page.getByTestId('transcript-read-note')).toContainText(/You have read this transcript/, { timeout: 30_000 });
 }
 
 /** The assessment id out of a /assessments/:id URL the spec is already on. */

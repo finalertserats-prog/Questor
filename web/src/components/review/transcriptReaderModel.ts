@@ -43,6 +43,13 @@ export type TranscriptVoice = 'interviewer' | 'candidate' | 'system';
 
 export interface TranscriptRow {
   readonly key: string;
+  /**
+   * The turn's index in the interview. It is what the transcript-read record
+   * is made of (components/review/transcriptReadGate.ts) — a number the server
+   * can check against the interview it has, rather than a scroll fraction it
+   * would have to take on trust.
+   */
+  readonly turnIndex: number;
   /** The stored turn id an evidence chip points at, or null on an older server. */
   readonly turnId: string | null;
   readonly voice: TranscriptVoice;
@@ -96,6 +103,7 @@ export function transcriptRows(
       const competency = voice === 'interviewer' && turn.competencyId ? competencyNames[turn.competencyId] ?? null : null;
       return {
         key: String(turn.index),
+        turnIndex: turn.index,
         turnId: turn.id ?? null,
         voice,
         label: labels[voice],

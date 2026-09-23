@@ -813,3 +813,75 @@ details.fold > summary .fold-count { font-size: 13px; color: var(--ink-3); }
     width: 100%;
   }
 }
+
+/* ==========================================================================
+   The transcript requirement (components/review/transcriptReadGate.ts)
+
+   The end marker is a real control, not a sentinel: it is the one thing that
+   satisfies the gate in a single step, so it has to be reachable by Tab and
+   announceable. It reads as part of the transcript, not as a call to action.
+   ========================================================================== */
+
+.tx-holder {
+  display: contents;
+}
+
+.tx-end {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  font: inherit;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  background: var(--sheet);
+  border: 0;
+  border-top: var(--hair) dashed var(--rule-strong);
+  cursor: pointer;
+}
+.tx-end:hover { color: var(--ink-2); }
+.tx-end:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  color: var(--ink);
+}
+
+/* Each turn is in the tab order, so the focused one has to be visible as such
+   without moving anything. */
+.tx-turn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.reader-count {
+  font-family: var(--font-data);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  padding-left: 8px;
+  border-left: var(--hair) solid var(--rule-strong);
+}
+
+/* Findable, not the easy path. */
+details.read-elsewhere {
+  border-top: var(--hair) solid var(--rule);
+  border-bottom: var(--hair) solid var(--rule);
+}
+details.read-elsewhere > summary {
+  padding: var(--space-3) 2px;
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+details.read-elsewhere > summary:hover { color: var(--ink); }
+details.read-elsewhere > *:not(summary) {
+  margin-bottom: var(--space-3);
+}

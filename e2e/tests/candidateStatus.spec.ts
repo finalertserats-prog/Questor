@@ -110,7 +110,7 @@ test('a finished interview turns its invitation link into the candidate status p
   await expect(page).toHaveURL(/\/assessments\//, { timeout: 30_000 });
   await expect(page.getByRole('heading', { name: 'Assessment', exact: true })).toBeVisible({ timeout: 20_000 });
   // The server refuses a verdict from a reviewer who has not read the
-  // interview; see tests/transcriptRead.ts.
+  // interview; this presses the page's own control. See tests/transcriptRead.ts.
   await readTranscriptForReview(page, assessmentIdFromUrl(page.url()));
   await page.getByTestId('verdict-CONSIDER').click();
   await page.getByLabel('Why (required)').fill('Read the evidence the same way; recording it so the letter goes.');

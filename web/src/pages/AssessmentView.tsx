@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner, Markdown, recBadge } from '../components/ui';
@@ -40,6 +40,11 @@ import { RecordedReview } from '../components/assessment/RecordedReview';
 import { NoDraftNote } from '../components/drafts/SuggestedDraft';
 import { TidyUp } from '../components/drafts/TidyUp';
 import { useTidyUp } from '../components/drafts/useFieldDraft';
+import { useTranscriptReadGate } from '../components/review/useTranscriptReadGate';
+import {
+  ATTESTATION_PROMPT, attestationIsEnough, isTranscriptNotReadError, markEndReached, markTurnSeen,
+  noTurnsSeen, readRecordSentence, turnsReadLabel, HUMAN_REVIEW_REQUIRED, type SeenTurns,
+} from '../components/review/transcriptReadGate';
 
 /**
  * The assessment, in three marked parts.
@@ -149,6 +154,13 @@ export function AssessmentView() {
   const [error, setError] = useState('');
   const [blocked, setBlocked] = useState(false);
   const [skipReason, setSkipReason] = useState('');
+  // The words a reviewer writes when they read the transcript somewhere else.
+  const [attestation, setAttestation] = useState('');
+  // The server turned a verdict down for want of a transcript record. Said
+  // beside the transcript, which is where the answer is.
+  const [readRefused, setReadRefused] = useState(false);
+  // "A person has to review this first", in the server's words.
+  const [reviewNeeded, setReviewNeeded] = useState('');
 
   // Empty until the reviewer chooses. Pre-filling it — from the AI's own
   // recommendation, of all things — meant a verdict could be recorded that
@@ -246,17 +258,72 @@ export function AssessmentView() {
     setQuotedAt((n) => n + 1);
   }, []);
 
+  /**
+   * The transcript requirement.
+   *
+   * The server refuses a verdict from a reviewer with no record of having read
+   * the interview, so this page has to be the way that record is made — and it
+   * has to be reachable by everyone, which is why the turns report themselves
+   * on focus as well as on scroll and why the end marker is a real control.
+   *
+   * `seen` is kept here only for the label ("Read 7 of 34 turns"). The record
+   * that goes to the server is the hook's, from the same two callbacks, so the
+   * two cannot say different things about different evidence.
+   */
+  const turnIndexes = useMemo(
+    () => (transcript.view?.rows ?? []).map((row) => row.turnIndex),
+    [transcript.view],
+  );
+  const readGate = useTranscriptReadGate(id ?? null, turnIndexes);
+  const [seen, setSeen] = useState<SeenTurns>(() => noTurnsSeen(id ?? ''));
+  const { noteTurnSeen, noteEndReached } = readGate;
+
+  const onTurnSeen = useCallback((index: number) => {
+    setSeen((previous) => markTurnSeen(previous, index));
+    noteTurnSeen(index);
+  }, [noteTurnSeen]);
+
+  const onEndReached = useCallback(() => {
+    setSeen(markEndReached);
+    noteEndReached();
+  }, [noteEndReached]);
+
+  /**
+   * Once everything has been shown, record it — without asking the reviewer to
+   * confirm that they did the thing the page just watched them do. A second
+   * click there would be ceremony, and ceremony is what makes people click
+   * through a control without reading it.
+   */
+  const { canRecord, record: readRecord, saving: readSaving, recordRead } = readGate;
+  useEffect(() => {
+    if (!canRecord || readRecord || readSaving) return;
+    void recordRead();
+  }, [canRecord, readRecord, readSaving, recordRead]);
+
+  // Where the transcript is, so a refusal can put it in front of the reviewer
+  // rather than describing it to them.
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const showTranscript = useCallback(() => {
+    const body = transcriptRef.current?.querySelector<HTMLElement>('.tx-body');
+    (body ?? transcriptRef.current)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    body?.focus();
+  }, []);
+
   const transcriptBlock = (
-    <AssessmentTranscript
-      status={transcript.status}
-      rows={transcript.view?.rows ?? []}
-      error={transcript.error}
-      onRetry={transcript.retry}
-      quotedTurnId={quotedTurnId}
-      quotedAt={quotedAt}
-      transcriptKey={transcript.key}
-      onRead={setTranscriptRead}
-    />
+    <div ref={transcriptRef} className="tx-holder">
+      <AssessmentTranscript
+        status={transcript.status}
+        rows={transcript.view?.rows ?? []}
+        error={transcript.error}
+        onRetry={transcript.retry}
+        quotedTurnId={quotedTurnId}
+        quotedAt={quotedAt}
+        transcriptKey={transcript.key}
+        onRead={setTranscriptRead}
+        onTurnSeen={onTurnSeen}
+        onEndReached={onEndReached}
+      />
+    </div>
   );
 
   const skipBlind = async () => {
@@ -394,7 +461,9 @@ export function AssessmentView() {
     ? null
     : consequenceCopy({ verdict, consequence, candidate: candidate.name, letterWaiting: journey?.letterWaiting ?? false });
 
-  const canSubmit = verdict !== '' && reason.trim().length >= 3 && scored && !submitting;
+  // The transcript record is part of what makes a verdict recordable, and the
+  // server enforces it too — this only saves the reviewer a refusal.
+  const canSubmit = verdict !== '' && reason.trim().length >= 3 && scored && !submitting && readRecord !== null;
 
   const refusal = !mayReview
     ? onlyWhoCan('assessment:review', 'record a review')
@@ -436,6 +505,15 @@ export function AssessmentView() {
       // wire says nothing about whether the server committed, and pressing
       // again with the same id is what turns a lost answer back into the
       // reviewer's own review rather than a refusal.
+      // "You have not read this transcript" is answered by showing it, not by
+      // telling them about it in a red box beside the button they just pressed.
+      if (isTranscriptNotReadError(err)) {
+        setReviewWait('');
+        setError('');
+        setReadRefused(true);
+        showTranscript();
+        return;
+      }
       const refused = reviewRefusal(err instanceof ApiError ? err : { message: err instanceof Error ? err.message : '' });
       if (refused.kind === 'wait') setReviewWait(refused.message);
       else setError(refused.message);
@@ -451,7 +529,11 @@ export function AssessmentView() {
       const r = await api.post<{ status: string }>(`/assessments/${id}/export`, {});
       toast.show(`Sent to your ATS (${humanise(r.status)}).`, { testId: 'export-done' });
     } catch (err: unknown) {
-      if (err instanceof ApiError) setError(atsErrorMessage(err, user?.role === 'admin'));
+      // The export is refused until a person has reviewed. That is the
+      // product's rule rather than an ATS problem, so it is said in the
+      // server's own words with the way forward beside it.
+      if (err instanceof ApiError && err.code === HUMAN_REVIEW_REQUIRED) setReviewNeeded(err.message);
+      else if (err instanceof ApiError) setError(atsErrorMessage(err, user?.role === 'admin'));
       else setError(err instanceof Error ? err.message : 'Could not export this assessment.');
     } finally {
       setExporting(false);
@@ -522,13 +604,73 @@ export function AssessmentView() {
 
       <div className="as">
         <div className="as-main">
-          {/* Not a gate, and never was: a note about what the page would
-              rather the reviewer did, beside the decision it is about. It
-              turns once the column alongside has been read to the end. */}
-          <p className={transcriptRead ? 'reader-note is-read' : 'reader-note'} data-testid="transcript-read-note" role="status">
-            <Icon name={transcriptRead ? 'check-circle' : 'evidence'} size={16} />
-            {transcriptRead ? 'Transcript read.' : 'Read the transcript before recording your review.'}
-          </p>
+          {/* It IS a gate now: the server refuses a verdict from a reviewer
+              with no record of having read the interview, and this is where
+              that record is made. The sentence is the server's vocabulary
+              (review/transcriptReadGate.ts) so the page and the refusal say
+              the same thing. */}
+          <div className={readRecord ? 'reader-note is-read' : 'reader-note'} data-testid="transcript-read-note" role="status">
+            <Icon name={readRecord ? 'check-circle' : 'evidence'} size={16} />
+            <span>
+              {readRecordSentence(readRecord)}
+              {!readRecord && <> <span className="reader-count">{turnsReadLabel(seen, turnIndexes)}</span></>}
+            </span>
+          </div>
+          {readGate.error && <Banner kind="error">{readGate.error}</Banner>}
+
+          {readRefused && !readRecord && (
+            <Banner kind="info">
+              <strong>Your verdict was not recorded: this interview has not been read.</strong>
+              <div style={{ marginTop: 6 }}>
+                The transcript is beside you. Read it to the end — or say where you read it, below — and the
+                verdict you already wrote is still here to submit.
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <button type="button" className="btn secondary sm" onClick={showTranscript} data-testid="go-to-transcript">
+                  <Icon name="captions" size={15} />Take me to the transcript
+                </button>
+              </div>
+            </Banner>
+          )}
+
+          {reviewNeeded && (
+            <Banner kind="info" data-testid="review-needed">
+              {reviewNeeded}{' '}
+              <a href={`#${REVIEW_SECTION_ID}`} onClick={() => document.getElementById(REVIEW_SECTION_ID)?.focus()}>
+                Record the review
+              </a>
+            </Banner>
+          )}
+
+          {/* Findable, but not the easy path: folded away, and it asks for
+              words that go on the record under the reviewer's own name. */}
+          {!readRecord && mayReview && (
+            <details className="read-elsewhere" data-testid="read-elsewhere">
+              <summary>I read this transcript elsewhere</summary>
+              <p className="muted small">
+                For a transcript read from an export or a printout. It is kept with your review, with your
+                name and the time on it, and it says plainly that you did not read it here.
+              </p>
+              <label htmlFor="read-attestation">{ATTESTATION_PROMPT}</label>
+              <textarea
+                id="read-attestation"
+                rows={3}
+                value={attestation}
+                onChange={(e) => setAttestation(e.target.value)}
+                data-testid="read-attestation"
+              />
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={!attestationIsEnough(attestation) || readGate.saving}
+                data-testid="read-elsewhere-submit"
+                onClick={() => { void readGate.recordReadElsewhere(attestation.trim()); }}
+              >
+                <Icon name={readGate.saving ? 'hourglass' : 'check'} size={16} />
+                {readGate.saving ? 'Recording…' : 'Record that I read it elsewhere'}
+              </button>
+            </details>
+          )}
 
           {/* ---------------------------------------------------------------
               PART 1 — what the AI found

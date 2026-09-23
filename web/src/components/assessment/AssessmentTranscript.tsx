@@ -13,6 +13,16 @@ import type { TranscriptStatus } from '../review/TranscriptReader';
  * column to it — not the page. Scrolling the whole page to a quotation is how
  * a reviewer loses the skill they were reading about; the two have to be on
  * screen together for the evidence to be checkable at all.
+ *
+ * It is also where the transcript requirement is satisfied. Each turn reports
+ * itself as shown when it enters the column OR when it takes focus, and the
+ * end-of-transcript marker at the bottom reports the lot. Both paths exist
+ * because neither covers everyone: an intersection observer never fires for a
+ * reader whose software walks the rendered list without scrolling, and focus
+ * never moves for someone who only scrolls. Every turn is therefore focusable
+ * and in the tab order, and the end marker is a real focusable element rather
+ * than a sentinel div — a keyboard or screen-reader user has to be able to
+ * reach it, because it is the only thing that satisfies the gate in one step.
  */
 
 export interface AssessmentTranscriptProps {
@@ -26,6 +36,10 @@ export interface AssessmentTranscriptProps {
   readonly quotedAt: number;
   readonly transcriptKey: string;
   readonly onRead: (read: boolean) => void;
+  /** A turn was put in front of the reviewer (seen or focused). */
+  readonly onTurnSeen?: (index: number) => void;
+  /** The end of the transcript was reached, which counts everything above it. */
+  readonly onEndReached?: () => void;
 }
 
 export function AssessmentTranscript(props: AssessmentTranscriptProps) {
@@ -56,6 +70,31 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
     if (typeof body.scrollTo === 'function') body.scrollTo({ top, behavior: 'smooth' });
     else body.scrollTop = top;
   }, [props.quotedTurnId, props.quotedAt]);
+
+  /**
+   * Report turns as they come into the column, and the end when it arrives.
+   *
+   * Re-created per transcript, and only once the rows are on screen. Where
+   * IntersectionObserver is missing (an older browser, the test DOM) this is
+   * simply absent — focus and the end marker still satisfy the gate, which is
+   * why both paths exist.
+   */
+  const { onTurnSeen, onEndReached } = props;
+  useEffect(() => {
+    if (!ready || typeof IntersectionObserver !== 'function') return;
+    const body = bodyRef.current;
+    if (!body) return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        const el = entry.target as HTMLElement;
+        if (el.dataset.endMarker === 'true') onEndReached?.();
+        else if (el.dataset.turnIndex !== undefined) onTurnSeen?.(Number(el.dataset.turnIndex));
+      }
+    }, { root: body, threshold: 0.4 });
+    for (const el of body.querySelectorAll<HTMLElement>('[data-turn-index], [data-end-marker]')) observer.observe(el);
+    return () => observer.disconnect();
+  }, [ready, props.transcriptKey, props.rows.length, onTurnSeen, onEndReached]);
 
   return (
     <aside className="tx" aria-labelledby="tx-heading" data-testid="assessment-transcript">
@@ -91,7 +130,14 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
                   key={row.key}
                   className={`tx-turn is-${row.voice}${quoted ? ' is-quoted' : ''}`}
                   data-turn-id={row.turnId ?? undefined}
+                  data-turn-index={row.turnIndex}
                   data-testid="transcript-turn"
+                  // In the tab order, so a keyboard or screen-reader user
+                  // moving through the transcript reports the same turns a
+                  // scrolling reader does. A list of turns is a long tab stop
+                  // run, which is why the end marker exists beside it.
+                  tabIndex={0}
+                  onFocus={() => onTurnSeen?.(row.turnIndex)}
                 >
                   {quoted && <span className="tx-quoted-tag">[ quoted ]</span>}
                   <p className="tx-meta">
@@ -106,6 +152,23 @@ export function AssessmentTranscript(props: AssessmentTranscriptProps) {
               );
             })}
           </ol>
+        )}
+
+        {ready && props.rows.length > 0 && (
+          /* A real focusable element, not a sentinel: for a reviewer who does
+             not scroll, this is the one control that says "I have reached the
+             end", and it must be reachable by Tab and announceable. */
+          <button
+            type="button"
+            className="tx-end"
+            data-end-marker="true"
+            data-testid="transcript-end"
+            onFocus={() => onEndReached?.()}
+            onClick={() => onEndReached?.()}
+          >
+            <Icon name="check-circle" size={15} />
+            End of transcript
+          </button>
         )}
       </div>
     </aside>

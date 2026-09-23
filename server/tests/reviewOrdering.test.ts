@@ -33,9 +33,21 @@ async function assessmentForReviewer() {
   return { ...ids, assessmentId: assessment.id, auth };
 }
 
-const recordVerdict = (assessmentId: string, auth: Record<string, string>) =>
-  request(app).post(`/api/assessments/${assessmentId}/review`).set(auth)
+/**
+ * The transcript requirement the verdict now passes through
+ * (services/transcriptReadGate.ts). These tests are about which reading came
+ * first, not about how the transcript was read, so they take the audited
+ * "read it elsewhere" route: it needs no turns and leaves the same record.
+ */
+const readTranscript = (assessmentId: string, auth: Record<string, string>) =>
+  request(app).post(`/api/assessments/${assessmentId}/transcript-read`).set(auth)
+    .send({ method: 'elsewhere', attestation: 'Read the exported transcript before opening this page.' });
+
+const recordVerdict = async (assessmentId: string, auth: Record<string, string>) => {
+  await readTranscript(assessmentId, auth);
+  return request(app).post(`/api/assessments/${assessmentId}/review`).set(auth)
     .send({ verdict: 'PROCEED', reason: 'He gave the whole diagnosis at 18:40. That is a 4, not a 2.' });
+};
 
 beforeEach(async () => { await wipe(); });
 
