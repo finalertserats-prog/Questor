@@ -187,6 +187,19 @@ export async function requestPasswordReset(rawEmail: string, ctx: RequestContext
     after: { ip: ctx.ip, requestedBy: ctx.requestedBy ?? 'self', expiresAt: new Date(now.getTime() + RESET_TTL_MS).toISOString() },
   });
 
+  // The console provider is perfectly configured and delivers nothing, and it
+  // does not throw — so without this a link is created, the person is told one
+  // is coming, and the only trace is a line in a log nobody was watching. The
+  // answer on the wire cannot change (it would say whether the address has an
+  // account), so the server says it instead, loudly. Production never reaches
+  // this: preflight refuses to boot with a provider that cannot deliver unless
+  // somebody set ALLOW_UNDELIVERED_EMAIL deliberately.
+  if (!getEmail().delivers) {
+    logger.error(
+      { userId: user.id, provider: getEmail().name },
+      'A password reset link was created on a deployment that cannot send email; nobody will receive it',
+    );
+  }
   try {
     await getEmail().send(renderPasswordResetEmail({
       to: user.email, name: user.name, url: resetUrl(decision.token),
