@@ -23,6 +23,7 @@ import { prisma } from '../src/db.js';
 import { hashPassword, signToken } from '../src/services/auth.js';
 import { wipe as wipeAll } from '../src/seed/demoData.js';
 import { MAX_PENDING_REQUESTS, MAX_REQUESTS_PER_EMAIL_PER_DAY, MAX_REQUESTS_PER_EMAIL_DOMAIN_PER_DAY, orgNameKey, emailDomainOf } from '../src/domain/orgOnboarding.js';
+import { _resetRateLimits } from '../src/middleware/rateLimit.js';
 
 const app = createApp();
 const SECRET = 'correct-horse-battery-staple';
@@ -101,6 +102,28 @@ describe('the public onboarding form', () => {
     expect(res.body.businessAreas.map((a: { slug: string }) => a.slug)).toEqual(['engineering', 'finance', 'legal']);
     expect(res.body.regions.map((r: { code: string }) => r.code)).toContain('GLOBAL');
     expect(res.body.businessAreaLimit).toBe(5);
+  });
+
+  it('does not spend the request allowance on loading the form', async () => {
+    // The limiters are switched off under NODE_ENV=test, so this switches them
+    // back on for one case: reading the form's lists shares a mount with
+    // submitting a request, and the two budgets have to stay apart. They did
+    // not at first, and ten page loads left the form with empty dropdowns.
+    const realEnv = config.nodeEnv;
+    config.nodeEnv = 'production';
+    _resetRateLimits();
+    try {
+      for (let i = 0; i < 15; i += 1) {
+        const res = await request(app).get('/api/signup/options');
+        expect(res.status).toBe(200);
+      }
+      // The submission budget is untouched by all of that.
+      const submit = await request(app).post('/api/signup').send(onboardBody());
+      expect(submit.status).toBe(201);
+    } finally {
+      config.nodeEnv = realEnv;
+      _resetRateLimits();
+    }
   });
 
   it('records what the organisation asked for', async () => {
@@ -237,6 +260,16 @@ describe('the owner deciding in the console', () => {
       { slug: 'engineering', name: 'Engineering' },
       { slug: 'finance', name: 'Finance' },
     ]);
+  });
+
+  it('names the organisation where the queue reads it', async () => {
+    const { auth } = await operatorAuth();
+    await request(app).post('/api/signup').send(onboardBody());
+    const res = await request(app).get('/api/admin/signups?status=pending').set('Authorization', auth);
+    // Nested, because only the server can say whether "the organisation" is
+    // the new name or the slug being joined. The queue's own parser reads it
+    // from here (web/src/components/signupModel.ts).
+    expect(res.body.signups[0].applicant.organisation).toBe('Northstar Robotics');
   });
 
   it('warns the owner when an organisation of that name is already here', async () => {

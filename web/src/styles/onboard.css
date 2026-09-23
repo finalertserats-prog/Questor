@@ -11,7 +11,10 @@
    sideways.
    ========================================================================== */
 
-.onboard-body {
+/* Doubled up to beat `.public-body`'s own max-width, which is set for prose a
+   reader scans and is far too wide for a form someone fills in: at 980px the
+   fields ran the width of a desktop window and the eye lost the column. */
+.public-body.onboard-body {
   max-width: 720px;
 }
 

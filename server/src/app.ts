@@ -233,7 +233,16 @@ export function createApp() {
   // Mount decisions first so they get the 60-request token-scanning budget, not
   // the stricter submission budget.
   app.use('/api/signup/decision', rateLimit({ name: 'signup-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), signupDecisionRouter);
-  app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10, failClosed: true }), signupRouter);
+  // The onboarding form's own lists — regions, business areas, size bands —
+  // on their own budget, before the submission one. They shared the submission
+  // limiter at first, which meant ten page loads in a quarter of an hour left
+  // the form with empty dropdowns and no way to say why: a visitor who read
+  // the page, went away and came back had spent the allowance meant for
+  // requests. They write nothing, name nobody, and are the same three curated
+  // lists for everyone, so they are limited like a public read.
+  const isSignupOptions = (req: Request) => req.path === '/options';
+  app.use('/api/signup', rateLimit({ name: 'signup-options', windowMs: 15 * 60_000, max: 120, skip: (req) => !isSignupOptions(req) }));
+  app.use('/api/signup', rateLimit({ name: 'signup', windowMs: 15 * 60_000, max: 10, failClosed: true, skip: isSignupOptions }), signupRouter);
   app.use('/api/demo/decision', rateLimit({ name: 'demo-decision', windowMs: 15 * 60_000, max: 60, failClosed: true }), demoDecisionRouter);
   // Only the two public forms that build sandboxes or send email draw on this
   // budget. A signed-in demo's own calls (the sample interview, End demo) must
