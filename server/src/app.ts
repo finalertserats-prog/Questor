@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import { config } from './config.js';
 import { prisma } from './db.js';
 import { requestId, errorHandler, csrfProtection, authenticate, HttpError } from './middleware/index.js';
-import { rateLimit } from './middleware/rateLimit.js';
+import { failureRateLimit, rateLimit, LOGIN_FAILURES_PER_ACCOUNT, LOGIN_FAILURES_PER_ADDRESS, LOGIN_WINDOW_MS } from './middleware/rateLimit.js';
 import { resolveCommit } from './services/build.js';
 import { isDraining } from './services/drainState.js';
 import { probeDatabase } from './services/databaseProbe.js';
@@ -114,15 +114,41 @@ export function createApp() {
   });
 
   // Credential stuffing / brute force on the recruiter login.
-  app.use('/api/auth/login', rateLimit({ name: 'login', windowMs: 15 * 60_000, max: 10, failClosed: true }));
-  // Only the routes that take a credential. Mounted on all of /api/auth this
-  // also counted GET /me, which the web calls on every page load, so a few HR
-  // users behind one office address exhausted it in minutes and every page
-  // answered "Too many requests". /me and /tour/complete are authenticated;
-  // /logout only clears cookies the caller already holds.
-  const credentialLimit = rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true });
-  app.use('/api/auth/login', credentialLimit);
-  app.use('/api/auth/register', credentialLimit);
+  //
+  // Charges FAILURES, not requests, and the tight bucket is per ACCOUNT. The
+  // previous limiter consumed before the handler and keyed on the client
+  // address, so ten SUCCESSFUL sign-ins from one office exhausted it and the
+  // eleventh colleague that quarter-hour was told "Too many requests"
+  // (docs/qa/resilience-2026-09-23.md, S1). A looser address ceiling remains
+  // for one address working through many accounts.
+  app.use('/api/auth/login', failureRateLimit({
+    name: 'login',
+    windowMs: LOGIN_WINDOW_MS,
+    max: LOGIN_FAILURES_PER_ACCOUNT,
+    addressMax: LOGIN_FAILURES_PER_ADDRESS,
+    // Normalised, so "A@x" and "a@x" share one bucket. Hashing happens in the
+    // store and in the log line; nothing here writes an address anywhere.
+    subjectOf: (req) => {
+      const email = (req.body as { email?: unknown } | undefined)?.email;
+      return typeof email === 'string' && email.trim() ? `account:${email.trim().toLowerCase()}` : null;
+    },
+    failClosed: true,
+  }));
+  // Registration takes a credential too, and nothing about it is per-account:
+  // the account does not exist yet. So it keeps the plain per-address limiter.
+  //
+  // Login no longer draws on this one. It counted every request, successes
+  // included, which is the same defect as S1 at a looser threshold — 60
+  // sign-ins from one office in a quarter-hour is reachable on a Monday
+  // morning. The failure limiter above carries login's address ceiling now,
+  // and charges only what failed.
+  //
+  // Mounted on all of /api/auth this also counted GET /me, which the web calls
+  // on every page load, so a few HR users behind one office address exhausted
+  // it in minutes and every page answered "Too many requests". /me and
+  // /tour/complete are authenticated; /logout only clears cookies the caller
+  // already holds.
+  app.use('/api/auth/register', rateLimit({ name: 'auth', windowMs: 15 * 60_000, max: 60, failClosed: true }));
 
   // The candidate portal is unauthenticated and every answer triggers a paid
   // LLM call, so it is both the abuse surface and the cost-amplification path.

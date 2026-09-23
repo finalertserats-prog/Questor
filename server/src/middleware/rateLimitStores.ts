@@ -12,6 +12,16 @@ import { logger } from '../logger.js';
 export interface RateLimitStore {
   readonly name: 'memory' | 'database';
   hit(key: string, windowMs: number, max: number, now: number): Promise<{ count: number; resetAt: number }>;
+  /**
+   * The window's count WITHOUT adding to it, so a limiter can refuse a caller
+   * that is already over without charging every request. The login limiter
+   * needs this: it charges failures only, and counting a success is what
+   * locked out an office behind one NAT
+   * (docs/qa/resilience-2026-09-23.md, S1).
+   *
+   * `count` is 0 when no window is open.
+   */
+  peek(key: string, windowMs: number, now: number): Promise<{ count: number; resetAt: number }>;
 }
 
 // ---- Memory ----
@@ -74,6 +84,11 @@ export function createMemoryRateLimitStore(): MemoryRateLimitStore {
         return { count: 1, resetAt: fresh.resetAt };
       }
       bucket.count += 1;
+      return { count: bucket.count, resetAt: bucket.resetAt };
+    },
+    async peek(key, windowMs, now) {
+      const bucket = buckets.get(key);
+      if (!bucket || bucket.resetAt <= now) return { count: 0, resetAt: now + windowMs };
       return { count: bucket.count, resetAt: bucket.resetAt };
     },
     clear() {
@@ -154,6 +169,12 @@ export const databaseRateLimitStore: RateLimitStore = {
       }
     }
     throw new Error('Could not record a rate-limit hit: the bucket kept changing underneath');
+  },
+
+  async peek(key, windowMs, now) {
+    const row = await prisma.rateLimitBucket.findUnique({ where: { key: storedKey(key) }, select: { count: true, expiresAt: true } });
+    if (!row || row.expiresAt.getTime() <= now) return { count: 0, resetAt: now + windowMs };
+    return { count: row.count, resetAt: row.expiresAt.getTime() };
   },
 };
 
