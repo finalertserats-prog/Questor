@@ -1,4 +1,4 @@
-import { LlmApiError, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult } from './types.js';
+import { LlmApiError, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult, PROVIDER_HARD_TIMEOUT_MS } from './types.js';
 
 /** The reply budget when a caller does not set one. */
 const DEFAULT_MAX_TOKENS = 1500;
@@ -36,7 +36,8 @@ export class AnthropicLlmProvider implements LlmProvider {
     const started = Date.now();
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
+      // Never undefined: see openai.ts.
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? PROVIDER_HARD_TIMEOUT_MS),
       headers: {
         'content-type': 'application/json',
         'x-api-key': this.apiKey,

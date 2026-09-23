@@ -1,4 +1,4 @@
-import { LlmApiError, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult, type ReasoningEffort } from './types.js';
+import { LlmApiError, PROVIDER_HARD_TIMEOUT_MS, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult, type ReasoningEffort } from './types.js';
 
 /** The reply budget when a caller does not set one. */
 const DEFAULT_MAX_TOKENS = 1500;
@@ -67,7 +67,9 @@ export class OpenAiLlmProvider implements LlmProvider {
     const started = Date.now();
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      signal: opts?.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
+      // Never undefined: a call with no ceiling is how a candidate waits
+      // five minutes on undici's default for a turn that never comes.
+      signal: AbortSignal.timeout(opts?.timeoutMs ?? PROVIDER_HARD_TIMEOUT_MS),
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${this.apiKey}`,

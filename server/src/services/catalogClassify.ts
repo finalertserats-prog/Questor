@@ -45,6 +45,7 @@ const SYSTEM_PROMPT = [
 /** The production model: the configured LLM, or null in a demo or without a key. */
 export const defaultClassificationModel: ClassificationModel = (request) => generateJson({
   fn: 'catalog_refresh_classify',
+  purpose: 'finalisation',
   system: SYSTEM_PROMPT,
   user: JSON.stringify(request),
   validate: (raw) => replySchema.parse(raw),

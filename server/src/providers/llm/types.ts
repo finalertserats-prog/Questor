@@ -15,11 +15,24 @@ export interface LlmResult {
 export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high'] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
+/**
+ * The last line of defence on a hung socket: what an adapter uses when a
+ * caller passed no options at all. Every path through `generateJson` supplies
+ * a purpose budget well under this, so reaching it means someone called an
+ * adapter directly — which must still end, and must not end at undici's 300 s
+ * default (docs/qa/resilience-2026-09-23.md, R1).
+ */
+export const PROVIDER_HARD_TIMEOUT_MS = 120_000;
+
 export interface LlmGenerateOptions {
   temperature?: number;
   maxTokens?: number;
-  /** Bounds the call; unset keeps the provider's default (no timeout). */
-  timeoutMs?: number;
+  /**
+   * Bounds the call. Required: a model call with no ceiling is how a candidate
+   * waits 212 s for a turn that never comes. Adapters fall back to
+   * `PROVIDER_HARD_TIMEOUT_MS` only when no options object is passed at all.
+   */
+  timeoutMs: number;
   /** Per-call override of the configured effort, e.g. more for grading than for a spoken turn. */
   reasoningEffort?: ReasoningEffort;
   /**

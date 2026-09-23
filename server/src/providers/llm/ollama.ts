@@ -1,4 +1,4 @@
-import { LlmApiError, LlmStreamError, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult } from './types.js';
+import { LlmApiError, LlmStreamError, PROVIDER_HARD_TIMEOUT_MS, type LlmGenerateOptions, type LlmMessage, type LlmProvider, type LlmResult } from './types.js';
 
 /**
  * The reply budget when a caller does not set one. Smaller than the hosted
@@ -103,9 +103,9 @@ export class OllamaLlmProvider implements LlmProvider {
       reason = err;
       abort.abort(err);
     };
-    const totalTimer = opts?.timeoutMs
-      ? setTimeout(() => stop(timeoutError(`Ollama reply not finished within ${opts.timeoutMs}ms`)), opts.timeoutMs)
-      : undefined;
+    // Never unbounded: a stream that never finishes holds the turn open.
+    const totalMs = opts?.timeoutMs ?? PROVIDER_HARD_TIMEOUT_MS;
+    const totalTimer = setTimeout(() => stop(timeoutError(`Ollama reply not finished within ${totalMs}ms`)), totalMs);
     let firstTokenTimer = opts?.firstTokenMs
       ? setTimeout(() => stop(timeoutError(`Ollama sent no token within ${opts.firstTokenMs}ms`)), opts.firstTokenMs)
       : undefined;

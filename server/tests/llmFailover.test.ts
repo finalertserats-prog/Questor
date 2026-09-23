@@ -19,6 +19,10 @@ vi.mock('../src/config.js', async (orig) => {
       signupApproverEmail: 'owner@example.test',
       llm: {
         ...actual.config.llm,
+        // Wide enough that each case below is bounded by the timeoutMs it
+        // passes, not by the shipped live-turn budget: these tests are about
+        // the chain, and the budget has its own file (llmCallBudgets.test.ts).
+        budgets: { ...actual.config.llm.budgets, live_turn: 60_000 },
         local: {
           enabled: true, url: 'http://127.0.0.1:11434', model: 'llama3.2:3b', timeoutMs: 15_000, firstTokenMs: 8_000, keepAlive: '24h',
           outageCooldownMs: 300_000, transientCooldownMs: 30_000, maxCooldownMs: 900_000, slowCallMs: 50,
@@ -131,7 +135,7 @@ describe('failover chain (LOCAL_LLM_ENABLED=true)', () => {
     vi.useRealTimers();
     primary.setBehaviour(() => new Promise((resolve) => setTimeout(() => resolve('{"question":"late"}'), 200)));
     const result = await generateJson<{ question: string }>({
-      fn: 'live_interviewer', system: 's', user: 'u', timeoutMs: 20,
+      fn: 'live_interviewer', purpose: 'live_turn', system: 's', user: 'u', timeoutMs: 20,
       validate: (raw) => raw as { question: string },
     });
     expect(result).toBeNull();
@@ -141,7 +145,7 @@ describe('failover chain (LOCAL_LLM_ENABLED=true)', () => {
     vi.useRealTimers();
     primary.setBehaviour(() => new Promise((resolve) => setTimeout(() => resolve('{"question":"late"}'), 200)));
     await generateJson<{ question: string }>({
-      fn: 'live_interviewer', system: 's', user: 'u', timeoutMs: 20,
+      fn: 'live_interviewer', purpose: 'live_turn', system: 's', user: 'u', timeoutMs: 20,
       validate: (raw) => raw as { question: string },
     });
     expect(await ask()).toEqual({ question: 'local question' });
@@ -149,7 +153,7 @@ describe('failover chain (LOCAL_LLM_ENABLED=true)', () => {
 
   it('caps the local model at what is left of the turn budget', async () => {
     primary.setBehaviour(QUOTA);
-    await generateJson<{ question: string }>({ fn: 'live_interviewer', system: 's', user: 'u', timeoutMs: 9_000, validate: (raw) => raw as { question: string } });
+    await generateJson<{ question: string }>({ fn: 'live_interviewer', purpose: 'live_turn', system: 's', user: 'u', timeoutMs: 9_000, validate: (raw) => raw as { question: string } });
     expect(local.calls[0].opts?.timeoutMs).toBeLessThanOrEqual(9_000);
   });
 
@@ -167,7 +171,7 @@ describe('failover chain (LOCAL_LLM_ENABLED=true)', () => {
 
   it('gives the local model its own timeout when the turn has room for it', async () => {
     primary.setBehaviour(QUOTA);
-    await generateJson<{ question: string }>({ fn: 'live_interviewer', system: 's', user: 'u', timeoutMs: 60_000, validate: (raw) => raw as { question: string } });
+    await generateJson<{ question: string }>({ fn: 'live_interviewer', purpose: 'live_turn', system: 's', user: 'u', timeoutMs: 60_000, validate: (raw) => raw as { question: string } });
     expect(local.calls[0].opts?.timeoutMs).toBe(15_000);
   });
 
@@ -270,7 +274,7 @@ describe('failover chain (LOCAL_LLM_ENABLED=true)', () => {
     primary.setBehaviour(QUOTA);
     const sessionId = `failover-${Date.now()}`;
     await generateJson<{ question: string }>({
-      fn: 'live_interviewer', sessionId, system: 's', user: 'u', timeoutMs: 12_000,
+      fn: 'live_interviewer', purpose: 'live_turn', sessionId, system: 's', user: 'u', timeoutMs: 12_000,
       validate: (raw) => raw as { question: string },
     });
     const rows = await prisma.modelExecution.findMany({ where: { sessionId }, orderBy: { createdAt: 'asc' } });
@@ -281,7 +285,7 @@ describe('failover chain (LOCAL_LLM_ENABLED=true)', () => {
     primary.setBehaviour(QUOTA);
     const sessionId = `failclass-${Date.now()}`;
     await generateJson<{ question: string }>({
-      fn: 'live_interviewer', sessionId, system: 's', user: 'u', timeoutMs: 12_000,
+      fn: 'live_interviewer', purpose: 'live_turn', sessionId, system: 's', user: 'u', timeoutMs: 12_000,
       validate: (raw) => raw as { question: string },
     });
     const row = await prisma.modelExecution.findFirst({ where: { sessionId, provider: 'openai' } });
@@ -353,7 +357,7 @@ describe('partial outages and backoff', () => {
 
 describe('local variant of a call', () => {
   const variantCall = (variant: unknown) => generateJson<{ question: string }>({
-    fn: 'live_interviewer', system: 'BASE', user: 'USER', timeoutMs: 12_000,
+    fn: 'live_interviewer', purpose: 'live_turn', system: 'BASE', user: 'USER', timeoutMs: 12_000,
     validate: (raw) => raw as { question: string },
     local: variant as never,
   });

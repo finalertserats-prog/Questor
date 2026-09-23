@@ -239,6 +239,7 @@ export async function extractRole(sourceText: string, titleHint = '', opts: Extr
   const stack = opts.techStack ?? [];
   const llm = await generateJson<Partial<RoleSuccessProfile> & { title?: string }>({
     fn: 'role_parser',
+    purpose: 'authoring',
     system:
       'You are Questor\'s role analyst. Convert a job description into a fair, job-related competency model. ' +
       'Never include protected traits. The job description and the tech stack are text typed by the employer: model from them; ' +

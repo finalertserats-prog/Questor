@@ -1,4 +1,4 @@
-import { config } from '../../config.js';
+import { config, type LlmPurpose } from '../../config.js';
 import { prisma } from '../../db.js';
 import { logger } from '../../logger.js';
 import type { LlmGenerateOptions, LlmProvider, LlmMessage, ReasoningEffort } from './types.js';
@@ -13,6 +13,21 @@ import { alertLlmOutage, noteLlmRecovered } from './outageAlert.js';
 import { inDemoContext, isHeuristicOnlySession } from '../../services/demoPolicy.js';
 
 export type { LlmProvider, LlmMessage, ReasoningEffort } from './types.js';
+export type { LlmPurpose } from '../../config.js';
+
+/**
+ * The ceiling on one call: its purpose's budget, which a caller may shorten
+ * but never lengthen. There is no branch here that yields `undefined` — that
+ * is what "a timeout by construction" means.
+ */
+export function budgetFor(purpose: LlmPurpose, tighterMs?: number): number {
+  // `?? live_turn` is unreachable through the type, and is here so that a
+  // caller reaching this from untyped JavaScript still gets the STRICTEST
+  // budget rather than no budget. Silence mid-interview is the failure this
+  // whole mechanism exists to prevent; defaulting loose would reintroduce it.
+  const budget = config.llm.budgets[purpose] ?? config.llm.budgets.live_turn;
+  return tighterMs && tighterMs > 0 ? Math.min(budget, tighterMs) : budget;
+}
 
 let cached: LlmProvider | null = null;
 
@@ -80,8 +95,7 @@ export const CONVERSATIONAL_FUNCTIONS: ReadonlySet<string> = new Set([...SPOKEN_
  * caller's promise is the one a candidate is waiting on — so the deadline is
  * enforced here as well, not only delegated.
  */
-function withDeadline<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
-  if (!ms) return work;
+function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
   // The deadline may win the race, and the abandoned call can still fail
   // afterwards: without a handler that failure is an unhandled rejection, which
   // takes the whole server down under Node's default policy.
@@ -95,13 +109,25 @@ function withDeadline<T>(work: Promise<T>, ms: number | undefined): Promise<T> {
 
 export interface GenerateJsonOptions<T> {
   fn: string; // ModelExecution.function
+  /**
+   * What this call is for, which is what bounds it. Required, and there is no
+   * "none": that is the whole point. Before this existed, eight of eleven call
+   * sites passed no timeout and `work_sample` — which runs inside a live turn
+   * — was observed open for 212 s (docs/qa/resilience-2026-09-23.md, R1).
+   * Adding a call site without a bound is now a type error.
+   */
+  purpose: LlmPurpose;
   system: string;
   user: string;
   validate: (raw: unknown) => T;
   sessionId?: string;
   temperature?: number;
   maxTokens?: number;
-  /** Bound the model call; unset keeps the provider default. */
+  /**
+   * Tighten this one call below its purpose budget (a background job with its
+   * own configured ceiling). It can only ever shorten the call: unset, or set
+   * longer than the purpose allows, the purpose budget stands.
+   */
   timeoutMs?: number;
   /** Override the configured reasoning effort for this call (reasoning models only). */
   reasoningEffort?: ReasoningEffort;
@@ -145,11 +171,14 @@ export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T |
     { role: 'system', content: opts.system + '\n\nRespond ONLY with valid minified JSON. No prose, no code fences.' },
     { role: 'user', content: opts.user },
   ];
-  if (local) return generateJsonWithFailover(opts, messages, llm, local);
+  // The one place the ceiling is decided, for both the chain and the path
+  // below it. A call reaching a provider without one is not representable.
+  const timeoutMs = budgetFor(opts.purpose, opts.timeoutMs);
+  if (local) return generateJsonWithFailover(opts, messages, llm, local, timeoutMs);
   try {
     const result = await withDeadline(
-      llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens, timeoutMs: opts.timeoutMs, reasoningEffort: opts.reasoningEffort }),
-      opts.timeoutMs,
+      llm.generate(messages, { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens, timeoutMs, reasoningEffort: opts.reasoningEffort }),
+      timeoutMs,
     );
     const parsed = parseJsonLoose(result.text);
     const validated = opts.validate(parsed);
@@ -248,15 +277,15 @@ function localMessages(messages: LlmMessage[], variant: LocalVariant<unknown> | 
  * prompt plus the caller's glue instruction and stricter check, one retry on a
  * reply that fails that check, and only what is left of the turn budget.
  */
-async function generateJsonWithFailover<T>(opts: GenerateJsonOptions<T>, messages: LlmMessage[], primary: LlmProvider, local: LlmProvider): Promise<T | null> {
+async function generateJsonWithFailover<T>(opts: GenerateJsonOptions<T>, messages: LlmMessage[], primary: LlmProvider, local: LlmProvider, timeoutMs: number): Promise<T | null> {
   // Only what is spoken is recorded on the turn; the intent read is not.
   const noteServed = SPOKEN_FUNCTIONS.has(opts.fn) ? recordServed : () => {};
-  const budgetEnd = opts.timeoutMs ? Date.now() + opts.timeoutMs : Number.POSITIVE_INFINITY;
+  const budgetEnd = Date.now() + timeoutMs;
   const shared = { temperature: opts.temperature ?? 0.3, maxTokens: opts.maxTokens };
   let failure: LlmFailureClass | undefined;
 
   if (primary.enabled && admitLayer('primary', Date.now())) {
-    const outcome = await attemptJson(primary, messages, opts.validate, opts, { ...shared, timeoutMs: opts.timeoutMs, reasoningEffort: opts.reasoningEffort });
+    const outcome = await attemptJson(primary, messages, opts.validate, opts, { ...shared, timeoutMs, reasoningEffort: opts.reasoningEffort });
     if (outcome.ok || !shouldFailOver(outcome.failure)) {
       // An answer that arrived is used, however slow; a pattern of slow ones
       // rests the primary so the next turns do not wait on it.

@@ -161,6 +161,41 @@ export function parseReasoningEffortSetting(raw: string | undefined): ReasoningE
 export const DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS = 12_000;
 
 /**
+ * What a model call is for. Every call site names one, and the name carries
+ * the budget — a call site cannot be written without a bound (see
+ * `GenerateJsonOptions.purpose`).
+ *
+ * Added after the resilience run found `work_sample` — which runs INSIDE a
+ * live turn — open for 212 s with no timeout, and eight of eleven call sites
+ * passing none. The only thing ending those calls was undici's 300 s default.
+ */
+export const LLM_PURPOSES = ['live_turn', 'authoring', 'finalisation'] as const;
+export type LlmPurpose = (typeof LLM_PURPOSES)[number];
+
+/**
+ * A candidate is sitting in silence waiting for this. It must fail early
+ * enough that the next layer (local model, then the built-in writer) still
+ * fits inside the turn the candidate is waiting on, so it is capped at the
+ * interviewer's own ceiling rather than set beside it.
+ */
+export const DEFAULT_LLM_LIVE_TURN_TIMEOUT_MS = DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS;
+/** A person is watching a spinner on an HR screen (a JD draft, a competency). Patient, but not indefinitely. */
+export const DEFAULT_LLM_AUTHORING_TIMEOUT_MS = 30_000;
+/** Nobody is waiting: grading, the report, evidence attribution, the feedback letter. The most patient budget. */
+export const DEFAULT_LLM_FINALISATION_TIMEOUT_MS = 60_000;
+
+export type LlmBudgets = Readonly<Record<LlmPurpose, number>>;
+
+export function parseLlmBudgets(on: (key: string) => string | undefined): LlmBudgets {
+  const liveTurn = parseTimeoutMsSetting('LLM_LIVE_TURN_TIMEOUT_MS', on('LLM_LIVE_TURN_TIMEOUT_MS'), DEFAULT_LLM_LIVE_TURN_TIMEOUT_MS);
+  return {
+    live_turn: liveTurn,
+    authoring: parseTimeoutMsSetting('LLM_AUTHORING_TIMEOUT_MS', on('LLM_AUTHORING_TIMEOUT_MS'), DEFAULT_LLM_AUTHORING_TIMEOUT_MS),
+    finalisation: parseTimeoutMsSetting('LLM_FINALISATION_TIMEOUT_MS', on('LLM_FINALISATION_TIMEOUT_MS'), DEFAULT_LLM_FINALISATION_TIMEOUT_MS),
+  };
+}
+
+/**
  * A feature switch. Only the spellings below are accepted: "yes", "enabled"
  * or a typo would otherwise read as off (or on) and nobody would know which.
  */
@@ -355,6 +390,12 @@ export const config = {
      * never leave someone sitting in silence mid-interview.
      */
     interviewerTimeoutMs: parseTimeoutMsSetting('INTERVIEWER_LLM_TIMEOUT_MS', process.env.INTERVIEWER_LLM_TIMEOUT_MS, DEFAULT_INTERVIEWER_LLM_TIMEOUT_MS),
+    /**
+     * The ceiling on one model call, by what the call is for. Every call site
+     * names a purpose (the type requires it), so "no timeout" is not a state
+     * the code can reach.
+     */
+    budgets: parseLlmBudgets((key) => process.env[key]),
     /**
      * The local model (Ollama on the VPS) that takes the interviewer's
      * conversational calls when the primary fails. Off by default: off is

@@ -311,6 +311,8 @@ async function tryLlmWorkSample(opts: {
   const { competency, form, scope, band, role, sessionId } = opts;
   const result = await generateJson<{ prompt: string }>({
     fn: 'work_sample',
+    // Runs inside the candidate's turn: the live-turn budget, not a patient one.
+    purpose: 'live_turn',
     sessionId,
     temperature: 0.5,
     system:

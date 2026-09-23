@@ -47,7 +47,7 @@ describe('model call latency guard', () => {
   it('gives up on a slow model at the timeout and returns null for the fallback', async () => {
     _setLlmForTests(new FakeProvider(5_000));
     const started = Date.now();
-    const out = await generateJson({ fn: 't', system: 's', user: 'u', validate: (r) => r, timeoutMs: 100 });
+    const out = await generateJson({ fn: 't', purpose: 'live_turn', system: 's', user: 'u', validate: (r) => r, timeoutMs: 100 });
     expect(out).toBeNull();
     expect(Date.now() - started).toBeLessThan(2_000);
   });

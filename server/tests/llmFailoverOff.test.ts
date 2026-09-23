@@ -41,7 +41,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const ask = () => generateJson<unknown>({ fn: 'live_interviewer', system: 's', user: 'u', timeoutMs: 12_000, validate: (raw) => raw });
+const ask = () => generateJson<unknown>({ fn: 'live_interviewer', purpose: 'live_turn', system: 's', user: 'u', timeoutMs: 12_000, validate: (raw) => raw });
 
 describe('LOCAL_LLM_ENABLED off (the default)', () => {
   it('is off by default', () => {

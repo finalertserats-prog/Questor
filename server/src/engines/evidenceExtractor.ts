@@ -247,6 +247,7 @@ async function requestSemanticAttribution(o: {
 
   return generateJson<AttributionMapping[]>({
     fn: 'evidence_attribution_llm',
+    purpose: 'finalisation',
     sessionId: o.sessionId,
     temperature: 0.1,
     system:

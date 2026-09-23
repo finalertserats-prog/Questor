@@ -99,6 +99,7 @@ export async function draftCompetency(input: CompetencyDraftInput): Promise<{ dr
   const existing = input.profile.competencies.filter((c) => c.retired !== true).map((c) => c.name).slice(0, 40);
   const llm = await generateJson<CompetencyDraft>({
     fn: 'competency_draft',
+    purpose: 'authoring',
     temperature: 0.2,
     system:
       'You are Questor\'s role analyst. A recruiter has named one competency to add to a role\'s scorecard. ' +

@@ -217,6 +217,7 @@ export async function draftJdWithLlm(input: JdDraftInput): Promise<DraftResult |
   const band = bandById(input.band);
   const raw = await generateJson<{ title: string; text: string }>({
     fn: 'jd_draft',
+    purpose: 'authoring',
     system:
       'You write fair, plain-text job descriptions for a shared library that many employers start from. Return JSON {"title","text"}. ' +
       'Sections: title line, About the role, What you will do (5-7 bullets), What you bring, Nice to have, Location, and a closing line welcoming applicants from every background and offering reasonable adjustments. ' +
@@ -258,6 +259,7 @@ export async function draftJdFromDescriptionWithLlm(input: {
   const band = bandById(input.band);
   const raw = await generateJson<{ title: string; text: string }>({
     fn: 'jd_draft_describe',
+    purpose: 'authoring',
     system:
       'You turn a hiring team\'s short description into a fair, plain-text job description. Return JSON {"title","text"}. ' +
       'Sections: title line, About the role, What you will do, What you bring, Nice to have, Location, and a closing line welcoming applicants from every background and offering reasonable adjustments. ' +

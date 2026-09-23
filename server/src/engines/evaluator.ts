@@ -328,6 +328,7 @@ async function gradeAgainstRubric(o: {
   const anchors = (o.anchors ?? []).slice(0, 12).map((a) => a.slice(0, 300));
   return generateJson<RubricGrade>({
     fn: 'competency_grader',
+    purpose: 'finalisation',
     sessionId: o.sessionId,
     temperature: 0.1,
     // Grading is not spoken, so nobody waits on it the way they wait on an
@@ -474,6 +475,7 @@ async function buildSummary(o: {
 }): Promise<string> {
   const llm = await generateJson<{ summary: string }>({
     fn: 'report_writer',
+    purpose: 'finalisation',
     sessionId: o.sessionId,
     system:
       'You are Questor\'s report writer. Summarize a structured interview assessment for a recruiter in 3-5 sentences. ' +

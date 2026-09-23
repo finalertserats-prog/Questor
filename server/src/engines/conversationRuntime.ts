@@ -541,6 +541,7 @@ async function readIntentWithLlm(text: string, opts: UtteranceOptions): Promise<
   const pending = pendingQuestion(opts.turns);
   return generateJson<LlmIntent>({
     fn: 'candidate_intent',
+    purpose: 'live_turn',
     sessionId: opts.sessionId,
     temperature: 0,
     maxTokens: 60,
@@ -662,6 +663,7 @@ async function answerCandidateQuestionWithLlm(question: string, opts: UtteranceO
     // figure in the reply comes from the role facts.
     local: candidateAnswerVariant([factsText]),
     fn: 'candidate_question',
+    purpose: 'live_turn',
     sessionId: opts.sessionId,
     temperature: 0.3,
     maxTokens: 220,
@@ -1152,6 +1154,7 @@ async function tryLlmUtterance(
   const glue = planned.length ? interviewerGlueVariant(planned, [...candidateSaid(turns), competencyName, opts.roleTitle ?? '']) : null;
   const result = await generateJson<LlmUtterance>({
     fn: 'live_interviewer',
+    purpose: 'live_turn',
     sessionId: opts.sessionId,
     local: glue
       ? { ...glue, validate: (raw: unknown): LlmUtterance => ({ ...glue.validate(raw), fromPlan: true }) }

@@ -53,6 +53,7 @@ export async function generateFeedbackContent(input: FeedbackInput, sessionId: s
   const model = covered
     ? await generateJson<ModelFeedback>({
       fn: 'candidate_feedback',
+      purpose: 'finalisation',
       system: SYSTEM,
       user: JSON.stringify({ ...prompt, promptVersion: FEEDBACK_PROMPT_VERSION }),
       validate: (raw) => modelFeedbackSchema.parse(raw),

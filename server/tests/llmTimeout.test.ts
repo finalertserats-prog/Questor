@@ -3,8 +3,10 @@ import { OpenAiLlmProvider } from '../src/providers/llm/openai.js';
 import { AnthropicLlmProvider } from '../src/providers/llm/anthropic.js';
 
 /**
- * A model call made from a background job must end. The catalog refresh asks
- * for a timeout; every other caller keeps the behaviour it had (none).
+ * Every model call must end. Until 2026-09-23 only callers that asked for a
+ * timeout got one, and eight of eleven did not ask — so the adapters now bound
+ * the socket themselves whatever the caller passed. See llmCallBudgets.test.ts
+ * for the per-call-site budgets.
  */
 
 function captureFetch(body: unknown) {
@@ -27,10 +29,10 @@ describe('model call timeouts', () => {
     expect(inits[0].signal).toBeInstanceOf(AbortSignal);
   });
 
-  it('leaves an OpenAI call unbounded for callers that did not ask', async () => {
+  it('bounds an OpenAI call even when the caller did not ask', async () => {
     const inits = captureFetch(openAiReply);
     await new OpenAiLlmProvider('k', 'm').generate([{ role: 'user', content: 'x' }]);
-    expect(inits[0].signal).toBeUndefined();
+    expect(inits[0].signal).toBeInstanceOf(AbortSignal);
   });
 
   it('bounds an Anthropic call when the caller asks for a timeout', async () => {
