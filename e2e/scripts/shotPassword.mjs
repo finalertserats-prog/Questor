@@ -46,6 +46,14 @@ async function shoot(label, path, { signedIn = false, prepare } = {}) {
         colorScheme: theme,
         storageState: signedIn ? statePath : { cookies: [], origins: [] },
       });
+      // The app defaults to light and remembers a choice; it deliberately does
+      // NOT follow the operating system (components/theme.tsx explains why).
+      // So `colorScheme` alone photographs the light theme twice — the choice
+      // has to be made the way a person makes it, in storage, before the app
+      // reads it.
+      await ctx.addInitScript((value) => {
+        try { window.localStorage.setItem('questor-theme', value); } catch { /* blocked storage: light */ }
+      }, theme);
       const page = await ctx.newPage();
       await page.goto(path, { waitUntil: 'networkidle' });
       // Held still so two runs are comparable.

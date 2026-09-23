@@ -232,6 +232,16 @@
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  /* These are <label>s, and a bare label in this design system is a mono
+     uppercase micro-label — which turned three sentences of explanation into
+     three lines of shouting. Reset the same way .check-row does. */
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.45;
+  text-transform: none;
+  color: var(--ink);
   padding: 12px 12px 12px 10px;
   border: var(--hair) solid var(--rule);
   border-left: var(--rail) solid transparent;
