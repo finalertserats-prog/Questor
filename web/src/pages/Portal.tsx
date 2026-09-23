@@ -116,6 +116,13 @@ export function Portal() {
   const [linkClosed, setLinkClosed] = useState(false);
   const cardHeadingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (swappedByPress) cardHeadingRef.current?.focus(); }, [swappedByPress]);
+  // The same reason, one step earlier in the journey: the one-time code step
+  // replaces itself with the audio check, and the field the candidate had just
+  // typed into disappears. Without this, focus fell back to the page body and a
+  // screen-reader user heard nothing about what had changed — they were told
+  // their code was accepted by a screen they had to go looking for.
+  const techCheckHeadingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { if (step === 'techcheck') techCheckHeadingRef.current?.focus(); }, [step]);
 
   useEffect(() => {
     api.get<PortalInfo>(`/portal/${token}`).then((loaded) => {
@@ -354,7 +361,7 @@ export function Portal() {
 
         {step === 'techcheck' && (
           <>
-            <h3>Quick audio check</h3>
+            <h3 ref={techCheckHeadingRef} tabIndex={-1}>Quick audio check</h3>
             <div className="row spread card tight" style={{ background: 'var(--panel-2)' }}>
               <span className="check-label">
                 <Icon name="mic" size={16} />Microphone
