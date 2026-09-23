@@ -1,0 +1,306 @@
+/* ==========================================================================
+   The candidate's status page
+   --------------------------------------------------------------------------
+   Where the invitation link leads once the interview is over. It keeps the
+   interview room's dark treatment in both themes, for the same reason the room
+   does: this is the candidate's surface, not the console's, and it must not
+   change under them because somebody flipped a preference. Every colour comes
+   from the --room-* tokens in app.css.
+
+   State is marked with rules, rings, weight and icons — never with a flat
+   tinted block behind a paragraph. The timeline reads as a line with stops on
+   it, and the one box that is a box (the feedback letter) is marked with a
+   rule down its left edge rather than a wash.
+
+   Phone first: the whole page is one column at 375px with no horizontal
+   scroll, and only widens its gutters past 640px.
+   ========================================================================== */
+
+.cstatus {
+  min-height: 100dvh;
+  background: var(--room-bg);
+  color: var(--room-ink);
+  color-scheme: dark;
+  font-size: 14px;
+  /* Markup below may reach for --brand; on this near-black ground the
+     console's deep iris sits at roughly 2.5:1. Rebound, as the room does. */
+  --brand: var(--room-accent);
+}
+.cstatus :focus-visible {
+  outline: 2px solid var(--room-accent);
+  outline-offset: 3px;
+}
+.cstatus a {
+  color: var(--room-accent);
+}
+
+.cstatus-page {
+  max-width: 34rem;
+  margin: 0 auto;
+  padding: 18px 16px 48px;
+  display: grid;
+  gap: 24px;
+}
+@media (min-width: 640px) {
+  .cstatus-page { padding: 32px 24px 64px; gap: 28px; }
+}
+
+/* --- who this is from --- */
+.cstatus-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--room-ink-2);
+  min-width: 0;
+}
+.cstatus-org {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- the thank-you --- */
+.cstatus-hero {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 12px;
+}
+.cstatus-avatar {
+  position: relative;
+  width: 84px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+}
+.cstatus-avatar b {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 26px;
+  font-weight: 600;
+  background: var(--room-accent);
+  color: var(--room-on-accent);
+  position: relative;
+  z-index: 1;
+}
+.cstatus-avatar::before,
+.cstatus-avatar::after {
+  content: "";
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--room-accent);
+  opacity: 0.5;
+  animation: cstatus-calm 4s ease-in-out infinite;
+}
+.cstatus-avatar::after { inset: 0; opacity: 0.22; animation-delay: 2s; }
+@keyframes cstatus-calm {
+  50% { transform: scale(1.06); opacity: 0.12; }
+}
+/* Nothing here conveys information by moving, so it all stops on request. */
+@media (prefers-reduced-motion: reduce) {
+  .cstatus-avatar::before,
+  .cstatus-avatar::after,
+  .cstatus-dot::after { animation: none; }
+}
+
+/* Colour stated, not inherited: app.css gives every h1 the console's ink,
+   which is near-black and vanishes on this ground whenever the app theme is
+   light. The heading is the whole message of the page. */
+.cstatus-hero h1 {
+  color: var(--room-ink);
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.cstatus-hero p {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--room-ink-2);
+  max-width: 36ch;
+  margin: 0;
+}
+
+/* --- section labels --- */
+/* --room-ink-3 would be the obvious token for these three quiet pieces of
+   text, and it is the one the mockup used. It sits at 3.9:1 on --room-bg,
+   which is under AA for text this size, so all three use --room-ink-2 (7.7:1)
+   and lean on size and weight to stay quiet instead of on being faint. */
+.cstatus-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--room-ink-2);
+  margin: 0 0 10px;
+}
+
+/* --- where you are --- */
+.cstatus-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.cstatus-steps li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 12px;
+  position: relative;
+  padding-bottom: 16px;
+}
+.cstatus-steps li::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 22px;
+  bottom: 0;
+  width: 1px;
+  background: var(--room-line-2);
+}
+.cstatus-steps li:last-child::before { display: none; }
+.cstatus-dot {
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  border: 1.5px solid var(--room-line-2);
+  display: grid;
+  place-items: center;
+  color: var(--room-observer);
+}
+.cstatus-step-done .cstatus-dot { border-color: var(--room-observer); }
+.cstatus-step-now .cstatus-dot {
+  border-color: var(--room-accent);
+  box-shadow: 0 0 0 4px var(--room-accent-halo);
+}
+.cstatus-step-now .cstatus-dot::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--room-accent);
+  animation: cstatus-pulse 1.8s ease-in-out infinite;
+}
+@keyframes cstatus-pulse {
+  50% { opacity: 0.35; }
+}
+.cstatus-steps b {
+  font-weight: 600;
+  font-size: 14.5px;
+  display: block;
+  line-height: 1.35;
+}
+.cstatus-steps span {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--room-ink-2);
+}
+.cstatus-step-later b { color: var(--room-ink-2); font-weight: 500; }
+.cstatus-step-now b { color: var(--room-accent); }
+
+/* --- boxes: an outline and a rule, never a wash --- */
+.cstatus-box {
+  border: 1px solid var(--room-line);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--room-ink-2);
+}
+.cstatus-box h2 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--room-ink);
+  margin: 0;
+}
+.cstatus-box p { margin: 0; }
+.cstatus-box-waiting {
+  border-style: dashed;
+  border-color: var(--room-line-2);
+}
+.cstatus-box-letter {
+  border-left: 3px solid var(--room-observer);
+  border-radius: 0 14px 14px 0;
+}
+.cstatus-letter {
+  white-space: pre-wrap;
+  color: var(--room-ink);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+  /* A letter written as an email carries long unbroken lines on a phone. */
+  overflow-wrap: anywhere;
+}
+.cstatus-provenance {
+  font-size: 12.5px;
+  color: var(--room-ink-2);
+  margin: 0;
+}
+
+/* --- talk to a person --- */
+.cstatus-talk-btn {
+  justify-self: start;
+  appearance: none;
+  border: 1px solid var(--room-accent);
+  background: transparent;
+  color: var(--room-accent);
+  border-radius: 999px;
+  padding: 9px 18px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cstatus-talk-btn:hover:not(:disabled) {
+  background: var(--room-accent);
+  color: var(--room-on-accent);
+}
+.cstatus-talk-btn:disabled { opacity: 0.6; cursor: default; }
+.cstatus-talk-done {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--room-ink);
+  margin: 0;
+}
+.cstatus-talk-done svg { flex: none; margin-top: 3px; color: var(--room-observer); }
+.cstatus-error { color: var(--room-stop); margin: 0; }
+
+/* --- the quiet foot --- */
+.cstatus-foot {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--room-ink-2);
+  border-top: 1px solid var(--room-line);
+  padding-top: 16px;
+}
+
+/* --- loading and dead links --- */
+.cstatus-centre {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  text-align: center;
+}
+.cstatus-centre h1 {
+  color: var(--room-ink);
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+.cstatus-centre p {
+  color: var(--room-ink-2);
+  max-width: 36ch;
+  margin: 0 auto;
+  line-height: 1.55;
+}

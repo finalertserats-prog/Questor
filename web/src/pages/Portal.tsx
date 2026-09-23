@@ -12,6 +12,7 @@ import { aiAcknowledgement, splitDisclosure, whatHappensFirst } from '../compone
 import { earlyStartNote } from '../components/portalEarlyStartModel';
 import { IdentityCodeStep } from '../components/IdentityCodeStep';
 import { consentIdentityLine, needsIdentityCode, stepAfterConsent, type PortalIdentity } from '../components/identityCodeModel';
+import { CandidateStatus } from './CandidateStatus';
 
 /** Mirrors SpeechCapability in server/src/providers/speech.ts. */
 export interface SttCapability { provider: string; mode: 'browser' | 'server'; configured: boolean }
@@ -109,6 +110,10 @@ export function Portal() {
   // left on nothing strands a keyboard or screen-reader user at the top of the
   // page with no announcement of what changed.
   const [swappedByPress, setSwappedByPress] = useState(false);
+  // The invitation no longer resolves to an interview to join. The status
+  // page takes over: it is the same link, and it can still say where things
+  // stand even when this one cannot.
+  const [linkClosed, setLinkClosed] = useState(false);
   const cardHeadingRef = useRef<HTMLHeadingElement>(null);
   useEffect(() => { if (swappedByPress) cardHeadingRef.current?.focus(); }, [swappedByPress]);
 
@@ -118,7 +123,13 @@ export function Portal() {
       // Agreed already but the code is still owed (back from the room, or a
       // reload on the code step): straight to the code, not the whole journey again.
       if (loaded.consented === true && needsIdentityCode(loaded.identity)) setStep('identity');
-    }).catch((e) => setErr(e.message));
+    }).catch((e: unknown) => {
+      // 404 and 410 are not errors here: an invitation that has been erased,
+      // expired or spent still has a status page behind it, and that page
+      // answers those cases in its own words. Anything else is a real failure.
+      if (e instanceof ApiError && (e.status === 404 || e.status === 410)) { setLinkClosed(true); return; }
+      setErr(e instanceof Error ? e.message : 'We could not load your interview details.');
+    });
   }, [token]);
 
   const action = consentAction({ accepted, accommodation });
@@ -194,6 +205,7 @@ export function Portal() {
     }
   };
 
+  if (linkClosed && token) return <CandidateStatus token={token} />;
   if (err && !info) return <div className="center-screen"><div className="card auth-card"><Banner kind="error">{err}</Banner></div></div>;
   if (!info) {
     return (
@@ -207,6 +219,12 @@ export function Portal() {
   if (handoff) return <div className="center-screen"><div className="card auth-card"><Banner kind="ok">{handoff}</Banner></div></div>;
 
   const entry = refusedEntry ?? portalEntry(info.state, info.consented === true);
+  // Past the interview, the invitation link is no longer an invitation: it is
+  // the candidate's status page. The card below stays for the one state that
+  // still has something to DO — rejoining an interview in progress.
+  if (token && (entry.kind === 'finished' || entry.kind === 'closed')) {
+    return <CandidateStatus token={token} takeFocus={swappedByPress} />;
+  }
   if (entry.kind !== 'journey') {
     return (
       <div className="center-screen">

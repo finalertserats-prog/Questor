@@ -31,7 +31,10 @@ import { findInvitationByToken } from '../services/invitations.js';
 import { openingQuestion } from '../engines/openingModel.js';
 import { hasConsentIntro } from '../domain/interviewerModel.js';
 import { getDisclosureText, describeLanguageSupport } from '../i18n/locales.js';
-import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn } from '../services/candidateFeedback.js';
+import { feedbackOptInOffered, getOptIn, recordFeedbackOptIn, recordHumanRequestForSession } from '../services/candidateFeedback.js';
+import { buildCandidateStatus, STATUS_SESSION_SELECT } from '../services/candidateStatus.js';
+import { linkStillLeadsToInterview, statusOutcome } from '../domain/candidateStatusModel.js';
+import { LETTER_HEADING, SIGN_OFF, TALK_LINK_PLACEHOLDER, TALK_PROMPT } from '../providers/email/autoFeedbackEmail.js';
 import { serverSpeechAllowed } from '../services/demoPolicy.js';
 import { formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
@@ -108,32 +111,199 @@ function receiveAudio(req: Request, res: Response, next: NextFunction): void {
  * must always be able to see that their interview is complete, and locking them
  * out of that view reads as the link being broken.
  */
-async function loadByToken(token: string, opts?: { requireUnconsumed?: boolean }) {
+async function loadByToken(token: string, opts?: { requireUnconsumed?: boolean; statusView?: boolean }) {
   // Shape-checked, hashed, compared in constant time; the plaintext is never
   // stored or queried. See services/invitations.ts.
   const inv = await findInvitationByToken(token, (tokenHash) =>
     prisma.invitation.findUnique({ where: { tokenHash }, include: { session: { include: { candidate: true, role: true } } } }));
   if (!inv) throw new HttpError(404, 'Invitation not found or expired');
-  if (inv.expiresAt && inv.expiresAt < new Date()) throw new HttpError(410, 'This invitation has expired');
+  // `statusView` survives the invitation's own expiry, and only once the
+  // interview has actually happened. The expiry exists to stop a stale link
+  // STARTING an interview; a candidate coming back six weeks later to read
+  // where they stand is the thing this page is for, and a 410 there reads as
+  // the company having deleted them. An expired link whose interview never
+  // happened still expires: there is nothing to look at, and the link is
+  // genuinely spent.
+  const expired = inv.expiresAt && inv.expiresAt < new Date();
+  if (expired && !(opts?.statusView && interviewIsOver(inv.session))) {
+    throw new HttpError(410, 'This invitation has expired');
+  }
   if (opts?.requireUnconsumed && inv.status === INVITATION_CONSUMED) {
     throw new HttpError(410, 'This interview has already been completed. Our team will be in touch.');
   }
   return inv;
 }
 
+/** Past the point where this link could ever start or resume an interview. */
+function interviewIsOver(session: { state: string; completedAt: Date | null }): boolean {
+  return statusOutcome(session.state, session.completedAt) !== 'closed' || Boolean(session.completedAt);
+}
 
-portalRouter.get('/:token/feedback', asyncHandler(async (req, res) => {
-  const inv = await loadByToken(req.params.token);
-  const assessment = await prisma.assessmentVersion.findFirst({
-    where: { sessionId: inv.sessionId },
-    orderBy: { createdAt: 'desc' },
-    include: { candidateFeedback: true },
-  });
-  const feedback = assessment?.candidateFeedback;
-  if (!feedback || feedback.status !== 'SENT' || !feedback.approvedText || !feedback.sentAt) {
-    return res.status(404).json({ feedback: null });
+/**
+ * The status routes answer only about a link that has stopped being an
+ * invitation. Asked earlier they would tell a candidate who has not interviewed
+ * yet that their link "has done its job", and would let the talk-to-a-person
+ * request be made from a surface that does not exist for them yet — the
+ * accommodation field on the consent screen is the way to ask before an
+ * interview, and it routes to a person differently.
+ */
+function requireInterviewOver(session: { state: string; completedAt: Date | null }): void {
+  if (linkStillLeadsToInterview(session.state, session.completedAt)) {
+    throw new HttpError(409, 'This interview has not finished yet.');
   }
-  return res.json({ approvedText: feedback.approvedText, sentAt: feedback.sentAt });
+}
+
+
+/**
+ * The candidate's own written feedback, once it has been sent to them.
+ *
+ * Two paths reach a candidate and both are answered here, because to the person
+ * reading their status page the difference between them is invisible and the
+ * words are theirs either way:
+ *
+ *   1. A reviewer approved a draft and pressed send (CandidateFeedbackDelivery).
+ *   2. The automatic letter went out after the review window
+ *      (CandidateFeedbackEmail) — the common case, on by default.
+ *
+ * `sentAt` is the gate in both. Nothing unsent is ever readable here: a draft,
+ * a queued letter or one held for a person is not the candidate's yet, and
+ * showing it would leak the hiring team's working copy and pre-empt their
+ * decision about whether to send it at all.
+ *
+ * The stored words are returned as they are, and deliberately not filtered for
+ * verdict vocabulary. That is not a gap in the rule that a candidate is never
+ * shown a verdict — it is where the rule is actually enforced: these exact
+ * words were EMAILED to this candidate, so they are already theirs, and the
+ * place to stop a verdict reaching them is before the letter goes (the
+ * guardrails in providers/email/autoFeedbackEmail.ts and the human approving
+ * it in routes/assessments.ts). Rewriting a letter on its way back to the
+ * person who received it would make the page disagree with their inbox, which
+ * is worse than the thing it would be guarding against. Everything the status
+ * page derives ITSELF is held to the rule in domain/candidateStatusModel.ts.
+ */
+portalRouter.get('/:token/feedback', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { statusView: true });
+  const [assessment, auto] = await Promise.all([
+    prisma.assessmentVersion.findFirst({
+      where: { sessionId: inv.sessionId },
+      orderBy: { createdAt: 'desc' },
+      include: { candidateFeedback: true },
+    }),
+    prisma.candidateFeedbackEmail.findUnique({
+      where: { sessionId: inv.sessionId },
+      select: { status: true, sentAt: true, bodyText: true },
+    }),
+  ]);
+  const feedback = assessment?.candidateFeedback;
+  if (feedback && feedback.status === 'SENT' && feedback.approvedText && feedback.sentAt) {
+    return res.json({ approvedText: feedback.approvedText, sentAt: feedback.sentAt });
+  }
+  if (auto && SENT_FEEDBACK_STATUSES.includes(auto.status) && auto.sentAt && auto.bodyText.trim()) {
+    return res.json({ approvedText: readableLetter(auto.bodyText), sentAt: auto.sentAt });
+  }
+  return res.status(404).json({ feedback: null });
+}));
+
+/** Both mean the words have left for the candidate. See autoFeedbackModel.ts. */
+const SENT_FEEDBACK_STATUSES: readonly string[] = ['SENT', 'SENT_UNVERIFIED'];
+
+/**
+ * The stored letter, read as a page rather than as an email.
+ *
+ * Three things are dropped, and only three, because everything else is the
+ * candidate's own feedback and none of it is ours to edit:
+ *
+ *   - The envelope at the top ("INTERVIEW FEEDBACK", their name, the role, the
+ *     date). The status page says all of that above the letter already, and
+ *     reading your own name and role twice in ten lines reads as a machine.
+ *   - Everything from the sign-off down: the sign-off, who it is from, and the
+ *     footer saying an AI drafted it. The page carries that last line itself,
+ *     once, directly under the letter.
+ *   - The talk-to-a-person prompt, and the bracketed note standing in for a
+ *     link that is deliberately not stored (TALK_LINK_PLACEHOLDER). The page
+ *     has its own button for that.
+ *
+ * Every cut is anchored on a marker exported by the template that wrote the
+ * text. When a marker is not there — a human's own approved letter, or a
+ * template that has since moved on — nothing is cut and the words are shown as
+ * they are. Silently dropping the wrong half of somebody's feedback would be
+ * far worse than showing a line of email furniture.
+ */
+function readableLetter(bodyText: string): string {
+  let lines = bodyText.split('\n');
+
+  const greeting = lines.findIndex((line) => /^(hi|hello|dear)\b/i.test(line.trim()));
+  if (lines[0]?.trim() === LETTER_HEADING && greeting > 0 && greeting < 8) {
+    lines = lines.slice(greeting);
+  }
+
+  const signOff = lines.findIndex((line) => line.trim() === SIGN_OFF);
+  if (signOff > 0) lines = lines.slice(0, signOff);
+
+  return lines
+    .filter((line) => !line.includes(TALK_LINK_PLACEHOLDER) && line.trim() !== TALK_PROMPT)
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Where the candidate stands, once the invitation link has done its first job.
+ *
+ * The same bearer token, and deliberately no more power than it already had:
+ * this reads, it never advances the interview, and it answers only about the
+ * one session the token names. What it may disclose is decided in
+ * domain/candidateStatusModel.ts and services/candidateStatus.ts — no score, no
+ * verdict, no competency level, nothing about anybody else.
+ */
+portalRouter.get('/:token/status', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { statusView: true });
+  requireInterviewOver(inv.session);
+  const session = await prisma.interviewSession.findUnique({
+    where: { id: inv.sessionId },
+    select: STATUS_SESSION_SELECT,
+  });
+  // The invitation resolved but its session did not: a half-finished erasure,
+  // or a row removed under us. Nothing to show, and nothing worth a 500.
+  if (!session) throw new HttpError(404, 'Invitation not found or expired');
+  res.json(await buildCandidateStatus(session, { sentAt: inv.sentAt, createdAt: inv.createdAt }));
+}));
+
+/**
+ * "I'd rather talk to a person." The same request the link in the feedback
+ * email makes (routes/feedbackRequest.ts), reached from the status page
+ * instead — one CandidateHumanRequest row, one notification, whichever way in.
+ *
+ * A POST, never a GET: a link-scanning mail gateway must not be able to put a
+ * candidate in front of the hiring team. Idempotent, because pressing a button
+ * twice when you are unsure it worked is a thing people do.
+ */
+portalRouter.post('/:token/talk-to-a-person', asyncHandler(async (req, res) => {
+  const inv = await loadByToken(req.params.token, { statusView: true });
+  requireInterviewOver(inv.session);
+  const claimed = await recordHumanRequestForSession({
+    sessionId: inv.sessionId,
+    candidateId: inv.session.candidateId,
+    tenantId: inv.session.tenantId,
+  });
+  if (claimed) {
+    // Neither a webhook subscriber being down nor a mail hiccup may fail the
+    // candidate's request: it is already recorded and visible in the app.
+    await emitEvent(inv.session.tenantId, 'candidate.human_request', {
+      candidateId: inv.session.candidateId,
+      sessionId: inv.sessionId,
+      requestedAt: claimed.requestedAt,
+    }).catch((err: unknown) => logger.warn({ err, sessionId: inv.sessionId }, 'candidate.human_request webhook failed to emit'));
+    await notifyHiringTeam({
+      tenantId: inv.session.tenantId,
+      candidateId: inv.session.candidateId,
+      sessionId: inv.sessionId,
+      event: 'human_request',
+    }).catch((err: unknown) => logger.warn({ err, sessionId: inv.sessionId }, 'Hiring team notice for a human request was not sent'));
+  }
+  // The same body on the first press and the fifth, so the answer reveals
+  // nothing about what happened before.
+  res.json({ requested: true });
 }));
 
 const feedbackOptInSchema = z.object({ wantsFeedback: z.boolean() });

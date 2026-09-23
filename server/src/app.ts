@@ -163,6 +163,13 @@ export function createApp() {
   // per invitation on top of the per-code attempt limit in the database.
   app.use('/api/portal/:token/identity', rateLimit({ name: 'portal-identity', windowMs: 15 * 60_000, max: 30, keyOf: portalKey }));
   app.use('/api/portal/:token/integrity-event', rateLimit({ name: 'portal-integrity', windowMs: 60 * 60_000, max: 600, keyOf: portalKey }));
+  // The status page after the interview. It is a page someone leaves open and
+  // refreshes while they wait, so the limit is generous — but it is still a
+  // limit, because this link outlives the interview and is the one candidate
+  // route with no natural end. Asking to speak to a person is bounded far
+  // harder: it is idempotent, so a real person needs it once.
+  app.use('/api/portal/:token/status', rateLimit({ name: 'portal-status', windowMs: 15 * 60_000, max: 120, keyOf: portalKey }));
+  app.use('/api/portal/:token/talk-to-a-person', rateLimit({ name: 'portal-talk', windowMs: 60 * 60_000, max: 20, keyOf: portalKey }));
   // Integrity events have their own limiter above and must not also draw on this
   // shared budget: a candidate who switches tabs often (assistive technology
   // does exactly that) would otherwise be throttled out of their own interview.

@@ -21,6 +21,7 @@ import { MARKER_LABEL, MARKER_SEGMENTS, type CoverageMarker, type FeedbackCompet
  */
 
 /** Where the working link was, in the stored copy of what was sent. */
+export const LETTER_HEADING = 'INTERVIEW FEEDBACK';
 export const TALK_LINK_PLACEHOLDER = '[link to ask to speak to someone — not stored]';
 
 export type FeedbackSignOff = 'questor' | 'company';
@@ -123,9 +124,9 @@ const INTRO = 'Thank you for your time. Here is an honest picture of how the con
   + 'what would make the strongest difference next time. It describes the interview itself.';
 const WHAT_NEXT = 'The hiring team is reviewing interviews now. This summary describes your '
   + 'interview only.';
-const TALK_PROMPT = 'Would you like to talk this through with someone?';
+export const TALK_PROMPT = 'Would you like to talk this through with someone?';
 const TALK_HELP = 'If the button does not work, copy this link:';
-const SIGN_OFF = 'All the best,';
+export const SIGN_OFF = 'All the best,';
 const NOT_COVERED_NOTE = '"Not covered" means the subject did not come up, not that anything was wrong.';
 
 export const FIXED_COPY: readonly string[] = [
@@ -154,7 +155,7 @@ function textBody(input: AutoFeedbackEmailInput, first: string, talkLine: string
   const company = input.companyName.trim();
   const when = input.interviewedAt ? `interviewed ${interviewDate(input.interviewedAt, input.timeZone)} · ` : '';
   const lines: string[] = [
-    'INTERVIEW FEEDBACK',
+    LETTER_HEADING,
     company ? `${input.roleTitle} · ${company}` : input.roleTitle,
     `${first} · ${when}${input.durationMinutes} minutes`,
     '',

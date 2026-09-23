@@ -342,6 +342,86 @@ export async function recordHumanRequest(token: string, now = new Date()): Promi
   return { ...row, status: 'REQUESTED', requestedAt: now };
 }
 
+/**
+ * The same request, made from the candidate's own status page rather than from
+ * the link in a feedback email.
+ *
+ * There is no emailed token in this path — the candidate is already holding
+ * their invitation token, which the portal route has resolved to this session,
+ * so minting a second bearer credential would only create another thing to
+ * steal. It writes the SAME row the emailed link writes, which is what keeps
+ * "have they asked to speak to someone?" a single fact for the hiring team
+ * rather than two half-answers.
+ *
+ * Returns null when the request was already on file: the first ask is the
+ * record, and a second press must not move the timestamp or notify twice.
+ */
+export async function recordHumanRequestForSession(opts: {
+  sessionId: string;
+  candidateId: string;
+  tenantId: string;
+  now?: Date;
+}): Promise<{ requestedAt: Date } | null> {
+  const now = opts.now ?? new Date();
+  // Two attempts, because the row this writes can be created underneath it by
+  // the emailed-link path (issueHumanRequestToken) between the read and the
+  // insert. Losing that race used to return null — "already asked" — while the
+  // row it lost to was only ISSUED, so the candidate was told a person had
+  // their request and nobody had been told anything. The second pass finds the
+  // row that won and claims it properly.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const existing = await prisma.candidateHumanRequest.findUnique({ where: { sessionId: opts.sessionId } });
+    if (existing?.status === 'REQUESTED') return null;
+
+    if (existing) {
+      // Conditional on the status just read, so two simultaneous presses cannot
+      // both claim it. The expiry is NOT re-checked: unlike the emailed link,
+      // this request is authorised by the invitation token the portal route has
+      // already resolved, and an aged-out email link must not silence the button
+      // on the candidate's own page.
+      const { count } = await prisma.candidateHumanRequest.updateMany({
+        where: { id: existing.id, status: 'ISSUED' },
+        data: { status: 'REQUESTED', requestedAt: now },
+      });
+      if (count === 0) return null;
+      break;
+    }
+
+    // No emailed link was ever issued for this session, so there is no row and
+    // no token hash to reuse. A hash of fresh random bytes keeps the unique
+    // column honest without minting anything that could be used as a link.
+    try {
+      await prisma.candidateHumanRequest.create({
+        data: {
+          sessionId: opts.sessionId,
+          candidateId: opts.candidateId,
+          tenantId: opts.tenantId,
+          tokenHash: hashCandidateLinkToken(mintCandidateLinkToken()),
+          issuedAt: now,
+          expiresAt: new Date(now.getTime() + HUMAN_REQUEST_TTL_DAYS * DAY_MS),
+          status: 'REQUESTED',
+          requestedAt: now,
+        },
+      });
+      break;
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'P2002') throw err;
+      if (attempt === 1) return null;
+    }
+  }
+
+  await logAudit({
+    tenantId: opts.tenantId,
+    actorType: 'system',
+    actorId: 'candidate-status-page',
+    action: 'feedback.human_request.recorded',
+    entityType: 'Candidate',
+    entityId: opts.candidateId,
+    after: { sessionId: opts.sessionId, requestedAt: now, via: 'status-page' },
+  });
+  return { requestedAt: now };
+}
+
 // ---------------------------------------------------------------------------
 // What the hiring team is shown
 // ---------------------------------------------------------------------------

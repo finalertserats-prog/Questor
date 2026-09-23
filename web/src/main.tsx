@@ -32,6 +32,7 @@ import './styles/hrbox.css';
 import './styles/import.css';
 import './styles/assessment.css';
 import './styles/compare.css';
+import './styles/status.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
