@@ -29,6 +29,7 @@ import { calibrationFor } from '../services/calibrationApply.js';
 import { withoutLibrary } from '../library/planLadders.js';
 import { config } from '../config.js';
 import { assertIdentityConfirmed } from '../services/identityAssurance.js';
+import { storedArtifactContent } from '../services/artifactContent.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -1152,14 +1153,17 @@ export async function finalizeInterview(
         logger.error({ sessionId, err: err instanceof Error ? err.message : String(err) }, 'Could not queue the candidate feedback email');
       });
 
-    // Persist a transcript + report artifact.
+    // Persist a transcript + report artifact. Both hold their content inline in
+    // storageKey, so both are sealed where the deployment has artifact
+    // encryption on (services/artifactContent.ts). sizeBytes stays the size of
+    // the content rather than of the envelope around it.
     const report = renderReportMarkdown({ candidateName: session.candidate.fullName, roleTitle: session.role.title, assessment: result });
     await prisma.artifact.create({
-      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'report', filename: `${assessmentVersion}.md`, contentType: 'text/markdown', storageKey: report, sizeBytes: report.length, retentionDays: 180 },
+      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'report', filename: `${assessmentVersion}.md`, contentType: 'text/markdown', storageKey: storedArtifactContent(report), sizeBytes: report.length, retentionDays: 180 },
     });
     const transcript = turns.map((t) => `[${fmt(t.startMs)}] ${t.speaker.toUpperCase()}: ${t.text}`).join('\n');
     await prisma.artifact.create({
-      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'transcript', filename: `${sessionId}-transcript.txt`, contentType: 'text/plain', storageKey: transcript, sizeBytes: transcript.length, retentionDays: 180 },
+      data: { tenantId: session.tenantId, sessionId, candidateId: session.candidateId, kind: 'transcript', filename: `${sessionId}-transcript.txt`, contentType: 'text/plain', storageKey: storedArtifactContent(transcript), sizeBytes: transcript.length, retentionDays: 180 },
     });
 
     await prisma.interviewSession.update({ where: { id: sessionId }, data: { completedAt: new Date() } });

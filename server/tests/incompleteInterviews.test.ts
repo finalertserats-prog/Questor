@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { wipe, createDemoData } from '../src/seed/demoData.js';
 import { sweepIncompleteInterviews, INACTIVITY_MS } from '../src/services/incompleteInterviews.js';
+import { readArtifactContent } from '../src/services/artifactContent.js';
 
 const app = createApp();
 
@@ -73,7 +74,9 @@ describe('interviews that stopped part-way', () => {
       where: { sessionId: ids.sessionId, kind: 'transcript' },
     });
     expect(transcript).not.toBeNull();
-    expect(transcript!.storageKey).toContain('reconciliation drift');
+    // Through the reader, not the raw column: storageKey holds the transcript
+    // inline and is sealed where the deployment encrypts (services/artifactContent.ts).
+    expect(readArtifactContent(transcript!.storageKey)).toContain('reconciliation drift');
   });
 
   it('does not record it as completed', async () => {

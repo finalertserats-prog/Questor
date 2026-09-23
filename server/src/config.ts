@@ -487,6 +487,24 @@ export const config = {
    * day 10 of the invitation plus the recruiter's expiry warning, and the
    * daily summary of what needs each HR user.
    */
+  /**
+   * Field-level encryption of the candidate content in `Artifact.storageKey` —
+   * CV text, transcript, report (services/artifactSeal.ts).
+   *
+   * Off by default so a deployment can take the release before it has a key.
+   * The order the owner follows is in docs/RUNBOOK.md and matters: set the key,
+   * run the backfill, then switch this on. Reading is transparent either way,
+   * so switching it on early only means new rows are sealed and old ones are
+   * not; switching it on without a key is refused at boot in production
+   * (preflight.ts).
+   */
+  artifactEncryption: {
+    enabled: parseBooleanSetting('ARTIFACT_ENCRYPTION_ENABLED', process.env.ARTIFACT_ENCRYPTION_ENABLED, false),
+    /** The key new writes are sealed under. 32 bytes, base64 or hex. */
+    key: env('ARTIFACT_ENCRYPTION_KEY'),
+    /** Keys being retired: they open old rows during a rotation and seal nothing. */
+    previousKeys: env('ARTIFACT_ENCRYPTION_KEYS_PREVIOUS'),
+  },
   hrBox: {
     remindersEnabled: parseBooleanSetting('REMINDERS_ENABLED', process.env.REMINDERS_ENABLED, false),
     /**

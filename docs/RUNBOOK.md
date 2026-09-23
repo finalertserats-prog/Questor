@@ -116,9 +116,95 @@ Set hold before purge or erasure work. A hold on a session or artifact blocks re
 
 Alerts go to `SIGNUP_APPROVER_EMAIL` at most once per job per hour when email is configured. Open `/api/admin/ops`, find the failed job note/holder/time, inspect pm2 logs, fix the cause, and confirm a later `ok: true` run.
 
+## Encryption of candidate content at rest
+
+`Artifact.storageKey` is not a key to anything — it holds the content inline:
+the extracted text of a CV, the interview transcript, and the assessment
+report. Until this was built, every database dump carried all of it in clear
+text. It is now sealed with AES-256-GCM under a key of its own.
+
+**Reading is transparent.** The application opens a sealed row and returns a
+clear one exactly as it is. That is what lets the three steps below happen on a
+running deployment with nothing taken down.
+
+### Generating the key
+
+```bash
+openssl rand -base64 32
+```
+
+Hex (`openssl rand -hex 32`) is accepted too. Keep it where you keep
+`AUTH_SECRET`, and keep it **separate from `AUTH_SECRET`** — rotating that one
+is routine and costs an admin a re-entered API key, whereas losing this one
+makes every sealed transcript unopenable for good. Back it up before you use
+it. It is not in the database and it is not in the dump.
+
+### Turning it on — this order, not another
+
+1. **Set the key, leave the switch off.** In `server/.env`:
+   `ARTIFACT_ENCRYPTION_KEY=<the key>`. Restart
+   (`pm2 restart questor --update-env --kill-timeout 1260000`). Nothing changes
+   yet: new rows are still written in clear.
+2. **Seal what is already there.**
+   ```bash
+   npm run artifacts:encrypt -w server -- --dry-run    # counts only, writes nothing
+   npm run artifacts:encrypt -w server
+   ```
+   It prints one JSON line: `{"ok":true,"scanned":…,"sealed":…,"lastId":"…","done":true}`.
+   Safe to run twice — an already-sealed row is skipped. Interrupted, resume
+   with `--after <lastId>` from that line, or just run it again from the start.
+   `--batch 200` sets the page size and `--max 5000` stops it early. It never
+   prints any part of a CV or a transcript. `ok:false` with
+   `"unreadable": n` means `n` rows were sealed under a key this deployment
+   does not hold — find that key before going on; the rows were left untouched.
+3. **Switch it on.** `ARTIFACT_ENCRYPTION_ENABLED=true`, restart. From here
+   every new CV, transcript and report is sealed as it is written.
+
+Doing step 3 before step 2 is not dangerous, only incomplete: new rows are
+sealed and old ones stay in clear until the backfill runs. Doing step 3 without
+step 1 **is** refused — the server will not start in production with the switch
+on and no key (`ARTIFACT_ENCRYPTION_KEY_MISSING`), because the alternative is an
+operator believing candidate content is encrypted while it is written in clear.
+In development the same case is a loud warning and the boot continues.
+
+### Verifying
+
+```bash
+psql "$DATABASE_URL" -tAc "SELECT count(*) FILTER (WHERE \"storageKey\" LIKE 'qenc.v1.%'), count(*) FROM \"Artifact\";"
+```
+
+Both numbers equal means everything is sealed. Never `SELECT "storageKey"`
+itself into a terminal or a log.
+
+### Rotating the key
+
+```
+ARTIFACT_ENCRYPTION_KEYS_PREVIOUS=<the old key>     # comma-separated if more than one
+ARTIFACT_ENCRYPTION_KEY=<the new key>
+```
+
+Restart, then run `npm run artifacts:encrypt -w server` again: it re-seals
+every row from the retired key onto the new one and reports them as `rotated`.
+When `scanned` equals `alreadySealed` on a second run, remove
+`ARTIFACT_ENCRYPTION_KEYS_PREVIOUS` and restart. Keep the old key archived
+until you have taken and drilled a backup made after the rotation.
+
+### What this does and does not cover
+
+- **Covered:** CV text, the interview transcript and the assessment report, as
+  stored in `Artifact`.
+- **Not covered:** `Turn.text`, which is the canonical transcript the review
+  page reads, `AssessmentVersion.resultJson`, `CandidateProfileVersion.rawText`,
+  candidate names and emails, and interviewer notes. A dump still holds those.
+  Host-level encryption and file permissions remain the control for them —
+  see "Known limits".
+- Erasure, the retention sweep and legal holds are unaffected: they delete and
+  count rows without reading the content.
+
 ## Rotating secrets
 
-- `AUTH_SECRET`: invalidates all sessions and makes sealed invitation links unopenable. Resend or regenerate invitations.
+- `ARTIFACT_ENCRYPTION_KEY`: see "Encryption of candidate content at rest" above. Never rotate it without putting the old key in `ARTIFACT_ENCRYPTION_KEYS_PREVIOUS` first — rows sealed under a key you no longer hold cannot be opened by anyone, including us.
+- `AUTH_SECRET`: invalidates all sessions and makes sealed invitation links unopenable. Resend or regenerate invitations. It does **not** touch artifact encryption, which has its own key.
 - `WEBHOOK_SIGNING_SECRET`: coordinate with receivers; confirm v2 timestamped verification.
 - Provider keys: rotate one at a time, restart with `pm2 restart questor --update-env --kill-timeout 1260000`, then verify `/api/admin/providers` and one low-risk real operation.
 

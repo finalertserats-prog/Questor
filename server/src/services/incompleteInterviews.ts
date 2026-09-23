@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
+import { storedArtifactContent } from './artifactContent.js';
 import { setState, fmt } from '../realtime/interviewEngine.js';
 
 /**
@@ -171,7 +172,9 @@ export async function sweepIncompleteInterviews(now = new Date()): Promise<Sweep
           data: {
             tenantId: session.tenantId, sessionId: session.id, candidateId: session.candidateId,
             kind: 'transcript', filename: `${session.id}-transcript.txt`,
-            contentType: 'text/plain', storageKey: transcript,
+            // Sealed where the deployment has artifact encryption on;
+            // sizeBytes is the content's size, not the envelope's.
+            contentType: 'text/plain', storageKey: storedArtifactContent(transcript),
             sizeBytes: transcript.length, retentionDays: 180,
           },
         });

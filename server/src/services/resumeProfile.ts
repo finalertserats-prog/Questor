@@ -8,6 +8,7 @@ import { extractCvFacts, factsFromPreparedCv } from '../engines/cvFacts.js';
 import { scorecardForFit } from './scorecards.js';
 import { roleTechStack } from './roleTechStack.js';
 import { logger } from '../logger.js';
+import { storedArtifactContent } from './artifactContent.js';
 import type { NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import type { TechStackItem } from '../domain/techStack.js';
 import type { CvFacts } from '../domain/cvFacts.js';
@@ -166,7 +167,10 @@ async function writeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeIn
     }
   }
 
-  await db.artifact.create({ data: { tenantId: o.tenantId, candidateId: o.candidateId, kind: 'resume', filename: o.filename, contentType: o.contentType, storageKey: o.rawText, sizeBytes: o.rawText.length, retentionDays: 180 } });
+  // storageKey holds the CV text itself, not a key to it. Sealed where the
+  // deployment has encryption on (services/artifactContent.ts); sizeBytes stays
+  // the size of the content, not of the envelope around it.
+  await db.artifact.create({ data: { tenantId: o.tenantId, candidateId: o.candidateId, kind: 'resume', filename: o.filename, contentType: o.contentType, storageKey: storedArtifactContent(o.rawText), sizeBytes: o.rawText.length, retentionDays: 180 } });
   return { profile, fit, profileVersionId: profileVersion.id, facts };
 }
 

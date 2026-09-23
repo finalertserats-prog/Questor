@@ -26,6 +26,7 @@
     "library:smoke": "node scripts/library-smoke.mjs",
     "llm:bench": "node scripts/llm-bench.mjs",
     "library:seed-export": "tsx src/library/seedExportMain.ts",
+    "artifacts:encrypt": "tsx src/services/artifactBackfillMain.ts",
     "library:seed-import": "tsx src/library/seedImportMain.ts",
     "library:seed-generate": "tsx scripts/library-seed/main.ts",
     "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json && tsc -p scripts/library-seed/tsconfig.json"

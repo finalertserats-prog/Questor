@@ -3,6 +3,7 @@ import { existsSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { config } from './config.js';
 import { logger } from './logger.js';
+import { parseArtifactKey, parseArtifactKeys } from './services/artifactSeal.js';
 
 // Boot-time safety gate. Questor stores real candidate personal data
 // (resumes, transcripts, assessments), so an unsafe production boot is a data
@@ -20,6 +21,43 @@ export interface PreflightIssue {
   code: string;
   message: string;
   fix: string;
+}
+
+const KEY_GENERATION_FIX = 'Generate one with `openssl rand -base64 32` and set ARTIFACT_ENCRYPTION_KEY in server/.env. '
+  + 'See docs/RUNBOOK.md, "Encryption of candidate content at rest", for the order: key, backfill, then the switch.';
+
+/**
+ * Artifact encryption (services/artifactContent.ts). The switch on without a
+ * key is the dangerous combination: nothing is sealed, while an operator who
+ * set the flag believes everything is. Fatal in production, loud in
+ * development. A key present without the switch is fine and expected — that is
+ * the state a deployment sits in while the backfill runs.
+ */
+function artifactEncryptionIssues(isProd: boolean): PreflightIssue[] {
+  const { enabled, key, previousKeys } = config.artifactEncryption;
+  if (enabled && !key.trim()) {
+    return [{
+      level: isProd ? 'fatal' : 'warn',
+      code: 'ARTIFACT_ENCRYPTION_KEY_MISSING',
+      message: 'ARTIFACT_ENCRYPTION_ENABLED is on but ARTIFACT_ENCRYPTION_KEY is not set. Candidate CVs, transcripts and reports are still being written in clear text.',
+      fix: KEY_GENERATION_FIX,
+    }];
+  }
+  try {
+    // Parsing here rather than at first write: a malformed key must stop the
+    // boot, not surface halfway through a candidate's interview.
+    if (key.trim()) parseArtifactKey('ARTIFACT_ENCRYPTION_KEY', key);
+    parseArtifactKeys('ARTIFACT_ENCRYPTION_KEYS_PREVIOUS', previousKeys);
+  } catch (err) {
+    return [{
+      level: isProd ? 'fatal' : 'warn',
+      code: 'ARTIFACT_ENCRYPTION_KEY_MALFORMED',
+      // The parser never puts key material in its message.
+      message: err instanceof Error ? err.message : String(err),
+      fix: KEY_GENERATION_FIX,
+    }];
+  }
+  return [];
 }
 
 export function collectIssues(env: NodeJS.ProcessEnv = process.env): PreflightIssue[] {
@@ -53,6 +91,8 @@ export function collectIssues(env: NodeJS.ProcessEnv = process.env): PreflightIs
       fix: 'Set IDENTITY_CODE_PEPPER in server/.env to a unique random value of at least 32 characters, generated the same way as AUTH_SECRET.',
     });
   }
+
+  issues.push(...artifactEncryptionIssues(isProd));
 
   if (DEV_DEFAULTS.has(config.webhookSigningSecret)) {
     issues.push({
@@ -149,7 +189,9 @@ function databaseExposureIssues(isProd: boolean): PreflightIssue[] {
       level: 'warn',
       code: 'SQLITE_IN_PRODUCTION',
       message: 'Candidate transcripts, résumés and assessments are in a plaintext SQLite file. Anyone with filesystem access — including anything else running on this host — can read every interview without logging in.',
-      fix: 'Move candidate data to a dedicated host with encryption at rest, or accept and document the risk. Note that switching to Postgres on the SAME host narrows file-permission exposure but does NOT protect against host compromise.',
+      fix: 'Move candidate data to a dedicated host with encryption at rest, or accept and document the risk. '
+        + 'Switch on ARTIFACT_ENCRYPTION_ENABLED (docs/RUNBOOK.md) so the stored CV text, transcripts and reports are sealed; note that the Turn rows holding the same transcript are not. '
+        + 'Note that switching to Postgres on the SAME host narrows file-permission exposure but does NOT protect against host compromise.',
     });
   }
 
