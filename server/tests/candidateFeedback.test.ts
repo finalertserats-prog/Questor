@@ -133,7 +133,11 @@ describe('candidate feedback delivery', () => {
 
     const res = await request(app).get(`/api/portal/${ids.token}/feedback`);
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body).sort()).toEqual(['approvedText', 'sentAt']);
+    // `source` says how the letter was sent (reviewer-released or automatic) so
+    // the status page can describe it truthfully; it carries nothing about the
+    // candidate, and the leak assertions below still hold.
+    expect(Object.keys(res.body).sort()).toEqual(['approvedText', 'sentAt', 'source']);
+    expect(res.body.source).toBe('reviewer');
     expect(res.body.approvedText).toBe('We appreciated your concrete data-platform examples and collaborative approach.');
     const serialized = JSON.stringify(res.body).toLowerCase();
     expect(serialized).not.toContain('score');
