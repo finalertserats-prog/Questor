@@ -5,6 +5,7 @@ import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { assertCanAccessCandidate, assertCanAccessSession, candidateScope, hasCapability } from '../services/access.js';
 import { getPipelineSummary, type PipelineSummary } from '../services/pipeline.js';
+import { csvCell } from '../services/csv.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
 import { attachLibrary } from '../library/planning.js';
 import { withoutLadders } from '../library/planLadders.js';
@@ -231,16 +232,6 @@ const pipelineSummaryQuerySchema = z.object({
   roleId: z.string().min(1).optional(),
   format: z.enum(['csv']).optional(),
 });
-
-/**
- * One CSV cell. A value starting with =, +, -, @, tab or CR is prefixed with an
- * apostrophe so a spreadsheet opens it as text rather than running it as a
- * formula; values containing quotes, commas or newlines are quoted.
- */
-function csvCell(value: string): string {
-  const defused = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-  return /[",\n\r]/.test(defused) ? `"${defused.replace(/"/g, '""')}"` : defused;
-}
 
 /** `state,count` — one row per state present in the summary, in no particular order. */
 function pipelineSummaryToCsv(summary: PipelineSummary): string {
