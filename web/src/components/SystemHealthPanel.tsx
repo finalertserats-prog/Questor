@@ -65,7 +65,14 @@ export function SystemHealthPanel() {
   const inFlight = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
-    inFlight.current?.abort();
+    // A request already on its way IS the refresh. This used to abort it and
+    // ask again, so every load of the console left a cancelled
+    // GET /api/admin/health in the network panel -- the mount's request thrown
+    // away by whatever fired next (the tab becoming visible, a refresh tick,
+    // the effect running again), and the answer arriving later than it needed
+    // to. Nothing triggers a check often enough for a fresher answer to be
+    // worth cancelling one that is 84ms from arriving.
+    if (inFlight.current) return;
     const controller = new AbortController();
     inFlight.current = controller;
     setLoading(true);
@@ -81,6 +88,7 @@ export function SystemHealthPanel() {
       setError(err instanceof Error ? err.message : 'System health could not be checked.');
       publishHealth({ status: 'unavailable', checkedAt: Date.now() });
     } finally {
+      if (inFlight.current === controller) inFlight.current = null;
       if (!controller.signal.aborted) setLoading(false);
     }
   }, []);
@@ -97,6 +105,9 @@ export function SystemHealthPanel() {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
       inFlight.current?.abort();
+      // Cleared as well as aborted: a controller left behind would read as a
+      // request in flight and the next mount would never ask.
+      inFlight.current = null;
     };
   }, [load]);
 
