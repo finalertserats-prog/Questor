@@ -56,5 +56,5 @@ export async function readTranscriptForReview(page: Page, assessmentId: string):
 export function assessmentIdFromUrl(url: string): string {
   const match = /\/assessments\/([^/?#]+)/.exec(url);
   if (!match) throw new Error(`Not an assessment URL: ${url}`);
-  return match[1];
+  return decodeURIComponent(match[1]);
 }

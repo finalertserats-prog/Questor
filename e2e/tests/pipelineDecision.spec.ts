@@ -113,7 +113,16 @@ async function assessedInterview(page: Page, browser: Browser, id: string) {
   return { candidateUrl, assessmentUrl: page.url() };
 }
 
-const SHOTS = 'D:/Projects/ClaudeCode/Questor/review-screenshots/enforce';
+/**
+ * Where the review screenshots go. An absolute path here would only ever be
+ * right on the machine it was written on, so the run names it
+ * (QUESTOR_REVIEW_SHOTS) and anywhere else they land beside the test's own
+ * output, which Playwright creates and cleans up.
+ */
+function shotPath(name: string): string {
+  const named = process.env.QUESTOR_REVIEW_SHOTS;
+  return named ? `${named}/${name}` : test.info().outputPath(name);
+}
 
 /** Open the candidate's journey and try to approve them, whatever happens next. */
 async function tryToApprove(page: Page, candidateUrl: string, reason: string) {
@@ -136,19 +145,19 @@ test('a decision is refused until a person has reviewed the interview, and goes 
   await tryToApprove(page, candidateUrl, 'Strong on ownership; ready for the human rounds.');
   const refusal = page.getByText(/a person on the hiring team would review their interview/);
   await expect(refusal).toBeVisible({ timeout: 20_000 });
-  await page.screenshot({ path: `${SHOTS}/decision-refused-no-human-review.png`, fullPage: true });
+  await page.screenshot({ path: shotPath('decision-refused-no-human-review.png'), fullPage: true });
 
   // The reviewer reads the interview and records their verdict: the promise,
   // kept. (The transcript requirement is met the way the review page will do
   // it — see tests/transcriptRead.ts.)
   await page.goto(assessmentUrl);
   await submitReview(page, 'PROCEED', 'Clear ownership of a production pipeline, with outcomes.', /stays at Gold|move .* to Gold/);
-  await page.screenshot({ path: `${SHOTS}/review-recorded-transcript-read.png`, fullPage: true });
+  await page.screenshot({ path: shotPath('review-recorded-transcript-read.png'), fullPage: true });
 
   await tryToApprove(page, candidateUrl, 'Strong on ownership; ready for the human rounds.');
   await expect(page.getByTestId('pipeline-outcome').or(page.getByTestId('journey-outcome')).first())
     .toBeVisible({ timeout: 20_000 });
-  await page.screenshot({ path: `${SHOTS}/decision-allowed-after-review.png`, fullPage: true });
+  await page.screenshot({ path: shotPath('decision-allowed-after-review.png'), fullPage: true });
 });
 
 /**
