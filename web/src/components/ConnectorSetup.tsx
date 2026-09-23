@@ -136,7 +136,7 @@ export function MeetingAdapterSetup(
       <thead>
         <tr>
           <th>Provider</th><th>Status</th><th>Space</th><th>Live</th>
-          <th>Recording</th><th>Transcript</th><th>Bot</th><th>Fallback</th><th scope="col" aria-label="Actions" />
+          <th>Recording</th><th>Transcript</th><th>Bot</th><th>Fallback</th><th scope="col"><span className="visually-hidden">Actions</span></th>
         </tr>
       </thead>
       <tbody>

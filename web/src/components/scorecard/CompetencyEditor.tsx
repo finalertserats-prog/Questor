@@ -109,7 +109,7 @@ export function CompetencyEditor({ roleId, competencies, mustPassIds, historyIds
         <table className="comp-table">
           <thead>
             <tr>
-              <th>Name</th><th>Category</th><th>Classification</th><th>Weight</th><th>Must pass</th><th>Req/Target</th><th></th>
+              <th>Name</th><th>Category</th><th>Classification</th><th>Weight</th><th>Must pass</th><th>Req/Target</th><th><span className="visually-hidden">Actions</span></th>
             </tr>
           </thead>
           <tbody>
