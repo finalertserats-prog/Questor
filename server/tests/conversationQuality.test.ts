@@ -101,6 +101,9 @@ const INJECTIONS: readonly string[] = [
 
 /** Ordinary answers that describe systems, scoring, protocols and debugging. */
 const NOT_INJECTIONS: readonly string[] = [
+  'We had to skip the remaining questions in the survey because the client changed scope.',
+  'I bypassed the next section of the workflow when the fraud score was already high.',
+  'After validating the first area, we moved on to the next section without further delay.',
   'We had a system update every Tuesday night and I owned the runbook for it.',
   'The scoring model the analytics team used weighted recency, so I rebuilt the feature store around it.',
   'I wrote the debug notice that goes into the alert, so whoever is on call can see which partition failed.',
@@ -215,6 +218,41 @@ describe('P5 — a plea for help is help, not evidence', () => {
     expect(second.kind).toBe('clarify');
   });
 
+  it('does not read a long answer that mentions understanding as a plea', () => {
+    // Found by a live run after the first fix: a candidate closed with a
+    // hundred-word turn containing "if team is okay with simple English, I am
+    // okay", the turn was read as a repeat request, and it cost them the
+    // answer to the two real questions they had just asked. A plea for help is
+    // short and aimed at us; this is neither.
+    const closing = 'Yes, two question. First — the team, how many data engineer? I want to know if I work alone on '
+      + 'pipeline, or there is someone to review my code. I like when someone check my work. Second — the measure '
+      + 'thing. We talk about it many time today. In this job, is there already dashboard for pipeline, like failure '
+      + 'rate, freshness? If not, is it okay if I build it? And one small thing. My English is not strong. I hope it '
+      + 'not hide that I know the work. If team is okay with simple English, I am okay.';
+    expect(detectCandidateIntent(closing).intent).not.toBe('repeat');
+  });
+
+  it('does not read "I didn\'t understand the requirements" as a plea', () => {
+    // Not understanding US is a plea; not having understood something at work
+    // is an answer, and re-asking a question the candidate has just answered
+    // loses the evidence and reads as not listening.
+    for (const answer of [
+      'I didn\'t understand the requirements at first, so I set up a clarification meeting.',
+      'We couldn\'t get the vendor API to return consistent results.',
+      'I did not follow the original design because the data model had changed.',
+      'I can\'t hear customer calls directly, so I built dashboards from the transcripts.',
+    ]) {
+      expect(detectCandidateIntent(answer).intent).toBe('answer');
+    }
+  });
+
+  it('does not read a long answer about not understanding a SYSTEM as a plea', () => {
+    const answer = 'The hardest part was that nobody on the team could follow what the legacy job was doing, and I '
+      + 'did not understand the partitioning scheme myself until I had read six months of commits, so the first '
+      + 'thing I did was write it down in one page and get the two people who had touched it to correct me.';
+    expect(detectCandidateIntent(answer).intent).toBe('answer');
+  });
+
   it('tells a plain repeat from a request for different words', () => {
     expect(detectSimplerWordingRequest('Sorry, could you say that again?')).toBe(false);
     expect(detectSimplerWordingRequest('Could you say that again, more simply?')).toBe(true);
@@ -273,6 +311,23 @@ describe('P6 — the interviewer never thanks the candidate for its own words', 
     expect(salientPhrase('I spent four years at Larkspur Media')).toBe('Larkspur Media');
   });
 
+  it('never names the same thing twice in one interview', () => {
+    // A live run said "Thanks for the detail on Airflow" at three separate
+    // points. Checking only the previous turn could not see it.
+    const answer = 'First I look in Airflow, at the log of the failed task, and work out whether the error is a '
+      + 'connection problem outside my code or a data problem inside it.';
+    const earlier = ['Thanks for the detail on Airflow. Walk me through how a problem moves through your hands.'];
+    expect(acknowledgement(answer, 5, '', OURS, earlier)).not.toMatch(/Airflow/);
+  });
+
+  it('never grabs at a noun that names nothing in particular', () => {
+    // "So I run small query, look at real rows" produced "Thanks for the
+    // detail on small query", which is worse than saying nothing.
+    const answer = 'First I check the instruction against the data, because many times the ticket says one thing '
+      + 'but the table is already different. So I run small query, look at real rows, and see where it does not match.';
+    expect(acknowledgement(answer, 3, '', OURS)).not.toMatch(/small query/);
+  });
+
   it('is caught by the deterministic audit when it happens', () => {
     const audit = auditScriptedTranscript(
       [
@@ -317,6 +372,25 @@ describe('P7 — the candidate\'s own question gets an answer', () => {
     const answer = answerFromRoleFacts('What does the salary band look like for this one?', ROLE_FACTS);
     expect(answer).toMatch(/hiring team/i);
     expect(answer).not.toMatch(/main responsibilities/i);
+  });
+
+  it('does not recite the role because the question contains the word "job"', () => {
+    // A live run answered "In this job, is there already a dashboard for
+    // pipeline failure rate?" with the job title and its two responsibilities.
+    const answer = answerFromRoleFacts('In this job, is there already a dashboard for pipeline, like failure rate?', ROLE_FACTS);
+    expect(answer).not.toMatch(/main responsibilities/i);
+    expect(answer).toMatch(/hiring team/i);
+  });
+
+  it('hands a headcount question to the people who know it', () => {
+    const answer = answerFromRoleFacts('How many data engineers are on the team?', ROLE_FACTS);
+    expect(answer).toMatch(/hiring team/i);
+    expect(answer).not.toMatch(/main responsibilities/i);
+  });
+
+  it('still answers a real question about the role', () => {
+    const answer = answerFromRoleFacts('What exactly is the role you are looking for?', ROLE_FACTS);
+    expect(answer).toMatch(/Data Engineer/);
   });
 
   it('answers a question asked at the close before signing off', async () => {
@@ -383,6 +457,24 @@ describe('P8 — a practical question form is used once per interview', () => {
       { id: 'a', index: 0, speaker: 'agent', text: DIAGNOSTIC_SQL, startMs: 0, endMs: 1, confidence: 1, competencyId: 'c_sql' },
     ];
     expect(workSampleFormsUsed(turns, ROLE.competencies, 'senior')).toHaveLength(1);
+  });
+
+  it('recovers a coding module\'s shape as coding, so it cannot be used twice', () => {
+    const turns: TurnRecord[] = [
+      { id: 'a', index: 0, speaker: 'agent', text: DIAGNOSTIC_SQL, startMs: 0, endMs: 1, confidence: 1, competencyId: 'c_sql' },
+    ];
+    const blocks = [{ competencyId: 'c_sql', competencyName: 'SQL & Data Warehousing', module: 'coding' }] as never;
+    expect(workSampleFormsUsed(turns, ROLE.competencies, 'senior', blocks)).toEqual(['coding']);
+  });
+
+  it('does not collapse two unrelated questions that both mention "work"', () => {
+    const a = 'Tell me about the hardest production incident work you owned, and what you changed afterwards.';
+    const b = 'Tell me about the slowest reporting migration work you owned, and who you had to convince.';
+    expect(auditScriptedTranscript([
+      { speaker: 'interviewer', text: a, kind: 'question' },
+      { speaker: 'candidate', text: REAL_ANSWER },
+      { speaker: 'interviewer', text: b, kind: 'question' },
+    ]).reusedTemplates.length).toBeLessThanOrEqual(1);
   });
 
   it('says "you can type your answer instead" once, not on every practical turn', async () => {

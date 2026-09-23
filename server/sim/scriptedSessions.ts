@@ -231,17 +231,22 @@ const ASKING_KINDS: readonly string[] = ['question', 'followup', 'transition', '
  * A question's TEMPLATE: its wording with the variable parts removed.
  *
  * Competency names are what the bank substitutes in, and they are exactly what
- * makes two renderings of one template look like two questions. Stripping
- * capitalised names, quoted fragments and digits leaves the sentence the
- * template actually is, so "Something in your SQL & Data Warehousing area
- * worked yesterday…" and "Something in your Data Engineering & Pipelines area
- * worked yesterday…" collapse onto each other.
+ * makes two renderings of one template look like two questions. The run of
+ * words immediately before "area" or "competency" is where the bank puts one,
+ * so it collapses to <name> along with quoted fragments and digits, and
+ * "Something in your SQL & Data Warehousing area worked yesterday…" and
+ * "Something in your Data Engineering & Pipelines area worked yesterday…"
+ * become the same sentence.
+ *
+ * "work" is deliberately NOT one of the keywords: a question can legitimately
+ * say "the hardest production incident work you owned", and collapsing seven
+ * words before it would make unrelated questions look like one template.
  */
 export function questionTemplate(text: string): string {
   return (text || '')
     .toLowerCase()
     // Proper nouns and competency labels, including the "A & B" shape.
-    .replace(/\b(?:[a-z][\w-]*|&)(?:\s+(?:[a-z][\w-]*|&)){0,6}(?=\s+(?:area|work|competency)\b)/g, '<name>')
+    .replace(/\b(?:[a-z][\w-]*|&)(?:\s+(?:[a-z][\w-]*|&)){0,6}(?=\s+(?:area|competency)\b)/g, '<name>')
     .replace(/["'][^"']{2,60}["']/g, '<quote>')
     .replace(/\d+/g, '<n>')
     .replace(/[^a-z<>\s]/g, ' ')

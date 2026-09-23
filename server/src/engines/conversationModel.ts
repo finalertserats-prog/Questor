@@ -363,6 +363,27 @@ function wordCount(text: string): number {
 }
 
 /**
+ * Is this phrase specific enough to say out loud?
+ *
+ * `salientPhrase` has two branches: a name in capitals (Decipher, Snowflake,
+ * Airflow), which is always worth naming, and the object of "I built / ran /
+ * managed …", which is sometimes a real thing and sometimes not. "So I run
+ * small query, look at real rows" yielded "small query", and "Thanks for the
+ * detail on small query" is worse than saying nothing: it is the interviewer
+ * visibly grabbing at a noun. A name, or something long enough to be a
+ * particular piece of work — otherwise the plain acknowledgement, which is
+ * true whatever they said.
+ */
+const MIN_WORDS_FOR_UNNAMED_PHRASE = 3;
+
+function worthNaming(phrase: string): string {
+  const words = phrase.trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return '';
+  if (words.some((w) => /^\p{Lu}/u.test(w))) return phrase;
+  return words.length >= MIN_WORDS_FOR_UNNAMED_PHRASE ? phrase : '';
+}
+
+/**
  * Is this phrase one we must never echo back as though the candidate had told
  * us about it? Matched loosely — either way round, case-insensitively — because
  * `salientPhrase` returns one or two words out of a longer name.
@@ -393,12 +414,25 @@ function isOursNotTheirs(phrase: string, avoid: readonly string[]): boolean {
  * title the greeting had already read out. Both read as keyword-matching,
  * because that is exactly what they were.
  */
-export function acknowledgement(answer: string, seed: number, previous = '', avoid: readonly string[] = []): string {
+export function acknowledgement(
+  answer: string,
+  seed: number,
+  previous = '',
+  avoid: readonly string[] = [],
+  /**
+   * Everything the interviewer has already said in this interview. A phrase
+   * named once is never named again: "Thanks for the detail on Airflow" three
+   * times in one conversation is the same script tell as saying it twice
+   * running, and checking only the previous turn missed it.
+   */
+  saidBefore: readonly string[] = [],
+): string {
   if (detectCandidateIntent(answer).intent !== 'answer') return '';
-  const phrase = wordCount(answer) >= MIN_WORDS_FOR_NAMED_ACK ? salientPhrase(answer) : '';
+  const phrase = wordCount(answer) >= MIN_WORDS_FOR_NAMED_ACK ? worthNaming(salientPhrase(answer)) : '';
+  const named = saidBefore.some((t) => phrase && t.toLowerCase().includes(phrase.toLowerCase()));
   // The same phrase twice running ("…on Decipher", "…on Decipher") sounds like
   // a script, so a phrase just used gives way to a plain acknowledgement.
-  const usable = phrase && !previous.toLowerCase().includes(phrase.toLowerCase()) && !isOursNotTheirs(phrase, avoid)
+  const usable = phrase && !named && !previous.toLowerCase().includes(phrase.toLowerCase()) && !isOursNotTheirs(phrase, avoid)
     ? phrase
     : '';
   const options = usable ? ACK_WITH_PHRASE.map((f) => f(usable)) : ACK_PLAIN;
@@ -559,7 +593,11 @@ const HIRING_TEAM_WILL_COVER = "I don't have those details, but the hiring team 
 function answerOneQuestion(question: string, facts: RoleFacts): string {
   const q = question.toLowerCase();
   // Facts a scorecard never holds: said plainly rather than guessed.
-  const notInTheRole = /\b(?:salary|pay|paid|compensation|package|ctc|benefits?|bonus|equity|location|located|remote|hybrid|office|relocat\w*|visa|notice period|start date|how big|team size|how many people)\b/.test(q);
+  // "How many data engineers are on the team?" belongs here beside pay and
+  // location: a scorecard has no headcount in it, and a candidate is better
+  // served by "I don't have that, the team will" than by a paragraph about
+  // the role that does not answer them.
+  const notInTheRole = /\b(?:salary|pay|paid|compensation|package|ctc|benefits?|bonus|equity|location|located|remote|hybrid|office|relocat\w*|visa|notice period|start date|how big|team size|how many)\b/.test(q);
   if (notInTheRole) return HIRING_TEAM_WILL_COVER;
   // Asked FIRST, because the role facts hold a real answer to it and the
   // generic role recital does not. "What stack do you use?" is the commonest
@@ -581,7 +619,15 @@ function answerOneQuestion(question: string, facts: RoleFacts): string {
     parts.push('What the first few months are measured on specifically is the hiring team\'s to set out, and they will cover it when they follow up.');
     return parts.join(' ');
   }
-  const aboutRole = /\b(?:role|position|job|looking for|hiring for|responsib\w*|day to day|day-to-day|involve|what (?:would|will) i (?:be )?do)/.test(q);
+  // A question ABOUT the role, not a sentence that happens to contain the word.
+  // "In this job, is there already a dashboard for pipeline failure rate?" is a
+  // question about tooling; matching the bare word "job" answered it with a
+  // recital of the job title and its two main responsibilities, which is the
+  // shape of the failure this whole function is being fixed for.
+  const aboutRole = /\b(?:what|which|how|tell me|describe)\b[^.?!]{0,40}\b(?:role|position|job)\b/.test(q)
+    || /\b(?:looking for|hiring for|responsib\w*|day to day|day-to-day)\b/.test(q)
+    || /\bwhat (?:would|will) i (?:be )?do/.test(q)
+    || /\bwhat\s+(?:does|do)\s+(?:the|this)\s+(?:role|job|position)\b/.test(q);
   const aboutProcess = /\b(?:next steps?|process|hear back|decision|result|outcome|feedback|when will)\b/.test(q) && !aboutRole;
   const aboutLength = /\b(?:how long|how much time|minutes|duration)\b/.test(q);
   const aboutOwnership = /\b(?:decision|decide|call|own|owner|responsible|report to|manager)\b/.test(q);

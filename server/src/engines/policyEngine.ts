@@ -90,9 +90,12 @@ const INJECTION_PATTERNS: RegExp[] = [
   /\b(?:invalidate|discard|delete|reset|wipe|disregard)\s+(?:the\s+|my\s+|those\s+|these\s+|all\s+|last\s+|previous\s+|prior\s+)*(?:\w+\s+){0,3}(?:evaluation|evaluations|assessment|assessments|score|scores|rating|ratings|answer|answers|competency|competencies)\b/i,
   /\balready\s+(?:been\s+)?fully\s+evidenced\b/i,
   // 3. Flow manipulation — tell us to stop assessing and move on.
-  /\bmove\s+(?:on\s+)?to\s+the\s+next\s+(?:section|competency|question|area)\b[^.?!]{0,40}\bwithout\s+(?:further|any|more)\b/i,
-  /\b(?:skip|omit|bypass)\s+(?:the\s+)?(?:rest|remaining|remainder|further|next)\s+(?:of\s+)?(?:the\s+)?(?:questions?|sections?|competenc\w+|interview|assessment)\b/i,
-  /\bno\s+(?:further|more)\s+questions?\s+(?:are\s+)?(?:needed|required|necessary)\b/i,
+  // Imperative, aimed at us. "We had to skip the remaining questions in the
+  // survey because the client changed scope" is a candidate describing their
+  // work; only an instruction opens a clause with the bare verb.
+  /(?:^|[.;:!?—-]\s*|\bplease\s+|\byou\s+(?:can|should|must|will|may)\s+|\bnow\s+)(?:move\s+(?:on\s+)?to\s+the\s+next\s+(?:section|competency|question|area))\b[^.?!]{0,40}\bwithout\s+(?:further|any|more)\b/i,
+  /(?:^|[.;:!?—-]\s*|\bplease\s+|\byou\s+(?:can|should|must|will|may)\s+|\bnow\s+)(?:skip|omit|bypass)\s+(?:the\s+)?(?:rest|remaining|remainder|further|next)\s+(?:of\s+)?(?:the\s+)?(?:questions?|sections?|competenc\w+|interview|assessment)\b/i,
+  /\bno\s+(?:further|more)\s+questions?\s+(?:are\s+)?(?:needed|required|necessary)\s+(?:for\s+)?(?:this|the)\s+(?:competency|section|area|interview|assessment)\b/i,
 ];
 
 /** Screen a question the agent is about to ask. */
@@ -232,6 +235,23 @@ export function detectWithdrawal(text: string): boolean {
 /** The candidate is asking us for something, rather than describing their work. */
 const REQUEST_FRAME = String.raw`(?:can|could|may|will|would)\s+(?:i|we|you|it|someone|somebody)\b|(?:is|are)\s+there\s+(?:any\s+)?(?:way|chance|option|possibility|someone|somebody|anyone|anybody|a|an|some)\b|(?:is|would)\s+it\s+possible\b|any\s+chance\b|\bplease\b|\bi'?d\s+(?:rather|prefer|like|sooner)\b|\bi\s+would\s+(?:rather|prefer|like)\b|\bi'?d\s+be\s+more\s+comfortable\b|\bi\s+want\s+to\s+(?:speak|talk)\b|\bi\s+need\s+to\s+(?:speak|talk)\b|\bi'?m\s+not\s+comfortable\b|\bi'?m\s+asking\b|\bi\s+asked\b|\barrange\b|\bput\s+me\s+through\b|\bconnect\s+me\b|\btransfer\s+me\b|\bhand\s+(?:this|it)\s+(?:over|to)\b|\bpick\s+(?:this|it)\s+up\b`;
 
+/**
+ * The candidate wants a PERSON in our place — said outright.
+ *
+ * Without this, "Can someone from your team tell me more about the tech
+ * stack?" ends the interview and puts the candidate in the urgent queue, which
+ * is its own way of not listening. A request for a person and a request for
+ * information both start "can someone from your team"; only one of them has a
+ * subject other than the interview itself.
+ */
+// The second half is a subject of its own: "speak to someone ABOUT the salary
+// band" is a question with a topic, and a request for a person has no topic
+// but this interview.
+const INFORMATION_REQUEST = /\b(?:tell me|let me know|explain|clarify|confirm|answer|send|share|forward|email|get back to me|walk me through|review|look at|check)\b|\babout\s+(?!this\b|that\b|it\b|the interview\b|this interview\b|the (?:same )?questions?\b)/i;
+
+/** Words that say a person is to take OUR place, which settles it either way. */
+const REPLACEMENT = /\binstead\b|\brather than\b|\btake (?:this|it) over\b|\btakes? over\b|\bpick (?:this|it) up\b|\bhand (?:this|it) (?:over|to)\b|\bnot comfortable\b|\buncomfortable\b|\bhuman alternative\b|\b(?:real|actual|live|human)\s+(?:person|human|interviewer|being)\b|\b(?:an?\s+)?(?:ai|a\.i\.|bot|chat ?bot|robot|machine)\b/i;
+
 /** A human being, named as who the candidate would rather deal with. */
 const PERSON_TARGET = [
   // "speak to someone / a person / a real human / an actual interviewer"
@@ -270,7 +290,13 @@ export function detectHumanRequest(text: string): boolean {
   for (const sentence of sentencesOf(raw)) {
     if (!frame.test(sentence)) continue;
     if (PERSON_IN_THE_PAST.test(sentence)) continue;
-    if (PERSON_TARGET.some((re) => re.test(sentence))) return true;
+    if (!PERSON_TARGET.some((re) => re.test(sentence))) continue;
+    // "Can someone from your team tell me about the stack?" asks a person for
+    // something; "can someone from your team pick this up instead?" asks for a
+    // person in our place. Replacement language settles it; without it, a
+    // sentence that asks for information is an ordinary question.
+    if (INFORMATION_REQUEST.test(sentence) && !REPLACEMENT.test(sentence)) continue;
+    return true;
   }
   return false;
 }
@@ -318,26 +344,62 @@ export function detectAiIdentityQuestion(text: string): boolean {
  * The candidate asked for the question again rather than answering it. Such a
  * turn must not count as the answer (see interviewDirector coverageState).
  */
+/**
+ * Past this many words, a turn is an answer that happens to mention not
+ * understanding something — not a plea for the question again.
+ *
+ * A candidate closed their interview with a hundred-word turn that ended "my
+ * English is not strong… if the team is okay with simple English, I am okay",
+ * and the loose patterns below read "simple English" as a request to reword
+ * the question. It cost them the answer to the two real questions they had
+ * just asked. A plea for help is short, always: every one in the report is
+ * under forty words.
+ */
+const MAX_WORDS_FOR_PLEA = 45;
+
+/**
+ * A request for SIMPLER words has to be aimed at us.
+ *
+ * The other pleas ("I don't understand", "what do you mean", "say it again")
+ * are about us by construction. "Simpler words" is not: a candidate said "if
+ * the team is okay with simple English, I am okay" about their own English,
+ * and it was read as a request to reword the question.
+ */
+const ADDRESSED_TO_US = /\?|^(?:sorry|pardon|excuse me|apolog)/;
+const ASKS_US = /\b(?:can|could|would|will)\s+you\b|\bplease\b|\bsay\s+(?:it|that|this)?\s*again\b|\byou\s+(?:mean|ask|said)\b/;
+
 export function detectRepeatRequest(text: string): boolean {
   const t = text.trim().toLowerCase().replace(/[’]/g, "'");
-  return (
+  const explicit = (
     /\b(?:can|could|would) you\s+(?:please\s+)?(?:repeat|say (?:that|it) again|rephrase)\b/.test(t) ||
     /\b(?:repeat|say)\s+(?:that|the question|it)\s+again\b/.test(t) ||
     /\bwhat was the question\b/.test(t) ||
     /^(?:sorry|pardon|come again|what)\s*[?!.]*$/.test(t) ||
-    /^(?:sorry,?\s+)?(?:pardon|come again)\b/.test(t) ||
-    // A plea for help that does not use the word "repeat". A candidate with
-    // simpler English said "Sorry, I not understand 'push back' — can you say
-    // again, more simple?" and it was read as an ANSWER: the topic was
-    // abandoned and the plea itself was quoted to the reviewer as this
-    // candidate's evidence for the competency. The opening greeting invites
-    // exactly this ("feel free to ask me to repeat anything"), so the invitation
-    // has to be honoured however it is taken up.
+    /^(?:sorry,?\s+)?(?:pardon|come again)\b/.test(t)
+  );
+  if (explicit) return true;
+
+  // A plea for help that does not use the word "repeat". A candidate with
+  // simpler English said "Sorry, I not understand 'push back' — can you say
+  // again, more simple?" and it was read as an ANSWER: the topic was abandoned
+  // and the plea itself was quoted to the reviewer as this candidate's
+  // evidence for the competency. The opening greeting invites exactly this
+  // ("feel free to ask me to repeat anything"), so the invitation has to be
+  // honoured however it is taken up — and, being loose, only where a plea can
+  // actually live: a short turn, aimed at us.
+  const words = (t.match(/\S+/g) ?? []).length;
+  if (words > MAX_WORDS_FOR_PLEA) return false;
+  const aimedAtUs = ADDRESSED_TO_US.test(t) || ASKS_US.test(t);
+  return (
     /\bsay\s+(?:it\s+|that\s+|this\s+)?again\b/.test(t) ||
-    /\b(?:i\s+)?(?:don'?t|do not|not|didn'?t|did not|can'?t|cannot)\s+(?:really\s+|quite\s+|fully\s+)?(?:understand|understood|get|follow|catch|hear)\b/.test(t) ||
+    // Not understanding US, rather than not having understood something at
+    // work. "I didn't understand the requirements at first, so I set up a
+    // clarification meeting" is an answer; without the object the same words
+    // re-asked a question the candidate had already answered.
+    /\b(?:i\s+)?(?:don'?t|do not|not|didn'?t|did not|can'?t|cannot)\s+(?:really\s+|quite\s+|fully\s+)?(?:understand|understood|get|follow|catch|hear)\s*(?:$|[.,;!?]|["']|\b(?:the question|your question|that|this|it|you|what you|anything)\b)/.test(t) ||
     /\bwhat\s+do\s+you\s+mean\b/.test(t) ||
     /\bnot\s+sure\s+(?:what|which)\s+you(?:'?re)?\s+(?:mean|asking|after)\b/.test(t) ||
-    simplerWordingRequested(t)
+    (aimedAtUs && simplerWordingRequested(t))
   );
 }
 

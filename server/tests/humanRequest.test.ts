@@ -56,6 +56,15 @@ const ASKS_FOR_A_PERSON: readonly string[] = [
 
 /** Talking about their work, or about us, without asking for anything. */
 const NOT_A_REQUEST: readonly string[] = [
+  // Asking a person FOR something is not asking for a person. These are the
+  // questions candidates put at the close, and reading one as a request to
+  // leave would end the interview and file them as urgent — which is its own
+  // way of not listening.
+  'Can someone from your team tell me more about the tech stack?',
+  'Can someone from the hiring team explain the next steps?',
+  'Could a member of your team review this after the interview?',
+  'Would someone from the team be able to let me know about the timeline?',
+  'Can I speak to someone about the salary band before I accept?',
   'I had to speak to a person in finance before the migration could go ahead.',
   'We talked to a real person at the vendor and they confirmed the quota logic.',
   'Can you tell me more about what you are looking for in this area?',

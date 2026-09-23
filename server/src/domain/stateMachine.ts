@@ -45,7 +45,12 @@ const FORWARD: Record<string, string[]> = {
   // said one question too early or one question too late did nothing at all.
   WARMUP: ['ASSESSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
   ASSESSING: ['CANDIDATE_QUESTIONS', 'CLOSING', 'CANDIDATE_WITHDREW', 'TECHNICAL_FAILURE', 'POLICY_STOP', 'MANUAL_HANDOFF', 'INCOMPLETE', 'RESCHEDULE_REQUIRED'],
-  CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE', 'MANUAL_HANDOFF', 'RESCHEDULE_REQUIRED'],
+  // The candidate is still speaking in CANDIDATE_QUESTIONS, so every ending
+  // they can reach in ASSESSING has to be legal here too. Withdrawal and the
+  // safety stop were missing: withdrawInterview writes those states directly
+  // rather than through assertTransition, so nothing broke — the machine was
+  // simply not describing what the product does.
+  CANDIDATE_QUESTIONS: ['CLOSING', 'TECHNICAL_FAILURE', 'CANDIDATE_WITHDREW', 'POLICY_STOP', 'MANUAL_HANDOFF', 'RESCHEDULE_REQUIRED'],
   // TECHNICAL_FAILURE is reachable because a finalisation can die between the
   // CLOSING transition and the PROCESSING one. Without it the recovery sweep had
   // no legal move for such a session and it stayed in CLOSING for ever.

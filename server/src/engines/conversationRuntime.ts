@@ -641,6 +641,11 @@ function candidateSaid(turns: TurnRecord[]): string[] {
   return turns.filter((t) => t.speaker === 'candidate').map((t) => t.text);
 }
 
+/** Everything the interviewer has already said — what an acknowledgement must not name twice. */
+function agentSaid(turns: TurnRecord[]): string[] {
+  return turns.filter((t) => t.speaker === 'agent').map((t) => t.text);
+}
+
 /**
  * Reply to a turn that is not an answer: a pause, a request to hear the
  * question again, a correction, a question of their own, or nothing at all.
@@ -866,7 +871,7 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
   // from a turn that tried to instruct us.
   const previousAgent = [...turns].reverse().find((t) => t.speaker === 'agent')?.text ?? '';
   const heard = reading?.intent === 'answer' && !correction && !injected
-    ? acknowledgement(lastText, turns.length, previousAgent, oursNotTheirs(opts))
+    ? acknowledgement(lastText, turns.length, previousAgent, oursNotTheirs(opts), agentSaid(turns))
     : '';
 
   // Close / candidate questions. The close invites the candidate's own
@@ -882,8 +887,7 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
       // `?` anywhere, not only at the end: "What stack does the team use? And
       // how is success measured in the first few months" is two questions, and
       // the last one arrived without its punctuation.
-      const asked = reading?.intent === 'question'
-        || ((reading?.intent === 'answer' || reading?.intent === 'non_answer') && lastText.includes('?'));
+      const asked = reading?.intent === 'question' || (reading?.intent === 'answer' && lastText.includes('?'));
       const answer = asked ? ((await answerCandidateQuestionWithLlm(lastText, opts)) ?? answerFromRoleFacts(lastText, roleFactsFor(opts))) : '';
       // The other half of the same failure: the closing question was asked, the
       // candidate carried on answering the PREVIOUS one, and the interview
@@ -1020,7 +1024,7 @@ async function composeUtterance(opts: UtteranceOptions & { identityAnswered?: bo
       competency: competency as Competency, block, role, sessionId: opts.sessionId, band: plan.band,
       // One shape per interview where the bank allows it, and the "you can type
       // this instead" hint said once rather than read out on every practical turn.
-      usedForms: workSampleFormsUsed(turns, role.competencies, plan.band),
+      usedForms: workSampleFormsUsed(turns, role.competencies, plan.band, plan.blocks),
       sayAnswerModeHint: countWorkSamples(turns) === 0,
     });
     const screened = screenQuestion(sample.prompt);

@@ -206,13 +206,20 @@ export function workSampleFormsUsed(
   turns: readonly TurnRecord[],
   competencies: readonly Competency[],
   bandId?: BandId,
+  /**
+   * The plan's blocks. A block configured as a coding module always produced a
+   * `coding` exercise, so replaying without it would reconstruct some other
+   * shape and then let the real one be used twice.
+   */
+  blocks: readonly PlanBlock[] = [],
 ): WorkSampleForm[] {
   const used: WorkSampleForm[] = [];
   for (const t of turns) {
     if (t.speaker !== 'agent' || !t.text.includes(WORK_SAMPLE_LEAD_IN)) continue;
     const competency = competencies.find((c) => c.id === t.competencyId);
     if (!competency) continue;
-    used.push(workSampleFormFor(competency, undefined, bandId, used));
+    const module = blocks.find((b) => b.competencyId === t.competencyId)?.module;
+    used.push(workSampleFormFor(competency, module, bandId, used));
   }
   return used;
 }

@@ -571,8 +571,6 @@ export function endReasonFor(kind: string): EndReason {
  */
 async function handoffInterview(sessionId: string, session: { tenantId: string; state: string }): Promise<void> {
   assertTransition(session.state, 'MANUAL_HANDOFF');
-  const moved = await transitionIfInState(sessionId, session.state, 'MANUAL_HANDOFF');
-  if (!moved) return; // another request settled it first
   const full = await prisma.interviewSession.findUnique({
     where: { id: sessionId }, select: { candidateId: true, consentJson: true },
   });
@@ -587,29 +585,52 @@ async function handoffInterview(sessionId: string, session: { tenantId: string; 
   );
   consent.humanRequestedDuringInterview = true;
   consent.humanRequestedAt = requestedAt.toISOString();
-  await prisma.interviewSession.update({
-    where: { id: sessionId },
-    data: { completedAt: requestedAt, consentJson: JSON.stringify(consent) },
-  });
 
-  await prisma.candidateHumanRequest.upsert({
-    where: { sessionId },
-    create: {
-      sessionId,
-      candidateId: full.candidateId,
-      tenantId: session.tenantId,
-      tokenHash: `in-interview:${sessionId}`,
-      issuedAt: requestedAt,
-      // Nothing expires a request a person still has to answer; the feed's own
-      // 30-day window decides how long it keeps asking.
-      expiresAt: new Date(requestedAt.getTime() + HUMAN_REQUEST_HOLD_DAYS * 24 * 60 * 60 * 1000),
-      status: 'REQUESTED',
-      requestedAt,
-    },
-    // An earlier request is the one that counts: a second ask does not reset
-    // how long the hiring team has left someone waiting.
-    update: {},
+  // ONE transaction, because the two halves are one promise. Moving the
+  // session to MANUAL_HANDOFF without writing the row would take the candidate
+  // out of the interview and leave nobody holding the request — the precise
+  // failure this whole change exists to prevent, arrived at by a different
+  // route. The state guard inside it is also the mutex: exactly one caller
+  // moves the session, and only that caller writes the row.
+  const moved = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.interviewSession.updateMany({
+      where: { id: sessionId, state: session.state },
+      data: { state: 'MANUAL_HANDOFF', completedAt: requestedAt, consentJson: JSON.stringify(consent) },
+    });
+    if (count === 0) return false; // another request settled it first
+
+    await tx.candidateHumanRequest.upsert({
+      where: { sessionId },
+      create: {
+        sessionId,
+        candidateId: full.candidateId,
+        tenantId: session.tenantId,
+        // Not a credential and not a digest: no token was ever minted for this
+        // request, because the candidate asked out loud rather than by
+        // following a link. The prefix is deliberately unlike a hash so the
+        // row can never be mistaken for a live link.
+        tokenHash: `${NO_TOKEN_PREFIX}${sessionId}`,
+        issuedAt: requestedAt,
+        // Nothing expires a request a person still has to answer; the feed's own
+        // 30-day window decides how long it keeps asking.
+        expiresAt: new Date(requestedAt.getTime() + HUMAN_REQUEST_HOLD_DAYS * DAY_MS),
+        status: 'REQUESTED',
+        requestedAt,
+      },
+      // A row may already exist in some other state. The candidate has now
+      // asked out loud, so the status is forced: leaving it ISSUED would keep
+      // the request out of the urgent queue it exists to reach.
+      update: { status: 'REQUESTED' },
+    });
+    // Separately, and only where it is still empty, so an earlier request keeps
+    // its own timestamp: a second ask does not reset how long the hiring team
+    // has left someone waiting.
+    await tx.candidateHumanRequest.updateMany({
+      where: { sessionId, requestedAt: null }, data: { requestedAt },
+    });
+    return true;
   });
+  if (!moved) return;
 
   await logAudit({
     tenantId: session.tenantId, actorType: 'user', actorId: 'candidate',
@@ -623,6 +644,12 @@ async function handoffInterview(sessionId: string, session: { tenantId: string; 
     .catch((err: unknown) => logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId }, 'human request notice failed to send; the request is still in the needs-you queue'));
   logger.info({ sessionId }, 'Interview handed off at candidate request — not assessed, a person must make contact');
 }
+
+/** Marks a request nobody can redeem: it arrived in conversation, not by link. */
+const NO_TOKEN_PREFIX = 'no-token:in-interview:';
+
+/** Milliseconds in a day, for the hold window below. */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** How long the row stays valid. It is a queue entry, not a credential, so this is generous. */
 const HUMAN_REQUEST_HOLD_DAYS = 365;
@@ -1151,6 +1178,15 @@ export async function finalizeInterview(
     // minting another version and another set of artifacts.
     if (existing) return { assessmentId: existing.id };
     throw new HttpError(409, `This interview cannot be finalised from its current state (${session.state}).`);
+  }
+  // An interview the candidate asked to hand to a person is never assessed —
+  // belt as well as braces. The state check above already refuses one that has
+  // reached MANUAL_HANDOFF, but the handoff turn is written before the state
+  // moves, and a finalisation already in flight from another tab would
+  // otherwise slip through that window and score a transcript whose last line
+  // promises the candidate that nothing in it will be scored.
+  if (turns.some((t) => t.speaker === 'agent' && t.kind === 'handoff')) {
+    throw new HttpError(409, 'This interview was handed to a person at the candidate\'s request and is not assessed.');
   }
   // Walk to PROCESSING one conditional step at a time. Every step applies only
   // if the session is still in the state it is being moved out of, so a second
