@@ -81,17 +81,24 @@ describe('how each competency is marked', () => {
     expect(coverageMarker(competency({ id: 'a', name: 'A', level: null, notEnoughEvidence: true, evidence: [] }))).toBe('not-covered');
   });
 
-  it('calls a competency whose grading failed not covered, never a shortfall', () => {
-    expect(coverageMarker(competency({ id: 'a', name: 'A', level: 1, requiredLevel: 3, gradingUnavailable: true }))).toBe('not-covered');
+  it('calls a competency whose grading failed unscored, never a shortfall', () => {
+    // Not "not covered" either: it was asked about and answered, and telling
+    // the candidate it did not come up is a false statement about their own
+    // interview. It is our grader that failed, and the letter says so.
+    expect(coverageMarker(competency({ id: 'a', name: 'A', level: 1, requiredLevel: 3, gradingUnavailable: true }))).toBe('unscored');
+  });
+
+  it('calls a competency whose grading failed AND left no evidence not covered', () => {
+    expect(coverageMarker(competency({ id: 'a', name: 'A', level: null, gradingUnavailable: true, evidence: [] }))).toBe('not-covered');
   });
 
   it('words the markers the way the design does', () => {
-    expect([MARKER_LABEL.strength, MARKER_LABEL.partly, MARKER_LABEL['not-covered']])
-      .toEqual(['Clear strength', 'Partly shown', 'Not covered']);
+    expect([MARKER_LABEL.strength, MARKER_LABEL.partly, MARKER_LABEL.unscored, MARKER_LABEL['not-covered']])
+      .toEqual(['Clear strength', 'Partly shown', 'Not scored', 'Not covered']);
   });
 
   it('fills the four-segment bar without ever stating a number', () => {
-    expect([MARKER_SEGMENTS.strength, MARKER_SEGMENTS.partly, MARKER_SEGMENTS['not-covered']]).toEqual([3, 2, 0]);
+    expect([MARKER_SEGMENTS.strength, MARKER_SEGMENTS.partly, MARKER_SEGMENTS.unscored, MARKER_SEGMENTS['not-covered']]).toEqual([3, 2, 0, 0]);
   });
 });
 

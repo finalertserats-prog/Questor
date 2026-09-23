@@ -67,16 +67,19 @@ const EMPTY_SEGMENT = '#e4e4ec';
 const MARKER_COLOUR: Readonly<Record<CoverageMarker, string>> = {
   strength: '#2e9e6b',
   partly: '#c98a2e',
+  unscored: EMPTY_SEGMENT,
   'not-covered': EMPTY_SEGMENT,
 };
 const MARKER_TEXT_COLOUR: Readonly<Record<CoverageMarker, string>> = {
   strength: '#1f6f4c',
   partly: '#8a5c14',
+  unscored: MUTED,
   'not-covered': MUTED,
 };
 const MARKER_BORDER: Readonly<Record<CoverageMarker, string>> = {
   strength: '#bfe3d0',
   partly: '#ecd9b4',
+  unscored: '#dcdce6',
   'not-covered': '#dcdce6',
 };
 

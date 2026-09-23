@@ -65,6 +65,49 @@ function isEvidenced(c: CompetencyScore): boolean {
     && c.evidence.length > 0;
 }
 
+/**
+ * Did this competency actually come up in the conversation?
+ *
+ * The distinction this file did not previously make, and the reason candidates
+ * were told in writing that topics they had been questioned on for ten minutes
+ * "did not come up". `isEvidenced` is a question about whether we can SAY
+ * anything; this is a question about what HAPPENED, and the two are not the
+ * same. A competency that was asked about, answered, and has the candidate's
+ * own words attached, but that the grader could not score, is evidenced in the
+ * transcript and ungraded in our system — a fact about us.
+ *
+ * `gradingUnavailable` counts as covered whether or not spans survived: a
+ * failed rubric call tells us nothing whatever about whether the question was
+ * asked, so it can never be the basis for saying it was not.
+ */
+function wasCovered(c: CompetencyScore): boolean {
+  return c.gradingUnavailable === true || (Array.isArray(c.evidence) && c.evidence.length > 0);
+}
+
+/**
+ * The three buckets, replacing two.
+ *
+ *   graded    — we can say something, and it is backed by their own words.
+ *   silent    — it came up, and we cannot honestly say how it went. Nothing is
+ *               written about these at all: "we asked and our grader fell over"
+ *               is not the candidate's business and not their failing, and any
+ *               sentence we could write about them would be about us.
+ *   notCovered— it genuinely did not come up, and saying so is true.
+ *
+ * "Say nothing" is the deliberate choice for the middle bucket. The letter is
+ * the part the candidate reads, and the one rule it has to keep is that every
+ * sentence in it is true about their own interview.
+ */
+function bucket(competencies: readonly CompetencyScore[]) {
+  const graded = competencies.filter(isEvidenced);
+  const rest = competencies.filter((c) => !isEvidenced(c));
+  return {
+    graded,
+    silent: rest.filter(wasCovered),
+    notCovered: rest.filter((c) => !wasCovered(c)),
+  };
+}
+
 function firstName(fullName: string): string {
   const first = fullName.trim().split(/\s+/)[0];
   return first || 'there';
@@ -104,11 +147,10 @@ export function buildFeedbackDraft(opts: {
   assessment: AssessmentResult;
 }): FeedbackDraft {
   const competencies = Array.isArray(opts.assessment.competencies) ? opts.assessment.competencies : [];
-  const evidenced = competencies.filter(isEvidenced);
+  const { graded: evidenced, notCovered } = bucket(competencies);
 
   const strong = evidenced.filter((c) => (c.level ?? 0) >= c.requiredLevel);
   const shortfall = evidenced.filter((c) => (c.level ?? 0) < c.requiredLevel);
-  const notCovered = competencies.filter((c) => !isEvidenced(c));
 
   const greeting = `Hello ${firstName(opts.candidateName)},`;
   const lines: string[] = [greeting, ''];

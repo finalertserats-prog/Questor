@@ -30,18 +30,31 @@ import { screenQuestion, validateNoProtectedInference } from '../engines/policyE
  * evidence, then safe generic wording that asserts nothing about the person.
  */
 
-export type CoverageMarker = 'strength' | 'partly' | 'not-covered';
+/**
+ * `unscored` is the fourth marker, and it exists because the other three could
+ * not tell the truth about a competency that was ASKED about and could not be
+ * GRADED. That case was filed as "Not covered", and the letter then told
+ * candidates that a topic they had been questioned on for ten minutes "did not
+ * come up in the time we had". It is the candidate-facing half of a distinction
+ * the assessment itself is scrupulous about ("This is a system failure, not a
+ * finding about the candidate") and the letter threw away — and the letter is
+ * the part the candidate reads.
+ */
+export type CoverageMarker = 'strength' | 'partly' | 'unscored' | 'not-covered';
 
 export const MARKER_LABEL: Readonly<Record<CoverageMarker, string>> = {
   strength: 'Clear strength',
   partly: 'Partly shown',
+  unscored: 'Not scored',
   'not-covered': 'Not covered',
 };
 
-/** Filled segments of the four in the glance bar. Qualitative: three buckets, no scale. */
+/** Filled segments of the four in the glance bar. Qualitative buckets, no scale. */
 export const MARKER_SEGMENTS: Readonly<Record<CoverageMarker, number>> = {
   strength: 3,
   partly: 2,
+  // Empty for the same reason "not covered" is: there is no claim being made.
+  unscored: 0,
   'not-covered': 0,
 };
 
@@ -97,7 +110,7 @@ export const feedbackContentSchema = z.object({
   competencies: z.array(z.object({
     id: z.string().min(1).max(200),
     name: z.string().trim().min(1).max(200),
-    marker: z.enum(['strength', 'partly', 'not-covered']),
+    marker: z.enum(['strength', 'partly', 'unscored', 'not-covered']),
     roleAsks: line,
     whatWeHeard: line,
     quote: z.string().max(600),
@@ -132,14 +145,18 @@ function hasEvidence(c: CompetencyScore): boolean {
 }
 
 /**
- * How the conversation went on this competency, in three buckets.
+ * How the conversation went on this competency, in four buckets.
  *
- * `gradingUnavailable` counts as not covered even when a level survives on the
- * row: that flag means our rubric call failed, which is a fact about our
- * system and not about the person.
+ * `gradingUnavailable` means our rubric call failed. That is a fact about our
+ * system and not about the person, so it can never be reported as a shortfall
+ * — and, equally, it can never be reported as "this did not come up", which is
+ * a claim about the conversation that a failed grader says nothing about. It
+ * gets its own marker, and the candidate is told the truth: we asked, and our
+ * scoring did not complete.
  */
 export function coverageMarker(c: CompetencyScore): CoverageMarker {
-  if (c.notEnoughEvidence || c.level === null || c.gradingUnavailable || !hasEvidence(c)) return 'not-covered';
+  if (c.gradingUnavailable) return hasEvidence(c) ? 'unscored' : 'not-covered';
+  if (c.notEnoughEvidence || c.level === null || !hasEvidence(c)) return 'not-covered';
   return c.level >= c.requiredLevel ? 'strength' : 'partly';
 }
 
@@ -194,12 +211,14 @@ function roleAsksFor(name: string, defined: Competency | undefined): string {
 const HEARD_TEMPLATES: Readonly<Record<CoverageMarker, (name: string) => string>> = {
   strength: () => 'You gave a specific example from your own work and walked through what you did.',
   partly: () => 'This came up, and your example stayed brief, so there was less to go on than the role asks for.',
+  unscored: () => 'This came up and you spoke to it. Our own scoring did not complete for it, so there is nothing here about how it went — that is a gap on our side, not yours.',
   'not-covered': () => 'This did not come up in the time we had, so there is nothing here either way.',
 };
 
 const FURTHER_TEMPLATES: Readonly<Record<CoverageMarker, (name: string) => string>> = {
   strength: () => 'Name the result as well as the work: what changed because of it, and how you knew.',
   partly: () => 'Walk through the steps you took, the choices you weighed, and what changed as a result.',
+  unscored: () => 'Nothing for you to act on here. If you would like us to look at this part again, just say so in your reply.',
   'not-covered': (name) => `Have one short story ready about ${name.toLowerCase()}: what you did, and what you took from it.`,
 };
 
@@ -209,7 +228,7 @@ function competencyFacts(input: FeedbackInput): FeedbackCompetency[] {
   const used = new Set<string>();
   const scores = Array.isArray(input.result.competencies) ? input.result.competencies : [];
   // Covered first: the letter should open on what the candidate did show.
-  const order: Record<CoverageMarker, number> = { strength: 0, partly: 1, 'not-covered': 2 };
+  const order: Record<CoverageMarker, number> = { strength: 0, partly: 1, unscored: 2, 'not-covered': 3 };
   return [...scores]
     .sort((a, b) => order[coverageMarker(a)] - order[coverageMarker(b)])
     .slice(0, MAX_COMPETENCIES)
@@ -303,7 +322,10 @@ function nextStepsFromEvidence(competencies: readonly FeedbackCompetency[]): str
 /** The whole letter, deterministic, with no model involved. */
 export function buildEvidenceFeedback(input: FeedbackInput): FeedbackContent {
   const competencies = competencyFacts(input);
-  const covered = competencies.filter((c) => c.marker !== 'not-covered');
+  // Only a graded competency can carry a SWOT or a next step. An unscored one
+  // is evidence we could not read, and building advice on it would be building
+  // advice on nothing.
+  const covered = competencies.filter((c) => c.marker === 'strength' || c.marker === 'partly');
   return {
     swot: covered.length ? swotFromEvidence(competencies) : GENERIC_SWOT,
     competencies,
