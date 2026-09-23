@@ -35,6 +35,7 @@ model Tenant {
   atsLinks        CandidateAtsLink[]
   demoGrants     DemoGrant[]
   competencies   OrgCompetency[]
+  outcomeSnapshots OutcomeSnapshot[]
 }
 
 model User {
@@ -1592,4 +1593,40 @@ model CandidateShortlist {
   @@unique([roleId, userId, candidateId])
   @@index([tenantId, roleId])
   @@index([candidateId])
+}
+
+// A month of one organisation's outcome statistics, frozen.
+//
+// WHY IT EXISTS. Candidate data is erased — on request, and on the retention
+// sweep — which is exactly right and which also means last quarter's funnel
+// stops being computable the moment the people in it are gone. Monitoring that
+// can only ever describe the data still present cannot show a trend, and a
+// trend is the whole point of monitoring.
+//
+// WHAT IT HOLDS. Counts and rates over a whole organisation-month, as JSON.
+// Nothing about an individual: no candidate id, no session id, no name, no
+// score belonging to one person, nothing that could be narrowed to a person by
+// intersecting two months. A snapshot is therefore NOT personal data and an
+// erasure has nothing to remove from it — erasure must never be blocked by,
+// or have to reach into, this table.
+//
+// Off by default (OUTCOME_SNAPSHOT_ENABLED). One row per organisation-month,
+// rewritten while the month is still open and settled once it has closed.
+model OutcomeSnapshot {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  // The organisation-month this describes, as "YYYY-MM" in UTC.
+  month     String
+  // Aggregate counts and rates only (services/outcomeSnapshot.ts). Never a row
+  // about a person.
+  statsJson String   @default("{}")
+  // Interviews the month's numbers were computed over, kept out of the JSON so
+  // a small month can be recognised without parsing it.
+  interviews Int     @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, month])
+  @@index([tenantId, month])
 }

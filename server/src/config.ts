@@ -409,6 +409,14 @@ export const config = {
     /** The hour, on each organisation's own clock, from which that day's summary may go. */
     digestHour: parseDigestHour(process.env.DIGEST_HOUR),
   },
+  /**
+   * Monthly outcome snapshots (services/outcomeSnapshot.ts). Off until the
+   * owner has decided to keep them: a snapshot outlives the candidate data it
+   * was computed from, deliberately, and starting to keep records is a choice
+   * an organisation makes rather than one a deploy makes for it. Aggregates
+   * only — nothing in a snapshot is about a person.
+   */
+  outcomeSnapshotEnabled: parseBooleanSetting('OUTCOME_SNAPSHOT_ENABLED', process.env.OUTCOME_SNAPSHOT_ENABLED, false),
   library: {
     /** Tenant-facing read API (select, entries) and the admin screen. */
     enabled: parseBooleanSetting('LIBRARY_ENABLED', process.env.LIBRARY_ENABLED, false),

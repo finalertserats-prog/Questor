@@ -23,6 +23,7 @@ import { JD_DRAFT_JOB, runJdDraftJob } from './services/jdDrafts.js';
 import { startCatalogRefreshSchedule } from './services/catalogRefresh.js';
 import { startInvitationReminders } from './services/invitationReminders.js';
 import { startDailyDigest } from './services/dailyDigest.js';
+import { startOutcomeSnapshots } from './services/outcomeSnapshot.js';
 import { reportMissingOperatorAccounts } from './middleware/platformOperator.js';
 import { markDraining } from './services/drainState.js';
 import { countLiveSessions, inFlightRequests } from './realtime/liveSessions.js';
@@ -57,6 +58,9 @@ startCatalogRefreshSchedule();
 // reminders and the recruiter's expiry warning, and the daily summary.
 startInvitationReminders();
 startDailyDigest();
+// Monthly outcome aggregates (OUTCOME_SNAPSHOT_ENABLED, off by default), so a
+// trend survives the candidate data it was computed from being erased.
+startOutcomeSnapshots();
 reportMissingOperatorAccounts().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not check platform operator accounts');
 });
