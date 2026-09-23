@@ -132,7 +132,13 @@ async function expireIfPast(row: SignupRequest, now: Date): Promise<void> {
   throw new HttpError(410, 'This signup request has expired.');
 }
 
-export function signupApplicant(row: SignupRequest) {
+/**
+ * The applicant's details, derived: "organisation" is `organisationName` for a
+ * new organisation and `orgSlug` for a join, and only this knows which. Typed
+ * to the fields it actually reads so the queue endpoint, which selects a subset
+ * of the row, can pass what it has without casting the check away.
+ */
+export function signupApplicant(row: Pick<SignupRequest, 'name' | 'email' | 'mode' | 'organisationName' | 'orgSlug'>) {
   return {
     name: row.name,
     email: row.email,

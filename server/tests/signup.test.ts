@@ -212,6 +212,15 @@ describe('operator-approved signup', () => {
     const listed = await request(app).get('/api/admin/signups?status=pending').set('Authorization', auth);
     expect(listed.status).toBe(200);
     expect(listed.body.signups).toHaveLength(1);
+    // Where the applicant's details live, pinned: the queue page reads them
+    // from here, and reading them from the top level instead took the page to
+    // its error boundary the moment anything was waiting.
+    expect(listed.body.signups[0].applicant).toEqual({
+      name: 'Priya Applicant',
+      email: 'admin-approve@example.com',
+      organisation: 'Priya Labs',
+      mode: 'new-org',
+    });
 
     const approved = await request(app).post(`/api/admin/signups/${requestRow.id}/approve`).set('Authorization', auth);
     expect(approved.status).toBe(200);

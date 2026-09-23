@@ -133,7 +133,7 @@ adminRouter.get('/signups', requireCapability('admin:manage'), requireOperator, 
       status: true, expiresAt: true, decidedAt: true, decidedBy: true, createdTenantId: true, createdUserId: true, createdAt: true,
     },
   });
-  res.json({ signups: rows.map((row) => ({ ...row, applicant: signupApplicant(row as never) })) });
+  res.json({ signups: rows.map((row) => ({ ...row, applicant: signupApplicant(row) })) });
 }));
 
 adminRouter.post('/signups/:id/approve', requireCapability('admin:manage'), requireOperator, asyncHandler(async (req, res) => {

@@ -2,12 +2,14 @@ import { describe, it, expect } from 'vitest';
 import {
   PASSWORD_MIN_LENGTH,
   applicantIntent,
+  applicantName,
   decisionPhaseForStatus,
   emailDomain,
   isValidOrgCode,
   joinEmailCaution,
   joinEmailOrigin,
   normaliseOrgCode,
+  queuedSignups,
   signupFormProblem,
   signupRequestBody,
   withoutSignup,
@@ -253,5 +255,74 @@ describe('decisionPhaseForStatus', () => {
 
   it('treats anything else as a fault at our end', () => {
     expect(decisionPhaseForStatus(500)).toBe('failed');
+  });
+});
+
+/**
+ * The queue's reading of what the server actually sends.
+ *
+ * `GET /api/admin/signups` nests the applicant's details under `applicant`,
+ * because the "organisation" is `organisationName` for one mode and `orgSlug`
+ * for the other and only the server can tell which. The queue read them from
+ * the top level, found `undefined`, and `.trim()` took the whole page to its
+ * error boundary the moment anyone was waiting.
+ */
+describe('queuedSignups', () => {
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'sr1',
+    name: 'Priya Sharma',
+    email: 'priya@acme.com',
+    mode: 'new-org',
+    organisationName: 'Priya Labs',
+    orgSlug: null,
+    status: 'PENDING',
+    createdAt: '2026-09-23T08:00:00.000Z',
+    applicant: { name: 'Priya Sharma', email: 'priya@acme.com', organisation: 'Priya Labs', mode: 'new-org' },
+    ...over,
+  });
+
+  it('reads the organisation from where the server puts it', () => {
+    expect(queuedSignups([row()])[0].organisation).toBe('Priya Labs');
+  });
+
+  it('reads the code of the organisation a join request names', () => {
+    const joining = row({
+      mode: 'join',
+      organisationName: null,
+      orgSlug: 'acme-hiring',
+      applicant: { name: 'Priya Sharma', email: 'priya@acme.com', organisation: 'acme-hiring', mode: 'join' },
+    });
+
+    expect(queuedSignups([joining])[0]).toMatchObject({ mode: 'join', organisation: 'acme-hiring' });
+  });
+
+  it('gives an organisation-less row an empty name rather than undefined', () => {
+    expect(queuedSignups([row({ applicant: { name: 'Priya Sharma', email: 'priya@acme.com', mode: 'join' } })])[0].organisation).toBe('');
+  });
+
+  it('survives a row with no applicant at all', () => {
+    expect(queuedSignups([row({ applicant: undefined })])[0].organisation).toBe('');
+  });
+
+  it('drops a row with no id, which no decision could be sent for', () => {
+    expect(queuedSignups([row({ id: '' }), row()])).toHaveLength(1);
+  });
+
+  it('reads nothing at all as an empty queue', () => {
+    expect(queuedSignups(undefined)).toEqual([]);
+  });
+});
+
+describe('applicantName', () => {
+  it('uses the name when there is one', () => {
+    expect(applicantName({ name: 'Priya Sharma', email: 'priya@acme.com' })).toBe('Priya Sharma');
+  });
+
+  it('falls back to the address rather than addressing nobody', () => {
+    expect(applicantName({ name: '  ', email: 'priya@acme.com' })).toBe('priya@acme.com');
+  });
+
+  it('says "This applicant" when the row carries neither', () => {
+    expect(applicantName({ name: '', email: '' })).toBe('This applicant');
   });
 });

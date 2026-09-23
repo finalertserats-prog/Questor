@@ -90,9 +90,15 @@ export function signupRequestBody(form: SignupForm): SignupRequestBody {
     : { ...base, orgCode: normaliseOrgCode(form.orgCode) };
 }
 
-/** One sentence saying what an applicant is asking for. */
-export function applicantIntent(mode: SignupMode, organisation: string): string {
-  const named = organisation.trim();
+/**
+ * One sentence saying what an applicant is asking for.
+ *
+ * The organisation is optional because a response can arrive without it, and a
+ * queue that throws rather than saying a little less is a queue nobody can get
+ * into Questor through.
+ */
+export function applicantIntent(mode: SignupMode, organisation: string | null | undefined): string {
+  const named = (organisation ?? '').trim();
   if (mode === 'new-org') {
     return named ? `Wants to start a new organisation called ${named}.` : 'Wants to start a new organisation.';
   }
@@ -180,6 +186,68 @@ export function joinEmailCaution(mode: SignupMode, email: string, organisation: 
   if (origin === 'consumer-mailbox') return `Personal email address, not one at ${named}.`;
   if (origin === 'unrelated-domain') return `Email domain does not look like ${named}.`;
   return null;
+}
+
+/* --------------------------------------------------------------------------
+   The operator's queue
+   -------------------------------------------------------------------------- */
+
+/** One waiting request, in the shape the queue draws. */
+export interface QueuedSignup {
+  readonly id: string;
+  readonly name: string;
+  readonly email: string;
+  readonly mode: SignupMode;
+  readonly organisation: string;
+  readonly createdAt: string;
+}
+
+function textOf(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * A row of `GET /api/admin/signups`, read rather than assumed.
+ *
+ * The applicant's details arrive nested under `applicant`, because the
+ * "organisation" is `organisationName` for a new organisation and `orgSlug` for
+ * a join and only the server can say which. The queue read them from the top
+ * level, found `undefined`, and the page fell to its error boundary the first
+ * time anyone was waiting in it — with no way back, since "Try again" re-ran
+ * the same render. Approving a request is the only door into Questor, so this
+ * is the one page that must render whatever it is handed: a row missing a field
+ * says less, and a row with no id is left out rather than drawn with an
+ * Approve button no decision could be sent for.
+ */
+export function queuedSignup(raw: unknown): QueuedSignup | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
+  const id = textOf(row.id);
+  if (!id) return null;
+  const applicant = (row.applicant && typeof row.applicant === 'object' ? row.applicant : {}) as Record<string, unknown>;
+  return {
+    id,
+    name: textOf(applicant.name) || textOf(row.name),
+    email: textOf(applicant.email) || textOf(row.email),
+    mode: (applicant.mode ?? row.mode) === 'new-org' ? 'new-org' : 'join',
+    organisation: textOf(applicant.organisation),
+    createdAt: textOf(row.createdAt),
+  };
+}
+
+/** The queue as the page will draw it, with unusable rows left out. */
+export function queuedSignups(raw: unknown): QueuedSignup[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(queuedSignup).filter((row): row is QueuedSignup => row !== null);
+}
+
+/**
+ * How to name an applicant in a sentence addressed to the operator. A request
+ * that reached the queue without a name still has to be approvable, and
+ * "'s request was approved" names nobody.
+ */
+export function applicantName(signup: { readonly name: string; readonly email: string }): string {
+  return signup.name.trim() || signup.email.trim() || 'This applicant';
 }
 
 /** The queue with one request taken out, so the list settles after a decision. */

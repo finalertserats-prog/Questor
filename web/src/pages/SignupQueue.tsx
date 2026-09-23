@@ -5,19 +5,16 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
-import { applicantIntent, joinEmailCaution, withoutSignup, type SignupMode } from '../components/signupModel';
+import {
+  applicantIntent,
+  applicantName,
+  joinEmailCaution,
+  queuedSignups,
+  withoutSignup,
+  type QueuedSignup,
+} from '../components/signupModel';
 import { formatDate } from '../components/dateFormat';
 import { useToast } from '../components/Toast';
-
-interface PendingSignup {
-  id: string;
-  name: string;
-  email: string;
-  mode: SignupMode;
-  organisation: string;
-  status: string;
-  createdAt: string;
-}
 
 /**
  * The requests waiting on a person.
@@ -26,7 +23,7 @@ interface PendingSignup {
  * is already signed in — and the place an expired link sends them.
  */
 export function SignupQueue() {
-  const [signups, setSignups] = useState<PendingSignup[]>([]);
+  const [signups, setSignups] = useState<QueuedSignup[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // A failed read is not an empty queue: "No requests waiting" over a failed
@@ -38,8 +35,8 @@ export function SignupQueue() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api.get<{ signups: PendingSignup[] }>('/admin/signups?status=pending');
-      setSignups(data.signups ?? []);
+      const data = await api.get<{ signups?: unknown }>('/admin/signups?status=pending');
+      setSignups(queuedSignups(data.signups));
       setError('');
       setLoadFailed(false);
     } catch (err: unknown) {
@@ -54,21 +51,21 @@ export function SignupQueue() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const decide = async (signup: PendingSignup, decision: 'approve' | 'decline') => {
+  const decide = async (signup: QueuedSignup, decision: 'approve' | 'decline') => {
     setActingId(signup.id);
     setError('');
     try {
       await api.post(`/admin/signups/${signup.id}/${decision}`);
       setSignups((current) => withoutSignup(current, signup.id));
       setPendingDeclineId(null);
-      toast.show(`${signup.name}'s request was ${decision === 'approve' ? 'approved' : 'declined'}.`);
+      toast.show(`${applicantName(signup)}'s request was ${decision === 'approve' ? 'approved' : 'declined'}.`);
       // Re-read rather than trust the row we just removed: the same request can
       // be decided from the emailed link, or by another admin, while this page
       // is open, and the queue is the thing that has to be right.
       await load();
     } catch (err: unknown) {
       setError(err instanceof ApiError && err.status === 409
-        ? `${signup.name}'s request had already been decided. The list below is up to date.`
+        ? `${applicantName(signup)}'s request had already been decided. The list below is up to date.`
         : err instanceof Error ? err.message : 'Could not record that decision.');
       await load();
     } finally {
@@ -116,11 +113,12 @@ export function SignupQueue() {
                 <tbody>
                   {signups.map((signup) => {
                     const caution = joinEmailCaution(signup.mode, signup.email, signup.organisation);
+                    const who = applicantName(signup);
                     const busy = actingId === signup.id;
                     return (
                       <tr key={signup.id}>
                         <td>
-                          <div className="signup-who">{signup.name}</div>
+                          <div className="signup-who">{who}</div>
                           <div className="muted small">{signup.email}</div>
                           {caution && (
                             <div className="signup-flag">
@@ -133,11 +131,11 @@ export function SignupQueue() {
                         <td className="muted small">{formatDate(signup.createdAt)}</td>
                         <td>
                           <span className="row" style={{ gap: 6 }}>
-                            <button type="button" className="btn sm" disabled={busy} aria-label={`Approve ${signup.name}'s request`}
+                            <button type="button" className="btn sm" disabled={busy} aria-label={`Approve ${who}'s request`}
                               onClick={() => void decide(signup, 'approve')}>Approve</button>
                             {pendingDeclineId === signup.id ? (
                               <>
-                                <button type="button" className="btn sm secondary" disabled={busy} aria-label={`Confirm declining ${signup.name}'s request`}
+                                <button type="button" className="btn sm secondary" disabled={busy} aria-label={`Confirm declining ${who}'s request`}
                                   onClick={() => void decide(signup, 'decline')}>
                                   {busy ? 'Declining…' : 'Confirm decline'}
                                 </button>
@@ -145,7 +143,7 @@ export function SignupQueue() {
                                   onClick={() => setPendingDeclineId(null)}>Cancel</button>
                               </>
                             ) : (
-                              <button type="button" className="btn sm secondary" disabled={busy} aria-label={`Decline ${signup.name}'s request`}
+                              <button type="button" className="btn sm secondary" disabled={busy} aria-label={`Decline ${who}'s request`}
                                 onClick={() => setPendingDeclineId(signup.id)}>Decline</button>
                             )}
                           </span>
