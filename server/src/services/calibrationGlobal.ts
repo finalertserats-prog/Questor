@@ -164,7 +164,14 @@ export async function runGlobalCalibration(now = new Date()): Promise<{ groups: 
   for (const group of groups) {
     try {
       const rows = await prisma.calibrationGlobalObservation.findMany({
-        where: { roleKey: group.roleKey, competencyKey: group.competencyKey, band: group.band },
+        // The same window the groups were chosen on. Without it, a group that
+        // qualified on recent rows was then aggregated over its entire
+        // history, so the shared calibration could be decided by evidence the
+        // window was meant to have retired.
+        where: {
+          roleKey: group.roleKey, competencyKey: group.competencyKey, band: group.band,
+          createdAt: { gte: windowStart(thresholds, now) },
+        },
         orderBy: { createdAt: 'asc' },
         take: 20_000,
       });

@@ -78,10 +78,16 @@ reviewers decided is worth keeping whatever the scoring does.
 
 Per role × competency × band, over a 365-day window:
 
-- **Point estimate** — a recency-weighted median (180-day half-life), with each
-  reviewer's weight capped at 40% of the total. The cap is the real protection
-  against one loud reviewer: "three distinct reviewers" is a box a determined
-  person walks straight through with twenty reviews to two others' one each.
+- **A balanced sample, first.** Before any threshold is applied, each reviewer
+  keeps at most a fair share of the rows (their most recent). This is the real
+  protection against one loud reviewer, and it took two goes to get right:
+  capping only the *weight* fixed the point estimate and left the confidence
+  interval and the observation count still counting rows, so eighteen rows from
+  one person plus two colleagues agreeing once each still read as "twenty
+  independent observations". Now that sample balances to three rows and is held
+  as too thin — which is what it is.
+- **Point estimate** — a recency-weighted median (180-day half-life) over the
+  balanced sample, with each reviewer's weight additionally capped at 40%.
 - **Interval** — a distribution-free confidence interval for the median from
   the order statistics. Deliberately **unweighted**: recency weighting is an
   opinion about which observations matter more, and letting that opinion narrow
@@ -102,8 +108,8 @@ order a person would ask them, first failure reported:
 
 | Gate | Default |
 |---|---|
-| Paired observations | **15** (`calibrationMinObservations`, min 5) |
-| Distinct reviewers | **3** (`calibrationMinReviewers`, floor 3, never lower) |
+| Distinct reviewers | **3** (`calibrationMinReviewers`, floor 3, never lower) — checked first, because a balanced sample collapses when there are too few people and "too few reviews" would then name the wrong problem |
+| Paired observations, after balancing | **15** (`calibrationMinObservations`, min 5) |
 | Interval excludes zero | 95% |
 | Estimate agrees in sign with the interval | — |
 | Reviewers pointing the same way | **2/3** of those with a direction |
@@ -167,6 +173,10 @@ What the guardrails *do*:
 - 15 observations is a judgement, not a power calculation. It is the point at
   which the order-statistic interval starts to be informative, and it is
   configurable upwards for a reason.
+- The balanced sample makes the effective evidence smaller than the raw count,
+  sometimes much smaller. That is deliberate, and it means a role with a lot of
+  reviews but few reviewers will sit held for a long time. Held is the correct
+  state for it.
 
 ---
 

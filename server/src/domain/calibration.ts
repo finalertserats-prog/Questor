@@ -154,11 +154,15 @@ export function resolveThresholds(patch?: Partial<CalibrationThresholds>): Calib
   const t = { ...DEFAULT_CALIBRATION_THRESHOLDS, ...(patch ?? {}) };
   const clamp = (v: number, lo: number, hi: number, fallback: number) =>
     (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : fallback);
+  const minReviewers = Math.round(clamp(t.minReviewers, 3, 100, 3));
   return {
     minObservations: Math.round(clamp(t.minObservations, 5, 10_000, 15)),
-    minReviewers: Math.round(clamp(t.minReviewers, 3, 100, 3)),
+    minReviewers,
     minReviewerAgreement: clamp(t.minReviewerAgreement, 0.5, 1, 2 / 3),
-    maxReviewerWeightShare: clamp(t.maxReviewerWeightShare, 0.1, 1, 0.4),
+    // Never below 1/minReviewers: a 10% cap with three reviewers is a rule
+    // nothing can satisfy, and the water-filling would spin without ever
+    // reaching it. The floor keeps every setting feasible by construction.
+    maxReviewerWeightShare: clamp(t.maxReviewerWeightShare, 1 / minReviewers, 1, 0.4),
     // The bound is a product promise, not a setting: an organisation may make
     // it tighter and can never make it looser than one level.
     maxAbsDelta: clamp(t.maxAbsDelta, 0, 1, 1),
@@ -221,6 +225,33 @@ export function capReviewerWeights(rows: readonly Weighted[], maxShare: number):
     if (!changed) break;
   }
   return capped;
+}
+
+/**
+ * The most rows any one reviewer may contribute to the SAMPLE — as opposed to
+ * to the weight.
+ *
+ * Capping the weight fixed the point estimate and left the confidence interval
+ * and the observation count still counting rows, which is most of the problem
+ * back again: one reviewer filing eighteen rows, plus two colleagues agreeing
+ * once each, produced an interval that excluded zero over twenty "independent"
+ * observations. Three reviewers had contributed; one reviewer had decided.
+ *
+ * So the sample itself is balanced first, and the thresholds are applied to
+ * what is left. The cap is the largest `c` for which taking at most `c` rows
+ * each still leaves no reviewer above `maxShare` of the result — found by
+ * scanning, because `c` appears on both sides.
+ */
+export function reviewerRowCap(counts: readonly number[], maxShare: number): number {
+  if (counts.length === 0) return 0;
+  if (maxShare >= 1) return Math.max(...counts);
+  let best = 0;
+  for (let c = 1; c <= Math.max(...counts); c += 1) {
+    const total = counts.reduce((a, n) => a + Math.min(n, c), 0);
+    if (c <= maxShare * total + 1e-9) best = c;
+    else break;
+  }
+  return best;
 }
 
 /** The weighted median: the value at which half the weight lies either side. */
@@ -331,8 +362,15 @@ export interface CalibrationAggregate {
   readonly competencyKey: string;
   readonly competencyId: string;
   readonly band: string;
-  /** Paired observations inside the window. */
+  /**
+   * The paired observations the thresholds are applied to: inside the window,
+   * and balanced so no reviewer supplies more than their share (see
+   * `reviewerRowCap`). This is also the number the provenance sentence quotes,
+   * because it is the number actually behind the adjustment.
+   */
   readonly observations: number;
+  /** Paired observations inside the window before the sample was balanced. */
+  readonly observationsInWindow: number;
   /** Observations seen at all, including those outside the window or unpaired. */
   readonly observationsSeen: number;
   readonly reviewers: number;
@@ -381,9 +419,15 @@ export function aggregate(input: AggregateInput): CalibrationAggregate {
   const excluded = new Set(input.excludedReviewerIds ?? []);
   const windowStart = new Date(now.getTime() - t.windowDays * DAY_MS);
 
-  const inWindow = input.observations.filter(
+  const rawInWindow = input.observations.filter(
     (o) => isPaired(o) && !excluded.has(o.reviewerId) && o.observedAt.getTime() >= windowStart.getTime(),
   );
+
+  // Balance the SAMPLE before any threshold touches it, so that "15 paired
+  // observations" means fifteen observations no one person supplied most of.
+  // Each reviewer keeps their most recent rows; the rest are still on the
+  // record, they simply do not get to be counted as independent evidence.
+  const inWindow = balanceSample(rawInWindow, t.maxReviewerWeightShare);
 
   const weighted: Weighted[] = inWindow.map((o) => ({
     value: o.delta as number,
@@ -426,6 +470,7 @@ export function aggregate(input: AggregateInput): CalibrationAggregate {
     competencyId: input.competencyId,
     band: input.band,
     observations: inWindow.length,
+    observationsInWindow: rawInWindow.length,
     observationsSeen: input.observations.length,
     reviewers: byReviewer.size,
     median,
@@ -439,6 +484,37 @@ export function aggregate(input: AggregateInput): CalibrationAggregate {
     reasons: withReasons.map((o) => o.reasonText),
     reasonAuthors: new Set(withReasons.map((o) => o.reviewerId)).size,
   };
+}
+
+/**
+ * Keep at most `reviewerRowCap` rows per reviewer, most recent first.
+ *
+ * Most recent rather than random: the whole model weights recent evidence more
+ * heavily, and a sample that dropped a reviewer's newest rows to keep their
+ * oldest would contradict that everywhere else.
+ */
+function balanceSample(
+  observations: readonly CalibrationObservation[], maxShare: number,
+): CalibrationObservation[] {
+  const byReviewer = new Map<string, CalibrationObservation[]>();
+  for (const o of observations) {
+    const list = byReviewer.get(o.reviewerId) ?? [];
+    list.push(o);
+    byReviewer.set(o.reviewerId, list);
+  }
+  // At least one row each, always. With fewer reviewers than 1/maxShare the
+  // cap is arithmetically unsatisfiable — three reviewers can never each hold
+  // under a quarter — and returning nothing would make a thin sample look like
+  // no sample, losing the counts the admin view reports and the reviewer
+  // shortfall the gate below wants to name. One row each is the honest floor:
+  // the sample is then genuinely tiny, and the thresholds say so.
+  const cap = Math.max(1, reviewerRowCap([...byReviewer.values()].map((list) => list.length), maxShare));
+  const kept: CalibrationObservation[] = [];
+  for (const list of byReviewer.values()) {
+    const newestFirst = [...list].sort((a, b) => b.observedAt.getTime() - a.observedAt.getTime());
+    kept.push(...newestFirst.slice(0, cap));
+  }
+  return kept.sort((a, b) => a.observedAt.getTime() - b.observedAt.getTime());
 }
 
 function plainMedian(values: readonly number[]): number {
@@ -710,17 +786,28 @@ export function decideActivation(input: ActivationInput): ActivationDecision {
   if (!input.enabled) {
     return hold('switched_off', 'Calibration is switched off, so nothing was applied.', 0, provenance);
   }
-  if (agg.observations < t.minObservations) {
+  if (agg.observations === 0) {
     return hold(
       'too_few_observations',
-      `Too few reviews to say anything: ${agg.observations} of the ${t.minObservations} paired reviews needed.`,
+      'No reviewer has yet recorded a level for this competency that the model also graded, so there is nothing to compare.',
       0, provenance,
     );
   }
+  // Reviewers before observations, because the sample is balanced per reviewer
+  // (see `balanceSample`): with too few people the row count collapses, and
+  // "too few reviews" would then be a true sentence that names the wrong
+  // problem. The number of people is the thing to fix.
   if (agg.reviewers < t.minReviewers) {
     return hold(
       'too_few_reviewers',
       `Only ${agg.reviewers} reviewer${agg.reviewers === 1 ? '' : 's'} contributed; ${t.minReviewers} are needed so that no one person can move a role's scoring.`,
+      0, provenance,
+    );
+  }
+  if (agg.observations < t.minObservations) {
+    return hold(
+      'too_few_observations',
+      `Too few reviews to say anything: ${agg.observations} of the ${t.minObservations} paired reviews needed${agg.observationsInWindow > agg.observations ? `, counting at most a fair share from each reviewer (${agg.observationsInWindow} reviews in all)` : ''}.`,
       0, provenance,
     );
   }

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_CALIBRATION_THRESHOLDS, aggregate, applyCalibration, boundDelta, capReviewerWeights,
   competencyKeyOf, decideActivation, describeProvenance, evaluateFairness, isShareableRoleKey,
-  magnitudeOf, medianInterval, projectPassRate, recencyWeight, resolveThresholds, roleKeyOf,
+  magnitudeOf, medianInterval, projectPassRate, recencyWeight, resolveThresholds, reviewerRowCap, roleKeyOf,
   weightedMedian, type AssessmentSnapshot, type CalibrationObservation, type CalibrationThresholds,
   type FairnessCheck,
 } from '../src/domain/calibration.js';
@@ -100,6 +100,34 @@ describe('resolveThresholds', () => {
 
   it('never lets the distinct-reviewer floor go below three', () => {
     expect(resolveThresholds({ minReviewers: 1 }).minReviewers).toBe(3);
+  });
+
+  it('never accepts a reviewer share no sample could satisfy', () => {
+    // A 10% cap with three reviewers is a rule nothing can meet.
+    const t = resolveThresholds({ maxReviewerWeightShare: 0.1, minReviewers: 3 });
+    expect(t.maxReviewerWeightShare).toBeCloseTo(1 / 3, 6);
+  });
+
+  it('allows a tight share once there are enough reviewers to satisfy it', () => {
+    expect(resolveThresholds({ maxReviewerWeightShare: 0.1, minReviewers: 10 }).maxReviewerWeightShare).toBeCloseTo(0.1, 6);
+  });
+});
+
+describe('reviewerRowCap', () => {
+  it('lets a balanced sample through whole', () => {
+    expect(reviewerRowCap([7, 7, 6], 0.4)).toBe(7);
+  });
+
+  it('cuts a stacked sample down to almost nothing', () => {
+    expect(reviewerRowCap([18, 1, 1], 0.4)).toBe(1);
+  });
+
+  it('is zero when there is nothing to cap', () => {
+    expect(reviewerRowCap([], 0.4)).toBe(0);
+  });
+
+  it('caps nobody when one reviewer is allowed everything', () => {
+    expect(reviewerRowCap([18, 1, 1], 1)).toBe(18);
   });
 });
 
@@ -250,12 +278,31 @@ describe('aggregate', () => {
     expect(a.reviewerAgreement).toBe(1);
   });
 
+  it('balances the SAMPLE, not only the weight, so a row count cannot be stacked', () => {
+    // 18 rows from one person and one each from two colleagues. Capping the
+    // weight alone left an interval computed over "20 observations", which is
+    // one person's opinion wearing a sample's clothes.
+    const loud = Array.from({ length: 18 }, (_, i) => obs({ reviewerId: 'loud', delta: -1, reviewId: `l${i}` }));
+    const a = agg([...loud, obs({ reviewerId: 'b', delta: -1, reviewId: 'b1' }), obs({ reviewerId: 'c', delta: -1, reviewId: 'c1' })]);
+    expect(a.observationsInWindow).toBe(20);
+    expect(a.observations).toBeLessThan(15);
+    expect(a.reviewers).toBe(3);
+  });
+
+  it('keeps a balanced sample whole', () => {
+    const a = agg(fixture(Array.from({ length: 21 }, () => -1), ['a', 'b', 'c']));
+    expect(a.observations).toBe(21);
+    expect(a.observationsInWindow).toBe(21);
+  });
+
   it('one loud reviewer cannot carry more than the share cap', () => {
     const loud = Array.from({ length: 20 }, (_, i) => obs({ reviewerId: 'loud', delta: -2, reviewId: `l${i}` }));
     const others = [obs({ reviewerId: 'b', delta: 0, reviewId: 'b1' }), obs({ reviewerId: 'c', delta: 0, reviewId: 'c1' })];
     const a = agg([...loud, ...others]);
     const loudShare = a.contributions.find((c) => c.reviewerId === 'loud')!.weightShare;
-    expect(loudShare).toBeCloseTo(0.4, 6);
+    // Never above the cap — and here below it, because balancing the sample
+    // has already cut this reviewer down before the weights are computed.
+    expect(loudShare).toBeLessThanOrEqual(0.4 + 1e-9);
   });
 
   it('ignores observations outside the window', () => {
@@ -269,14 +316,17 @@ describe('aggregate', () => {
   it('holds out an excluded reviewer without losing the record of them', () => {
     const observations = [
       ...Array.from({ length: 10 }, (_, i) => obs({ reviewerId: 'flagged', delta: -2, reviewId: `f${i}` })),
-      ...Array.from({ length: 4 }, (_, i) => obs({ reviewerId: 'b', delta: 0, reviewId: `b${i}` })),
+      ...['b', 'c', 'd'].flatMap((reviewerId) =>
+        Array.from({ length: 4 }, (_, i) => obs({ reviewerId, delta: 0, reviewId: `${reviewerId}${i}` }))),
     ];
     const a = aggregate({
       roleKey: 'catalog:x', competencyKey: 'k', competencyId: 'c1', band: 'mid',
       observations, now: NOW, thresholds: T, excludedReviewerIds: ['flagged'],
     });
-    expect(a.observations).toBe(4);
-    expect(a.observationsSeen).toBe(14);
+    expect(a.observations).toBe(12);
+    // Held out of the statistics, still on the record: the rows exist and are
+    // counted among everything seen, they simply do not get a vote today.
+    expect(a.observationsSeen).toBe(22);
     expect(a.contributions.some((c) => c.reviewerId === 'flagged')).toBe(false);
   });
 
@@ -286,18 +336,19 @@ describe('aggregate', () => {
   });
 
   it('counts the reviewers who WROTE, not the reviewers who disagreed', () => {
-    // Three reviewers disagree; only one of them writes anything down.
-    // Clustering one person's notes into "themes" republishes their words.
+    // Three reviewers disagree, in balanced numbers so the whole sample
+    // survives; only one of them writes anything down. Clustering that one
+    // person's notes into "themes" would republish their words.
     const a = agg([
-      obs({ reviewerId: 'a', delta: -1, reviewId: '1', reasonText: 'A strong answer names the outcome.' }),
-      obs({ reviewerId: 'a', delta: -1, reviewId: '2', reasonText: 'Again, no outcome given.' }),
-      obs({ reviewerId: 'a', delta: -1, reviewId: '3', reasonText: 'No measurable result anywhere.' }),
-      obs({ reviewerId: 'b', delta: -1, reviewId: '4' }),
-      obs({ reviewerId: 'c', delta: -1, reviewId: '5' }),
+      ...Array.from({ length: 5 }, (_, i) => obs({
+        reviewerId: 'a', delta: -1, reviewId: `a${i}`, reasonText: 'A strong answer names the outcome.',
+      })),
+      ...Array.from({ length: 5 }, (_, i) => obs({ reviewerId: 'b', delta: -1, reviewId: `b${i}` })),
+      ...Array.from({ length: 5 }, (_, i) => obs({ reviewerId: 'c', delta: -1, reviewId: `c${i}` })),
     ]);
     expect(a.reviewers).toBe(3);
     expect(a.reasonAuthors).toBe(1);
-    expect(a.reasons).toHaveLength(3);
+    expect(a.reasons).toHaveLength(5);
   });
 
   it('counts each writer once however much they wrote', () => {
@@ -326,16 +377,16 @@ describe('decideActivation', () => {
   const decide = (observations: readonly CalibrationObservation[], fairness = CLEAN_FAIRNESS, enabled = true) =>
     decideActivation({ aggregate: agg(observations), thresholds: T, fairness, enabled });
 
-  it('no evidence: holds and says how far off it is', () => {
+  it('no evidence: holds and says there is nothing to compare', () => {
     const d = decide([]);
     expect(d.outcome).toBe('hold');
     expect(d.reason).toBe('too_few_observations');
     expect(d.delta).toBe(0);
-    expect(d.statement).toContain('Too few reviews');
+    expect(d.statement).toContain('nothing to compare');
   });
 
-  it('thin evidence: holds on the observation count before anything else', () => {
-    const d = decide(fixture([-1, -1, -1, -1, -1], ['a', 'b', 'c']));
+  it('thin evidence from enough people: holds on the observation count', () => {
+    const d = decide(fixture(Array.from({ length: 6 }, () => -1), ['a', 'b', 'c']));
     expect(d.reason).toBe('too_few_observations');
   });
 
@@ -353,7 +404,9 @@ describe('decideActivation', () => {
     ];
     const d = decide(observations);
     expect(d.outcome).toBe('hold');
-    expect(['reviewers_disagree', 'interval_includes_zero', 'estimate_outside_interval']).toContain(d.reason);
+    // Balancing the sample means this never even reaches the statistics: one
+    // person's twenty rows count for one person's worth of evidence.
+    expect(['too_few_observations', 'reviewers_disagree', 'interval_includes_zero', 'estimate_outside_interval']).toContain(d.reason);
     expect(d.delta).toBe(0);
   });
 
