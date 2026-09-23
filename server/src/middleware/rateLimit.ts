@@ -175,11 +175,15 @@ export const LOGIN_WINDOW_MS = 15 * 60_000;
 const SUBJECT_FAILURE = (status: number): boolean => status === 401 || status === 403;
 
 /**
- * Which answers charge the ADDRESS bucket: the above, plus anything the
- * server refused as a bad request. That bucket is per address and very loose,
- * so it costs a person nothing and still meters a flood of garbage.
+ * Which answers charge the ADDRESS bucket: the above, plus anything the server
+ * refused as a bad request, plus an attempt already over an account's ceiling.
+ *
+ * That bucket is per address and very loose, so it costs a person nothing and
+ * still meters a flood of garbage. 429 is in it because an attempt past one
+ * account's ceiling is still an attempt: without it, hammering one account
+ * would accrue nothing against the address at all.
  */
-const ADDRESS_FAILURE = (status: number): boolean => SUBJECT_FAILURE(status) || status === 400;
+const ADDRESS_FAILURE = (status: number): boolean => SUBJECT_FAILURE(status) || status === 400 || status === 429;
 
 export interface FailureRateLimitOptions {
   readonly name: string;

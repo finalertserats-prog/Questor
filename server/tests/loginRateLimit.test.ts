@@ -151,6 +151,16 @@ describe('the address ceiling that remains', () => {
     expect(LOGIN_FAILURES_PER_ADDRESS).toBeGreaterThanOrEqual(LOGIN_FAILURES_PER_ACCOUNT * 5);
   });
 
+  it('meters attempts that are already past an account ceiling', async () => {
+    // Without this, hammering ONE account accrues nothing against the address
+    // at all: every attempt past its ceiling answers 429 and, if 429 did not
+    // count, the address bucket would never move.
+    const app = createApp();
+    for (let i = 0; i < LOGIN_FAILURES_PER_ADDRESS + 5; i++) await signIn(app, staff[7], 'wrong-password-entirely');
+    // A different account, same address: the address bucket is what refuses now.
+    expect((await signIn(app, staff[8], PASSWORD)).status).toBe(429);
+  }, 120_000);
+
   it('still stops one address grinding through many accounts', async () => {
     const app = createApp();
     let refused = 0;
