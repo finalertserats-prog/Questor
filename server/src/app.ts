@@ -276,13 +276,23 @@ export function createApp() {
   // meets it — each field asks once per visit — and low enough that a loop
   // does. Per user rather than per IP: a whole office behind one address must
   // not share one person's budget.
-  // `authenticate` ahead of the limiter, not only inside the router: without
-  // it req.auth is not set yet and every user behind one address would share
-  // one budget.
-  app.use('/api/drafts', authenticate, rateLimit({
+  // Every /suggest and /tidy is a model call, so an unbounded one is somebody
+  // else's bill. Generous enough that a person writing a job advert never
+  // meets it — each field asks once per visit — and low enough that a loop
+  // does. Per user rather than per IP: a whole office behind one address must
+  // not share one person's budget, which is why `authenticate` runs ahead of
+  // the limiter rather than only inside the router.
+  //
+  // The two that call a model, and not /accepted. That one writes the record
+  // that a draft was taken; it costs nothing to serve, and it is asked for
+  // AFTER the model call it describes. Counting it would spend two units on
+  // one call and, at the limit, throw away the audit for a draft the person
+  // had already been given.
+  app.use(['/api/drafts/suggest', '/api/drafts/tidy'], authenticate, rateLimit({
     name: 'field-drafts', windowMs: 60 * 60_000, max: 240,
     keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
-  }), fieldDraftsRouter);
+  }));
+  app.use('/api/drafts', fieldDraftsRouter);
   app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
