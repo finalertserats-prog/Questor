@@ -15,17 +15,17 @@ const CHOICES: ReadonlyArray<{ value: MfaPolicy; label: string; detail: string }
   {
     value: 'everyone',
     label: 'Everyone',
-    detail: 'Every person in this organisation enters a code from their email after their password.',
+    detail: 'Every person here enters a code from their email after their password. The strongest setting, and the one that asks the most of people who sign in many times a day.',
   },
   {
     value: 'admins',
     label: 'Administrators only',
-    detail: 'The accounts that can add people, change roles and read the audit trail. This is the default.',
+    detail: 'The accounts that can add people, change roles, read the audit trail and export candidate data. Recommended: it protects what matters most and asks nothing of everybody else.',
   },
   {
     value: 'off',
     label: 'Nobody',
-    detail: 'A password alone signs anyone in. The platform owner is still asked for a code; that is not an organisation’s choice to make.',
+    detail: 'A password alone signs anyone in. This is where every organisation starts, so you can turn it on when you are ready rather than the day you arrive.',
   },
 ];
 
@@ -90,6 +90,26 @@ export function SignInPolicySetting() {
 
       {settings && (
         <>
+          {/* Shown only while it is off, and said as what will happen rather
+              than as an exhortation. Someone switching a security control on
+              needs to know what the next sign-in looks like — theirs included —
+              and that it is one press to switch back. */}
+          {settings.mfaPolicy === 'off' && (
+            <div className="signin-off-note">
+              <p>
+                Sign-in codes are <strong>off</strong> for your organisation. Turning them on takes
+                one press below and applies from the next sign-in: the person types their password,
+                we email them six digits, and they type those in. Nobody is signed out, and nothing
+                else changes.
+              </p>
+              <p className="muted small">
+                Try it on your own account first. If a code does not arrive, set this back to
+                Nobody and ask your Questor contact to check the email settings — a code that
+                cannot be delivered is a door nobody can open.
+              </p>
+            </div>
+          )}
+
           <fieldset className="policy-choices">
             <legend className="field-label">Who enters a code after their password</legend>
             {CHOICES.map((choice) => (

@@ -271,3 +271,19 @@
   margin-top: 3px;
   flex: 0 0 auto;
 }
+
+/* "Sign-in codes are off" (Admin → Organisation).
+   A note that explains what turning it on will do, marked by a rule down its
+   leading edge like every other note here — never a tinted block, which would
+   read as a warning about a setting that is simply not on yet. */
+.signin-off-note {
+  margin-top: 12px;
+  padding: 10px 0 10px 12px;
+  border-left: var(--rail) solid var(--accent-edge);
+}
+.signin-off-note p {
+  margin: 0 0 6px;
+}
+.signin-off-note p:last-child {
+  margin-bottom: 0;
+}

@@ -1,15 +1,28 @@
 // Who has to enter a code after their password, per organisation.
 //
-// The default is "admins" rather than "everyone" because an organisation that
-// finds the code step painful will turn it off entirely, and losing it for the
-// admins is the loss that matters: an admin account is the one that can add
-// people, change roles, read the audit trail and reach candidate data in bulk.
-// A default nobody switches off is worth more than a stricter one everybody does.
+// It ships DORMANT. Every organisation, new ones included, starts at 'off' and
+// an admin turns it on.
+//
+// That is the owner's call and it is the right one. A default of 'admins' would
+// mean that the moment this deploys, the owner's own account starts needing an
+// emailed code — before anybody has watched a single code arrive on this
+// deployment's mail setup. And if mail turns out not to work, the way back in
+// is the platform operator, who is the same person. A security control switched
+// on by a deploy, whose failure mode is locking out the one account that could
+// fix it, is not a safe default however good the control is.
+//
+// So the switch and everything behind it is built and tested; the organisation
+// chooses the day. Once a code has been seen to arrive, 'admins' is the setting
+// worth landing on — an admin account is the one that can add people, change
+// roles, read the audit trail and reach candidate data in bulk.
+//
+// The platform operator is the exception and is asked for a code whenever the
+// organisation has switched it on; see codeRequired below.
 
 export const MFA_POLICIES = ['everyone', 'admins', 'off'] as const;
 export type MfaPolicy = (typeof MFA_POLICIES)[number];
 
-export const DEFAULT_MFA_POLICY: MfaPolicy = 'admins';
+export const DEFAULT_MFA_POLICY: MfaPolicy = 'off';
 
 /** The roles a policy of 'admins' covers. */
 const ELEVATED_ROLES = new Set(['admin']);
@@ -33,19 +46,31 @@ export interface CodeRequirement {
 /**
  * Whether this sign-in has to be met with a code.
  *
- * The platform operator is always asked, whatever an organisation has chosen:
- * that account can reach the shared role catalog and the question library, so
- * it is not an organisation's decision to make. An organisation may not turn
- * the code step off for the owner's account by turning it off for their own.
+ * 'off' means off for everyone, the platform operator included. That is what
+ * makes "ships dormant" true: an operator override here would mean the deploy
+ * itself starts asking the owner for an emailed code, which is precisely the
+ * thing shipping dormant exists to avoid — and the owner is also the person the
+ * break-glass path runs through, so they are the worst account to lock out
+ * before anyone has watched a code arrive.
+ *
+ * Once an organisation HAS switched it on, the operator is always included and
+ * cannot be carved out by role. That is the rule worth keeping: the operator
+ * account reaches the shared role catalog and the question library across every
+ * organisation, so an organisation choosing 'admins' does not get to decide
+ * that the owner signing into it is exempt.
+ *
+ * The two readings differ only in the 'off' case, and only there does the
+ * decision about the owner's own account belong to the owner.
  */
 export function codeRequired(input: {
   readonly policy: MfaPolicy;
   readonly role: string;
   readonly platformOperator: boolean;
 }): CodeRequirement {
+  if (input.policy === 'off') return { required: false, reason: 'not_required' };
   if (input.platformOperator) return { required: true, reason: 'platform_operator' };
   if (input.policy === 'everyone') return { required: true, reason: 'policy' };
-  if (input.policy === 'admins' && ELEVATED_ROLES.has(input.role)) return { required: true, reason: 'role' };
+  if (ELEVATED_ROLES.has(input.role)) return { required: true, reason: 'role' };
   return { required: false, reason: 'not_required' };
 }
 

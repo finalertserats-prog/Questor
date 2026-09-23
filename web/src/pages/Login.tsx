@@ -106,7 +106,9 @@ export function Login() {
           <div className="small muted" style={{ textAlign: 'center' }}>
             No account yet? <Link to="/signup">Ask for one</Link>
             <br />
-            <Link to="/signup?mode=new-org">Bring your organisation to Questor</Link>
+            {/* The onboarding lane owns what is behind this; the front door
+                owns getting people to it. */}
+            <Link to="/onboard">Bring your organisation to Questor</Link>
             <br />
             <Link to="/demo">Ask for a demo</Link>
           </div>

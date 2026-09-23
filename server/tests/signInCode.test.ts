@@ -69,8 +69,14 @@ beforeEach(async () => {
   await prisma.signInChallenge.deleteMany({});
   await prisma.trustedDevice.deleteMany({});
   await prisma.auditEvent.deleteMany({});
-  // Back to the default policy ('admins') and a fresh device generation.
-  await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: '{}', mfaEpoch: 0, listed: true } });
+  // Most of this file is about what the code step DOES, so the organisation
+  // has switched it on. The product default is 'off' (it ships dormant), and
+  // the tests that care about that say so explicitly rather than leaning on
+  // this line — see "who is asked for a code" above.
+  await prisma.tenant.update({
+    where: { id: fx.tenantId },
+    data: { policyJson: JSON.stringify({ mfaPolicy: 'admins' }), mfaEpoch: 0, listed: true },
+  });
   await prisma.user.updateMany({ where: { tenantId: fx.tenantId }, data: { mfaBypassUntil: null } });
   // Roles, passwords and session generations reset too: several tests below
   // move one of them, and a test that fails part-way would otherwise poison
@@ -82,7 +88,21 @@ beforeEach(async () => {
 afterAll(() => { _resetEmail(); });
 
 describe('who is asked for a code', () => {
-  it('asks an admin, because the default policy covers admins', async () => {
+  it('asks nobody at all until an organisation turns it on', async () => {
+    // It ships dormant. An organisation with NOTHING stored is 'off', and that
+    // has to be true of an admin too — the whole point is that the deploy
+    // itself does not start demanding codes of the people who would have to fix
+    // it if they did not arrive.
+    await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: '{}' } });
+    const res = await signIn(fx.adminEmail);
+    expect(res.status).toBe(200);
+    expect(res.body.mfa).toBeUndefined();
+    expect(typeof res.body.token).toBe('string');
+    expect(outbox).toEqual([]);
+  });
+
+  it('asks an admin once the organisation chooses administrators', async () => {
+    await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: JSON.stringify({ mfaPolicy: 'admins' }) } });
     const res = await signIn(fx.adminEmail);
     expect(res.status).toBe(200);
     expect(res.body.mfa).toBe('code_sent');
@@ -90,7 +110,8 @@ describe('who is asked for a code', () => {
     expect(outbox.map((m) => m.to)).toEqual([fx.adminEmail]);
   });
 
-  it('does not ask a recruiter under that policy', async () => {
+  it('leaves a recruiter alone under that setting', async () => {
+    await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: JSON.stringify({ mfaPolicy: 'admins' }) } });
     const res = await signIn(fx.recruiterEmail);
     expect(res.status).toBe(200);
     expect(res.body.mfa).toBeUndefined();
@@ -103,18 +124,35 @@ describe('who is asked for a code', () => {
     expect((await signIn(fx.recruiterEmail)).body.mfa).toBe('code_sent');
   });
 
-  it('asks nobody when the organisation switches it off', async () => {
+  it('asks nobody when the organisation switches it back off', async () => {
     await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: JSON.stringify({ mfaPolicy: 'off' }) } });
     expect((await signIn(fx.adminEmail)).body.mfa).toBeUndefined();
   });
 
-  it('asks the platform operator whatever the organisation chose', async () => {
+  it('leaves the platform operator alone too while it is off', async () => {
+    // 'off' means off, or "ships dormant" would not be true: the operator is
+    // the owner, and a deploy that starts asking THEM for a code is the exact
+    // failure shipping dormant exists to prevent — they are also the account
+    // the break-glass path runs through.
     await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: JSON.stringify({ mfaPolicy: 'off' }) } });
     const before = [...config.platformOperatorEmails];
     (config as { platformOperatorEmails: string[] }).platformOperatorEmails = [fx.recruiterEmail];
     try {
-      // An organisation must not be able to turn the code step off for the
-      // owner's account by turning it off for their own.
+      expect((await signIn(fx.recruiterEmail)).body.mfa).toBeUndefined();
+    } finally {
+      (config as { platformOperatorEmails: string[] }).platformOperatorEmails = before;
+    }
+  });
+
+  it('asks the platform operator whatever an organisation that HAS turned it on chose', async () => {
+    // Once it is on, the operator cannot be carved out by role: that account
+    // reaches the shared role catalog and the question library across every
+    // organisation, so it is not one organisation's call.
+    await prisma.tenant.update({ where: { id: fx.tenantId }, data: { policyJson: JSON.stringify({ mfaPolicy: 'admins' }) } });
+    const before = [...config.platformOperatorEmails];
+    (config as { platformOperatorEmails: string[] }).platformOperatorEmails = [fx.recruiterEmail];
+    try {
+      // A recruiter, so 'admins' alone would not have asked them.
       expect((await signIn(fx.recruiterEmail)).body.mfa).toBe('code_sent');
     } finally {
       (config as { platformOperatorEmails: string[] }).platformOperatorEmails = before;
