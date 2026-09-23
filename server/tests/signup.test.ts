@@ -29,6 +29,7 @@ import { prisma } from '../src/db.js';
 import { hashPassword, signToken } from '../src/services/auth.js';
 import { hashSignupDecisionToken, mintSignupDecisionToken } from '../src/services/signup.js';
 import { runRetentionSweep } from '../src/services/dataRights.js';
+import { _resetRateLimits } from '../src/middleware/rateLimit.js';
 import { wipe as wipeAll } from '../src/seed/demoData.js';
 
 const app = createApp();
@@ -83,6 +84,12 @@ beforeEach(async () => {
   config.signupApproverEmail = 'operator@example.com';
   config.webOrigin = 'https://questor.example';
   await wipe();
+  // The abuse defences claim each limit atomically as well as counting rows
+  // (services/signupAbuse.ts), and a claim outlives a wipe of the tables. Every
+  // case below asks from the same address for the same organisation, so without
+  // this the fourth one is refused by the third one's allowance.
+  _resetRateLimits();
+  await prisma.rateLimitBucket.deleteMany();
 });
 
 describe('operator-approved signup', () => {

@@ -85,7 +85,21 @@ export async function createSignupRequest(input: CreateSignupInput): Promise<voi
   if (verdict.kind === 'refuse') throw new HttpError(verdict.status, verdict.message);
   // Answered exactly as success is answered, with nothing created: see
   // services/signupAbuse.ts for why saying anything else would be an answer.
-  if (verdict.kind === 'silently-drop') return;
+  //
+  // The acknowledgement goes out all the same. Saying nothing back to the
+  // applicant was the loudest signal of the lot: anyone probing a name with
+  // their own address learnt it was in cooldown from the email that never
+  // arrived, which is exactly the question the identical response exists to
+  // refuse. The operator's notice is not sent, because there is no request for
+  // them to read; that one is not observable from outside.
+  if (verdict.kind === 'silently-drop') {
+    try {
+      await getEmail().send(renderSignupAcknowledgementEmail({ to: email, name: input.name }));
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Signup acknowledgement email could not be sent');
+    }
+    return;
+  }
 
   const token = mintSignupDecisionToken();
   const organisation = input.mode === 'new-org' ? input.organisationName! : input.orgCode!;
@@ -244,7 +258,10 @@ export async function decideSignupRequest(opts: {
   let createdUserId: string | undefined;
   let createdTenantId: string | undefined;
   let declinedReason: string | null = null;
-  let grantedAreaSlugs: readonly string[] = [];
+  let grantedAreaSlugs: string[] = [];
+  // Asked for but not granted, because the catalog retired the area between
+  // the request and the decision. Recorded so the gap has an explanation.
+  let droppedAreaSlugs: string[] = [];
 
   const transitioned = await prisma.$transaction(async (tx) => {
     const claimed = await tx.signupRequest.updateMany({
@@ -300,13 +317,18 @@ export async function decideSignupRequest(opts: {
         model: 'SignupRequest', id: row.id, field: 'businessAreasJson',
       });
       if (Array.isArray(slugs) && slugs.length > 0) {
-        const domains = await tx.catalogDomain.findMany({ where: { slug: { in: slugs }, status: 'active' }, select: { id: true } });
+        const domains = await tx.catalogDomain.findMany({ where: { slug: { in: slugs }, status: 'active' }, select: { id: true, slug: true } });
         if (domains.length > 0) {
           await tx.tenantBusinessArea.createMany({
             data: domains.map((d) => ({ tenantId: tenant.id, domainId: d.id })),
           });
         }
-        grantedAreaSlugs = slugs;
+        // What was granted, not what was asked for. Recording the request's
+        // slugs here would have the audit trail say an organisation was set up
+        // with an area that had been retired in the meantime and never reached
+        // it — a record of the wrong thing is worse than no record.
+        grantedAreaSlugs = domains.map((d) => d.slug);
+        droppedAreaSlugs = slugs.filter((slug) => !grantedAreaSlugs.includes(slug));
       }
       createdTenantId = tenant.id;
       createdUserId = user.id;
@@ -327,6 +349,7 @@ export async function decideSignupRequest(opts: {
     // has an answer from the moment the account exists.
     regionCode: row.regionCode ?? undefined,
     businessAreas: grantedAreaSlugs.length > 0 ? grantedAreaSlugs : undefined,
+    businessAreasDropped: droppedAreaSlugs.length > 0 ? droppedAreaSlugs : undefined,
   });
   // The account exists once the transaction above committed. A welcome mail
   // that bounces must not turn that into a 500, which then reads as "already

@@ -7,10 +7,16 @@
  * so theirs looks like the duplicate). Four checks, because they stop four
  * different people.
  *
- * All of it is decided from the database rather than the in-process rate
- * limiter: these limits have to hold across instances and across restarts, and
- * the request limiter in `middleware/rateLimit.ts` is switched off under test,
- * which would have left the defences unexercised by every test that matters.
+ * Each limit is decided twice, on purpose. The rows are the durable record —
+ * they survive a restart, they hold whatever the deployment's rate-limit store
+ * is, and an operator can look at them — but reading a count and then writing
+ * against it has a window in the middle that a burst walks straight through.
+ * So every limit is also claimed atomically through the shared rate-limit
+ * store, whose increment is one write that returns its own count.
+ *
+ * None of it goes through the request middleware in `middleware/rateLimit.ts`,
+ * which is switched off under NODE_ENV=test: that would have left every one of
+ * these defences unexercised by the tests that matter most.
  *
  * The IP limiter in `app.ts` stays where it is. It is the cheap first door;
  * this is the one that knows what was asked for.
@@ -18,6 +24,7 @@
 
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
+import { consume } from '../middleware/rateLimit.js';
 import {
   DAY_MS, MAX_PENDING_REQUESTS, MAX_REQUESTS_PER_EMAIL_PER_DAY,
   MAX_REQUESTS_PER_EMAIL_DOMAIN_PER_DAY, ORG_NAME_COOLDOWN_HOURS,
@@ -87,8 +94,8 @@ export async function guardSignupRequest(input: SignupGuardInput): Promise<Signu
     }
   }
 
-  if (input.mode === 'new-org' && input.organisationName) {
-    const key = orgNameKey(input.organisationName);
+  const key = input.mode === 'new-org' && input.organisationName ? orgNameKey(input.organisationName) : '';
+  if (key) {
     const cooldownSince = new Date(now.getTime() - ORG_NAME_COOLDOWN_HOURS * 60 * 60_000);
     const recent = await prisma.signupRequest.findFirst({
       where: { orgNameKey: key, createdAt: { gte: cooldownSince } },
@@ -100,7 +107,64 @@ export async function guardSignupRequest(input: SignupGuardInput): Promise<Signu
     }
   }
 
+  // The counts above are read, judged, and only then written against — three
+  // requests arriving together all read a count below the limit and all get
+  // through. The rows are the durable record (they survive a restart, and they
+  // are what an operator can look at), but on their own they are a check with
+  // a window in it.
+  //
+  // So each limit is also claimed here, through the shared rate-limit store,
+  // whose increment is one atomic write that returns the count it produced
+  // (middleware/rateLimitStores.ts). In production that store is the database,
+  // so the claim holds across instances too. Nothing below can be spent by a
+  // request the checks above already refused.
+  return claimAtomically(email, domain, key);
+}
+
+/**
+ * The same four limits again, as atomic claims rather than as reads.
+ *
+ * Deliberately after the row-backed checks and never before them: a claim is
+ * spent whether or not the request goes on to be created, so spending one on a
+ * request that the durable check would have refused anyway would let a refused
+ * attempt eat a real applicant's allowance.
+ */
+async function claimAtomically(email: string, domain: string, orgKey: string): Promise<SignupGuardVerdict> {
+  const claims: { name: string; key: string; windowMs: number; max: number }[] = [
+    { name: 'signup-email', key: email, windowMs: DAY_MS, max: MAX_REQUESTS_PER_EMAIL_PER_DAY },
+  ];
+  if (domain) claims.push({ name: 'signup-email-domain', key: domain, windowMs: DAY_MS, max: MAX_REQUESTS_PER_EMAIL_DOMAIN_PER_DAY });
+
+  for (const claim of claims) {
+    const verdict = await consume(claim.name, claim.key, claim.windowMs, claim.max, { failClosed: true });
+    if (!verdict.allowed) return { kind: 'refuse', status: 429, message: TOO_MANY, reason: claim.name };
+  }
+
+  // One name, once per cooldown. Answered as a suppressed duplicate rather
+  // than as a refusal, to match the row-backed check above exactly: which of
+  // the two noticed must not be visible from outside.
+  if (orgKey) {
+    const held = await consume('signup-org-name', orgKey, ORG_NAME_COOLDOWN_HOURS * 60 * 60_000, 1, { failClosed: true });
+    if (!held.allowed) return { kind: 'silently-drop', reason: 'org_name_cooldown_race' };
+  }
   return { kind: 'allow' };
+}
+
+/**
+ * Organisation names on the platform, by their comparison key.
+ *
+ * Built once for a whole queue rather than per row: matching has to normalise
+ * both sides (see `orgNameKey`), so it cannot be a database comparison, and
+ * doing it per request would read every tenant once per row in the queue.
+ */
+export async function organisationNameIndex(): Promise<ReadonlyMap<string, string>> {
+  const tenants = await prisma.tenant.findMany({ where: { isDemo: false }, select: { name: true } });
+  const index = new Map<string, string>();
+  for (const tenant of tenants) {
+    const key = orgNameKey(tenant.name);
+    if (key && !index.has(key)) index.set(key, tenant.name);
+  }
+  return index;
 }
 
 /**
@@ -110,9 +174,10 @@ export async function guardSignupRequest(input: SignupGuardInput): Promise<Signu
  * the public form must never confirm, and exactly the fact the person deciding
  * needs in front of them.
  */
-export async function existingOrganisationMatch(organisationName: string): Promise<string | null> {
+export function existingOrganisationMatch(
+  organisationName: string,
+  index: ReadonlyMap<string, string>,
+): string | null {
   const key = orgNameKey(organisationName);
-  if (!key) return null;
-  const tenants = await prisma.tenant.findMany({ where: { isDemo: false }, select: { name: true } });
-  return tenants.find((t) => orgNameKey(t.name) === key)?.name ?? null;
+  return key ? index.get(key) ?? null : null;
 }

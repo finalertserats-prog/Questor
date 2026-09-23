@@ -92,6 +92,11 @@ beforeEach(async () => {
   config.signupApproverEmail = OPERATOR;
   config.webOrigin = 'https://questor.example';
   await wipeAll();
+  // The abuse defences claim each limit atomically as well as counting rows,
+  // and those claims outlive a wipe: without this, one test's organisation
+  // name holds its cooldown over every test after it.
+  _resetRateLimits();
+  await prisma.rateLimitBucket.deleteMany();
   await seedCatalog();
 });
 
@@ -217,6 +222,19 @@ describe('abuse defences', () => {
     expect(await prisma.signupRequest.count()).toBe(1);
   });
 
+  it('acknowledges a suppressed request the same way it acknowledges a real one', async () => {
+    await request(app).post('/api/signup').send(onboardBody());
+    sent.length = 0;
+    await request(app).post('/api/signup')
+      .send(onboardBody({ email: 'rival@competitor.test', name: 'Rival', organisationName: 'northstar robotics ltd' }));
+    // Silence here was the loudest signal of the lot: a prober using their own
+    // address would learn from the email that never came.
+    const ack = sent.find((m) => m.to === 'rival@competitor.test');
+    expect(ack).toBeTruthy();
+    // But nothing reached the owner, because there is nothing for them to read.
+    expect(sent.some((m) => m.to === OPERATOR)).toBe(false);
+  });
+
   it('lets a genuinely different organisation through', async () => {
     await request(app).post('/api/signup').send(onboardBody());
     const other = await request(app).post('/api/signup')
@@ -319,6 +337,24 @@ describe('the owner deciding in the console', () => {
     expect(after.businessAreas).toEqual(['engineering', 'finance']);
     expect(after.regionCode).toBe('IN');
     expect(event.actorType).toBe('user');
+  });
+
+  it('records the areas it granted, not the ones that were asked for', async () => {
+    const { auth } = await operatorAuth();
+    await request(app).post('/api/signup').send(onboardBody());
+    // The catalog retires one of the two areas between the asking and the
+    // deciding. The organisation cannot be set up with it, so the trail must
+    // not say it was.
+    await prisma.catalogDomain.updateMany({ where: { slug: 'finance' }, data: { status: 'retired' } });
+    const pending = await prisma.signupRequest.findFirstOrThrow();
+    await request(app).post(`/api/admin/signups/${pending.id}/approve`).set('Authorization', auth);
+
+    const tenant = await prisma.tenant.findFirstOrThrow({ where: { name: 'Northstar Robotics' }, include: { businessAreas: true } });
+    expect(tenant.businessAreas).toHaveLength(1);
+
+    const after = JSON.parse((await prisma.auditEvent.findFirstOrThrow({ where: { action: 'signup.approved' } })).afterJson);
+    expect(after.businessAreas).toEqual(['engineering']);
+    expect(after.businessAreasDropped).toEqual(['finance']);
   });
 
   it('records a decline and who made it', async () => {

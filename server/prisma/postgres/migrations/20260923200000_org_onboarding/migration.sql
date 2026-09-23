@@ -46,6 +46,13 @@ CREATE INDEX "TenantBusinessArea_tenantId_idx" ON "TenantBusinessArea"("tenantId
 -- The abuse checks read "recent requests for this key". Without these they are
 -- sequential scans of the whole queue on every public form submission, which
 -- is the flood they exist to stop.
+--
+-- Built without CONCURRENTLY, deliberately. CONCURRENTLY cannot run inside a
+-- transaction, and every migration here is applied inside one, so using it
+-- would mean a migration this deploy path cannot run. The lock it avoids is
+-- also not one worth avoiding on this table: "SignupRequest" holds pending
+-- account requests and a cap keeps it in the hundreds, so the build is
+-- milliseconds. Revisit if that table ever stops being a short queue.
 CREATE INDEX "SignupRequest_orgNameKey_createdAt_idx" ON "SignupRequest"("orgNameKey", "createdAt");
 
 -- CreateIndex

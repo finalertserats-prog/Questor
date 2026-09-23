@@ -176,7 +176,11 @@ catalogRouter.get('/experience-bands', (_req, res) => {
 catalogRouter.get('/roles', asyncHandler(async (req, res) => {
   const query = roleQuerySchema.parse(req.query);
   const normalizedQuery = normalizeTitle(query.q);
-  const scopeDomainIds = await scopedDomainIds(req.auth!.tenantId);
+  // Not read when the caller named a domain or asked for everything: this runs
+  // on every keystroke of the role typeahead, and a query whose answer cannot
+  // change the result is one more round trip per character typed.
+  const needsScope = !query.domainId && query.scope === 'mine';
+  const scopeDomainIds = needsScope ? await scopedDomainIds(req.auth!.tenantId) : [];
   const rows = await findActiveRoles(
     query.domainId,
     normalizedQuery,

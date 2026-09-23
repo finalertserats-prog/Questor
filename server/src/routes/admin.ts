@@ -25,7 +25,7 @@ import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
 import { getPipelineSummary } from '../services/pipeline.js';
 import { ORG_SLUG } from './orgs.js';
 import { decideSignupRequest, signupApplicant } from '../services/signup.js';
-import { existingOrganisationMatch } from '../services/signupAbuse.js';
+import { existingOrganisationMatch, organisationNameIndex } from '../services/signupAbuse.js';
 import { getTenantBusinessAreas, listBusinessAreas, setBusinessAreaLimit, setTenantBusinessAreas, MAX_BUSINESS_AREA_LIMIT } from '../services/businessAreas.js';
 import { orgSizeLabel } from '../domain/orgOnboarding.js';
 import { webhookUrlProblem } from '../services/webhookUrl.js';
@@ -142,14 +142,17 @@ adminRouter.get('/signups', requireCapability('admin:manage'), requireOperator, 
   // "an organisation" without seeing which areas of the shared catalog it
   // asked for is approving a blank.
   const areaSlugs = new Set(rows.flatMap((row) => parseJsonOptional<string[]>(row.businessAreasJson, [], { model: 'SignupRequest', id: row.id, field: 'businessAreasJson' })));
-  const [areaNames, regionNames] = await Promise.all([
+  const [areaNames, regionNames, orgNames] = await Promise.all([
     areaSlugs.size === 0 ? [] : prisma.catalogDomain.findMany({ where: { slug: { in: [...areaSlugs] } }, select: { slug: true, name: true } }),
     prisma.catalogRegion.findMany({ select: { code: true, name: true } }),
+    // Once for the whole queue: the name match has to normalise both sides, so
+    // per row it would be one read of every tenant per request waiting.
+    organisationNameIndex(),
   ]);
   const areaName = new Map(areaNames.map((a) => [a.slug, a.name]));
   const regionName = new Map(regionNames.map((r) => [r.code, r.name]));
 
-  const signups = await Promise.all(rows.map(async (row) => {
+  const signups = rows.map((row) => {
     const slugs = parseJsonOptional<string[]>(row.businessAreasJson, [], { model: 'SignupRequest', id: row.id, field: 'businessAreasJson' });
     return {
       ...row,
@@ -160,9 +163,9 @@ adminRouter.get('/signups', requireCapability('admin:manage'), requireOperator, 
       // The one fact the public form must never confirm, shown to the only
       // person entitled to know it: an organisation of this name is already
       // here, so this may be a duplicate — or someone reaching for the name.
-      existingOrganisation: row.organisationName ? await existingOrganisationMatch(row.organisationName) : null,
+      existingOrganisation: row.organisationName ? existingOrganisationMatch(row.organisationName, orgNames) : null,
     };
-  }));
+  });
   res.json({ signups });
 }));
 
