@@ -19,8 +19,27 @@ describe('the feedback question', () => {
     expect(FEEDBACK_EXPLANATION).toMatch(/only send feedback if you say yes/);
   });
 
-  it('says a person writes and checks it', () => {
-    expect(FEEDBACK_EXPLANATION).toMatch(/someone on the hiring team writes/i);
+  /**
+   * It used to say "someone on the hiring team writes a short note … checks it
+   * … It is not automatic". Often nobody does: the letter is written from the
+   * interview by Questor and sent on its own if no review arrives
+   * (server/src/services/autoFeedback.ts). That was a promise about authorship
+   * the product does not keep, so the words now name both possibilities.
+   */
+  it('says the note may be written by Questor or by a person, because either can happen', () => {
+    expect(FEEDBACK_EXPLANATION).toMatch(/by Questor, or by someone on the hiring team/i);
+  });
+
+  it('no longer claims a person always writes it', () => {
+    expect(FEEDBACK_EXPLANATION).not.toMatch(/someone on the hiring team writes a short note/i);
+  });
+
+  it('no longer claims it is not automatic', () => {
+    expect(FEEDBACK_EXPLANATION).not.toMatch(/not automatic/i);
+  });
+
+  it('still says what the note is about', () => {
+    expect(FEEDBACK_EXPLANATION).toMatch(/what would be worth working on/i);
   });
 
   it('says neither answer affects the application', () => {

@@ -403,3 +403,67 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --------------------------------------------------------------------------
+   Privacy — the public notice a candidate reads. It shares the About page's
+   section and note styles; only the lists below are its own. Marked with a
+   rule down the side rather than a tinted block, like every other state in
+   the product.
+   -------------------------------------------------------------------------- */
+
+.privacy-points {
+  max-width: 78ch;
+  margin: 0 0 10px;
+  padding: 0 0 0 18px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.privacy-points li {
+  margin: 0 0 5px;
+}
+
+.privacy-recipients {
+  display: grid;
+  gap: 12px;
+  margin: 2px 0 10px;
+  padding: 0;
+  list-style: none;
+}
+
+.privacy-recipient {
+  max-width: 78ch;
+  padding-left: 12px;
+  border-left: 2px solid var(--rule-strong);
+}
+
+.privacy-recipient-who {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.privacy-recipient-line {
+  margin: 0 0 2px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.privacy-recipient-label {
+  margin-right: 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.privacy-contact {
+  max-width: 78ch;
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}

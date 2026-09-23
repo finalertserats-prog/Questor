@@ -12,6 +12,7 @@ export function ComplianceFooter() {
     <footer className="compliance-footer">
       <p className="compliance-footer-line">
         Built for {FOOTER_FRAMEWORKS.join(' · ')} — <Link to={`/about#${TRUST_SECTION_ID}`}>how we handle your data</Link>
+        {' · '}<Link to="/privacy">Privacy</Link>
       </p>
       <CatalogAttribution className="compliance-footer-attribution" />
     </footer>

@@ -8,6 +8,7 @@ import { BrandLogo } from '../components/BrandLogo';
 import { Skeleton } from '../components/Skeleton';
 import { accommodationHint, canSubmitConsent, consentAction } from '../components/portalConsentModel';
 import { entryFromRefusal, portalEntry, type PortalEntry } from '../components/portalEntryModel';
+import { PrivacyLink } from '../components/PrivacyLink';
 import { aiAcknowledgement, splitDisclosure, whatHappensFirst } from '../components/interviewerModel';
 import { earlyStartNote } from '../components/portalEarlyStartModel';
 import { IdentityCodeStep } from '../components/IdentityCodeStep';
@@ -246,6 +247,10 @@ export function Portal() {
               {entry.action}<Icon name="arrow-right" size={16} />
             </button>
           )}
+          {/* Reachable from every status the candidate can land on, including
+              the ones where their interview is over and this is the only page
+              of ours they can still open. */}
+          <p className="small muted" style={{ marginTop: 12 }}><PrivacyLink /></p>
         </div>
       </main>
     );
@@ -286,6 +291,9 @@ export function Portal() {
             <div className="card tight" style={{ background: 'var(--panel-2)' }}>
               <b className="check-label"><Icon name="lock" size={16} />Privacy</b>
               <p className="small">{info.privacy}</p>
+              {/* The document behind the sentence. Until this link existed a
+                  candidate agreed to an AI interview with nothing to read. */}
+              <p className="small"><PrivacyLink /></p>
             </div>
             {(!sttSupported() || !ttsSupported()) && (
               <Banner kind="info">For the best voice experience use Chrome or Edge. You can still complete the interview by typing your answers.</Banner>
@@ -336,6 +344,11 @@ export function Portal() {
                 <p className="small muted" style={{ marginTop: 4 }}>{accommodationHint(accommodation)}</p>
               </>
             )}
+            {/* Beside the boxes, not only two screens back: this is the moment
+                the candidate agrees, and it is what the checkbox refers to. */}
+            <p className="small muted" style={{ marginTop: 10 }} data-testid="consent-privacy-link">
+              <PrivacyLink label="What happens to your data, in full" />
+            </p>
             <button
               className="btn"
               style={{ width: '100%', marginTop: 12 }}

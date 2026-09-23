@@ -7,6 +7,8 @@ import { sectionIdFromHash } from '../components/trustModel';
 import { BrandLogo } from '../components/BrandLogo';
 import { WorkflowDiagram } from '../components/WorkflowDiagram';
 import { SHOWCASE_FEATURES, SHOWCASE_STEPS } from '../components/landingShowcase';
+import { Link } from 'react-router-dom';
+import { RECIPIENTS_IN_ONE_LINE } from '../components/privacyModel';
 
 /** Who each person is and what Questor actually gives them. */
 const AUDIENCE: ReadonlyArray<{ key: string; icon: IconName; name: string; detail: string }> = [
@@ -51,7 +53,8 @@ const AUDIENCE: ReadonlyArray<{ key: string; icon: IconName; name: string; detai
 /** Said plainly, so nobody meets these as a surprise later. */
 const LIMITS: readonly string[] = [
   'Questor’s scores have not been validated against human hiring judgement. Treat a score as a reason to read the evidence, not as a measurement that settles the question.',
-  'No audio is kept. The voice is transcribed as it is spoken and the written transcript is what the hiring team reads.',
+  'No audio is kept. The voice is transcribed as it is spoken and the written transcript is what the hiring team reads. A candidate answering by voice does send that audio, while they speak, to their browser’s own speech recognition — in Chrome and Edge, Google’s servers — which the consent screen tells them in terms.',
+  'There is no camera and no video anywhere in Questor, and nothing analyses a face, body language or tone of voice.',
   'Human rounds are scheduled and recorded here, not hosted here — you hold those interviews wherever you normally do.',
   'The AI round always runs in Questor’s own browser room. For human rounds, the meeting provider your admin chooses (Teams, Zoom or Meet) creates the join link, or a recruiter pastes one by hand.',
   'Automatic deletion at the end of a retention window only happens when the retention sweep is switched on for the deployment.',
@@ -136,6 +139,19 @@ export function About() {
           <ul className="about-limits">
             {LIMITS.map((limit) => <li key={limit}>{limit}</li>)}
           </ul>
+        </section>
+
+        <section className="about-section">
+          {/* Named here as well as on the consent screen, because the About
+              page and the consent screen used to describe the same processing
+              differently: this page said transcripts go to the model provider
+              and said nothing about the audio the browser sends to Google. */}
+          <h2 className="about-heading">Where candidate data goes</h2>
+          <p>{RECIPIENTS_IN_ONE_LINE}</p>
+          <p>
+            The full notice a candidate reads is on the <Link to="/privacy">privacy page</Link>: what is
+            collected, why, how long it is kept, every recipient in turn, and how to ask for a copy or for erasure.
+          </p>
         </section>
 
         <TrustSection />

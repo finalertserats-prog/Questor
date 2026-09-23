@@ -56,7 +56,7 @@ export const TRUST_FRAMEWORKS: readonly TrustFramework[] = [
         key: 'ai-act-oversight',
         topic: 'Human oversight (Art. 14)',
         asks: 'People must be able to understand, question and override the system, and guard against trusting it blindly.',
-        questor: 'A person makes every decision. Reviewers can record their own verdict before Questor’s is revealed, every rating points to the transcript that supports it, and a review records its reason and any rating it changed.',
+        questor: 'A person makes every decision. Every rating points to the transcript that supports it, and a review records its reason and any rating it changed. Reviewers can record their own verdict before Questor’s is revealed where the organisation switches that on; it is off by default.',
         status: 'in-place',
       },
       {
@@ -113,7 +113,7 @@ export const TRUST_FRAMEWORKS: readonly TrustFramework[] = [
         key: 'gdpr-art22',
         topic: 'Automated decisions (Art. 22)',
         asks: 'No one may be subject to a decision made solely by automated means, and human review must be meaningful, not a rubber stamp.',
-        questor: 'The score is advisory. The review page puts the transcript first, reviewers can judge before seeing Questor’s view, and a person records the decision and why.',
+        questor: 'The score is advisory. The review page puts the transcript first, a person records the decision and why, and reviewers can judge before seeing Questor’s view where the organisation switches that on.',
         status: 'in-place',
       },
       {
@@ -134,7 +134,7 @@ export const TRUST_FRAMEWORKS: readonly TrustFramework[] = [
         key: 'gdpr-processors',
         topic: 'Processors and transfers (Art. 28, Chapter V)',
         asks: 'Anyone processing candidate data for the employer needs a written agreement, and transfers abroad need a lawful basis.',
-        questor: 'Transcripts go only to the AI model provider the deployment configures, for scoring. A standard processing agreement for customers is not published yet.',
+        questor: 'The transcript goes to the AI model provider the deployment configures, for scoring. A candidate answering by voice also sends their audio to their browser’s own speech recognition — in Chrome and Edge, Google’s servers — and to a server-side transcription provider where one is configured; "Who receives what" below sets out every recipient. A standard processing agreement for customers is not published yet.',
         status: 'planned',
       },
     ],
@@ -282,8 +282,8 @@ export const TRUST_SECURITY: readonly TrustItem[] = [
     key: 'sec-at-rest',
     topic: 'Encryption of stored candidate data',
     asks: 'Personal data at rest should be protected if the host is compromised.',
-    questor: 'Candidate records rely on the host’s own protection today; encryption at rest for them is planned.',
-    status: 'planned',
+    questor: 'The stored CV text, interview transcript and report are encrypted with AES-256-GCM under a key only the running application holds, where the deployment has switched it on. Candidate names, contact details and the reviewers’ own records still rely on the host’s protection.',
+    status: 'in-progress',
   },
   {
     key: 'sec-pentest',
@@ -318,6 +318,7 @@ export const DPIA_SUMMARY: readonly DpiaPart[] = [
       'The interview transcript — voice is transcribed as it is spoken and no audio is kept.',
       'Competency ratings, the AI recommendation, reviewers’ notes and the decision.',
       'Consent and accommodation requests.',
+      'Where the organisation switched monitoring on and the candidate’s consent covered it, tab-focus changes and paste events during the interview.',
     ],
   },
   {
@@ -338,10 +339,10 @@ export const DPIA_SUMMARY: readonly DpiaPart[] = [
   {
     heading: 'How they are reduced',
     points: [
-      'A person decides; blind review and evidence-linked ratings work against rubber-stamping.',
+      'A person decides; evidence-linked ratings work against rubber-stamping, and blind review does too where the organisation switches it on.',
       'Outcome monitoring is in place; group-level adverse impact and a bias audit are not, and need data we do not collect.',
       'Retention windows, legal holds, erasure on request, tenant isolation and role-based access.',
-      'Transcripts go only to the configured AI model provider, for scoring.',
+      'The transcript goes only to the configured AI model provider, for scoring; a candidate answering by voice also sends audio to their browser’s speech recognition, which the consent screen names.',
     ],
   },
 ];

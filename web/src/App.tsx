@@ -52,6 +52,7 @@ import { Portal } from './pages/Portal';
 import { InterviewRoom } from './pages/InterviewRoom';
 import { Settings } from './pages/Settings';
 import { About } from './pages/About';
+import { Privacy } from './pages/Privacy';
 import { Contact } from './pages/Contact';
 import { ObserveInterview } from './pages/ObserveInterview';
 import { TalkToAPerson } from './pages/TalkToAPerson';
@@ -565,6 +566,9 @@ export function App() {
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="/about" element={<PublicOrApp><About /></PublicOrApp>} />
+      {/* Public, and deliberately so: a candidate has no account, and the
+          consent screen links here before they agree to anything. */}
+      <Route path="/privacy" element={<PublicOrApp><Privacy /></PublicOrApp>} />
       <Route path="/contact" element={<Protected><Contact /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

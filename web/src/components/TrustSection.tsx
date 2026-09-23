@@ -1,4 +1,6 @@
+import { Link } from 'react-router-dom';
 import { CatalogAttribution } from './CatalogAttribution';
+import { DATA_RECIPIENTS, contactSentence, supportContact } from './privacyModel';
 import {
   DPIA_SUMMARY, TRUST_FRAMEWORKS, TRUST_SECTION_ID, TRUST_SECURITY, trustStatusLabel, type TrustItem, type TrustStatus,
 } from './trustModel';
@@ -24,13 +26,39 @@ function TrustEntry({ item }: { readonly item: TrustItem }) {
 function PrivacyRequests() {
   // The same build-time address the Contact page publishes; absent, the
   // organisation is the only honest answer, and it is the right one anyway.
-  const supportEmail = import.meta.env.VITE_SUPPORT_EMAIL as string | undefined;
+  // contactSentence words both cases, so nothing here reads as a broken offer
+  // when no address is configured (privacyModel.ts).
+  const contact = supportContact(import.meta.env.VITE_SUPPORT_EMAIL as string | undefined);
   return (
-    <p>
-      To see, correct or delete your interview data, ask the organisation that invited you: it decides
-      what happens to your data, and its administrators can erase it in Questor.
-      {supportEmail && <> For questions about Questor itself, write to <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</>}
-    </p>
+    <>
+      <p>
+        To see, correct or delete your interview data, ask the organisation that invited you: it decides
+        what happens to your data, and its administrators can erase it in Questor.
+      </p>
+      <p>
+        {contactSentence(contact)}
+        {contact && <> <a href={`mailto:${contact}`}>{contact}</a></>}
+      </p>
+      <p>
+        The full notice for candidates is on the <Link to="/privacy">privacy page</Link>: what is collected,
+        why, how long it is kept, who else receives it, and how to ask for a copy or for erasure.
+      </p>
+    </>
+  );
+}
+
+/** Who receives what, from the same list the privacy page reads. */
+function Recipients() {
+  return (
+    <ul className="trust-items">
+      {DATA_RECIPIENTS.map((r) => (
+        <li key={r.key} className="trust-item">
+          <div className="trust-item-head"><span className="trust-item-topic">{r.who}</span></div>
+          <p className="trust-item-line"><span className="trust-item-label">What they receive: </span>{r.what}</p>
+          <p className="trust-item-line"><span className="trust-item-label">When: </span>{r.when}</p>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -76,6 +104,14 @@ export function TrustSection() {
             </div>
           ))}
         </dl>
+      </div>
+
+      <div className="trust-framework">
+        {/* The same list the consent screen and the privacy page give, so the
+            three surfaces cannot describe the same processing differently —
+            which is exactly what they used to do about the audio. */}
+        <h3 className="trust-framework-name">Who receives what</h3>
+        <Recipients />
       </div>
 
       <div className="trust-framework">

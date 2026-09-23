@@ -459,7 +459,13 @@ portalRouter.get('/:token', asyncHandler(async (req, res) => {
     // voiceHint only steers which BROWSER voice speaks when there is no server
     // voice; the provider voice itself never leaves the server.
     persona: { name: personaNameOf(s.personaJson, s.id), interviewerId, voiceHint: await voiceHintForInterviewer(interviewerId) },
-    privacy: 'Your responses are transcribed and reviewed by our hiring team. This first round is conducted by an AI interviewer. You may request accommodations or a human alternative, and you can withdraw consent at any time.',
+    // "You can withdraw consent at any time" promised a route that does not
+    // exist: what is built is leaving the interview, which ends it unscored,
+    // and asking the organisation afterwards. The sentence now says that, and
+    // points at the privacy page for the rest.
+    privacy: 'Your answers are transcribed and read by the hiring team. This first round is conducted by an AI interviewer. '
+      + 'You can ask for an accommodation or for a person instead, and you can leave the interview at any time — one you leave is not scored and does not count against you. '
+      + 'Afterwards, ask the organisation that invited you for a copy of your interview data or for it to be deleted.',
     accommodationsEnabled: true,
     proctoringEnabled,
     observerNotice: hasObserverNotice(typeof consent.disclosureText === 'string' ? consent.disclosureText : ''),
