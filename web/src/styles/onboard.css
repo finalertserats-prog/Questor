@@ -167,6 +167,16 @@
   font-size: 12.5px;
 }
 
+/* On a phone the queue is a scrolling table inside its own region, and this
+   column is narrow. Two columns inside it left the area names breaking one
+   word to a line; stacked, each fact gets the whole width. */
+@media (max-width: 640px) {
+  .onboard-request-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
 .onboard-request-label {
   color: var(--ink-3);
   font-family: var(--font-data);
