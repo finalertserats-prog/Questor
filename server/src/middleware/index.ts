@@ -59,9 +59,24 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
   // used to be read from the token alone, so a demoted or deleted user kept
   // their old authority until the hour ran out. One indexed lookup per request
   // is the price of revocation taking effect immediately.
-  prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true } })
+  prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true, sessionsEpoch: true } })
     .then((user) => {
       if (!user || user.tenantId !== claims.tenantId) {
+        res.status(401).json({ error: 'Invalid or expired token' });
+        return;
+      }
+      // Setting a password ends every session the account had. Sessions are
+      // stateless JWTs with no revocation list, so this comparison IS the
+      // revocation: a token carries the generation it was minted under, setting
+      // a password increments the account's generation, and everything from an
+      // earlier one is refused from its next request onwards. That is what
+      // makes "signed out everywhere else" true rather than a sentence in an
+      // email.
+      //
+      // Absent reads as 0, which is what an account that has never had a
+      // password change still holds — so no existing session is broken by this
+      // arriving, and the first change is what starts enforcing it.
+      if ((claims.pv ?? 0) !== user.sessionsEpoch) {
         res.status(401).json({ error: 'Invalid or expired token' });
         return;
       }
@@ -72,13 +87,13 @@ export function authenticate(req: Request, res: Response, next: NextFunction) {
               res.status(401).json({ error: 'Invalid or expired token' });
               return;
             }
-            req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, demo: true, demoGrantId: claims.demoGrantId };
+            req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, demo: true, demoGrantId: claims.demoGrantId, pv: user.sessionsEpoch };
             runAsDemo(() => next());
           })
           .catch(next);
         return;
       }
-      req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
+      req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, pv: user.sessionsEpoch };
       next();
     })
     .catch(next);
@@ -96,6 +111,18 @@ const CSRF_EXEMPT_PATHS = [
   // is locked out of their own login page with a 403 they cannot clear.
   // SameSite=Strict already blocks the forged-login variant in any current browser.
   /^\/api\/auth\/(?:login|register)\/?$/,
+  // Password recovery, for exactly the reason above and more sharply: these are
+  // the routes a locked-out person reaches, often on a browser still holding a
+  // stale session cookie whose paired CSRF cookie has already gone. Refusing
+  // them with a 403 would lock someone out of the page that exists to let them
+  // back in. Forging either is worthless anyway — a forged "forgot" only mails
+  // the victim's own address a link the attacker cannot read, and a forged
+  // "reset" needs the token, which is the whole secret. SameSite=Strict on our
+  // cookies blocks the cross-site variant in any current browser.
+  //
+  // /password/change is deliberately NOT here: it acts on a live session, which
+  // is precisely what CSRF abuses.
+  /^\/api\/auth\/password\/(?:forgot|reset|reset\/check)\/?$/,
   // "Would you like to speak to a person?" — followed from a candidate's email,
   // with no account and no cookies of ours. Exempt for the same reason as the
   // portal, and explicitly rather than by falling through the no-session-cookie

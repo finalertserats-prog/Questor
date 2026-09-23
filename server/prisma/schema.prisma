@@ -85,6 +85,50 @@ model User {
   // something, until they switch it off in Settings.
   digestOptOut Boolean  @default(false)
   digestDeliveries DigestDelivery[]
+  // Which generation of this account's sessions is current. Sessions are
+  // stateless JWTs with no revocation list, so this counter IS the revocation:
+  // every token carries the generation it was minted under, setting a password
+  // increments it, and every token from an earlier generation is refused from
+  // its next request onwards.
+  //
+  // A counter rather than a timestamp, deliberately. A cutoff time can only be
+  // compared against a JWT's `iat`, which has one-second resolution — so a
+  // session minted in the same second as the change would survive it, and
+  // "signed out everywhere else" would be true except for a window an attacker
+  // gets to choose the start of. A counter has no window.
+  sessionsEpoch Int    @default(0)
+  passwordResetTokens PasswordResetToken[]
+}
+
+/// A single-use link that lets one person set a new password.
+///
+/// Only an HMAC of the token is stored (services/passwordReset.ts), under the
+/// same server pepper the candidate identity codes use, so a copy of this table
+/// cannot be turned back into working links.
+model PasswordResetToken {
+  id           String   @id @default(cuid())
+  userId       String
+  // Cascade: a deleted account must not leave a live way back into it, and the
+  // default RESTRICT would have made an outstanding reset link block the
+  // deletion outright.
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // HMAC-SHA-256 of the token under the server pepper. Unique so a collision is
+  // a database error rather than two links opening one account.
+  tokenHash    String   @unique
+  expiresAt    DateTime
+  // Set when the link is used. Written by a conditional update, so two presses
+  // of the same link cannot both set a password.
+  consumedAt   DateTime?
+  // Set when a newer request for the same account retires this one.
+  supersededAt DateTime?
+  // self | admin | operator — who asked for the link, for the audit trail.
+  requestedBy  String   @default("self")
+  // The admin or operator who sent it; empty when the user asked themselves.
+  requestedById String  @default("")
+  createdAt    DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
 }
 
 model CatalogDomain {

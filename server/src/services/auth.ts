@@ -11,6 +11,15 @@ export interface AuthClaims {
   email: string;
   demo?: boolean;
   demoGrantId?: string;
+  /**
+   * The session generation this token was minted under (User.sessionsEpoch).
+   * `authenticate` refuses a token whose generation is not the account's
+   * current one, which is how setting a password signs every other browser out.
+   * Optional, and read as 0 when absent: tokens minted before this existed, and
+   * the many tests that sign a bare claim set, are all generation zero — which
+   * is what a User row that has never had a password change still holds.
+   */
+  pv?: number;
 }
 
 /**
