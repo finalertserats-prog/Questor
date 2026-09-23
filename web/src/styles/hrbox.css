@@ -9,8 +9,17 @@
 
 /* --- the two sub-tabs ---------------------------------------------------- */
 
+/* The track is named, not left to `auto`.
+   An implicit `auto` track takes its minimum from the content, so the tab
+   panel could not be narrower than the widest thing inside it: at 375px the
+   dashboard's min-content came out at 477 and the whole column -- the tabs,
+   the page title bar, every card -- was stretched to 477 with it, which is the
+   118px of sideways scroll the sweep found on this one screen of 46. A zero
+   minimum lets the column be the width of the viewport and leaves anything
+   inside it to wrap, which everything here already knows how to do. */
 .hb-landing {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-5);
 }
 
