@@ -22,11 +22,21 @@ import { normalizeProfile } from '../src/engines/resumeParser.js';
 import { computeFitScore } from '../src/engines/fitScoring.js';
 import { buildInterviewPlan } from '../src/engines/interviewPlanner.js';
 import { DEMO_JD, DEMO_RESUME } from '../src/seed/demoData.js';
+import { consentIntro } from '../src/domain/interviewerModel.js';
 
 const BASE = process.env.LOAD_BASE ?? 'http://127.0.0.1:4300';
+/** The interviewer this harness's sessions are assigned, named once. */
+const INTERVIEWER_NAME = 'Maya';
+// Built from consentIntro(), never retyped. POST /consent refuses any session
+// whose stored disclosure does not open with the current wording
+// (routes/portal.ts, domain/interviewerModel.ts), so the hand-written copy
+// this used to carry made every consent answer 409 disclosure_missing and
+// every turn after it 409 — the harness reported latency for a run in which
+// no interview ever started (docs/qa/resilience-2026-09-23.md §5). Derived,
+// a future change to the wording breaks this loudly instead.
 const DISCLOSURE =
-  "Hi, I'm Maya, your AI interviewer from Questor. I'll be conducting your first-round interview today. While you speak, your voice is " +
-  'captured and written down. No recording of your voice is stored — the written transcript is what is kept.';
+  `${consentIntro(INTERVIEWER_NAME)} While you speak, your voice is captured and written down. ` +
+  'No recording of your voice is stored — the written transcript is what is kept.';
 const ANSWER =
   'We had a nightly pipeline that silently dropped late-arriving events. I noticed it through a freshness check, ' +
   'made the load idempotent on merge keys so a backfill was safe, re-ran the affected partitions, and told the ' +
@@ -99,7 +109,7 @@ async function seed(count: number): Promise<string[]> {
       data: {
         tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
         state: 'ACCEPTED', provider: 'hosted', language: 'en', durationMinutes: 45,
-        personaJson: JSON.stringify({ interviewerId: 'maya', name: 'Maya', tone: 'warm' }),
+        personaJson: JSON.stringify({ interviewerId: 'maya', name: INTERVIEWER_NAME, tone: 'warm' }),
         consentJson: JSON.stringify({ disclosureText: DISCLOSURE, recordingRequested: false, humanReviewRequired: true }),
         recordingConsent: false,
       },

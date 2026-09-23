@@ -16,6 +16,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { synthesizeElevenLabs, synthesizeOpenAI } from '../src/providers/speech.js';
 import { config } from '../src/config.js';
+import { consentIntro } from '../src/domain/interviewerModel.js';
 
 /**
  * Lines drawn from real simulated interviews rather than invented for the demo.
@@ -23,7 +24,10 @@ import { config } from '../src/config.js';
  * warm opening, a hard probe, an acknowledgement, and the close.
  */
 export const VOICE_SAMPLE_LINES: readonly string[] = [
-  "Hi, I'm Maya, your AI interviewer from Questor. I'll be conducting your first-round interview today. Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is, and a person on the hiring team reads it.",
+  // The disclosure as it is actually spoken, built from consentIntro() rather
+  // than retyped: the hand-written copy here was the pre-rename wording, so
+  // this measured the voice on a line no candidate hears (§5).
+  `${consentIntro('Maya')} Your voice is transcribed as we talk — no audio recording is kept, but the written transcript is.`,
   'Great. To start, could you briefly tell me about your current role and the project you\'ve worked on that\'s most relevant to this position?',
   'That\'s a strong example, so let me push on it. What was the best argument against the approach you took, and why did you go ahead anyway?',
   'Thanks for the correction — Pharma, noted.',
