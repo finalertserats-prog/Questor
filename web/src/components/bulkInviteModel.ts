@@ -35,6 +35,51 @@ export function invitePlan(targets: readonly InviteTarget[]): InvitePlan {
   }, { setUp: [], invite: [], skipped: [] });
 }
 
+/**
+ * What bulk-invite answers with.
+ *
+ * A batch it finishes inside its own short wait comes back as `{ results }`,
+ * exactly as it always did. A longer one comes back 202 with a job id and the
+ * rows done so far, because a row is a database write and an outbound email
+ * and 200 of them against a real mail provider outlast a proxy read timeout
+ * (docs/qa/resilience-2026-09-23.md §2.3). Both shapes arrive here.
+ */
+export interface BulkInviteAnswer {
+  readonly results?: readonly BulkInviteResult[];
+  readonly jobId?: string;
+  readonly finished?: boolean;
+  readonly total?: number;
+  readonly done?: number;
+}
+
+/** How long to keep collecting a run that outlived its request. */
+export const INVITE_POLL_EVERY_MS = 1_000;
+export const INVITE_POLL_FOR_MS = 5 * 60_000;
+
+/**
+ * The finished rows, whichever shape came back: the answer itself when it is
+ * done, or the job collected until it is. `fetchJob` is passed in so this
+ * stays testable without a network.
+ */
+export async function collectInvites(
+  answer: BulkInviteAnswer,
+  fetchJob: (jobId: string) => Promise<BulkInviteAnswer>,
+  wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now: () => number = Date.now,
+): Promise<readonly BulkInviteResult[]> {
+  if (!answer.jobId || answer.finished) return answer.results ?? [];
+  const giveUpAt = now() + INVITE_POLL_FOR_MS;
+  let latest = answer;
+  while (now() < giveUpAt) {
+    await wait(INVITE_POLL_EVERY_MS);
+    latest = await fetchJob(answer.jobId);
+    if (latest.finished) return latest.results ?? [];
+  }
+  // Out of patience. The rows that DID land are still reported rather than
+  // thrown away: the recruiter knowing which half went is the whole point.
+  return latest.results ?? [];
+}
+
 /** One row of the bulk-invite answer; only what this page reads. */
 export interface BulkInviteResult {
   readonly candidateId?: string;

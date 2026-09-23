@@ -8,7 +8,7 @@ import { useToast } from './Toast';
 import { DEFAULT_DURATION_MINUTES, INTERVIEW_MODULES } from './interviewSetupModel';
 import { DEFAULT_INTERVIEWER_CHOICE } from './interviewerModel';
 import { chunk, isDone, resultSummary, retryableKeys, type ConfirmedRow, type ImportRow } from './bulkImportModel';
-import { invitePlan, inviteOutcomes, inviteSummary, type BulkInviteResult, type InviteOutcome } from './bulkInviteModel';
+import { collectInvites, invitePlan, inviteOutcomes, inviteSummary, type BulkInviteAnswer, type BulkInviteResult, type InviteOutcome } from './bulkInviteModel';
 
 /**
  * What confirm did, row by row, and the Invite step. Inviting goes through
@@ -100,8 +100,10 @@ export function ImportResults({ rows, results, canInvite, retrying, onRetry }: P
       const toInvite = plan.invite.filter((id) => !failedIds.has(id));
       const answers: BulkInviteResult[] = [];
       for (const group of chunk(toInvite, MAX_BULK_INVITE)) {
-        const res = await api.post<{ results: BulkInviteResult[] }>('/interviews/bulk-invite', group.map((candidateId) => ({ candidateId })));
-        answers.push(...res.results);
+        // A big batch outlives its own request and is collected instead; a
+        // small one comes back complete, as it always did.
+        const res = await api.post<BulkInviteAnswer>('/interviews/bulk-invite', group.map((candidateId) => ({ candidateId })));
+        answers.push(...await collectInvites(res, (jobId) => api.get<BulkInviteAnswer>(`/interviews/bulk-invite/${jobId}`)));
       }
       const next = inviteOutcomes(answers, plan.skipped, setUpFailures);
       setOutcomes(next);

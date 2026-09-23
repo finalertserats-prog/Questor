@@ -20,6 +20,7 @@ import { meetingCapability } from '../providers/meeting/index.js';
 import { brandedEmail, companyEmail, emailButton, headerSafe, escapeHtml } from '../providers/email/branding.js';
 import { firstName } from '../engines/openingModel.js';
 import { rateLimit } from '../middleware/rateLimit.js';
+import { bulkInviteJob, runBulkInvite, type BulkInviteRowResult } from '../services/bulkInviteJobs.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { logAudit } from '../services/audit.js';
@@ -277,37 +278,67 @@ const MAX_BULK_INVITE = 200;
 // Each row sends mail. Per user, not per address: everyone in an office shares one.
 const bulkInviteLimit = rateLimit({ name: 'bulk-invite', windowMs: 15 * 60_000, max: 10, keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown' });
 
+/**
+ * Invite many people at once.
+ *
+ * Every row is a database round trip and an outbound email. Run one after
+ * another inside the request that asked for them, 200 rows took 3.8 s against
+ * an instant local relay — and against a real mail provider at 300 ms a send
+ * it is a minute, which a reverse proxy read timeout ends before it finishes,
+ * leaving the recruiter not knowing which half went
+ * (docs/qa/resilience-2026-09-23.md §2.3).
+ *
+ * The rows now run as a job, a few at a time. The request waits a couple of
+ * seconds and hands back whatever is finished: a batch that completes in that
+ * time answers 200 with `results`, exactly as it always did, and a longer one
+ * answers 202 with `jobId` and the rows done so far, to be collected from
+ * GET /bulk-invite/:jobId. Per-row errors are unchanged in either case.
+ */
 interviewsRouter.post('/bulk-invite', requireCapability('interview:invite'), bulkInviteLimit, asyncHandler(async (req, res) => {
   const rows = z.array(z.unknown()).max(MAX_BULK_INVITE).parse(req.body);
-  const results = [];
+  const auth = req.auth!;
 
-  for (let index = 0; index < rows.length; index++) {
+  const inviteRow = async (index: number): Promise<BulkInviteRowResult> => {
     const parsed = bulkInviteRowSchema.safeParse(rows[index]);
     const candidateId = parsed.success ? parsed.data.candidateId : undefined;
     try {
       if (!parsed.success) throw new HttpError(400, parsed.error.issues.map((i) => i.message).join('; '));
 
-      const candidate = await assertCanAccessCandidate(req.auth!, parsed.data.candidateId);
+      const candidate = await assertCanAccessCandidate(auth, parsed.data.candidateId);
       const session = await prisma.interviewSession.findFirst({
-        where: { tenantId: req.auth!.tenantId, candidateId: candidate.id },
+        where: { tenantId: auth.tenantId, candidateId: candidate.id },
         orderBy: { createdAt: 'desc' },
       });
       if (!session) throw new HttpError(404, 'Interview not found');
 
       const invitation = await inviteSession(req, session);
-      results.push({ index, candidateId: candidate.id, sessionId: session.id, success: true, invitation });
+      return { index, candidateId: candidate.id, sessionId: session.id, success: true, invitation };
     } catch (err) {
       // Only messages written for a caller are returned; a driver or Prisma
       // message here would bypass the sanitising in the error handler.
       if (!(err instanceof HttpError)) logger.error({ err: err instanceof Error ? err.message : String(err), candidateId }, 'bulk invite row failed');
-      results.push({
+      return {
         index, candidateId, success: false,
         error: err instanceof HttpError ? err.message : 'Invitation failed',
-      });
+      };
     }
-  }
+  };
 
-  res.json({ results });
+  const view = await runBulkInvite({ tenantId: auth.tenantId, userId: auth.userId }, rows.length, inviteRow);
+  // 200 and the plain `{ results }` when it is done — the shape every caller
+  // already reads. 202 and a job id when there is more to come.
+  res.status(view.finished ? 200 : 202).json(view.finished ? { results: view.results } : view);
+}));
+
+/**
+ * Collect a bulk invite that outlived its request. Scoped to the person who
+ * started it: the rows carry candidate ids and delivery outcomes.
+ */
+interviewsRouter.get('/bulk-invite/:jobId', requireCapability('interview:invite'), asyncHandler(async (req, res) => {
+  const auth = req.auth!;
+  const view = bulkInviteJob(z.string().min(1).max(64).parse(req.params.jobId), { tenantId: auth.tenantId, userId: auth.userId });
+  if (!view) throw new HttpError(404, 'That invitation run is no longer available.');
+  res.json(view);
 }));
 
 // The organisation's time zone, for the scheduling picker's first suggestion
