@@ -90,7 +90,7 @@ describe('the candidate own words, for a candidate who cannot see them', () => {
 describe('where the keyboard lands', () => {
   it('takes focus when it replaces the Join button', () => {
     render(createElement(Composer, props()));
-    expect(document.activeElement).toBe(screen.getByRole('group', { name: 'Your answer' }));
+    expect(document.activeElement).toBe(screen.getByRole('group', { name: 'Answer this question' }));
   });
 
   it('moves focus to what was heard when the candidate says they are done', () => {
@@ -114,7 +114,7 @@ describe('where the keyboard lands', () => {
   it('brings focus back into the composer when the pause ends', () => {
     const { rerender } = render(createElement(Composer, props({ paused: true })));
     rerender(createElement(Composer, props({ paused: false })));
-    expect(document.activeElement).toBe(screen.getByRole('group', { name: 'Your answer' }));
+    expect(document.activeElement).toBe(screen.getByRole('group', { name: 'Answer this question' }));
   });
 });
 

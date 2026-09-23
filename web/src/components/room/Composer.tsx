@@ -192,7 +192,7 @@ export function Composer(props: ComposerProps) {
   };
 
   return (
-    <div className="room-composer" ref={rootRef} role="group" aria-label="Your answer" tabIndex={-1}>
+    <div className="room-composer" ref={rootRef} role="group" aria-label="Answer this question" tabIndex={-1}>
       {(props.currentQuestion || props.questionPrefix) && (
         <div className="room-current">
           <div>
