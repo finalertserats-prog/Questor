@@ -261,7 +261,7 @@ function Layout({ children }: { children: React.ReactNode }) {
           is a visual wayfinder for a bar that outlives the page heading, and
           is hidden from screen readers because the page's own <h1> is the
           heading they already have. */}
-      <div className="nav-bar">
+      <header className="nav-bar">
         <button
           ref={toggleRef}
           type="button"
@@ -276,7 +276,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         </button>
         <span className="nav-bar-title" aria-hidden="true">{pageTitleFor(location.pathname)}</span>
         {mayReadCandidates && <NeedsYouBell total={needsYouTotal} className="hb-bell--top" />}
-      </div>
+      </header>
 
       {overlayOpen && <button type="button" className="nav-backdrop" aria-label="Close menu" tabIndex={-1} onClick={closeNav} />}
 
@@ -429,6 +429,30 @@ function PublicOrApp({ children }: { children: React.ReactNode }) {
  * a fault there shows a way forward rather than a blank page. A candidate has
  * no dashboard, so their pages offer only "Try again".
  */
+/**
+ * A landmark around a page that has no shell to give it one.
+ *
+ * Every page a candidate, an applicant or an operator-with-a-link sees is
+ * rendered on its own, outside the signed-in Layout -- and so none of them had
+ * a `main`. axe reported `landmark-one-main` on 43 screens and `region` on 45,
+ * 1,080 observations between them, and what that means in use is that a screen
+ * reader offers no way to skip past the furniture to the content on any page a
+ * candidate ever reaches.
+ *
+ * It sits at the route rather than inside each page because these pages return
+ * a different tree per phase -- loading, open, decided, expired, refused -- and
+ * a landmark that depends on which branch rendered is a landmark that goes
+ * missing exactly when someone is lost. Unstyled on purpose: <main> is a block
+ * box like the <div> each page roots itself in, so nothing moves.
+ *
+ * Pages that already carry their own <main> (the demo pages, the portal, the
+ * candidate's status page) are not wrapped: two of them would be no landmark
+ * at all.
+ */
+function CandidatePage({ children }: { children: React.ReactNode }) {
+  return <main>{children}</main>;
+}
+
 function RouteBoundary({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation();
   return <ErrorBoundary scope="page" resetKey={pathname} homeHref={isPublicPath(pathname) ? null : '/'}>{children}</ErrorBoundary>;
@@ -439,28 +463,28 @@ export function App() {
     <TourProvider>
     <RouteBoundary>
     <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/o/:slug" element={<OrgLogin />} />
+      <Route path="/login" element={<CandidatePage><Login /></CandidatePage>} />
+      <Route path="/o/:slug" element={<CandidatePage><OrgLogin /></CandidatePage>} />
       {/* Both unauthenticated, for the same reason from two directions: someone
           asking for an account has none to sign in with, and the operator's
           emailed link carries its own credential in the token — putting the
           decision behind a session would gate granting access on having it. */}
-      <Route path="/signup" element={<Signup />} />
-      <Route path="/signup/decision/:token" element={<SignupDecision />} />
+      <Route path="/signup" element={<CandidatePage><Signup /></CandidatePage>} />
+      <Route path="/signup/decision/:token" element={<CandidatePage><SignupDecision /></CandidatePage>} />
       <Route path="/demo" element={<DemoRequest />} />
       <Route path="/demo/ended" element={<DemoEnded />} />
       <Route path="/demo/:token" element={<DemoRedeem />} />
-      <Route path="/demo/decision/:token" element={<DemoDecision />} />
+      <Route path="/demo/decision/:token" element={<CandidatePage><DemoDecision /></CandidatePage>} />
       <Route path="/portal/:token" element={<Portal />} />
-      <Route path="/room/:token" element={<InterviewRoom />} />
+      <Route path="/room/:token" element={<CandidatePage><InterviewRoom /></CandidatePage>} />
       {/* Followed from a feedback email. Unauthenticated by design: asking to
           speak to a person must not require making an account. */}
-      <Route path="/talk-to-a-person/:token" element={<TalkToAPerson />} />
-      <Route path="/observer-consent/:token" element={<ObserverConsent />} />
+      <Route path="/talk-to-a-person/:token" element={<CandidatePage><TalkToAPerson /></CandidatePage>} />
+      <Route path="/observer-consent/:token" element={<CandidatePage><ObserverConsent /></CandidatePage>} />
       <Route path="/rounds/:roundId/observer" element={<Protected><ObserverRoom /></Protected>} />
       {/* Followed from a recruiter's "would you like feedback?" email; answering
           must not require an account. */}
-      <Route path="/feedback-consent/:token" element={<FeedbackConsent />} />
+      <Route path="/feedback-consent/:token" element={<CandidatePage><FeedbackConsent /></CandidatePage>} />
       {/* Home (HR-Box) and Dashboard, as sub-tabs: ?tab=home|dashboard. */}
       <Route path="/" element={<Protected><Landing /></Protected>} />
       <Route path="/roles" element={<Protected><RolesList /></Protected>} />

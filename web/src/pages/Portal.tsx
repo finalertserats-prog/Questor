@@ -213,17 +213,17 @@ export function Portal() {
   };
 
   if (linkClosed && token) return <CandidateStatus token={token} />;
-  if (err && !info) return <div className="center-screen"><div className="card auth-card"><Banner kind="error">{err}</Banner></div></div>;
+  if (err && !info) return <main className="center-screen"><div className="card auth-card"><Banner kind="error">{err}</Banner></div></main>;
   if (!info) {
     return (
-      <div className="center-screen">
+      <main className="center-screen">
         <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
           <Skeleton lines={6} label="Loading your interview details…" />
         </div>
-      </div>
+      </main>
     );
   }
-  if (handoff) return <div className="center-screen"><div className="card auth-card"><Banner kind="ok">{handoff}</Banner></div></div>;
+  if (handoff) return <main className="center-screen"><div className="card auth-card"><Banner kind="ok">{handoff}</Banner></div></main>;
 
   const entry = refusedEntry ?? portalEntry(info.state, info.consented === true);
   // Past the interview, the invitation link is no longer an invitation: it is
@@ -234,7 +234,7 @@ export function Portal() {
   }
   if (entry.kind !== 'journey') {
     return (
-      <div className="center-screen">
+      <main className="center-screen">
         <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
           <BrandLogo variant="lockup" size={26} className="candidate-logo" />
           <h1 style={{ marginTop: 8 }}>First-round interview: {info.roleTitle}</h1>
@@ -247,7 +247,7 @@ export function Portal() {
             </button>
           )}
         </div>
-      </div>
+      </main>
     );
   }
 
@@ -258,7 +258,7 @@ export function Portal() {
   const disclosure = splitDisclosure(info.aiDisclosure);
 
   return (
-    <div className="center-screen">
+    <main className="center-screen">
       <div className="card" style={{ width: 560, maxWidth: '92vw' }}>
         {/* Candidate-facing: the lockup is kept small; the interview is the subject. */}
         <BrandLogo variant="lockup" size={26} className="candidate-logo" />
@@ -385,6 +385,6 @@ export function Portal() {
           </>
         )}
       </div>
-    </div>
+    </main>
   );
 }
