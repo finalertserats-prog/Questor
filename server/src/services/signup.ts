@@ -9,7 +9,7 @@ import { logAudit } from './audit.js';
 import { getEmail } from '../providers/email/index.js';
 import { isReservedOperatorEmail } from '../middleware/platformOperator.js';
 import { renderSignupAcknowledgementEmail, renderSignupOperatorEmail, renderSignupWelcomeEmail } from '../providers/email/signupEmail.js';
-import { guardSignupRequest } from './signupAbuse.js';
+import { guardSignupRequest, mayAcknowledgeSuppressed } from './signupAbuse.js';
 import { emailDomainOf, orgNameKey } from '../domain/orgOnboarding.js';
 
 export const SIGNUP_DECISION_TTL_DAYS = 14;
@@ -93,10 +93,12 @@ export async function createSignupRequest(input: CreateSignupInput): Promise<voi
   // refuse. The operator's notice is not sent, because there is no request for
   // them to read; that one is not observable from outside.
   if (verdict.kind === 'silently-drop') {
-    try {
-      await getEmail().send(renderSignupAcknowledgementEmail({ to: email, name: input.name }));
-    } catch (err) {
-      logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Signup acknowledgement email could not be sent');
+    if (await mayAcknowledgeSuppressed(email)) {
+      try {
+        await getEmail().send(renderSignupAcknowledgementEmail({ to: email, name: input.name }));
+      } catch (err) {
+        logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Signup acknowledgement email could not be sent');
+      }
     }
     return;
   }

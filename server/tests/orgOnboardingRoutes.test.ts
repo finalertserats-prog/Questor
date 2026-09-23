@@ -235,6 +235,37 @@ describe('abuse defences', () => {
     expect(sent.some((m) => m.to === OPERATOR)).toBe(false);
   });
 
+  it('does not spend the allowance of a stranger named in a suppressed request', async () => {
+    await request(app).post('/api/signup').send(onboardBody());
+    // An attacker points the form at a stranger's address with a name they
+    // know is in cooldown. It is suppressed — and must cost the stranger
+    // nothing, because a suppressed request writes no row the daily count
+    // would ever see again.
+    for (let i = 0; i < 5; i += 1) {
+      const res = await request(app).post('/api/signup')
+        .send(onboardBody({ email: 'victim@elsewhere.test', organisationName: 'Northstar Robotics' }));
+      expect(res.status).toBe(201);
+    }
+    // The stranger's own request still goes through afterwards.
+    const theirs = await request(app).post('/api/signup')
+      .send(onboardBody({ email: 'victim@elsewhere.test', organisationName: 'Victim Industries' }));
+    expect(theirs.status).toBe(201);
+    expect(await prisma.signupRequest.count({ where: { email: 'victim@elsewhere.test' } })).toBe(1);
+  });
+
+  it('will not mail a stranger all day through suppressed requests', async () => {
+    await request(app).post('/api/signup').send(onboardBody());
+    sent.length = 0;
+    for (let i = 0; i < 10; i += 1) {
+      await request(app).post('/api/signup')
+        .send(onboardBody({ email: 'victim@elsewhere.test', organisationName: 'Northstar Robotics' }));
+    }
+    // Bounded to what a created request would have earned, so the volume is
+    // the same either way and neither path is the quiet one.
+    const acks = sent.filter((m) => m.to === 'victim@elsewhere.test');
+    expect(acks).toHaveLength(MAX_REQUESTS_PER_EMAIL_PER_DAY);
+  });
+
   it('lets a genuinely different organisation through', async () => {
     await request(app).post('/api/signup').send(onboardBody());
     const other = await request(app).post('/api/signup')

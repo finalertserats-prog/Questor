@@ -107,47 +107,74 @@ export async function guardSignupRequest(input: SignupGuardInput): Promise<Signu
     }
   }
 
-  // The counts above are read, judged, and only then written against — three
-  // requests arriving together all read a count below the limit and all get
-  // through. The rows are the durable record (they survive a restart, and they
-  // are what an operator can look at), but on their own they are a check with
-  // a window in it.
-  //
-  // So each limit is also claimed here, through the shared rate-limit store,
-  // whose increment is one atomic write that returns the count it produced
-  // (middleware/rateLimitStores.ts). In production that store is the database,
-  // so the claim holds across instances too. Nothing below can be spent by a
-  // request the checks above already refused.
-  return claimAtomically(email, domain, key);
+  return closeTheRace(email, domain, key);
 }
 
 /**
- * The same four limits again, as atomic claims rather than as reads.
+ * A minute. Everything above is the real limit, measured in rows over a day;
+ * this only has to cover the gap between reading a count and writing the row
+ * that count will include, and requests that race are milliseconds apart.
  *
- * Deliberately after the row-backed checks and never before them: a claim is
- * spent whether or not the request goes on to be created, so spending one on a
- * request that the durable check would have refused anyway would let a refused
- * attempt eat a real applicant's allowance.
+ * Short on purpose. A claim is spent whether or not the row it was for ends up
+ * standing — the operator-notice failure path deletes the row it just made —
+ * and a claim that outlived its request by a day would lock a real applicant,
+ * or a whole organisation name, out of a form because the mail server was
+ * down. Outliving it by a minute costs nobody anything.
  */
-async function claimAtomically(email: string, domain: string, orgKey: string): Promise<SignupGuardVerdict> {
-  const claims: { name: string; key: string; windowMs: number; max: number }[] = [
-    { name: 'signup-email', key: email, windowMs: DAY_MS, max: MAX_REQUESTS_PER_EMAIL_PER_DAY },
-  ];
-  if (domain) claims.push({ name: 'signup-email-domain', key: domain, windowMs: DAY_MS, max: MAX_REQUESTS_PER_EMAIL_DOMAIN_PER_DAY });
+const RACE_GUARD_MS = 60_000;
 
-  for (const claim of claims) {
-    const verdict = await consume(claim.name, claim.key, claim.windowMs, claim.max, { failClosed: true });
-    if (!verdict.allowed) return { kind: 'refuse', status: 429, message: TOO_MANY, reason: claim.name };
-  }
-
-  // One name, once per cooldown. Answered as a suppressed duplicate rather
-  // than as a refusal, to match the row-backed check above exactly: which of
-  // the two noticed must not be visible from outside.
+/**
+ * The same limits again, as atomic claims rather than as reads.
+ *
+ * The counts above are read, judged, and only then written against — three
+ * requests arriving together all read a count below the limit and all get
+ * through. The rows stay the durable record; this closes the window in the
+ * middle, through the shared rate-limit store, whose increment is one write
+ * that returns the count it produced (middleware/rateLimitStores.ts). In
+ * production that store is the database, so the claim holds across instances.
+ *
+ * The organisation name goes first, and that order is the whole point: a
+ * suppressed duplicate must not spend the address's allowance. It creates no
+ * row, so the row-backed check would never see it again — the allowance would
+ * simply have gone, invisibly, and an attacker holding a name in cooldown
+ * could have spent a stranger's allowance by submitting their address.
+ */
+async function closeTheRace(email: string, domain: string, orgKey: string): Promise<SignupGuardVerdict> {
   if (orgKey) {
-    const held = await consume('signup-org-name', orgKey, ORG_NAME_COOLDOWN_HOURS * 60 * 60_000, 1, { failClosed: true });
+    const held = await consume('signup-org-name-race', orgKey, RACE_GUARD_MS, 1, { failClosed: true });
+    // Suppressed, not refused, so that which of the two checks noticed — this
+    // one or the row-backed cooldown above — is not visible from outside.
     if (!held.allowed) return { kind: 'silently-drop', reason: 'org_name_cooldown_race' };
   }
+
+  const claims = [
+    { name: 'signup-email-race', key: email, max: MAX_REQUESTS_PER_EMAIL_PER_DAY },
+    ...(domain ? [{ name: 'signup-email-domain-race', key: domain, max: MAX_REQUESTS_PER_EMAIL_DOMAIN_PER_DAY }] : []),
+  ];
+  for (const claim of claims) {
+    const verdict = await consume(claim.name, claim.key, RACE_GUARD_MS, claim.max, { failClosed: true });
+    if (!verdict.allowed) return { kind: 'refuse', status: 429, message: TOO_MANY, reason: claim.name };
+  }
   return { kind: 'allow' };
+}
+
+/**
+ * Whether to send the courtesy acknowledgement for a request that was
+ * suppressed rather than created.
+ *
+ * It has to be sent, or the email that never arrives answers the question the
+ * identical response refuses to. But a suppressed request writes no row, so
+ * nothing else bounds it: without this, anyone could point the form at a
+ * stranger's address with an organisation name they knew was in cooldown and
+ * send them mail all day, with nothing appearing in any queue.
+ *
+ * Its own budget, not the applicant's, and set to the same number of messages
+ * a day that a created request would have earned — so the volume a watcher
+ * sees is the same either way, and neither path is the quiet one.
+ */
+export async function mayAcknowledgeSuppressed(email: string): Promise<boolean> {
+  const verdict = await consume('signup-suppressed-ack', email.trim().toLowerCase(), DAY_MS, MAX_REQUESTS_PER_EMAIL_PER_DAY, { failClosed: true });
+  return verdict.allowed;
 }
 
 /**
