@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { readTranscript } from './reviewGateHelpers.js';
 import { prisma } from '../src/db.js';
 import { wipe, createDemoData } from '../src/seed/demoData.js';
 
@@ -110,6 +111,7 @@ describe('recording a human review', () => {
 
   it('still accepts an ordinary review', async () => {
     const { assessmentId, token } = await signedIn();
+    await readTranscript(app, assessmentId, `Bearer ${token}`);
 
     const res = await request(app).post(`/api/assessments/${assessmentId}/review`)
       .set('Authorization', `Bearer ${token}`)

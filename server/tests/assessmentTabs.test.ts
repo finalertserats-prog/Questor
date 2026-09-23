@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { readTranscript } from './reviewGateHelpers.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
@@ -40,6 +41,9 @@ async function assessment() {
 const OVERRIDES = [{ competencyId: 'stake', from: 2, to: 4, reason: 'Much stronger in the second half than the transcript reads.' }];
 
 async function review(ids: Awaited<ReturnType<typeof assessment>>, disposition = 'CONSIDER', extra: Record<string, unknown> = {}) {
+  // The server refuses a verdict from a reviewer with no record of having read
+  // the interview, so a spec about the review recording it has to read it too.
+  await readTranscript(app, ids.assessmentId, ids.auth.Authorization);
   const res = await request(app).post(`/api/assessments/${ids.assessmentId}/review`).set(ids.auth)
     .send({ verdict: disposition, reason: 'My own read of the evidence.', comments: 'Worth a second conversation.', overrides: OVERRIDES, ...extra });
   expect(res.status).toBe(201);

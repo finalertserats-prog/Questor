@@ -42,6 +42,18 @@ async function scoredAssessment(sessionId: string, scorecardId: string) {
       resultJson: JSON.stringify({ recommendation: 'CONSIDER', overallScore: 71, confidence: 0.7, competencies: [] }),
     },
   });
+  // The AI's reading reaches the ATS only after a person has reviewed the
+  // interview — the candidate's consent screen says so. That rule has its own
+  // spec (humanReviewEnforced.test.ts); here it is a precondition, so the
+  // assessment arrives already reviewed and these tests stay about tenancy.
+  const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: sessionId }, select: { tenantId: true } });
+  const reviewer = await prisma.user.findFirstOrThrow({ where: { tenantId: session.tenantId }, orderBy: { createdAt: 'asc' } });
+  await prisma.humanReview.create({
+    data: {
+      assessmentId: row.id, reviewerId: reviewer.id, status: 'COMPLETED', disposition: 'CONSIDER',
+      reason: 'Reviewed before export.', activeForAssessmentId: row.id, completedAt: new Date(),
+    },
+  });
   return row.id;
 }
 

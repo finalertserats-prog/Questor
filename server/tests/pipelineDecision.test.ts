@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { readTranscript } from './reviewGateHelpers.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { finalizeInterview } from '../src/realtime/interviewEngine.js';
@@ -103,7 +104,13 @@ describe('approving on the pipeline', () => {
     const [finalized] = await audits(pipeline.id, 'pipeline.finalized');
 
     expect({ actorType: finalized.actorType, actorId: finalized.actorId, after: JSON.parse(finalized.afterJson) })
-      .toEqual({ actorType: 'user', actorId: ids.userId, after: { stage: 'diamond', decision: 'APPROVED', source: 'pipeline', trigger: 'pipeline.decision' } });
+      .toEqual({
+        actorType: 'user', actorId: ids.userId,
+        // humanReview travels with every decision now: this candidate's
+        // interview never produced an assessment, so there was nothing for
+        // anyone to read — and the trail says that rather than saying nothing.
+        after: { stage: 'diamond', decision: 'APPROVED', source: 'pipeline', trigger: 'pipeline.decision', humanReview: { required: false, because: 'no_assessment' } },
+      });
   });
 
   it('closes a Diamond candidate as approved', async () => {
@@ -122,7 +129,8 @@ describe('approving on the pipeline', () => {
 
     const advances = await audits(pipeline.id, 'pipeline.advanced');
 
-    expect(JSON.parse(advances[advances.length - 1].afterJson)).toEqual({ stage: 'silver', decision: 'APPROVED', source: 'pipeline', trigger: 'pipeline.decision' });
+    expect(JSON.parse(advances[advances.length - 1].afterJson))
+      .toEqual({ stage: 'silver', decision: 'APPROVED', source: 'pipeline', trigger: 'pipeline.decision', humanReview: { required: false, because: 'no_assessment' } });
   });
 
   it('refuses a decision about a stage the candidate has already left', async () => {
@@ -192,7 +200,10 @@ describe('rejecting or withdrawing on the pipeline', () => {
     const [decided] = await audits(pipeline.id, 'pipeline.decided');
 
     expect({ actorId: decided.actorId, after: JSON.parse(decided.afterJson), hasReason: decided.afterJson.includes(REASON) })
-      .toEqual({ actorId: ids.userId, after: { decision: 'REJECTED', stage: 'silver', about: 'silver', source: 'pipeline', trigger: 'pipeline.decision', reasonRecorded: true }, hasReason: false });
+      .toEqual({
+        actorId: ids.userId, hasReason: false,
+        after: { decision: 'REJECTED', stage: 'silver', about: 'silver', source: 'pipeline', trigger: 'pipeline.decision', reasonRecorded: true, humanReview: { required: false, because: 'no_assessment' } },
+      });
   });
 
   it('refuses a second decision on a decided pipeline with 409 and changes nothing', async () => {
@@ -253,7 +264,10 @@ async function assessedInterview(ids: Seeded) {
   return { assessmentId: assessment.id, pipelineId: pipeline.id };
 }
 
-function review(ids: Seeded, assessmentId: string, disposition: string, extra: Record<string, unknown> = {}) {
+async function review(ids: Seeded, assessmentId: string, disposition: string, extra: Record<string, unknown> = {}) {
+  // A verdict is refused from a reviewer with no record of having read the
+  // interview; reading it is what makes the decision below permissible.
+  await readTranscript(app, assessmentId, ids.auth);
   return request(app).post(`/api/assessments/${assessmentId}/review`).set('Authorization', ids.auth)
     .send({ verdict: disposition, reason: REASON, overrides: [], ...extra });
 }
@@ -307,7 +321,12 @@ describe('the verdict on an assessment review', () => {
 
     const [decided] = await audits(pipelineId, 'pipeline.decided');
     expect({ actorType: decided.actorType, actorId: decided.actorId, after: JSON.parse(decided.afterJson) })
-      .toEqual({ actorType: 'user', actorId: ids.userId, after: { decision: 'REJECTED', stage: 'gold', about: 'silver', source: 'review', trigger: 'review.completed', reasonRecorded: true } });
+      .toEqual({
+        actorType: 'user', actorId: ids.userId,
+        // The interview this verdict is about was read: that is what the
+        // candidate's consent screen promised, and it is on the decision.
+        after: { decision: 'REJECTED', stage: 'gold', about: 'silver', source: 'review', trigger: 'review.completed', reasonRecorded: true, humanReview: { required: true, satisfiedBy: [assessmentId] } },
+      });
   });
 
   it('reports what the review did to the pipeline', async () => {

@@ -116,6 +116,8 @@ const {
 const { MAX_SEND_ATTEMPTS } = await import('../src/services/autoFeedbackModel.js');
 const { TALK_LINK_PLACEHOLDER } = await import('../src/providers/email/autoFeedbackEmail.js');
 
+const { readTranscript } = await import('./reviewGateHelpers.js');
+
 const app = createApp();
 
 const RESULT = {
@@ -151,6 +153,10 @@ async function completedInterview(opts: { state?: string; isDemo?: boolean; emai
     },
   });
   const auth = { Authorization: `Bearer ${signToken({ userId: ids.userId, tenantId: ids.tenantId, role: 'admin', email: ids.email })}` };
+  // A verdict is refused from a reviewer with no record of having read the
+  // interview. That rule has its own spec (transcriptReadEnforced.test.ts);
+  // here it is a precondition, so this file stays about when the letter goes.
+  await readTranscript(app, assessment.id, auth.Authorization);
   return { ...ids, assessmentId: assessment.id, auth };
 }
 

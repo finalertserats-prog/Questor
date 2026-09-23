@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { readTranscript } from './reviewGateHelpers.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { finalizeInterview } from '../src/realtime/interviewEngine.js';
@@ -52,7 +53,10 @@ function load(ids: Seeded, assessmentId: string) {
   return request(app).get(`/api/assessments/${assessmentId}`).set('Authorization', ids.auth);
 }
 
-function submit(ids: Seeded, assessmentId: string, verdict: string, extra: Record<string, unknown> = {}, auth = ids.auth) {
+async function submit(ids: Seeded, assessmentId: string, verdict: string, extra: Record<string, unknown> = {}, auth = ids.auth) {
+  // The verdict is refused from a reviewer who has not read the transcript, so
+  // every submit here starts where a real one does.
+  await readTranscript(app, assessmentId, auth);
   return request(app).post(`/api/assessments/${assessmentId}/review`).set('Authorization', auth)
     .send({ verdict, reason: REASON, overrides: [], ...extra });
 }

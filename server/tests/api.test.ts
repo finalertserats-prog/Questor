@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { readTranscript } from './reviewGateHelpers.js';
 import { wipe, DEMO_JD, DEMO_RESUME } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
 
@@ -156,6 +157,7 @@ describe('Questor API end-to-end', () => {
   });
 
   it('records a human review override with a reason', async () => {
+    await readTranscript(app, assessmentId, `Bearer ${token}`);
     const res = await request(app).post(`/api/assessments/${assessmentId}/review`).set('Authorization', `Bearer ${token}`).send({ verdict: 'CONSIDER', reason: 'Want a second panel on leadership scope.' });
     expect(res.status).toBe(201);
   });

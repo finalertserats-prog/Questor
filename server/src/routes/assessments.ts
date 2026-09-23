@@ -991,11 +991,20 @@ assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), as
   if (result.overallScore === null) {
     throw new HttpError(409, 'This assessment could not be scored, so there is nothing to export. It needs a human assessment first.');
   }
+  const { connection, client } = await requireTenantAts(req.auth!.tenantId);
+  const link = await findCandidateLink(req.auth!.tenantId, a.session.candidateId, connection.id);
+  if (!link) {
+    throw new HttpError(409, 'This candidate is not linked to a candidate in your ATS yet. An administrator can link them from the candidate page.', ATS_LINK_MISSING);
+  }
   // The ATS is the system of record: once the AI's reading is in it, it is a
   // hiring signal that outlives this application and that nobody downstream can
   // trace back to whether a person ever read the interview. So the promise
   // holds here too — the recommendation leaves Questor only after the review
   // the candidate was told about has happened.
+  //
+  // Last, immediately before the push, so an unconnected ATS or a missing link
+  // still answers with the thing the admin actually has to fix rather than
+  // with this. Nothing has left the process at this point.
   const promise = await assessmentReviewRequirement({ tenantId: req.auth!.tenantId, assessmentId: a.id });
   if (promise.required && !promise.satisfied) {
     await logAudit({
@@ -1003,11 +1012,6 @@ assessmentsRouter.post('/:id/export', requireCapability('assessment:export'), as
       entityType: 'AssessmentVersion', entityId: a.id, after: { because: HUMAN_REVIEW_REQUIRED },
     });
     throw new HttpError(409, humanReviewRefusal(promise), HUMAN_REVIEW_REQUIRED);
-  }
-  const { connection, client } = await requireTenantAts(req.auth!.tenantId);
-  const link = await findCandidateLink(req.auth!.tenantId, a.session.candidateId, connection.id);
-  if (!link) {
-    throw new HttpError(409, 'This candidate is not linked to a candidate in your ATS yet. An administrator can link them from the candidate page.', ATS_LINK_MISSING);
   }
   const out = await client.pushAssessment(link.externalCandidateId, {
     candidate: a.session.candidate.fullName, role: a.session.role.title,

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
+import { readTranscript } from './reviewGateHelpers.js';
 import { wipe } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
 import { signToken } from '../src/services/auth.js';
@@ -217,6 +218,7 @@ describe('assessment review capability', () => {
   });
 
   it('lets an assigned manager sign off the assessment', async () => {
+    await readTranscript(app, fx.assessmentId, `Bearer ${fx.managerToken}`);
     const res = await request(app)
       .post(`/api/assessments/${fx.assessmentId}/review`)
       .set(as(fx.managerToken))
@@ -239,6 +241,7 @@ describe('separation of duties (soft)', () => {
   let selfReviewBody: { review?: { selfReview?: boolean } } = {};
 
   beforeAll(async () => {
+    await readTranscript(app, fx.selfReviewAssessmentId, `Bearer ${fx.selfReviewingManagerToken}`);
     const res = await request(app)
       .post(`/api/assessments/${fx.selfReviewAssessmentId}/review`)
       .set(as(fx.selfReviewingManagerToken))

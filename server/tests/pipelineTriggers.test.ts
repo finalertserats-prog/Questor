@@ -214,7 +214,13 @@ describe('finalising a candidate', () => {
     const audit = await prisma.auditEvent.findFirst({ where: { action: 'pipeline.finalized', entityId: pipeline!.id } });
 
     expect({ actorType: audit?.actorType, actorId: audit?.actorId, after: JSON.parse(audit?.afterJson ?? '{}') })
-      .toEqual({ actorType: 'user', actorId: ids.userId, after: { stage: 'diamond' } });
+      .toEqual({
+        actorType: 'user', actorId: ids.userId,
+        // Finalising carries the candidate past every remaining stage, the AI
+        // round's review among them, so it is checked and the trail says what
+        // the check found. This candidate never sat an AI interview.
+        after: { stage: 'diamond', humanReview: { required: false, because: 'no_ai_interview' } },
+      });
   });
 
   it('is never done by an event on its own', async () => {
