@@ -57,6 +57,7 @@ import { FeedbackConsent } from './pages/FeedbackConsent';
 import { CatalogReview } from './pages/CatalogReview';
 import { LibraryAdmin } from './pages/LibraryAdmin';
 import { can, onlyWhoCan } from './components/capabilityModel';
+import { canManageAdmin } from './components/profileMenuModel';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { isPublicPath } from './components/errorBoundaryModel';
@@ -470,7 +471,12 @@ function CandidatePage({ children }: { children: React.ReactNode }) {
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!user) return null;
-  if (can(user, 'admin:manage')) return <>{children}</>;
+  // The role, not the capability list. `can` deliberately answers true when a
+  // server sends no list, so that an older server decides for itself -- which
+  // is the right default for hiding a button and the wrong one for a door.
+  // This is the check the console itself already made, moved to where the
+  // router can see it.
+  if (canManageAdmin(user.role)) return <>{children}</>;
   return (
     <EmptyState
       heading="page"

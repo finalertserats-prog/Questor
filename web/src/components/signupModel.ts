@@ -97,8 +97,11 @@ export function signupRequestBody(form: SignupForm): SignupRequestBody {
  * queue that throws rather than saying a little less is a queue nobody can get
  * into Questor through.
  */
-export function applicantIntent(mode: SignupMode, organisation: string | null | undefined): string {
+export function applicantIntent(mode: SignupMode | null, organisation: string | null | undefined): string {
   const named = (organisation ?? '').trim();
+  // A request whose kind did not survive the trip is still a request somebody
+  // is waiting on. It says what is known rather than picking a kind.
+  if (mode === null) return 'Asking for an account.';
   if (mode === 'new-org') {
     return named ? `Wants to start a new organisation called ${named}.` : 'Wants to start a new organisation.';
   }
@@ -177,7 +180,7 @@ export function joinEmailOrigin(email: string, organisation: string): EmailOrigi
  * Only join requests are checked: someone starting an organisation of their own
  * may use whatever address they like.
  */
-export function joinEmailCaution(mode: SignupMode, email: string, organisation: string): string | null {
+export function joinEmailCaution(mode: SignupMode | null, email: string, organisation: string): string | null {
   if (mode !== 'join') return null;
   const origin = joinEmailOrigin(email, organisation);
   const named = organisation.trim() || 'that organisation';
@@ -197,13 +200,19 @@ export interface QueuedSignup {
   readonly id: string;
   readonly name: string;
   readonly email: string;
-  readonly mode: SignupMode;
+  /** Null when the response did not say; the queue then says less, not wrong. */
+  readonly mode: SignupMode | null;
   readonly organisation: string;
   readonly createdAt: string;
 }
 
 function textOf(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/** The two kinds of request, or null for anything else. */
+function signupMode(value: unknown): SignupMode | null {
+  return value === 'new-org' || value === 'join' ? value : null;
 }
 
 /**
@@ -229,7 +238,7 @@ export function queuedSignup(raw: unknown): QueuedSignup | null {
     id,
     name: textOf(applicant.name) || textOf(row.name),
     email: textOf(applicant.email) || textOf(row.email),
-    mode: (applicant.mode ?? row.mode) === 'new-org' ? 'new-org' : 'join',
+    mode: signupMode(applicant.mode ?? row.mode),
     organisation: textOf(applicant.organisation),
     createdAt: textOf(row.createdAt),
   };

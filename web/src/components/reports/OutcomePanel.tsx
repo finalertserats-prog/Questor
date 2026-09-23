@@ -349,7 +349,7 @@ export function OutcomePanel() {
               tableless
             />
 
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0} role="region" aria-label="Every measure, for each group in this cut">
               <table className="report-table">
                 <caption className="sr-only">Every measure, for each group in this cut</caption>
                 <thead>
@@ -456,7 +456,7 @@ export function OutcomePanel() {
               {report.reviewerChanges.competencyChanges.humanHigher === 1 ? '' : 's'} and lowered{' '}
               {report.reviewerChanges.competencyChanges.aiHigher}.
             </p>
-            <div className="table-wrap">
+            <div className="table-wrap" tabIndex={0} role="region" aria-label="What reviewers decided, by what the AI had recommended">
               <table className="report-table">
                 <caption className="sr-only">What reviewers decided, by what the AI had recommended</caption>
                 <thead>

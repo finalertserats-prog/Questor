@@ -300,6 +300,13 @@ describe('queuedSignups', () => {
     expect(queuedSignups([row({ applicant: { name: 'Priya Sharma', email: 'priya@acme.com', mode: 'join' } })])[0].organisation).toBe('');
   });
 
+  it('says a request of no known kind is asking for an account, rather than inventing one', () => {
+    const odd = queuedSignups([row({ mode: 'sideways', applicant: { name: 'Priya Sharma', email: 'priya@acme.com', organisation: '', mode: 'sideways' } })]);
+
+    expect({ mode: odd[0].mode, says: applicantIntent(odd[0].mode, odd[0].organisation) })
+      .toEqual({ mode: null, says: 'Asking for an account.' });
+  });
+
   it('survives a row with no applicant at all', () => {
     expect(queuedSignups([row({ applicant: undefined })])[0].organisation).toBe('');
   });
