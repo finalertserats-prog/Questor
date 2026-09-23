@@ -5,6 +5,7 @@ import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
 import { BrandLogo } from '../components/BrandLogo';
 import { OrgPicker } from '../components/OrgPicker';
+import { useSearchParams } from 'react-router-dom';
 import { type Org } from '../components/orgSearchModel';
 import {
   PASSWORD_MIN_LENGTH,
@@ -26,13 +27,22 @@ import {
  * identical answer exists to withhold.
  */
 export function Signup() {
+  // Someone who came from an organisation's own sign-in page has already said
+  // which organisation they mean; asking again would be the page forgetting a
+  // step they just took.
+  const [params] = useSearchParams();
+  const fromOrg = ((): Org | null => {
+    const slug = params.get('org');
+    const name = params.get('orgName');
+    return slug && name ? { slug, name } : null;
+  })();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [mode, setMode] = useState<SignupMode>('new-org');
+  const [mode, setMode] = useState<SignupMode>(fromOrg ? 'join' : 'new-org');
   const [organisationName, setOrganisationName] = useState('');
   const [orgCode, setOrgCode] = useState('');
-  const [chosenOrg, setChosenOrg] = useState<Org | null>(null);
+  const [chosenOrg, setChosenOrg] = useState<Org | null>(fromOrg);
   const [showCodeEntry, setShowCodeEntry] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
