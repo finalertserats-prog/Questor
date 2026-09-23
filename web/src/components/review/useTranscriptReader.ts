@@ -30,22 +30,30 @@ interface TranscriptState {
   readonly status: TranscriptStatus;
   readonly view: TranscriptView | null;
   readonly error: string;
+  /**
+   * The blind payload this view was built from, when that is where it came
+   * from. Kept because the assessment page draws its masked competency cards
+   * from the same response — the scorecard's competencies and the evidence
+   * quotes — and fetching /blind a second time would record a second "opened"
+   * notice for one visit.
+   */
+  readonly blind: BlindTranscriptSource | null;
 }
 
-const LOADING: TranscriptState = { status: 'loading', view: null, error: '' };
+const LOADING: TranscriptState = { status: 'loading', view: null, error: '', blind: null };
 
 function sourceKey(source: TranscriptSource | null): string {
   if (!source) return '';
   return source.kind === 'interview' ? `interview:${source.sessionId}` : `blind:${source.assessmentId}`;
 }
 
-async function fetchView(source: TranscriptSource): Promise<TranscriptView> {
+async function fetchView(source: TranscriptSource): Promise<{ view: TranscriptView; blind: BlindTranscriptSource | null }> {
   if (source.kind === 'blind') {
-    const view = await api.get<BlindTranscriptSource>(`/assessments/${source.assessmentId}/blind`);
-    return transcriptViewFromBlind(view);
+    const blind = await api.get<BlindTranscriptSource>(`/assessments/${source.assessmentId}/blind`);
+    return { view: transcriptViewFromBlind(blind), blind };
   }
   const resp = await api.get<InterviewTranscriptResponse>(`/interviews/${source.sessionId}/transcript`);
-  return transcriptViewFromInterview(resp, source);
+  return { view: transcriptViewFromInterview(resp, source), blind: null };
 }
 
 export function useReviewTranscript(source: TranscriptSource | null) {
@@ -63,10 +71,10 @@ export function useReviewTranscript(source: TranscriptSource | null) {
     let cancelled = false;
     setState(LOADING);
     fetchView(current)
-      .then((view) => { if (!cancelled) setState({ status: 'ready', view, error: '' }); })
+      .then(({ view, blind }) => { if (!cancelled) setState({ status: 'ready', view, error: '', blind }); })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setState({ status: 'failed', view: null, error: err instanceof Error ? err.message : 'The transcript could not be loaded.' });
+        setState({ status: 'failed', view: null, blind: null, error: err instanceof Error ? err.message : 'The transcript could not be loaded.' });
       });
     return () => { cancelled = true; };
   }, [key, attempt]);

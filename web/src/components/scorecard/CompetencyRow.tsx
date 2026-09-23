@@ -13,6 +13,8 @@ import {
   type Classification,
   type EditableCompetency,
 } from './competencyEditModel';
+import { SuggestedDraft } from '../drafts/SuggestedDraft';
+import { useFieldDraft } from '../drafts/useFieldDraft';
 
 function catKind(c: Category): 'blue' | 'gray' {
   return c === 'technical' || c === 'domain' ? 'blue' : 'gray';
@@ -41,6 +43,18 @@ export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onP
   const retired = c.retired === true;
   const removal = removalLabel(hasHistory);
   const disabled = locked || retired;
+
+  // Competency wording is role content: it describes what the job asks for,
+  // not what a candidate did, so a draft here is authoring rather than
+  // judgement (components/drafts/fieldDraftVocabulary.ts).
+  const definitionDraft = useFieldDraft({
+    field: 'competency_definition',
+    context: c.name,
+    value: c.definition,
+    onAccept: (text) => onPatch({ definition: text }),
+    entityType: 'Competency',
+    entityId: c.id,
+  });
 
   return (
     <>
@@ -120,8 +134,12 @@ export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onP
                   maxLength={COMPETENCY_DEFINITION_MAX_LENGTH}
                   disabled={disabled}
                   rows={3}
-                  onChange={(e) => onPatch({ definition: e.target.value })}
+                  aria-describedby={definitionDraft.describedBy}
+                  onFocus={definitionDraft.onFocus}
+                  onKeyDown={definitionDraft.onKeyDown}
+                  onChange={(e) => { definitionDraft.onTyped(); onPatch({ definition: e.target.value }); }}
                 />
+                {!disabled && <SuggestedDraft draft={definitionDraft} />}
               </div>
               <div>
                 <label htmlFor={`comp-ind-${c.id}`} className="muted small">Indicators — one per line, what the interviewer listens for</label>

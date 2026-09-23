@@ -31,6 +31,7 @@ import './styles/lists.css';
 import './styles/hrbox.css';
 import './styles/import.css';
 import './styles/assessment.css';
+import './styles/drafts.css';
 import './styles/compare.css';
 import './styles/status.css';
 import './styles/fit.css';

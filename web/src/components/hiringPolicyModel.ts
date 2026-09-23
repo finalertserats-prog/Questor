@@ -7,7 +7,7 @@
  * console must show what the server will actually do in that case.
  */
 
-export type HiringPolicyKey = 'autoCandidateFeedback' | 'requireBlindReview' | 'feedbackSignedByCompany';
+export type HiringPolicyKey = 'autoCandidateFeedback' | 'requireBlindReview' | 'feedbackSignedByCompany' | 'aiFieldDrafts';
 
 /** Mirrors the server's DEFAULT_REVIEW_WINDOW_HOURS (services/autoFeedbackModel.ts). */
 export const DEFAULT_REVIEW_WINDOW_HOURS = 12;
@@ -36,6 +36,15 @@ export const HIRING_POLICY_TOGGLES: readonly HiringPolicyToggle[] = [
       + 'Switch this on to sign it as your own hiring team.',
   },
   {
+    key: 'aiFieldDrafts',
+    label: 'Offer AI-drafted suggestions in text fields',
+    help: 'A suggested draft under the box when someone is writing a job description, a competency or a message '
+      + 'to a candidate, and "tidy up what I wrote" on their own notes. Nothing is ever drafted for a reviewer’s '
+      + 'verdict, their evidence notes or a reason for changing a level — those are the record of a human '
+      + 'judgement, and no switch turns that on. Switch this off if your organisation does not allow '
+      + 'AI-generated text in hiring.',
+  },
+  {
     key: 'requireBlindReview',
     label: 'Require an independent review before showing AI scores',
     help: 'When on, reviewers must record their own verdict from the evidence (or give a reason to skip) before the '
@@ -49,6 +58,10 @@ export function hiringPolicySwitches(policy: Readonly<Record<string, unknown>>):
     autoCandidateFeedback: policy.autoCandidateFeedback !== false,
     requireBlindReview: policy.requireBlindReview === true,
     feedbackSignedByCompany: policy.feedbackSignedByCompany === true,
+    // On unless switched off: drafting is offered only on authoring fields,
+    // and never taken without the person pressing something
+    // (server/src/services/fieldDraftPolicy.ts).
+    aiFieldDrafts: policy.aiFieldDrafts !== false,
   };
 }
 

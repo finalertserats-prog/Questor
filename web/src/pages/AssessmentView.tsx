@@ -9,7 +9,6 @@ import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { isBlindReviewGate, isScored, reviewRefusal } from '../components/assessmentModel';
 import { FeedbackEmailPanel } from '../components/FeedbackEmailPanel';
-import { DifferencesPanel, type DifferencesView } from '../components/AssessmentTabs';
 import { TechStackCoverage, type TechStackCoverageItem } from '../components/TechStackCoverage';
 import { humanise } from '../components/statusModel';
 import { atsErrorMessage } from '../components/atsModel';
@@ -23,10 +22,10 @@ import { servingModeSentence, type ServingModeView } from '../components/serving
 import { QuestionsAskedCard } from '../components/QuestionsAskedCard';
 import type { AskedQuestion } from '../components/questionsAskedModel';
 import { useToast } from '../components/Toast';
-import { VerdictPanel } from '../components/assessment/VerdictPanel';
+import { VerdictPanel, AiReadingCard } from '../components/assessment/VerdictPanel';
 import { SkillsGrid, type SkillView } from '../components/assessment/SkillsGrid';
 import { AssessmentTranscript } from '../components/assessment/AssessmentTranscript';
-import { outcomeLabel, type Verdict } from '../components/assessment/verdictVocabulary';
+import type { Verdict } from '../components/assessment/verdictVocabulary';
 import {
   caveatSentence, consequenceCopy, consequenceFor, exportRefusalSentence, levelText, outcomeSentence,
   type ExportOffer, type JourneyMove, type JourneyView,
@@ -35,21 +34,44 @@ import { ValidationStatus } from '../components/assessment/ValidationStatus';
 import { Fold, SwotFold } from '../components/assessment/AssessmentFolds';
 import { IdentityIntegrityPanel } from '../components/IdentityIntegrityPanel';
 import { IDENTITY_PANEL_TITLE } from '../components/identityPanelModel';
+import { AssessmentPart, type OrderingView } from '../components/assessment/AssessmentPart';
+import { DifferencesSection, type DifferencesView } from '../components/assessment/DifferencesSection';
+import { RecordedReview } from '../components/assessment/RecordedReview';
+import { NoDraftNote } from '../components/drafts/SuggestedDraft';
+import { TidyUp } from '../components/drafts/TidyUp';
+import { useTidyUp } from '../components/drafts/useFieldDraft';
 
 /**
- * The assessment, in the order a reviewer actually works.
+ * The assessment, in three marked parts.
  *
- * The decision is at the top — the AI's reading beside the reviewer's own, and
- * each choice saying what it will do before it does it. The skills are below
- * with their evidence, and pressing a quote marks that turn in the transcript
- * alongside. Everything else — the strengths and concerns, the identity
- * checks, the questions asked, the candidate's letter — folds underneath,
- * because it is reference, not the work.
+ *   Part 1  what the AI found — its recommendation, its confidence, its
+ *           numbers, and the competencies with the evidence behind them;
+ *   Part 2  what the reviewer decided — their verdict, their words, the levels
+ *           they changed, who and when, and whether the AI's reading was
+ *           visible to them first;
+ *   Part 3  where the two differ — both values, side by side, with no
+ *           commentary from either.
  *
- * Two rules the layout must not break. Where the organisation requires blind
- * review, the AI's recommendation stays withheld until the reviewer has
- * recorded their own; and the transcript is never withheld, because the
- * reviewer judges from it.
+ * The layout underneath is the one that shipped: the decision near the top,
+ * the transcript alongside, everything that is reference folded below. What
+ * changed is that the product's whole claim — a machine assesses, a person
+ * judges, and the difference is kept — is now legible on the page that is
+ * supposed to demonstrate it, instead of being spread across a panel and a
+ * fold called "Where the reviewer and the AI differ".
+ *
+ * THE COMPETENCIES ARE UP FRONT. They used to be readable only once a verdict
+ * had been recorded in an organisation that reviews blind, which meant the
+ * reviewer judged with the least guidance at the moment they needed the most.
+ * They are now shown while the reviewer is deciding — and where the
+ * organisation reviews blind, shown MASKED: the competency, what the role
+ * asks for and the evidence quotes with their timestamps, with the AI's own
+ * level and reasoning withheld until the reviewer has recorded their own.
+ * Facts from the transcript are not the machine's opinion, and withholding
+ * them only leaves the reviewer with less to judge from.
+ *
+ * Two rules the layout must not break. The AI's recommendation stays withheld
+ * where the organisation requires a blind read first; and the transcript is
+ * never withheld, because the reviewer judges from it.
  */
 
 interface Evidence { turnId: string; startMs: number; endMs: number; quote: string; }
@@ -68,11 +90,18 @@ interface AssessmentResult {
   techStackCoverage?: TechStackCoverageItem[];
 }
 interface Review { id: string; status: string; disposition: string; reason: string; overrides: unknown[]; completedAt: string | null; }
+interface ReviewedReview {
+  id: string; reviewerId: string; disposition: string; reason: string; comments: string; completedAt: string | null;
+  /** Whether the AI's reading was visible first. Absent on an older server. */
+  ordering?: OrderingView | null;
+}
 interface AssessmentResp {
   id: string; sessionId: string;
   candidate: { id: string; name: string }; role: { id: string; title: string };
   result: AssessmentResult; reviews: Review[];
-  reviewed?: { review: { id: string; reviewerId: string; disposition: string; reason: string; comments: string; completedAt: string | null } } | null;
+  /** When the AI produced this reading. Absent on an older server. */
+  scoredAt?: string | null;
+  reviewed?: { review: ReviewedReview } | null;
   differences?: DifferencesView | null;
   outcome?: { source: 'human' | 'ai'; recommendation: string; reviewedAt: string | null };
   /** Turns written by a fallback during an AI provider outage. Absent on an older server. */
@@ -82,6 +111,12 @@ interface AssessmentResp {
   /** Where the candidate stands and what each verdict would do. Absent on an older server. */
   journey?: JourneyView | null;
   export?: ExportOffer;
+  /**
+   * Per-role calibrated levels, from feature/role-calibration. This page does
+   * not compute it, does not require it and does not break without it: when it
+   * is absent the comparison renders exactly as it does today.
+   */
+  calibration?: unknown;
 }
 
 interface SubmitResult {
@@ -97,6 +132,11 @@ function newSubmissionId(): string {
   const bytes = new Uint8Array(12);
   globalThis.crypto.getRandomValues(bytes);
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** When a part was recorded, in the mono voice the product uses for measurements. */
+function recordedAt(when: string | null | undefined, fallback: string): string {
+  return when ? `recorded ${formatDateTime(when)}` : fallback;
 }
 
 export function AssessmentView() {
@@ -134,8 +174,6 @@ export function AssessmentView() {
 
   // Per-competency levels the reviewer disagrees with. Empty means "the AI's
   // level stands", which is a verdict in itself and is recorded as agreement.
-  // Folded rather than dropped: it is what the "where the reviewer and the AI
-  // differ" record is made of, so a page without it would quietly retire that.
   const [levels, setLevels] = useState<Record<string, string>>({});
   const [levelReasons, setLevelReasons] = useState<Record<string, string>>({});
 
@@ -149,6 +187,19 @@ export function AssessmentView() {
   const [reportLoading, setReportLoading] = useState(false);
   // The identity fold fetches only once a reviewer opens it.
   const [identityOpen, setIdentityOpen] = useState(false);
+
+  /**
+   * "Tidy up what I wrote", on the reviewer's own reason.
+   *
+   * The one AI action this field gets, and only after they have written
+   * something: it rewrites their words, so it cannot originate the judgement.
+   * No DRAFT is offered here, ever — see NoDraftNote below and
+   * server/src/domain/fieldDrafts.ts for why.
+   */
+  const tidyReason = useTidyUp({
+    field: 'verdict_reason', value: reason, onAccept: setReason,
+    entityType: 'AssessmentVersion', entityId: id ?? '',
+  });
 
   // `cancelled` so a response for an assessment the reviewer has already left
   // cannot overwrite the one in front of them.
@@ -220,37 +271,101 @@ export function AssessmentView() {
 
   if (loading) return <PageSkeleton label="Loading assessment…" cards={3} />;
 
-  // The blind-review gate. Unchanged in substance: the transcript is shown,
-  // the AI's reading is not, and the way forward is an independent review.
+  // -------------------------------------------------------------------------
+  // The blind-review gate: the same three parts, with the AI's opinion masked
+  // -------------------------------------------------------------------------
   if (blocked) {
+    // The competencies as a blind reviewer may see them: the name, what the
+    // role asks for, and the evidence — from the approved scorecard and the
+    // transcript, which are not the AI's reading of this candidate.
+    const maskedSkills: SkillView[] = (transcript.blind?.competencies ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      level: null,
+      requiredLevel: c.requiredLevel ?? 0,
+      notEnoughEvidence: false,
+      rationale: '',
+      evidence: (c.evidence ?? []).map((e) => ({ turnId: e.turnId, startMs: e.startMs, quote: e.quote })),
+    }));
+
     return (
-      <div className="stack">
-        <h2 id={REVIEW_SECTION_ID} className="card-title review-section" tabIndex={-1}>
-          <Icon name="lock" />Independent review required
-        </h2>
-        <Banner kind="info">
-          The AI's recommendation and scores are hidden until you record your own judgement.
-          This keeps your read independent — which is both the point of a second opinion and
-          what keeps the AI advisory rather than the decision-maker.
-        </Banner>
-        <div className="card">
-          <Link className="btn" to={`/assessments/${id}/review`}><Icon name="eye-off" size={16} />Review the evidence blind</Link>
-        </div>
-        {transcriptBlock}
-        <details className="card">
-          <summary>I need to open it without reviewing</summary>
-          <p className="muted">
-            Legitimate sometimes — re-reading a candidate you already decided on, a compliance
-            check, investigating a bad report. It is recorded against your name and shown in the
-            shadow-mode metrics, so skipping habitually is visible rather than assumed fine.
-          </p>
-          <label htmlFor="skip-reason">Reason</label>
-          <textarea id="skip-reason" rows={3} value={skipReason} onChange={(e) => setSkipReason(e.target.value)} />
-          <button className="btn secondary" disabled={skipReason.trim().length < 10} onClick={skipBlind}>
-            <Icon name="eye" size={16} />Open without blind review
-          </button>
-        </details>
+      <div>
+        <PageHeader
+          icon="evidence"
+          title="Assessment"
+          subtitle={<span className="muted">Independent review required before the AI&rsquo;s reading opens</span>}
+        />
         {error && <Banner kind="error">{error}</Banner>}
+
+        <div className="as">
+          <div className="as-main">
+            <AssessmentPart
+              number={1}
+              id="part-ai"
+              title="What the AI found"
+              when="withheld until you record your own"
+            >
+              <div className="as-withheld" data-testid="ai-withheld">
+                <p className="v-micro">Withheld</p>
+                <p className="v-word is-withheld">
+                  <Icon name="lock" size={20} />Recommendation, scores and confidence
+                </p>
+                <p className="v-caveat">
+                  Your organisation asks for an independent read first. This keeps your judgement your own —
+                  which is both the point of a second opinion and what keeps the AI advisory rather than the
+                  decision-maker.
+                </p>
+              </div>
+
+              <ValidationStatus />
+
+              <SkillsGrid masked skills={maskedSkills} activeChip={activeChip} onChip={onChip} />
+            </AssessmentPart>
+
+            <AssessmentPart
+              number={2}
+              id={REVIEW_SECTION_ID}
+              title="What the reviewer decided"
+              when="not yet recorded"
+            >
+              <p className="as-route">
+                <Link className="btn" to={`/assessments/${id}/review`}>
+                  <Icon name="eye-off" size={16} />Review the evidence blind
+                </Link>
+                <span className="muted small">
+                  You record your verdict there, from the transcript and the evidence. The AI&rsquo;s reading
+                  opens the moment you have.
+                </span>
+              </p>
+              <NoDraftNote field="verdict_reason" />
+
+              <details className="card">
+                <summary>I need to open it without reviewing</summary>
+                <p className="muted">
+                  Legitimate sometimes — re-reading a candidate you already decided on, a compliance
+                  check, investigating a bad report. It is recorded against your name and shown in the
+                  shadow-mode metrics, so skipping habitually is visible rather than assumed fine.
+                </p>
+                <label htmlFor="skip-reason">Reason</label>
+                <textarea id="skip-reason" rows={3} value={skipReason} onChange={(e) => setSkipReason(e.target.value)} />
+                <button className="btn secondary" disabled={skipReason.trim().length < 10} onClick={skipBlind}>
+                  <Icon name="eye" size={16} />Open without blind review
+                </button>
+              </details>
+            </AssessmentPart>
+
+            <AssessmentPart
+              number={3}
+              id="part-differences"
+              title="Where they differ"
+              when="nothing to compare yet"
+            >
+              <DifferencesSection differences={null} />
+            </AssessmentPart>
+          </div>
+
+          {transcriptBlock}
+        </div>
       </div>
     );
   }
@@ -285,14 +400,7 @@ export function AssessmentView() {
     ? onlyWhoCan('assessment:review', 'record a review')
     : !scored
       ? 'Grading did not complete, so there is nothing to record a verdict against. Decide from the candidate\'s page instead.'
-      : reviewed
-        // Deliberately does not offer a route to replace it. A completed
-        // review is the version the team acts on and the version the
-        // candidate's letter was written from, and nothing in the console
-        // replaces one today — so this says what stands rather than pointing
-        // at a screen that cannot do it.
-        ? `Reviewed already: ${outcomeLabel(reviewed.review.disposition)}, ${formatDateTime(reviewed.review.completedAt)}. That verdict is the one the team acts on.`
-        : '';
+      : '';
 
   const submit = async (applyToJourney: boolean) => {
     // canSubmit already carries "a verdict was chosen", which is what narrows
@@ -370,6 +478,11 @@ export function AssessmentView() {
 
   const exportRefusal = exportRefusalSentence(offer);
 
+  // The levels this reviewer changed, named, for the record in Part 2.
+  const recordedOverrides = (data.differences?.competencies ?? [])
+    .filter((c) => c.changed)
+    .map((c) => ({ competencyId: c.competencyId, name: c.competencyName, from: c.aiLevel, to: c.humanLevel }));
+
   return (
     <div>
       <PageHeader
@@ -403,10 +516,6 @@ export function AssessmentView() {
         </Banner>
       )}
 
-      {/* Above the score, not below it: a reviewer who has already read
-          "76/100" has formed the impression the notice is meant to qualify. */}
-      <ValidationStatus />
-
       {servingModeSentence(data.servingMode) && (
         <p className="muted small" role="note" data-testid="serving-mode-note">{servingModeSentence(data.servingMode)}</p>
       )}
@@ -421,105 +530,181 @@ export function AssessmentView() {
             {transcriptRead ? 'Transcript read.' : 'Read the transcript before recording your review.'}
           </p>
 
-          <section id={REVIEW_SECTION_ID} className="review-section" tabIndex={-1} aria-label="The verdict">
-            <VerdictPanel
+          {/* ---------------------------------------------------------------
+              PART 1 — what the AI found
+              --------------------------------------------------------------- */}
+          <AssessmentPart
+            number={1}
+            id="part-ai"
+            title="What the AI found"
+            when={recordedAt(data.scoredAt, 'recorded with the interview')}
+          >
+            <AiReadingCard
               ai={scored ? {
                 recommendation: result.recommendation,
                 confidence: result.confidence,
                 caveat: caveatSentence(result),
               } : null}
-              candidate={candidate.name}
-              verdict={verdict}
-              onVerdict={(v) => { startNewSubmission(); setVerdict(v); }}
-              reason={reason}
-              onReason={(r) => { startNewSubmission(); setReason(r); }}
-              copy={copy}
-              canSubmit={canSubmit}
-              submitting={submitting}
-              onSubmit={(apply) => void submit(apply)}
-              refusal={refusal}
             />
-          </section>
 
-          {!scored && (
-            <Banner kind="error">
-              <strong>This assessment has no score.</strong>
-              <div style={{ marginTop: 6 }}>
-                Grading did not complete, so there is no overall score, no confidence and no usable
-                recommendation. The transcript and whatever evidence was captured are still here —
-                read those, and re-run the assessment from the interview if you need a score.
-              </div>
-            </Banner>
-          )}
+            {/* Above the competencies, not below them: a reviewer who has
+                already read "76/100" has formed the impression the notice is
+                meant to qualify. It sits inside this part because it is a
+                statement about THIS reading, not about the page. */}
+            <ValidationStatus />
 
-          {/* Offered where the verdict is recorded, not behind another screen.
-              When it is not on offer, the page says who can rather than
-              showing nothing at all. */}
-          <p className="row" data-testid="export-offer">
-            {offer.available
+            {!scored && (
+              <Banner kind="error">
+                <strong>This assessment has no score.</strong>
+                <div style={{ marginTop: 6 }}>
+                  Grading did not complete, so there is no overall score, no confidence and no usable
+                  recommendation. The transcript and whatever evidence was captured are still here —
+                  read those, and re-run the assessment from the interview if you need a score.
+                </div>
+              </Banner>
+            )}
+
+            {scored && (
+              <dl className="review-facts" data-testid="ai-numbers">
+                <div className="review-fact"><dt>Overall</dt><dd>{formatScoreOutOf100(result.overallScore)}</dd></div>
+                <div className="review-fact"><dt>Confidence</dt><dd>{formatPercent(result.confidence)}</dd></div>
+                <div className="review-fact"><dt>Evidence coverage</dt><dd>{formatPercent(result.evidenceCoverage)}</dd></div>
+              </dl>
+            )}
+
+            <SkillsGrid skills={skills} activeChip={activeChip} onChip={onChip} />
+
+            {result.summary && (
+              <section aria-labelledby="summary-heading">
+                <div className="block-h"><h3 id="summary-heading">The AI&rsquo;s summary</h3></div>
+                <p>{result.summary}</p>
+              </section>
+            )}
+          </AssessmentPart>
+
+          {/* ---------------------------------------------------------------
+              PART 2 — what the reviewer decided
+              --------------------------------------------------------------- */}
+          <AssessmentPart
+            number={2}
+            id={REVIEW_SECTION_ID}
+            title="What the reviewer decided"
+            when={reviewed ? recordedAt(reviewed.review.completedAt, 'recorded') : 'not yet recorded'}
+          >
+            {reviewed
               ? (
-                <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
-                  <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
-                  {exporting ? 'Exporting…' : 'Export to ATS'}
-                </button>
+                <RecordedReview
+                  verdict={reviewed.review.disposition}
+                  reason={reviewed.review.reason}
+                  comments={reviewed.review.comments}
+                  completedAt={reviewed.review.completedAt}
+                  reviewerName="The reviewer"
+                  ordering={reviewed.review.ordering}
+                  overrides={recordedOverrides}
+                  competencyCount={skills.length}
+                />
               )
-              : <span className="muted small">{exportRefusal}</span>}
-          </p>
+              : (
+                <>
+                  <VerdictPanel
+                    ai="elsewhere"
+                    candidate={candidate.name}
+                    verdict={verdict}
+                    onVerdict={(v) => { startNewSubmission(); setVerdict(v); }}
+                    reason={reason}
+                    onReason={(r) => { startNewSubmission(); setReason(r); }}
+                    copy={copy}
+                    canSubmit={canSubmit}
+                    submitting={submitting}
+                    onSubmit={(apply) => void submit(apply)}
+                    refusal={refusal}
+                    reasonAside={(
+                      <>
+                        {/* Said, not merely absent. A feature that is missing
+                            everywhere else reads as an oversight here, and
+                            this one is a decision. */}
+                        <NoDraftNote field="verdict_reason" />
+                        <TidyUp tidy={tidyReason} value={reason} />
+                      </>
+                    )}
+                  />
 
-          <SkillsGrid skills={skills} activeChip={activeChip} onChip={onChip} />
+                  {mayReview && scored && skills.length > 0 && (
+                    <Fold
+                      title="Change a level where you read it differently"
+                      count="optional"
+                      testId="levels-fold"
+                    >
+                      <p className="muted small">
+                        What you leave alone counts as agreeing with the AI. Both are kept, and the
+                        comparison below is what Part 3 is made of.
+                      </p>
+                      <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency levels">
+                        <table>
+                          <thead><tr><th>Competency</th><th>AI</th><th>Your level</th><th>Why</th></tr></thead>
+                          <tbody>
+                            {skills.map((c) => (
+                              <tr key={c.id}>
+                                <td>{c.name}</td>
+                                <td className="muted">{levelText(c.level, c.notEnoughEvidence)}</td>
+                                <td>
+                                  <label className="sr-only" htmlFor={`level-${c.id}`}>Your level for {c.name}</label>
+                                  <select
+                                    id={`level-${c.id}`}
+                                    value={levels[c.id] ?? ''}
+                                    onChange={(e) => setLevels((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                  >
+                                    <option value="">Agree with the AI</option>
+                                    {[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>{level}/5</option>)}
+                                  </select>
+                                </td>
+                                <td>
+                                  <label className="sr-only" htmlFor={`level-reason-${c.id}`}>Why you changed {c.name}</label>
+                                  <input
+                                    id={`level-reason-${c.id}`}
+                                    value={levelReasons[c.id] ?? ''}
+                                    onChange={(e) => setLevelReasons((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                    placeholder="Optional"
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {/* The same boundary, at the field it applies to. */}
+                      <NoDraftNote field="level_override_reason" />
+                    </Fold>
+                  )}
+                </>
+              )}
 
-          {mayReview && scored && !reviewed && skills.length > 0 && (
-            <Fold
-              title="Change a level where you read it differently"
-              count="optional"
-              testId="levels-fold"
-            >
-              <p className="muted small">
-                What you leave alone counts as agreeing with the AI. Both are kept, and the
-                comparison is what "where the reviewer and the AI differ" is made of.
-              </p>
-              <div className="table-scroll" tabIndex={0} role="region" aria-label="Competency levels">
-                <table>
-                  <thead><tr><th>Competency</th><th>AI</th><th>Your level</th><th>Why</th></tr></thead>
-                  <tbody>
-                    {skills.map((c) => (
-                      <tr key={c.id}>
-                        <td>{c.name}</td>
-                        <td className="muted">{levelText(c.level, c.notEnoughEvidence)}</td>
-                        <td>
-                          <label className="sr-only" htmlFor={`level-${c.id}`}>Your level for {c.name}</label>
-                          <select
-                            id={`level-${c.id}`}
-                            value={levels[c.id] ?? ''}
-                            onChange={(e) => setLevels((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                          >
-                            <option value="">Agree with the AI</option>
-                            {[1, 2, 3, 4, 5].map((level) => <option key={level} value={level}>{level}/5</option>)}
-                          </select>
-                        </td>
-                        <td>
-                          <label className="sr-only" htmlFor={`level-reason-${c.id}`}>Why you changed {c.name}</label>
-                          <input
-                            id={`level-reason-${c.id}`}
-                            value={levelReasons[c.id] ?? ''}
-                            onChange={(e) => setLevelReasons((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                            placeholder="Optional"
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </Fold>
-          )}
+            {/* Offered where the verdict is recorded, not behind another screen.
+                When it is not on offer, the page says who can rather than
+                showing nothing at all. */}
+            <p className="row" data-testid="export-offer">
+              {offer.available
+                ? (
+                  <button type="button" className="btn secondary" onClick={doExport} disabled={exporting}>
+                    <Icon name={exporting ? 'hourglass' : 'export'} size={16} />
+                    {exporting ? 'Exporting…' : 'Export to ATS'}
+                  </button>
+                )
+                : <span className="muted small">{exportRefusal}</span>}
+            </p>
+          </AssessmentPart>
 
-          {result.summary && (
-            <section aria-labelledby="summary-heading">
-              <div className="block-h"><h2 id="summary-heading">Summary</h2></div>
-              <p>{result.summary}</p>
-            </section>
-          )}
+          {/* ---------------------------------------------------------------
+              PART 3 — where they differ
+              --------------------------------------------------------------- */}
+          <AssessmentPart
+            number={3}
+            id="part-differences"
+            title="Where they differ"
+            when={data.differences ? recordedAt(data.differences.reviewedAt, 'compared') : 'nothing to compare yet'}
+          >
+            <DifferencesSection differences={data.differences ?? null} calibration={data.calibration} />
+          </AssessmentPart>
 
           <div className="as-folds">
             <SwotFold result={result} />
@@ -540,19 +725,8 @@ export function AssessmentView() {
             )}
 
             {scored && (
-              <Fold title="Scores and coverage" count={`${formatScoreOutOf100(result.overallScore)} overall`}>
-                <dl className="review-facts">
-                  <div className="review-fact"><dt>Overall</dt><dd>{formatScoreOutOf100(result.overallScore)}</dd></div>
-                  <div className="review-fact"><dt>Confidence</dt><dd>{formatPercent(result.confidence)}</dd></div>
-                  <div className="review-fact"><dt>Evidence coverage</dt><dd>{formatPercent(result.evidenceCoverage)}</dd></div>
-                </dl>
+              <Fold title="Coverage of the role&rsquo;s tech stack">
                 <TechStackCoverage coverage={result.techStackCoverage} />
-              </Fold>
-            )}
-
-            {data.differences && (
-              <Fold title="Where the reviewer and the AI differ">
-                <DifferencesPanel differences={data.differences} />
               </Fold>
             )}
 

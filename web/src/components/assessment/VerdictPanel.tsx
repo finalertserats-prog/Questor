@@ -1,4 +1,4 @@
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { Icon } from '../Icon';
 import { VERDICTS, verdictLabel, verdictMark, type Verdict } from './verdictVocabulary';
 import type { ConsequenceCopy } from './verdictFlowModel';
@@ -22,9 +22,20 @@ export interface AiReading {
   readonly caveat: string;
 }
 
+/**
+ * Where the AI's reading is, relative to this panel.
+ *
+ * An object or null is the panel as it was: the reading beside the reviewer's
+ * choice, or "Withheld" where the organisation asks for a blind read first.
+ * 'elsewhere' is the assessment page, where the reading is a whole part of its
+ * own further up (AiReadingCard) and repeating it here would say the same
+ * thing twice.
+ */
+export type AiPlacement = AiReading | null | 'elsewhere';
+
 export interface VerdictPanelProps {
   /** Null while the organisation's blind-review policy withholds it. */
-  readonly ai: AiReading | null;
+  readonly ai: AiPlacement;
   readonly candidate: string;
   readonly verdict: Verdict | '';
   readonly onVerdict: (verdict: Verdict) => void;
@@ -36,6 +47,26 @@ export interface VerdictPanelProps {
   readonly onSubmit: (applyToJourney: boolean) => void;
   /** Said plainly when the control is not the reviewer's to use. */
   readonly refusal: string;
+  /**
+   * Rendered directly under the reason box. It is where the page says that no
+   * draft is offered for a reviewer's own judgement, and offers to tidy up
+   * what they have written once they have written it — so the statement and
+   * the field it is about are never separated.
+   */
+  readonly reasonAside?: ReactNode;
+}
+
+/**
+ * The AI's reading on its own, for the page that gives it a part of its own.
+ * Exported because "what the AI found" is a section of the assessment page,
+ * not a column of the decision panel.
+ */
+export function AiReadingCard({ ai }: { readonly ai: AiReading | null }) {
+  return (
+    <section className="verdict is-solo" data-testid="ai-reading-card">
+      <AiSide ai={ai} />
+    </section>
+  );
 }
 
 function AiSide({ ai }: { readonly ai: AiReading | null }) {
@@ -99,10 +130,16 @@ export function VerdictPanel(props: VerdictPanelProps) {
   const { verdict, copy, refusal } = props;
   const chosen = verdict !== '';
 
+  const elsewhere = props.ai === 'elsewhere';
+
   return (
-    <section className="verdict" aria-labelledby="verdict-heading" data-testid="verdict-panel">
+    <section
+      className={elsewhere ? 'verdict is-solo' : 'verdict'}
+      aria-labelledby="verdict-heading"
+      data-testid="verdict-panel"
+    >
       <h2 id="verdict-heading" className="sr-only">The verdict on this interview</h2>
-      <AiSide ai={props.ai} />
+      {!elsewhere && <AiSide ai={props.ai as AiReading | null} />}
 
       <div className="v-you">
         <p className="v-micro">Your decision</p>
@@ -151,6 +188,7 @@ export function VerdictPanel(props: VerdictPanelProps) {
                     minLength={3}
                     placeholder="What in the evidence led you here?"
                   />
+                  {props.reasonAside}
                   <div className="v-acts">
                     <button
                       type="button"

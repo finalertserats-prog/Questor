@@ -247,7 +247,18 @@ export interface BlindTranscriptSource {
   readonly candidate: { readonly id: string; readonly name: string };
   readonly role: { readonly id: string; readonly title: string };
   readonly session?: SessionFacts | null;
-  readonly competencies: readonly { readonly id: string; readonly name: string }[];
+  /**
+   * The approved scorecard's competencies, as the blind view serves them.
+   * `requiredLevel` and `evidence` are what the assessment page draws the
+   * masked competency cards from: they are facts about the role and about
+   * what was said, not the AI's reading, so a blind reviewer sees them.
+   */
+  readonly competencies: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly requiredLevel?: number;
+    readonly evidence?: readonly { readonly turnId: string; readonly startMs: number; readonly quote: string }[];
+  }[];
   readonly transcript: readonly TranscriptTurnInput[];
 }
 

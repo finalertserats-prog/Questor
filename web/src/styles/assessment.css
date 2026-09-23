@@ -25,6 +25,15 @@
 
 /* --- the verdict panel --------------------------------------------------- */
 
+/* One column when the AI's reading lives in a part of its own further up the
+   page, or when this panel IS that reading. */
+.verdict.is-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+.verdict.is-solo .v-you {
+  border-left: 0;
+}
+
 .verdict {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
@@ -184,7 +193,8 @@
   gap: var(--space-2) var(--space-4);
   margin-bottom: var(--space-3);
 }
-.block-h h2 {
+.block-h h2,
+.block-h h3 {
   margin: 0;
   font-size: var(--type-section-size);
   line-height: var(--type-section-line);
@@ -548,5 +558,258 @@ details.fold > summary .fold-count { font-size: 13px; color: var(--ink-3); }
   }
   .ev-quote {
     max-width: 62vw;
+  }
+}
+
+/* ==========================================================================
+   The three parts (components/assessment/AssessmentPart.tsx)
+
+   What the AI found, what the reviewer decided, where they differ. Marked
+   down the spine of the page with a numbered label and a rule, because the
+   product's whole claim is that these are three different things.
+   ========================================================================== */
+
+.as-part {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+  min-width: 0;
+}
+.as-part-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  padding-bottom: 6px;
+  border-bottom: var(--rail) solid var(--ink);
+}
+.as-part-h h2 {
+  margin: 0;
+  font-size: var(--type-section-size);
+  line-height: var(--type-section-line);
+  font-weight: var(--type-section-weight);
+}
+.as-part-tag {
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--ink);
+  border: var(--hair) solid var(--ink);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+}
+.as-part-when {
+  margin-left: auto;
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Whether the human judged before the machine's reading was visible. The one
+   fact that turns two verdicts into a record of oversight. */
+.as-order {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  padding-left: var(--space-3);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  border-left: var(--rail) solid var(--accent-edge);
+}
+.as-order.is-unknown {
+  border-left-color: var(--rule-strong);
+  color: var(--ink-3);
+}
+
+/* The AI's reading, withheld. Deliberate and calm: a dashed edge and a lock,
+   not an error. */
+.as-withheld {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border: var(--hair) dashed var(--field-edge);
+  border-radius: var(--radius);
+}
+.as-route {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+}
+.as-empty {
+  margin: 0;
+  padding-left: var(--space-3);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  border-left: var(--hair) dashed var(--rule-strong);
+}
+
+/* What the comparison is used for. One sentence, and every clause of it has
+   to be true of the code (components/assessment/DifferencesSection.tsx). */
+.as-learning {
+  margin: 0;
+  padding-left: var(--space-3);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  border-left: var(--rail) solid var(--accent-edge);
+}
+
+/* --- the comparison ------------------------------------------------------ */
+
+.as-diff-overall {
+  display: grid;
+  gap: 4px;
+  padding: var(--space-3) 0 var(--space-3) var(--space-3);
+  border-left: var(--rail) solid var(--spark);
+}
+.as-diff-micro {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.as-diff-pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+  font-size: 14.5px;
+}
+.as-diff-pair span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.as-diff-pair .k {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.as-diff-count {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.as-diff-cal-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.as-diff {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.as-diff th {
+  text-align: left;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  font-weight: var(--type-micro-weight);
+  color: var(--ink-3);
+  padding: 0 var(--space-3) 6px 0;
+  border-bottom: var(--hair) solid var(--rule-strong);
+  white-space: nowrap;
+}
+.as-diff td {
+  padding: 9px var(--space-3) 9px 0;
+  border-bottom: var(--hair) solid var(--rule);
+  vertical-align: top;
+}
+/* A row where the two readings parted company: a rule in the margin, never a
+   tinted row, and never a word from us about who was right. */
+.as-diff tr.is-changed td:first-child {
+  box-shadow: inset 3px 0 0 var(--spark);
+  padding-left: var(--space-3);
+}
+.as-diff-num {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.as-diff-prov {
+  display: block;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  color: var(--ink-3);
+  white-space: normal;
+}
+.as-diff-why {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.as-diff-neutral {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  padding-left: var(--space-3);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-3);
+  border-left: var(--hair) dashed var(--rule-strong);
+}
+
+/* --- the recorded review ------------------------------------------------- */
+
+.rr-words {
+  margin: 0;
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rr-levels {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+
+/* --- the masked competencies --------------------------------------------- */
+
+.skills-masked-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-3);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  border-left: var(--rail) solid var(--rule-strong);
+}
+/* Deliberate, not broken: the card keeps its shape and says what is missing. */
+.skill-withheld {
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .as-part-when {
+    margin-left: 0;
+    width: 100%;
   }
 }

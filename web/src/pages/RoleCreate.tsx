@@ -14,6 +14,8 @@ import { TechStackEditor } from '../components/TechStackEditor';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
 import { useTechStackTools } from '../components/useTechStackTools';
 import { useToast } from '../components/Toast';
+import { SuggestedDraft } from '../components/drafts/SuggestedDraft';
+import { useFieldDraft } from '../components/drafts/useFieldDraft';
 
 type Source = 'paste' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
@@ -56,6 +58,7 @@ export function RoleCreate() {
   const [error, setError] = useState('');
   const [catalogError, setCatalogError] = useState('');
   const [catalogAttempt, setCatalogAttempt] = useState(0);
+
   // Errors from the title field's own "add to catalog" action, cleared as soon as the title changes.
   const [titleError, setTitleError] = useState('');
   const [warnings, setWarnings] = useState<{ term: string; suggestion: string }[]>([]);
@@ -68,6 +71,18 @@ export function RoleCreate() {
   const [describedUsed, setDescribedUsed] = useState(false);
   const [describeOpen, setDescribeOpen] = useState(false);
   const [description, setDescription] = useState('');
+  /**
+   * A suggested draft under each of the two role-content fields. Role content
+   * is authoring, not judgement: nobody is being assessed by these words, so
+   * a draft here saves typing rather than pre-empting a decision
+   * (components/drafts/fieldDraftVocabulary.ts).
+   */
+  const summaryDraft = useFieldDraft({
+    field: 'role_summary', context: title, value: description, onAccept: setDescription, entityType: 'Role',
+  });
+  const jdDraft = useFieldDraft({
+    field: 'job_description', context: title, value: sourceText, onAccept: setSourceText, entityType: 'Role',
+  });
   const [describeBusy, setDescribeBusy] = useState(false);
 
   useEffect(() => {
@@ -338,7 +353,17 @@ export function RoleCreate() {
             {(describeOpen || draftState.kind === 'failed') && (
               <div style={{ marginTop: 12 }}>
                 <label htmlFor={`${fieldId}-describe`}>Describe the role</label>
-                <textarea id={`${fieldId}-describe`} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="In a few sentences: what will this person own, who do they work with, what does success look like?" style={{ minHeight: 120 }} />
+                <textarea
+                  id={`${fieldId}-describe`}
+                  value={description}
+                  onChange={(e) => { summaryDraft.onTyped(); setDescription(e.target.value); }}
+                  onFocus={summaryDraft.onFocus}
+                  onKeyDown={summaryDraft.onKeyDown}
+                  aria-describedby={summaryDraft.describedBy}
+                  placeholder="In a few sentences: what will this person own, who do they work with, what does success look like?"
+                  style={{ minHeight: 120 }}
+                />
+                <SuggestedDraft draft={summaryDraft} />
                 <button type="button" className="btn secondary" disabled={describeBusy || description.trim().length < 40} onClick={draftFromMyDescription}>Draft from my description</button>
               </div>
             )}
@@ -365,11 +390,15 @@ export function RoleCreate() {
             <textarea
               id={`${fieldId}-jd`}
               value={sourceText}
-              onChange={(e) => setSourceText(e.target.value)}
+              onChange={(e) => { jdDraft.onTyped(); setSourceText(e.target.value); }}
+              onFocus={jdDraft.onFocus}
+              onKeyDown={jdDraft.onKeyDown}
+              aria-describedby={jdDraft.describedBy}
               placeholder="Paste the full job description here…"
               style={{ minHeight: 220 }}
               required
             />
+            <SuggestedDraft draft={jdDraft} />
           </>
         )}
 

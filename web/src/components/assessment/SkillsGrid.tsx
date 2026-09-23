@@ -2,14 +2,22 @@ import { Icon } from '../Icon';
 import { evidenceChips, levelText, meterCells } from './verdictFlowModel';
 
 /**
- * The skills, below the decision, each score beside the words that earned it.
+ * The competencies, with the evidence that earned each one.
  *
- * The evidence was a wall of quotes in a table cell: readable, and impossible
- * to check, because finding the quoted moment in the transcript meant reading
- * the transcript. Each quote is now a chip carrying the time it was said, and
- * pressing one marks that turn in the transcript alongside. The turn is the
- * one the evaluator recorded (EvidenceSpan.turnId) — not one matched back from
- * the text, which a truncated quote never matched.
+ * They sit inside "What the AI found", ABOVE the reviewer's form rather than
+ * below it, because they are what the reviewer works from: the competency, the
+ * level the role needs, and the moments in the interview that bear on it.
+ * Pressing a quote marks that turn in the transcript alongside — the turn the
+ * evaluator recorded (EvidenceSpan.turnId), not one matched back from text,
+ * which a truncated quote never matched.
+ *
+ * MASKED, in an organisation that requires blind review, until the reviewer
+ * has recorded their own verdict. Masked, not hidden: the competency name,
+ * what the role asks for and the evidence quotes with their timestamps are
+ * facts from the transcript and the approved scorecard, and withholding them
+ * would leave the reviewer judging from nothing. What is withheld is the AI's
+ * own opinion — the level, the meter and the one-line rationale — because that
+ * is the thing blind review exists to keep out of their head.
  */
 
 export interface SkillEvidence {
@@ -33,34 +41,53 @@ export interface SkillsGridProps {
   /** The evidence chip currently marking a turn, by chip key. */
   readonly activeChip: string;
   readonly onChip: (chip: { readonly key: string; readonly turnId: string }) => void;
+  /** Withhold the AI's own reading of each competency, keeping the evidence. */
+  readonly masked?: boolean;
 }
 
-export function SkillsGrid({ skills, activeChip, onChip }: SkillsGridProps) {
+const MASK_NOTE = 'The levels and the AI’s reasoning are withheld until you record your own verdict. '
+  + 'What the role asks for, and what the candidate actually said, are not — you judge from those.';
+
+export function SkillsGrid({ skills, activeChip, onChip, masked = false }: SkillsGridProps) {
   if (skills.length === 0) return null;
   const chipsFor = new Map(skills.map((skill) => [skill.id, evidenceChips(skill.evidence)]));
   return (
     <section aria-labelledby="skills-heading">
       <div className="block-h">
-        <h2 id="skills-heading">Skills</h2>
-        <small className="muted">Levels out of 5 · a quote marks its turn in the transcript</small>
+        <h3 id="skills-heading">Competencies</h3>
+        <small className="muted">
+          {masked
+            ? 'What the role asks for, and the evidence · a quote marks its turn in the transcript'
+            : 'Levels out of 5 · a quote marks its turn in the transcript'}
+        </small>
       </div>
-      <ul className="skills" data-testid="skills-grid">
+      {masked && (
+        <p className="skills-masked-note" data-testid="skills-masked-note">
+          <Icon name="eye-off" size={15} />{MASK_NOTE}
+        </p>
+      )}
+      <ul className="skills" data-testid="skills-grid" data-masked={masked ? 'true' : 'false'}>
         {skills.map((skill) => (
-          <li key={skill.id} className="skill">
+          <li key={skill.id} className={masked ? 'skill is-masked' : 'skill'}>
             <p className="skill-h">
               <b>{skill.name}</b>
-              <span className="skill-level">{levelText(skill.level, skill.notEnoughEvidence)}</span>
+              {masked
+                ? <span className="skill-withheld" data-testid="skill-withheld">Level withheld</span>
+                : <span className="skill-level">{levelText(skill.level, skill.notEnoughEvidence)}</span>}
             </p>
             {/* The meter repeats what the text beside it already says, so it
-                is decorative: a screen reader should not read it twice. */}
-            <span className="skill-meter" aria-hidden="true">
-              {meterCells(skill.level).map((cell, i) => <i key={i} className={`is-${cell}`} />)}
-            </span>
+                is decorative: a screen reader should not read it twice. It is
+                the AI's reading, so it goes when the reading is masked. */}
+            {!masked && (
+              <span className="skill-meter" aria-hidden="true">
+                {meterCells(skill.level).map((cell, i) => <i key={i} className={`is-${cell}`} />)}
+              </span>
+            )}
             <p className="skill-need muted">Needs {skill.requiredLevel}/5</p>
-            {skill.notEnoughEvidence && (
+            {!masked && skill.notEnoughEvidence && (
               <p className="skill-thin"><Icon name="alert" size={14} />The interview did not reach this.</p>
             )}
-            {skill.rationale && <p className="skill-why muted">{skill.rationale}</p>}
+            {!masked && skill.rationale && <p className="skill-why muted">{skill.rationale}</p>}
             {(chipsFor.get(skill.id) ?? []).length > 0 && (
               <div className="ev-chips">
                 {(chipsFor.get(skill.id) ?? []).map((chip) => (
@@ -73,7 +100,7 @@ export function SkillsGrid({ skills, activeChip, onChip }: SkillsGridProps) {
                     onClick={() => onChip(chip)}
                   >
                     <span className="ev-at">{chip.stamp}</span>
-                    <span className="ev-quote">“{chip.quote}”</span>
+                    <span className="ev-quote">&ldquo;{chip.quote}&rdquo;</span>
                   </button>
                 ))}
               </div>
