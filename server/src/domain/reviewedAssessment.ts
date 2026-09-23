@@ -33,6 +33,12 @@ export interface CompletedReview {
   readonly comments: string;
   readonly completedAt: Date | string | null;
   readonly overrides: readonly ReviewOverride[];
+  /**
+   * Whether the AI's reading was visible to this reviewer before they recorded
+   * it. Null on reviews written before the fact was stored; never guessed
+   * (domain/reviewOrdering.ts).
+   */
+  readonly aiVisibleBefore?: boolean | null;
 }
 
 const DISPOSITIONS: readonly Recommendation[] = ['PROCEED', 'CONSIDER', 'DO_NOT_PROGRESS'];

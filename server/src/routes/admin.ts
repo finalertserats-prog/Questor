@@ -548,6 +548,12 @@ const policySchema = z.object({
   // Reviews one person must have completed before any pattern about them is
   // computed or shown (domain/reviewerPatterns.ts). Unset means 10.
   calibrationReviewerPatternMinReviews: z.number().int().min(5).max(1000).optional(),
+  // AI-drafted suggestions in the product's text fields. Unset means on; false
+  // turns every suggestion and every "tidy up" off, for organisations whose
+  // policy forbids AI-generated text in hiring (services/fieldDraftPolicy.ts).
+  // It does NOT govern the judgement-field boundary, which cannot be switched
+  // on at all (domain/fieldDrafts.ts).
+  aiFieldDrafts: z.boolean().optional(),
   // Hours the hiring team has to complete a review before the candidate's
   // feedback goes on its own. Unset means the deployment default (12).
   feedbackReviewWindowHours: z.number().int().min(0).max(168).optional(),

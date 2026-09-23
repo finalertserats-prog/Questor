@@ -26,6 +26,8 @@ import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from
 import { recordCalibrationObservations } from '../services/calibrationCapture.js';
 import { recordLibraryReviewerDelta } from '../services/calibrationAnchors.js';
 import { assessmentCalibration } from '../domain/calibrationView.js';
+import { aiVisibleBeforeReview } from '../services/reviewOrdering.js';
+import { orderingView, reviewOrdering } from '../domain/reviewOrdering.js';
 import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import { questionsAskedFor, type AskedQuestion } from '../library/questionsAsked.js';
 import { identityPanelFor } from '../services/identityPanel.js';
@@ -512,6 +514,10 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
     candidate: { id: a.session.candidateId, name: a.session.candidate.fullName },
     role: { id: a.session.roleId, title: a.session.role.title },
     result,
+    // When the AI produced this reading. The page states it beside the AI's
+    // part, because "what the AI found" and "what the reviewer decided" only
+    // mean something next to each other if both say when they were recorded.
+    scoredAt: a.createdAt,
     reviews: reviews.map((r) => ({ id: r.id, status: r.status, disposition: r.disposition, reason: r.reason, overrides: parseJsonOptional(r.overridesJson, [], { model: 'HumanReview', id: r.id, field: 'overridesJson' }), completedAt: r.completedAt })),
     reviewed: completed
       ? {
@@ -519,6 +525,11 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
         review: {
           id: completed.id, reviewerId: completed.reviewerId, disposition: completed.disposition,
           reason: completed.reason, comments: completed.comments, completedAt: completed.completedAt,
+          // Whether this verdict was recorded before or after the AI's reading
+          // was visible. The page shows it beside the review, because that
+          // ordering is what makes the record an independent second opinion
+          // rather than a countersignature.
+          ordering: orderingView(reviewOrdering(completed.aiVisibleBefore)),
         },
       }
       : null,
@@ -865,6 +876,12 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // it on the review row and the audit event makes the missing independence
   // visible in the compliance record instead of absent from it.
   const selfReview = await ranTheInterview(req.auth!.userId, a.sessionId);
+  // Whether this reviewer could already see the AI's reading. Read BEFORE the
+  // review is written, because writing it is what ends the "before" — and
+  // stored on the row, because an ordering inferred later from an audit trail
+  // that may have been pruned is not evidence of anything
+  // (services/reviewOrdering.ts).
+  const aiVisibleBefore = await aiVisibleBeforeReview(a.id, req.auth!.userId);
   const comments = body.comments ?? '';
   // Where the candidate stood before this submit. The move is reported by
   // comparing this with the row afterwards, so what the reviewer is told
@@ -890,6 +907,7 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
       data: {
         assessmentId: a.id, reviewerId: req.auth!.userId, status: 'COMPLETED', disposition: body.verdict,
         reason: body.reason, submissionId: body.submissionId ?? null, activeForAssessmentId: a.id,
+        aiVisibleBefore,
         comments: selfReview ? (comments ? `${comments}\n\n${SELF_REVIEW_NOTE}` : SELF_REVIEW_NOTE) : comments,
         overridesJson: JSON.stringify(body.overrides), completedAt: new Date(),
       },

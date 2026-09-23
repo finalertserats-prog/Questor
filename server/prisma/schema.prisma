@@ -629,6 +629,17 @@ model HumanReview {
   overridesJson  String   @default("[]")
   comments       String   @default("")
   reason         String   @default("")
+  // Whether this reviewer could already see the AI's recommendation, scores
+  // and levels when they recorded this verdict.
+  //
+  // It is the fact that makes the record mean something: a verdict written
+  // before the machine's is an independent second opinion, the same verdict
+  // written after it may be a countersignature, and the two are identical on
+  // the page. So it is stored at the moment the review is written rather than
+  // inferred later from an audit trail that may have been pruned or a policy
+  // that has since changed. Null on rows written before this column existed —
+  // neither ordering is ever guessed (domain/reviewOrdering.ts).
+  aiVisibleBefore Boolean?
   createdAt      DateTime @default(now())
   completedAt    DateTime?
   // Superseded by a later completed review, with the reason it was replaced.

@@ -37,7 +37,7 @@ function readOverrides(raw: string, reviewId: string): ReviewOverride[] {
 
 function asCompleted(review: {
   id: string; reviewerId: string; disposition: string | null; reason: string | null; comments: string | null;
-  completedAt: Date | null; overridesJson: string;
+  completedAt: Date | null; overridesJson: string; aiVisibleBefore?: boolean | null;
 }): CompletedReview {
   return {
     id: review.id,
@@ -47,6 +47,7 @@ function asCompleted(review: {
     comments: review.comments ?? '',
     completedAt: review.completedAt,
     overrides: readOverrides(review.overridesJson, review.id),
+    aiVisibleBefore: review.aiVisibleBefore ?? null,
   };
 }
 

@@ -20,6 +20,7 @@ import { roleStatusRouter } from './routes/roleStatus.js';
 import { catalogRouter } from './routes/catalog.js';
 import { catalogReviewRouter } from './routes/catalogReview.js';
 import { jdDraftsRouter } from './routes/jdDrafts.js';
+import { fieldDraftsRouter } from './routes/fieldDrafts.js';
 import { candidatesRouter } from './routes/candidates.js';
 import { candidateImportsRouter } from './routes/candidateImports.js';
 import { interviewsRouter } from './routes/interviews.js';
@@ -270,6 +271,7 @@ export function createApp() {
   app.use('/api/catalog', catalogRouter);
   app.use('/api/catalog-review', catalogReviewRouter);
   app.use('/api/jd-drafts', jdDraftsRouter);
+  app.use('/api/drafts', fieldDraftsRouter);
   app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
