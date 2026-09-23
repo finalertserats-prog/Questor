@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client';
 import {
   ALREADY_ANSWERED, FEEDBACK_EXPLANATION, FEEDBACK_NO_LABEL, FEEDBACK_QUESTION, FEEDBACK_YES_LABEL, answerConfirmation,
 } from '../components/feedbackOptInCopy';
+import { LoadingNote } from '../components/Skeleton';
 
 /**
  * "Would you like written feedback?" — the page behind the link a recruiter's
@@ -54,7 +55,7 @@ export function FeedbackConsent() {
   return (
     <div className="center-screen">
       <div className="card auth-card">
-        {phase === 'loading' && <p className="muted">One moment…</p>}
+        {phase === 'loading' && <LoadingNote />}
 
         {phase === 'open' && (
           <>

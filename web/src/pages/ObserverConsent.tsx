@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
+import { LoadingNote } from '../components/Skeleton';
 import { CandidateObserverConsent } from '../components/ObserverPanels';
 import type { CandidateConsentView } from '../components/observerModel';
 
@@ -64,7 +65,7 @@ export function ObserverConsent() {
     <div className="center-screen">
       <h1 className="visually-hidden">Interview observer consent</h1>
       {error && <Banner kind="error">{error}</Banner>}
-      {!view && !error && <p className="muted">One moment…</p>}
+      {!view && !error && <LoadingNote />}
       {view && (
         <CandidateObserverConsent
           view={view}

@@ -179,7 +179,7 @@ export function LeaveDialog({ open, interviewer, onCancel, onConfirm }: {
 export function RoomLoading({ err }: { err: string }) {
   if (err) return <div className="center-screen"><div className="card auth-card"><div className="banner error">{err}</div></div></div>;
   return (
-    <div className="center-screen muted" role="status">
+    <div className="center-screen muted" role="status" aria-busy="true">
       <span className="check-label"><Icon name="refresh" size={18} />Connecting to the interview room…</span>
     </div>
   );

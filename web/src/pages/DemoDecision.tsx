@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { Icon } from '../components/Icon';
+import { LoadingNote } from '../components/Skeleton';
 import { decisionPhaseForStatus, type DecisionPhase } from '../components/signupModel';
 
 interface Applicant {
@@ -68,7 +69,7 @@ export function DemoDecision() {
   return (
     <div className="center-screen">
       <div className="card auth-card">
-        {phase === 'loading' && <p className="muted">One moment…</p>}
+        {phase === 'loading' && <LoadingNote />}
 
         {phase === 'open' && applicant && (
           <>

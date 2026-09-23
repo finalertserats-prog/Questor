@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
+import { LoadingNote } from '../components/Skeleton';
 
 /**
  * "Would you like to speak to a person?" — the page behind the link in a
@@ -58,7 +59,7 @@ export function TalkToAPerson() {
   return (
     <div className="center-screen">
       <div className="card auth-card">
-        {phase === 'loading' && <p className="muted">One moment…</p>}
+        {phase === 'loading' && <LoadingNote />}
 
         {phase === 'open' && (
           <>
