@@ -14,6 +14,7 @@ const MENU_STOPS = '[role="menuitem"], .profile-menu-theme button';
 const MENU_ICONS: Record<string, IconName> = {
   settings: 'settings',
   admin: 'admin',
+  people: 'team',
   signups: 'inbox',
   audit: 'audit',
   'catalog-review': 'list',

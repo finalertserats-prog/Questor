@@ -114,7 +114,12 @@ export function OrgLogin() {
                   {busy ? 'Please wait…' : 'Sign in'}
                 </button>
               </form>
+              {/* The organisation is carried through, so "back to sign in"
+                  returns to this door rather than the front one. */}
               <div className="small muted" style={{ marginTop: 12, textAlign: 'center' }}>
+                <Link to={`/forgot-password?org=${encodeURIComponent(slug)}`}>Forgot your password?</Link>
+              </div>
+              <div className="small muted" style={{ marginTop: 6, textAlign: 'center' }}>
                 <Link to="/login">Not {org.name}?</Link>
               </div>
             </>

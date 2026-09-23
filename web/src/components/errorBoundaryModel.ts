@@ -28,7 +28,7 @@ export function boundaryCopy(scope: BoundaryScope): BoundaryCopy {
 }
 
 /** Candidate-facing addresses: no dashboard to send anyone to. */
-const PUBLIC_PREFIXES = ['/portal/', '/room/', '/talk-to-a-person/', '/observer-consent/', '/feedback-consent/', '/signup', '/demo', '/login', '/o/'];
+const PUBLIC_PREFIXES = ['/portal/', '/room/', '/talk-to-a-person/', '/observer-consent/', '/feedback-consent/', '/signup', '/demo', '/login', '/o/', '/forgot-password', '/reset-password'];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));

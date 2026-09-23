@@ -130,6 +130,13 @@ export function Login() {
               <button className="btn" style={{ width: '100%', marginTop: 18 }} disabled={busy}>
                 {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create organisation'}
               </button>
+              {/* Only when signing in. Offering to reset a password on the form
+                  that creates one would be nonsense. */}
+              {mode === 'login' && (
+                <div className="small muted" style={{ marginTop: 12, textAlign: 'center' }}>
+                  <Link to="/forgot-password">Forgot your password?</Link>
+                </div>
+              )}
             </form>
           )}
 

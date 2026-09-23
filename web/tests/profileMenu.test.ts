@@ -25,8 +25,8 @@ describe('initialsFor', () => {
 });
 
 describe('profileMenuItems', () => {
-  it('lists Settings, Admin console, Account requests, Audit log, About, Contact and Take the tour in that order for an admin', () => {
-    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'Account requests', 'Audit log', 'About', 'Contact', 'Take the tour']);
+  it('lists Settings, Admin console, People, Account requests, Audit log, About, Contact and Take the tour in that order for an admin', () => {
+    expect(profileMenuItems('admin').map((item) => item.label)).toEqual(['Settings', 'Admin console', 'People', 'Account requests', 'Audit log', 'About', 'Contact', 'Take the tour']);
   });
 
   it('omits Admin console and Audit log for a recruiter', () => {
@@ -47,11 +47,11 @@ describe('profileMenuItems', () => {
 
   it('points each page link at its route', () => {
     const routes = profileMenuItems('admin').flatMap((item) => (item.kind === 'link' ? [item.to] : []));
-    expect(routes).toEqual(['/settings', '/admin', '/admin/signups', '/audit', '/about', '/contact']);
+    expect(routes).toEqual(['/settings', '/admin', '/admin/users', '/admin/signups', '/audit', '/about', '/contact']);
   });
 
   it('offers Catalog review to the platform owner, after the audit log', () => {
-    expect(profileMenuItems('admin', { platformOperator: true }).map((item) => item.key)).toEqual(['settings', 'admin', 'signups', 'audit', 'catalog-review', 'library-admin', 'about', 'contact', 'tour']);
+    expect(profileMenuItems('admin', { platformOperator: true }).map((item) => item.key)).toEqual(['settings', 'admin', 'people', 'signups', 'audit', 'catalog-review', 'library-admin', 'about', 'contact', 'tour']);
   });
 
   it('offers Catalog review to a platform owner whatever their organisation role', () => {

@@ -24,6 +24,9 @@ import {
 import { Login } from './pages/Login';
 import { OrgLogin } from './pages/OrgLogin';
 import { Signup } from './pages/Signup';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
+import { TeamUsers } from './pages/TeamUsers';
 import { SignupDecision } from './pages/SignupDecision';
 import { DemoRequest } from './pages/DemoRequest';
 import { DemoEnded, DemoRedeem } from './pages/DemoRedeem';
@@ -505,6 +508,12 @@ export function App() {
           asking for an account has none to sign in with, and the operator's
           emailed link carries its own credential in the token — putting the
           decision behind a session would gate granting access on having it. */}
+      {/* Recovery is public by necessity: the person reaching it cannot sign
+          in. Neither page names anyone — the confirmation is the same sentence
+          whether or not the address has an account, and the token lives in the
+          URL fragment, which a browser never sends to a server. */}
+      <Route path="/forgot-password" element={<CandidatePage><ForgotPassword /></CandidatePage>} />
+      <Route path="/reset-password" element={<CandidatePage><ResetPassword /></CandidatePage>} />
       <Route path="/signup" element={<CandidatePage><Signup /></CandidatePage>} />
       <Route path="/onboard" element={<CandidatePage><Onboard /></CandidatePage>} />
       <Route path="/signup/decision/:token" element={<CandidatePage><SignupDecision /></CandidatePage>} />
@@ -548,6 +557,8 @@ export function App() {
       <Route path="/catalog-review" element={<Protected><CatalogReview /></Protected>} />
       <Route path="/library-admin" element={<Protected><LibraryAdmin /></Protected>} />
       <Route path="/admin" element={<Protected><AdminOnly><Admin /></AdminOnly></Protected>} />
+      {/* Before /admin/:tab, which would otherwise swallow it. */}
+      <Route path="/admin/users" element={<Protected><AdminOnly><TeamUsers /></AdminOnly></Protected>} />
       <Route path="/admin/signups" element={<Protected><AdminOnly><SignupQueue /></AdminOnly></Protected>} />
       {/* The console's sub-tabs; /admin itself is the System health tab. */}
       <Route path="/admin/:tab" element={<Protected><AdminOnly><Admin /></AdminOnly></Protected>} />

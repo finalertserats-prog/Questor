@@ -7,6 +7,7 @@ import { humanise } from '../components/statusModel';
 import { can } from '../components/capabilityModel';
 import { DigestSetting } from '../components/hrbox/DigestSetting';
 import { BusinessAreasPanel } from '../components/BusinessAreasPanel';
+import { ChangePasswordPanel } from '../components/ChangePasswordPanel';
 
 export function Settings() {
   const { user, tenant } = useAuth();
@@ -37,6 +38,9 @@ export function Settings() {
         {/* Only for someone the summary could be about: it lists candidates. */}
         {user && can(user, 'candidate:read') && <DigestSetting initialOptOut={user.digestOptOut ?? false} />}
       </div>
+      {/* A demo visitor's account is a throwaway with a random password and an
+          expiry; there is nothing there to change. */}
+      {user && user.role !== 'demo' && <ChangePasswordPanel />}
       {/* The server refuses everyone else; hiding it just spares them a 403. */}
       {user?.role === 'admin' && <AtsConnectionPanel />}
       {/* Which part of the shared role catalog this organisation searches by
