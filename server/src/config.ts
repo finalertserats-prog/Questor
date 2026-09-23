@@ -457,6 +457,28 @@ export const config = {
    * only — nothing in a snapshot is about a person.
    */
   outcomeSnapshotEnabled: parseBooleanSetting('OUTCOME_SNAPSHOT_ENABLED', process.env.OUTCOME_SNAPSHOT_ENABLED, false),
+  /**
+   * Role calibration (docs/plans/role-calibration.md): what the evaluator
+   * learns from what reviewers actually decided.
+   *
+   * Dark by default. With `enabled` off, observations are still captured —
+   * they are the record of what reviewers decided, and worth keeping whatever
+   * the scoring does — but nothing is aggregated, activated or applied. An
+   * organisation must ALSO switch it on in its own policy.
+   *
+   * `requireFairnessCheck` fails the fairness gate CLOSED: when the outcome
+   * statistics cannot be read, an activation is held rather than allowed,
+   * because "we could not check" is not "the check passed". Turning it off is
+   * a deliberate, documented reduction in safety.
+   */
+  calibration: {
+    enabled: parseBooleanSetting('CALIBRATION_ENABLED', process.env.CALIBRATION_ENABLED, false),
+    requireFairnessCheck: parseBooleanSetting(
+      'CALIBRATION_REQUIRE_FAIRNESS_CHECK', process.env.CALIBRATION_REQUIRE_FAIRNESS_CHECK, true,
+    ),
+    /** The shared, anonymised calibration. Off here closes it for every organisation at once. */
+    globalEnabled: parseBooleanSetting('CALIBRATION_GLOBAL_ENABLED', process.env.CALIBRATION_GLOBAL_ENABLED, false),
+  },
   library: {
     /** Tenant-facing read API (select, entries) and the admin screen. */
     enabled: parseBooleanSetting('LIBRARY_ENABLED', process.env.LIBRARY_ENABLED, false),

@@ -327,6 +327,42 @@ export interface CompetencyScore {
   rubricVersion: string;
   /** True when rubric grading was configured but failed, so no score was produced. */
   gradingUnavailable?: boolean;
+  /**
+   * The AI's own level, before role calibration moved it. Present only when a
+   * calibration applied — so an uncalibrated assessment is byte-for-byte what
+   * it always was, and `level` NEVER stops meaning "what the AI graded".
+   *
+   * Reading order for anything that shows a competency:
+   *   level            — what the AI graded (unchanged, always present)
+   *   calibratedLevel  — what the role's own reviewers have taught us to read
+   *                      that as (half-level steps, present only when applied)
+   *   the human's level — from HumanReview.overridesJson, which beats both
+   *
+   * See domain/calibration.ts and docs/plans/role-calibration.md.
+   */
+  calibratedLevel?: number | null;
+  /** Why the level moved, kept on the assessment so it can be reconstructed later. */
+  calibration?: CompetencyCalibrationNote;
+}
+
+/**
+ * The record of one calibration, as it stood when this interview was assessed.
+ *
+ * Copied onto the assessment rather than referenced, because the adjustment can
+ * later be reverted or recomputed and this must still explain the score that
+ * was actually given. An auditor asking "why did this move?" is answered by the
+ * assessment alone.
+ */
+export interface CompetencyCalibrationNote {
+  readonly adjustmentId: string;
+  readonly scope: 'org' | 'global';
+  readonly delta: number;
+  readonly observations: number;
+  readonly reviewers: number;
+  /** ISO date of the earliest review the adjustment was learned from. */
+  readonly since: string;
+  /** "Adjusted -0.5: 18 reviews, 4 reviewers, since 12 Aug 2026" */
+  readonly statement: string;
 }
 
 /**

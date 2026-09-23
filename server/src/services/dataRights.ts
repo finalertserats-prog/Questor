@@ -141,6 +141,13 @@ async function deleteSessionCascade(
     // The record of how a reviewer differed from the AI keys onto the review
     // and the assessment, so it goes before both.
     await count('reviewDifferences', () => tx.reviewDifference.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
+    // The calibration observations from those same reviews. They hold nothing
+    // about the candidate beyond the assessment id and references to their
+    // turns, but the references are to a transcript that is about to cease to
+    // exist, and an erasure leaves nothing pointing at the person. Deliberately
+    // no foreign key onto the assessment, so this is a plain delete that an
+    // erasure can always complete rather than a constraint that could block it.
+    await count('calibrationObservations', () => tx.calibrationObservation.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('humanReviews', () => tx.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('assessments', () => tx.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
   }

@@ -31,6 +31,7 @@ import { signupRouter, signupDecisionRouter } from './routes/signup.js';
 import { demoRouter, demoDecisionRouter } from './routes/demo.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
+import { calibrationRouter } from './routes/calibration.js';
 import { systemHealthRouter } from './routes/systemHealth.js';
 import { dashboardRouter } from './routes/dashboard.js';
 import { reportsRouter } from './routes/reports.js';
@@ -271,6 +272,7 @@ export function createApp() {
   // The console polls this every minute per open tab; the report is cached for
   // 15 s, and this bounds what a script can make the database do.
   app.use('/api/admin/health', rateLimit({ name: 'admin-health', windowMs: 60_000, max: 30 }), systemHealthRouter);
+  app.use('/api/admin/calibration', calibrationRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/reports', reportsRouter);

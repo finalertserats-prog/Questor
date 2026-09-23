@@ -24,6 +24,7 @@ import { startCatalogRefreshSchedule } from './services/catalogRefresh.js';
 import { startInvitationReminders } from './services/invitationReminders.js';
 import { startDailyDigest } from './services/dailyDigest.js';
 import { startOutcomeSnapshots } from './services/outcomeSnapshot.js';
+import { startCalibrationJob } from './services/calibrationJob.js';
 import { reportMissingOperatorAccounts } from './middleware/platformOperator.js';
 import { markDraining } from './services/drainState.js';
 import { countLiveSessions, inFlightRequests } from './realtime/liveSessions.js';
@@ -61,6 +62,7 @@ startDailyDigest();
 // Monthly outcome aggregates (OUTCOME_SNAPSHOT_ENABLED, off by default), so a
 // trend survives the candidate data it was computed from being erased.
 startOutcomeSnapshots();
+startCalibrationJob();
 reportMissingOperatorAccounts().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not check platform operator accounts');
 });

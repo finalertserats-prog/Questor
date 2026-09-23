@@ -25,6 +25,7 @@ import { currentSitting } from '../engines/conversationModel.js';
 import { traceServing, type ServedCall } from '../providers/llm/servingTrace.js';
 import { servingMeta } from '../services/interviewServing.js';
 import { anchorsFor, recordLibraryUsage } from '../library/usage.js';
+import { calibrationFor } from '../services/calibrationApply.js';
 import { withoutLibrary } from '../library/planLadders.js';
 import { config } from '../config.js';
 import { assertIdentityConfirmed } from '../services/identityAssurance.js';
@@ -962,9 +963,22 @@ export async function finalizeInterview(
   try {
     const count = await prisma.assessmentVersion.count({ where: { sessionId } });
     const assessmentVersion = `A-${sessionId.slice(0, 6)}-v${count + 1}`;
+    // What this role's own reviewers have taught us, read HERE and applied only
+    // to the assessment about to be written. Read at assessment time, and
+    // nowhere else, is what makes calibration forward-only: nothing already
+    // assessed passes through this function again. Empty when calibration is
+    // off, which is the default (services/calibrationApply.ts).
+    const calibration = await calibrationFor({
+      tenantId: session.tenantId,
+      roleId: session.roleId,
+      catalogRoleId: session.role.catalogRoleId,
+      band: plan.band ?? session.role.experienceBand ?? '',
+      competencies: profile.competencies,
+    });
     const result = await evaluate({
       role: profile, turns, rubricVersion: session.scorecardId, assessmentVersion, sessionId,
       techStack: roleTechStack(session.role),
+      calibration,
       // The plan knows which competencies it had no room for. Passing that on is
       // what lets the assessment say "not asked" instead of "no evidence".
       notAssessed: plan.notAssessed,

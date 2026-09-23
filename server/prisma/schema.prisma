@@ -1655,3 +1655,209 @@ model OutcomeSnapshot {
   @@unique([tenantId, month])
   @@index([tenantId, month])
 }
+// ---------------------------------------------------------------------------
+// Role calibration (docs/plans/role-calibration.md)
+//
+// The AI's assessment gets better at each role because it learns from what
+// human reviewers actually decided. Four rules hold the whole design up, and
+// the schema is shaped so that breaking one needs a migration:
+//
+//   FORWARD ONLY   - nothing here relates back onto AssessmentVersion as a
+//                    writable field. A recorded assessment is never rewritten;
+//                    a calibration only reaches interviews assessed after it
+//                    became active.
+//   BOUNDED        - CalibrationAdjustment.delta is at most one level.
+//   EVIDENCED      - an adjustment carries the count, the reviewers, the
+//                    interval and the date it was learned from, so a score
+//                    movement can be reconstructed years later.
+//   NEVER ABOUT A PERSON - no observation carries anything about the candidate
+//                    beyond the assessment id, and nothing anywhere records an
+//                    opinion about the reviewer.
+// ---------------------------------------------------------------------------
+
+// One paired judgement: what the AI said about one competency in one interview,
+// and what the reviewer left. Written once, at the moment a review is
+// completed, beside the ReviewDifference the same event writes.
+//
+// ReviewDifference is the record of ONE review. This is the unit the
+// statistics need: one row per competency, keyed so that role x competency x
+// band can be counted without reparsing every difference's JSON.
+model CalibrationObservation {
+  id               String   @id @default(cuid())
+  tenantId         String
+  roleId           String
+  // "catalog:<slug>" where the role is in the shared catalog, else "role:<id>".
+  // Only a catalog key can ever be contributed to the shared calibration.
+  roleKey          String
+  band             String   @default("")
+  competencyId     String
+  // The competency name, lower-cased and single-spaced: the only key that
+  // means the same thing in two different organisations.
+  competencyKey    String
+  scorecardId      String
+  scorecardVersion Int      @default(0)
+  assessmentId     String
+  reviewId         String
+  reviewerId       String
+  aiLevel          Int?
+  humanLevel       Int?
+  // humanLevel - aiLevel. Null when either side had no level, and those rows
+  // are counted but never averaged.
+  delta            Int?
+  magnitude        String   @default("none") // none | minor | major
+  verdictAi        String   @default("")
+  verdictHuman     String   @default("")
+  verdictAgreed    Boolean  @default(true)
+  // The reviewer's own words. Clustered into themes, never scored, never
+  // characterised as right or wrong, and never contributed globally.
+  reasonText       String   @default("")
+  // Set when the output guardrail found non-job-related language in the reason
+  // and it was dropped rather than stored.
+  reasonRedacted   Boolean  @default(false)
+  blindReview      Boolean  @default(false)
+  aiConfidence     Float    @default(0)
+  notEnoughEvidence Boolean @default(false)
+  // What the interview produced for this competency: how many spans, and which
+  // turns they were. References, not a second copy of the transcript - the
+  // quotes stay on the assessment and die with the session on erasure.
+  evidenceCount    Int      @default(0)
+  evidenceTurnIdsJson String @default("[]")
+  observedAt       DateTime @default(now())
+  createdAt        DateTime @default(now())
+
+  @@unique([reviewId, competencyId])
+  @@index([tenantId, roleKey, competencyKey, band, observedAt])
+  @@index([tenantId, reviewerId, observedAt])
+  @@index([assessmentId])
+}
+
+// The opt-in shared calibration, and the whole of what leaves an organisation.
+//
+// This table IS the privacy statement: a field that is not here is a field that
+// is never shared. Absent on purpose: tenant, role id, candidate, assessment,
+// reviewer identity, the reviewer's free text, the evidence, and the exact time.
+model CalibrationGlobalObservation {
+  id                String   @id @default(cuid())
+  roleKey           String   // always "catalog:<slug>"
+  competencyKey     String
+  band              String   @default("")
+  aiLevel           Int?
+  humanLevel        Int?
+  delta             Int?
+  magnitude         String   @default("none")
+  verdictAgreed     Boolean  @default(true)
+  blindReview       Boolean  @default(false)
+  // A keyed hash of (tenant, reviewer). Distinct contributors can be counted so
+  // the three-reviewer rule still holds globally; nobody can be named, and the
+  // same person in two organisations is two pseudonyms.
+  reviewerPseudonym String
+  // The month, not the day. A role plus an exact timestamp is close to an
+  // identifier for whoever was interviewed that afternoon.
+  observedMonth     String   // YYYY-MM
+  // Keyed hash of the source observation, so re-running the contribution job
+  // writes nothing twice and no source id is exposed.
+  sourceHash        String   @unique
+  createdAt         DateTime @default(now())
+
+  @@index([roleKey, competencyKey, band, observedMonth])
+}
+
+// What was learned, and whether it is being applied. One row per
+// scope x role x competency x band; recomputed in place, never duplicated.
+model CalibrationAdjustment {
+  id             String   @id @default(cuid())
+  scope          String   @default("org") // org | global
+  // "" for a global row, so the unique key holds (NULLs would not collide).
+  tenantId       String   @default("")
+  roleKey        String
+  roleId         String   @default("")
+  competencyKey  String
+  competencyId   String   @default("")
+  band           String   @default("")
+  status         String   @default("held") // held | active | reverted
+  // The bounded adjustment actually applied: half-level steps, |delta| <= 1.
+  delta          Float    @default(0)
+  // What was measured, which is not always what is applied.
+  measuredMedian Float    @default(0)
+  ciLow          Float    @default(0)
+  ciHigh         Float    @default(0)
+  ciKnown        Boolean  @default(false)
+  observations   Int      @default(0)
+  reviewers      Int      @default(0)
+  majorDisagreements Int  @default(0)
+  sinceAt        DateTime?
+  // Why it is not applied, in the vocabulary of domain/calibration.ts.
+  holdReason     String   @default("")
+  statement      String   @default("")
+  // Themes clustered from the reviewers' own words. Groups, never verdicts on
+  // what they said.
+  themesJson     String   @default("[]")
+  // The pass-rate projection and what the outcome statistics said.
+  fairnessJson   String   @default("{}")
+  computedAt     DateTime @default(now())
+  activatedAt    DateTime?
+  revertedAt     DateTime?
+  revertedById   String   @default("")
+  revertReason   String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([scope, tenantId, roleKey, competencyKey, band])
+  @@index([tenantId, status, computedAt])
+  @@index([scope, roleKey, competencyKey, band, status])
+}
+
+// An anchor revision the reasons pointed at, waiting on the approval path that
+// already governs rubric changes. Proposed here; applied only by a person with
+// role:approve_scorecard, through the ordinary draft-then-approve flow.
+model CalibrationAnchorProposal {
+  id            String   @id @default(cuid())
+  tenantId      String
+  roleId        String
+  roleKey       String
+  competencyId  String
+  competencyKey String
+  band          String   @default("")
+  status        String   @default("proposed") // proposed | applied | declined | stale
+  themesJson    String   @default("[]")
+  anchorsJson   String   @default("[]")
+  observations  Int      @default(0)
+  reviewers     Int      @default(0)
+  scorecardId   String   @default("")
+  decidedById   String   @default("")
+  decidedAt     DateTime?
+  decidedReason String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([tenantId, roleId, competencyId, band])
+  @@index([tenantId, status, createdAt])
+}
+
+// A pattern in how one reviewer reviews, raised for a person to look at.
+//
+// NOT a finding, NOT a performance record, and nothing acts on it. Its only
+// consequences are that an admin is shown it and that the reviewer is held out
+// of calibration until the admin has closed it. The reviewer can read their own
+// statistics, and every admin view of them is audited, because this is employee
+// data. See domain/reviewerPatterns.ts.
+model ReviewerPatternAlert {
+  id           String   @id @default(cuid())
+  tenantId     String
+  reviewerId   String
+  kind         String
+  status       String   @default("open") // open | acknowledged | dismissed
+  sample       Int      @default(0)
+  observed     Float    @default(0)
+  baseline     Float    @default(0)
+  // Neutral and non-conclusive; it asks someone to look, and says nothing else.
+  statement    String   @default("")
+  openedAt     DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  decidedById  String   @default("")
+  decidedAt    DateTime?
+  decidedNote  String   @default("")
+
+  @@unique([tenantId, reviewerId, kind])
+  @@index([tenantId, status, lastSeenAt])
+}

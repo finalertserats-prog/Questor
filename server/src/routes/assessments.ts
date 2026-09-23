@@ -23,6 +23,9 @@ import { demoRecipientBlocked } from '../services/demoPolicy.js';
 import { feedbackEmailState, gateReviewCompletion, previewFeedbackEmail, sendFeedbackNow } from '../services/autoFeedback.js';
 import { keepFeedbackHeld } from '../services/feedbackHold.js';
 import { completedReviewFor, recordReviewDifference, reviewDifferenceView } from '../services/assessmentReview.js';
+import { recordCalibrationObservations } from '../services/calibrationCapture.js';
+import { recordLibraryReviewerDelta } from '../services/calibrationAnchors.js';
+import { assessmentCalibration } from '../domain/calibrationView.js';
 import { applyReviewOverrides, reviewedOutcome } from '../domain/reviewedAssessment.js';
 import { questionsAskedFor, type AskedQuestion } from '../library/questionsAsked.js';
 import { identityPanelFor } from '../services/identityPanel.js';
@@ -498,6 +501,7 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
   // review already stored (services/assessmentReview.ts), so the comparison
   // can be analysed later without a second copy of the truth.
   const completed = await completedReviewFor(a.id);
+  const differences = await reviewDifferenceView(req.auth!.tenantId, a.id, completed);
   res.json({
     id: a.id,
     sessionId: a.sessionId,
@@ -514,7 +518,13 @@ assessmentsRouter.get('/:id', requireCapability('assessment:read'), asyncHandler
         },
       }
       : null,
-    differences: await reviewDifferenceView(req.auth!.tenantId, a.id, completed),
+    differences,
+    // What this role's own reviewers taught the model before this interview was
+    // assessed, and the model's own level beside it. Empty for every assessment
+    // written before a calibration existed and for every organisation with
+    // calibration off, which is the default. The page contract — what to render
+    // and the rules for rendering it — is in domain/calibrationView.ts.
+    calibration: assessmentCalibration(result, differences),
     // Which interviewer turns ran on the local fallback model or the built-in
     // writer during a model outage, so a thinner probe is not held against the
     // candidate. Empty unless the local fallback chain (LOCAL_LLM_ENABLED) ran.
@@ -859,6 +869,14 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
   // Where this reviewer parted company with the AI, kept for later analysis
   // (services/assessmentReview.ts). Written now, at the moment the fact exists.
   await recordReviewDifference(req.auth!.tenantId, a.id, review.id);
+  // The same fact, per competency, in the shape calibration counts
+  // (services/calibrationCapture.ts). Best effort, like the library's usage
+  // rows: a review must complete whether or not any of this can be written,
+  // and NOTHING here touches the assessment that was just reviewed.
+  await recordCalibrationObservations({ tenantId: req.auth!.tenantId, assessmentId: a.id, reviewId: review.id });
+  // And the signal the question library's quality loop already consumes, for
+  // the questions this interview asked (services/calibrationAnchors.ts).
+  await recordLibraryReviewerDelta({ assessmentId: a.id, reviewId: review.id });
   res.status(201).json({
     review: { id: review.id, verdict: review.disposition, selfReview },
     replayed: false,

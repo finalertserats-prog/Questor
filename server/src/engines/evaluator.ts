@@ -8,6 +8,7 @@ import {
   type AttributedEvidenceSpan,
 } from './evidenceExtractor.js';
 import { validateNoProtectedInference } from './policyEngine.js';
+import { applyCalibration, type CalibrationMap } from '../domain/calibration.js';
 import { generateJson, getLlm } from '../providers/llm/index.js';
 import { inDemoContext, isHeuristicOnlySession } from '../services/demoPolicy.js';
 import { techStackPromptLine, type TechStackItem } from '../domain/techStack.js';
@@ -50,6 +51,17 @@ export async function evaluate(opts: {
    * live rows). Absent for an interview the library did not plan.
    */
   anchors?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * What this role's own reviewers have taught us, per competency id
+   * (domain/calibration.ts, services/calibrationApply.ts).
+   *
+   * Bounded to one level, and applied ONLY here — at the moment an interview
+   * is assessed. That is what makes calibration forward-only: an assessment
+   * already written has no route back through this function. Absent when
+   * calibration is off, which is the default, and the result is then
+   * byte-for-byte what it was before calibration existed.
+   */
+  calibration?: CalibrationMap;
 }): Promise<AssessmentResult> {
   const { role, turns, rubricVersion } = opts;
   // Retired competencies are history for older assessments, never graded anew.
@@ -83,14 +95,27 @@ export async function evaluate(opts: {
         })),
   );
 
+  // What this role's reviewers have taught us, applied to the AI's own levels.
+  //
+  // `level` is deliberately left alone: it means "what the AI graded" and every
+  // reader of an assessment already depends on that. The calibrated reading is
+  // added alongside, and it is the one the score, the must-pass gate and the
+  // recommendation below are computed from — otherwise calibration would be a
+  // caption rather than a correction.
+  const calibrated = applyCalibrationTo(competencyScores, opts.calibration);
+  // The level each competency is JUDGED at: calibrated where one applied,
+  // the AI's own otherwise.
+  const effective = (s: CompetencyScore): number | null =>
+    (typeof s.calibratedLevel === 'number' ? s.calibratedLevel : s.level);
+
   // Overall score: weighted mean over competencies WITH evidence (NEE excluded).
-  const withEvidence = competencyScores.filter((s) => !s.notEnoughEvidence && s.level !== null);
+  const withEvidence = calibrated.filter((s) => !s.notEnoughEvidence && s.level !== null);
   const totalWeight = withEvidence.reduce((a, s) => a + weightOf(role, s.id), 0) || 1;
   const weightedScore = Math.round(
-    withEvidence.reduce((a, s) => a + (s.level! / 5) * 100 * weightOf(role, s.id), 0) / totalWeight,
+    withEvidence.reduce((a, s) => a + ((effective(s) ?? 0) / 5) * 100 * weightOf(role, s.id), 0) / totalWeight,
   );
 
-  const gradingFailures = competencyScores.filter((s) => s.gradingUnavailable);
+  const gradingFailures = calibrated.filter((s) => s.gradingUnavailable);
   // Nothing was graded AND grading is why. The mean above is 0/1 = 0 in that
   // case, which is not a low score — it is the absence of one, and it was
   // reaching reports and the ATS as a real result. Reported as null instead so
@@ -104,13 +129,13 @@ export async function evaluate(opts: {
 
   // Must-pass evaluation.
   const mustPass = role.scoringRules.mustPassCompetencyIds;
-  const failedMustPass = competencyScores.filter(
-    (s) => mustPass.includes(s.id) && s.level !== null && s.level < s.requiredLevel,
+  const failedMustPass = calibrated.filter(
+    (s) => mustPass.includes(s.id) && effective(s) !== null && (effective(s) as number) < s.requiredLevel,
   );
   // An unasked must-pass competency is an incomplete interview, not a candidate
   // who failed to evidence it — routing it through the must-pass gate would turn
   // our scheduling into their result.
-  const mustPassNEE = competencyScores.filter(
+  const mustPassNEE = calibrated.filter(
     (s) => mustPass.includes(s.id) && s.notEnoughEvidence && !notAsked.has(s.name),
   );
 
@@ -121,12 +146,14 @@ export async function evaluate(opts: {
         failedMustPass: failedMustPass.length, mustPassNEE: mustPassNEE.length,
       });
 
-  const strengths = competencyScores.filter((s) => (s.level ?? 0) >= 4).map((s) => `${s.name}: demonstrated at level ${s.level}/5 with supporting evidence.`);
+  // Said at the level the competency is judged at, so the narrative and the
+  // score cannot tell a reader two different stories.
+  const strengths = calibrated.filter((s) => (effective(s) ?? 0) >= 4).map((s) => `${s.name}: demonstrated at level ${effective(s)}/5 with supporting evidence.`);
   const concerns = [
-    ...failedMustPass.map((s) => `${s.name} is a must-pass competency but was demonstrated at level ${s.level}/5 (required ${s.requiredLevel}).`),
-    ...competencyScores.filter((s) => (s.level ?? 5) <= 2 && !s.notEnoughEvidence).map((s) => `${s.name} showed limited depth (level ${s.level}/5).`),
+    ...failedMustPass.map((s) => `${s.name} is a must-pass competency but was demonstrated at level ${effective(s)}/5 (required ${s.requiredLevel}).`),
+    ...calibrated.filter((s) => (effective(s) ?? 5) <= 2 && !s.notEnoughEvidence).map((s) => `${s.name} showed limited depth (level ${effective(s)}/5).`),
   ];
-  const openQuestions = competencyScores.filter((s) => s.notEnoughEvidence).map((s) => (
+  const openQuestions = calibrated.filter((s) => s.notEnoughEvidence).map((s) => (
     s.gradingUnavailable
       ? `${s.name} could not be graded automatically — requires human assessment.`
       : `Not enough evidence gathered for ${s.name} — recommend a focused human follow-up.`
@@ -134,7 +161,7 @@ export async function evaluate(opts: {
   // A required technology nobody evidenced is an open question for the next
   // round, never a mark against the candidate: it sits with the other gaps,
   // outside the score and the recommendation.
-  const stackCoverage = techStackCoverage(opts.techStack, turns, competencyScores);
+  const stackCoverage = techStackCoverage(opts.techStack, turns, calibrated);
   for (const gap of stackCoverage.filter((c) => !c.evidenced)) {
     openQuestions.push(`No evidence of ${gap.name} (a required technology at ${gap.level} level) came up — a gap to cover in the next round, not a finding against the candidate.`);
   }
@@ -164,6 +191,10 @@ export async function evaluate(opts: {
     ...(attribution.mode === 'semantic'
       ? [`Evidence was attributed to competencies by automated analysis of each answer's content, not only by the question it was asked under (attribution record ${attribution.modelExecutionId || 'unavailable'}).`]
       : []),
+    // Disclose calibration on the face of the assessment. A reader must never
+    // have to know the feature exists to discover that a level was moved, and
+    // the sentence carries the evidence it was moved on.
+    ...calibrationLimitations(calibrated),
   ];
 
   // Coverage now excludes what was never asked, so the cost of a partial
@@ -175,7 +206,7 @@ export async function evaluate(opts: {
     (withEvidence.reduce((a, s) => a + s.confidence, 0) / (withEvidence.length || 1)) * evidenceCoverage * attempted * 100,
   ) / 100;
 
-  const summary = await buildSummary({ role, recommendation, confidence, evidenceCoverage, overallScore, competencyScores, strengths, concerns, sessionId: opts.sessionId });
+  const summary = await buildSummary({ role, recommendation, confidence, evidenceCoverage, overallScore, competencyScores: calibrated, strengths, concerns, sessionId: opts.sessionId });
 
   const result: AssessmentResult = {
     assessmentVersion: opts.assessmentVersion,
@@ -184,7 +215,7 @@ export async function evaluate(opts: {
     confidence: Math.max(0.2, confidence),
     evidenceCoverage,
     overallScore,
-    competencies: competencyScores,
+    competencies: calibrated,
     strengths,
     concerns,
     contradictions,
@@ -353,6 +384,36 @@ async function gradeAgainstRubric(o: {
       };
     },
   });
+}
+
+/**
+ * Apply the role's calibration to the graded levels.
+ *
+ * Adds `calibratedLevel` and the provenance; NEVER touches `level`, which goes
+ * on meaning "what the AI graded" for every existing reader of an assessment.
+ * A competency with no evidence is left entirely alone: calibration corrects a
+ * reading of evidence, and there is no reading to correct.
+ *
+ * Returns the same array, unchanged, when there is no calibration — so an
+ * uncalibrated assessment is byte-for-byte what it always was.
+ */
+function applyCalibrationTo(scores: CompetencyScore[], calibration: CalibrationMap | undefined): CompetencyScore[] {
+  if (!calibration || Object.keys(calibration).length === 0) return scores;
+  return scores.map((score) => {
+    const entry = calibration[score.id];
+    if (!entry || entry.delta === 0 || score.level === null || score.notEnoughEvidence) return score;
+    const calibratedLevel = applyCalibration(score.level, entry.delta);
+    // Clamping at the ends of the scale can leave nothing to record.
+    if (calibratedLevel === score.level) return score;
+    return { ...score, calibratedLevel, calibration: entry.provenance };
+  });
+}
+
+/** One line per calibrated competency, saying what moved and on what evidence. */
+function calibrationLimitations(scores: readonly CompetencyScore[]): string[] {
+  return scores
+    .filter((s) => s.calibration && typeof s.calibratedLevel === 'number')
+    .map((s) => `${s.name}: the model graded level ${s.level}/5; this role's own reviewers have consistently read that differently, so it is assessed at ${s.calibratedLevel}/5 (${s.calibration!.statement.replace(/\.$/, '')}). The model's own level is kept above.`);
 }
 
 function weightOf(role: RoleSuccessProfile, id: string): number {

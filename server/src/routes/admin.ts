@@ -530,6 +530,24 @@ const policySchema = z.object({
   autoCandidateFeedback: z.boolean().optional(),
   // Reviewers must judge blind before the assessment opens. Unset means off.
   requireBlindReview: z.boolean().optional(),
+  // Role calibration (docs/plans/role-calibration.md): let the evaluator learn
+  // from what this organisation's reviewers actually decided. Unset means off,
+  // and the deployment switch (CALIBRATION_ENABLED) must be on as well.
+  calibrationEnabled: z.boolean().optional(),
+  // Contribute anonymised observations to the shared calibration. A separate,
+  // explicit opt-in with its own consent text
+  // (services/calibrationSettings.ts, GLOBAL_CONTRIBUTION_CONSENT): switching
+  // calibration on does NOT switch this on. Unset means off.
+  calibrationGlobalContribution: z.boolean().optional(),
+  // How much evidence this organisation wants before a calibration applies.
+  // Held inside the product's own bounds (domain/calibration.ts,
+  // resolveThresholds): an organisation may ask for MORE evidence than the
+  // default and can never ask for less than three distinct reviewers.
+  calibrationMinObservations: z.number().int().min(5).max(10_000).optional(),
+  calibrationMinReviewers: z.number().int().min(3).max(100).optional(),
+  // Reviews one person must have completed before any pattern about them is
+  // computed or shown (domain/reviewerPatterns.ts). Unset means 10.
+  calibrationReviewerPatternMinReviews: z.number().int().min(5).max(1000).optional(),
   // Hours the hiring team has to complete a review before the candidate's
   // feedback goes on its own. Unset means the deployment default (12).
   feedbackReviewWindowHours: z.number().int().min(0).max(168).optional(),
