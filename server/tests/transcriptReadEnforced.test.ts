@@ -6,6 +6,7 @@ import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
 import { TRANSCRIPT_NOT_READ } from '../src/domain/transcriptRead.js';
 import { readTranscript, readTranscriptElsewhere, READ_ELSEWHERE } from './reviewGateHelpers.js';
+import { eraseCandidate } from '../src/services/dataRights.js';
 
 /**
  * "Read the transcript before recording your review."
@@ -295,5 +296,42 @@ describe('what the page can ask', () => {
     const res = await request(app).get(`/api/assessments/${ids.assessmentId}/transcript-read`)
       .set('Authorization', `Bearer ${signToken({ userId: user.id, tenantId: stranger.id, role: 'admin', email: user.email })}`);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('erasing the candidate', () => {
+  // The row names the candidate's interview and holds a required key onto the
+  // assessment. Prisma's foreign keys RESTRICT rather than cascade here, as
+  // every other relation in this schema does, so an erasure that did not
+  // delete it first would fail on a constraint — and an erasure that fails is
+  // a legal obligation that did not happen. This is the test that says it does.
+  it('takes the reading record with it, rather than failing on a constraint', async () => {
+    const ids = await assessedInterview();
+    await readTranscriptElsewhere(app, ids.assessmentId, ids.auth);
+    expect(await prisma.transcriptRead.count()).toBe(1);
+
+    await eraseCandidate({ tenantId: ids.tenantId, candidateId: ids.candidateId, actorId: ids.userId, reason: 'Asked to be forgotten.' });
+
+    expect(await prisma.transcriptRead.count()).toBe(0);
+    expect(await prisma.assessmentVersion.count()).toBe(0);
+  });
+
+  // The sentence the reviewer wrote is the candidate's record and goes with
+  // them; that a reading happened is a compliance fact and survives, as consent
+  // and decision events do.
+  it('leaves the audit trail saying that the transcript was read', async () => {
+    const ids = await assessedInterview();
+    await readTranscriptElsewhere(app, ids.assessmentId, ids.auth);
+
+    await eraseCandidate({ tenantId: ids.tenantId, candidateId: ids.candidateId, actorId: ids.userId, reason: 'Asked to be forgotten.' });
+
+    expect(await prisma.auditEvent.count({ where: { action: 'review.transcript_read' } })).toBe(1);
+  });
+
+  it('erases it even when the reviewer read it in the app', async () => {
+    const ids = await assessedInterview();
+    await readTranscript(app, ids.assessmentId, ids.auth);
+    await eraseCandidate({ tenantId: ids.tenantId, candidateId: ids.candidateId, actorId: ids.userId, reason: 'Asked to be forgotten.' });
+    expect(await prisma.transcriptRead.count()).toBe(0);
   });
 });

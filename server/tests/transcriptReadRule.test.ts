@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ATTESTATION_MIN, checkReadReport, readRefusalMessage, unseenIndexes, type ReadReport,
+  ATTESTATION_MAX, ATTESTATION_MIN, checkReadReport, readRefusalMessage, unseenIndexes, type ReadReport,
 } from '../src/domain/transcriptRead.js';
 
 /**
@@ -77,6 +77,17 @@ describe('reading it elsewhere', () => {
 
   it('refuses one too short to mean anything', () => {
     expect(checkReadReport(elsewhere('read it'), [])).toEqual({ ok: false, reason: 'no_attestation' });
+  });
+
+  // Bounded in the rule, not only in the route's schema: the rule is what
+  // decides whether the requirement was met, and it should not depend on every
+  // future caller remembering a second check.
+  it('refuses one longer than the column will hold', () => {
+    expect(checkReadReport(elsewhere('x'.repeat(ATTESTATION_MAX + 1)), [])).toEqual({ ok: false, reason: 'no_attestation' });
+  });
+
+  it('accepts one exactly at the limit', () => {
+    expect(checkReadReport(elsewhere('x'.repeat(ATTESTATION_MAX)), [])).toEqual({ ok: true });
   });
 
   it('does not count surrounding whitespace towards the sentence', () => {

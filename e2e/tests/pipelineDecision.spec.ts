@@ -110,8 +110,46 @@ async function assessedInterview(page: Page, browser: Browser, id: string) {
   await page.getByRole('link', { name: 'Open the assessment' }).click();
   await expect(page).toHaveURL(/\/assessments\//);
   await expect(page.getByRole('heading', { name: 'Assessment', exact: true })).toBeVisible({ timeout: 20_000 });
-  return { candidateUrl };
+  return { candidateUrl, assessmentUrl: page.url() };
 }
+
+const SHOTS = 'D:/Projects/ClaudeCode/Questor/review-screenshots/enforce';
+
+/** Open the candidate's journey and try to approve them, whatever happens next. */
+async function tryToApprove(page: Page, candidateUrl: string, reason: string) {
+  await page.goto(candidateUrl);
+  await openJourney(page);
+  await recordDecision(page, 'APPROVED', reason);
+}
+
+/**
+ * The promise, refused and then kept, as a reviewer sees it.
+ *
+ * The candidate's consent screen says a person on the hiring team reviews
+ * their interview. The decision is refused until one has, and the refusal says
+ * so and links to the review rather than naming a permission.
+ */
+test('a decision is refused until a person has reviewed the interview, and goes through once they have', async ({ browser, page }) => {
+  test.setTimeout(240_000);
+  const { candidateUrl, assessmentUrl } = await assessedInterview(page, browser, runId());
+
+  await tryToApprove(page, candidateUrl, 'Strong on ownership; ready for the human rounds.');
+  const refusal = page.getByText(/a person on the hiring team would review their interview/);
+  await expect(refusal).toBeVisible({ timeout: 20_000 });
+  await page.screenshot({ path: `${SHOTS}/decision-refused-no-human-review.png`, fullPage: true });
+
+  // The reviewer reads the interview and records their verdict: the promise,
+  // kept. (The transcript requirement is met the way the review page will do
+  // it — see tests/transcriptRead.ts.)
+  await page.goto(assessmentUrl);
+  await submitReview(page, 'PROCEED', 'Clear ownership of a production pipeline, with outcomes.', /stays at Gold|move .* to Gold/);
+  await page.screenshot({ path: `${SHOTS}/review-recorded-transcript-read.png`, fullPage: true });
+
+  await tryToApprove(page, candidateUrl, 'Strong on ownership; ready for the human rounds.');
+  await expect(page.getByTestId('pipeline-outcome').or(page.getByTestId('journey-outcome')).first())
+    .toBeVisible({ timeout: 20_000 });
+  await page.screenshot({ path: `${SHOTS}/decision-allowed-after-review.png`, fullPage: true });
+});
 
 /**
  * The verdict, as a reviewer records it on the redesigned page: choose, read

@@ -32,7 +32,10 @@ export async function readTranscriptForReview(page: Page, assessmentId: string):
       const sessionId = assessment.sessionId as string | undefined;
       if (!sessionId) return 'no session id on the assessment';
       const transcript = await get(`/interviews/${sessionId}/transcript`);
-      const turns = (transcript.transcript ?? []) as Array<{ index: number }>;
+      const turns = (transcript.transcript ?? []) as Array<{ index?: unknown }>;
+      // Checked here so a transcript that arrives without indexes fails saying
+      // that, rather than posting nulls and failing as a bare status code.
+      if (!turns.every((turn) => Number.isInteger(turn.index))) return 'transcript turns carried no numeric index';
 
       const res = await fetch(`/api/assessments/${id}/transcript-read`, {
         method: 'POST',

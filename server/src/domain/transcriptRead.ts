@@ -82,7 +82,13 @@ export type ReadRefusal =
  */
 export function checkReadReport(report: ReadReport, allIndexes: readonly number[]): ReadRefusal {
   if (report.method === 'elsewhere') {
-    return report.attestation.trim().length >= ATTESTATION_MIN ? { ok: true } : { ok: false, reason: 'no_attestation' };
+    // Both bounds here, not only at the route's schema. The rule is the thing
+    // that decides whether a reviewer has met the requirement, and a rule that
+    // relies on every future caller remembering a second check is one bug away
+    // from storing whatever arrives.
+    const length = report.attestation.trim().length;
+    const written = length >= ATTESTATION_MIN && length <= ATTESTATION_MAX;
+    return written ? { ok: true } : { ok: false, reason: 'no_attestation' };
   }
   const unseen = unseenIndexes(allIndexes, report.seenIndexes);
   return unseen.length === 0 ? { ok: true } : { ok: false, reason: 'incomplete', unseen, total: allIndexes.length };

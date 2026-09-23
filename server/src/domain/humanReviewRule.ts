@@ -105,6 +105,11 @@ export type UnreviewedInterview = Extract<ReviewRequirement, { satisfied: false 
  * null when the promise is kept (or was never made). Every AI interview for the
  * role is considered, not just the latest: a second interview that has not been
  * assessed yet must not excuse the first one nobody read.
+ *
+ * "First" is the caller's order, not a sort done here — this function has no
+ * timestamps to sort by. services/humanReviewGate.ts reads them oldest first
+ * (createdAt, then id), which is what makes the refusal point the reviewer at
+ * the earliest interview still owed rather than an arbitrary one.
  */
 export function firstUnreviewed(interviews: readonly ConductedInterview[]): UnreviewedInterview | null {
   for (const interview of interviews) {

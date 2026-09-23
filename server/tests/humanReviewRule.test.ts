@@ -3,6 +3,7 @@ import {
   CLOSE_OUT_STATES, firstUnreviewed, humanReviewRefusal, outcomeNeedsHumanReview, reviewRequirementFor,
   type ConductedInterview,
 } from '../src/domain/humanReviewRule.js';
+import { EXCEPTION_STATES, SESSION_STATES } from '../src/domain/stateMachine.js';
 
 /**
  * The rule behind the sentence on the candidate's consent screen: "A person on
@@ -61,6 +62,23 @@ describe('when it does not', () => {
 
   it.each(CLOSE_OUT_STATES)('lets a person close out an interview in %s', (state) => {
     expect(reviewRequirementFor(one({ state }))).toEqual({ required: false, because: 'closed_out' });
+  });
+
+  // The exemption list is written out rather than imported, so the rule does
+  // not drag the state machine (and Express, through it) into the domain. This
+  // is what keeps the copy honest: every state an interview can END in without
+  // having happened is a state a person must be able to close out from, so a
+  // new exception state added upstream and not added here fails right here
+  // rather than silently stranding candidates.
+  it('exempts exactly the states an interview can fail into', () => {
+    expect([...CLOSE_OUT_STATES].sort()).toEqual([...EXCEPTION_STATES].sort());
+  });
+
+  // The mirror of the above: a state the interview passes THROUGH on its way to
+  // being reviewable must never become an exemption.
+  it('exempts none of the states a real interview passes through', () => {
+    const exempt = SESSION_STATES.filter((state) => CLOSE_OUT_STATES.includes(state));
+    expect(exempt).toEqual([]);
   });
 
   // Ordering matters for the record, not just the answer: a candidate who
