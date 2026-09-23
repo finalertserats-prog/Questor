@@ -95,11 +95,26 @@ export interface StoreResumeInput {
   readonly filename: string;
   readonly contentType: string;
   readonly scoring: ResumeScoring;
+  /**
+   * The CV already read into facts, by `cvFactsFor`, BEFORE the caller opened
+   * its transaction.
+   *
+   * It is a parameter rather than something this function works out, because
+   * reading a CV can involve a model call with an eight-second budget, and
+   * doing that with a write transaction open holds a connection — and, on
+   * Postgres, row locks — for the whole of it. Every caller already does its
+   * slow reads before the transaction; this is one of them.
+   */
+  readonly facts: CvFacts;
 }
 
-export async function storeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeInput) {
+export function storeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeInput) {
+  return writeResumeProfile(db, o);
+}
+
+async function writeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeInput) {
   const profile: NormalizedProfile = normalizeProfile(o.rawText);
-  const facts = await cvFactsFor(o.rawText);
+  const facts = o.facts;
   const { fit } = scoreFit(facts, o.scoring.role, o.scoring.techStack, { scorecardVersion: o.scoring.scorecardVersion });
 
   const version = (await db.candidateProfileVersion.count({ where: { candidateId: o.candidateId } })) + 1;

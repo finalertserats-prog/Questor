@@ -8,7 +8,7 @@ import { logAudit } from './audit.js';
 import { emitEvent } from './webhooks.js';
 import { notePipelineEvent } from './pipelineAutonomy.js';
 import { normalizeEmail } from './userEmail.js';
-import { resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
+import { cvFactsFor, resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
 import type { AuthClaims } from './auth.js';
 
 /**
@@ -98,8 +98,11 @@ export async function attachResume(
   opts: AttachResumeOptions = {},
 ) {
   const scoring = await resumeScoringFor(candidate.roleId);
+  // Reading the CV can call the configured model; it happens here, before the
+  // transaction, so a slow provider cannot hold a write transaction open.
+  const facts = await cvFactsFor(resume.rawText);
   const stored = await prisma.$transaction(async (tx) => {
-    const result = await storeResumeProfile(tx, { tenantId: auth.tenantId, candidateId: candidate.id, ...resume, scoring });
+    const result = await storeResumeProfile(tx, { tenantId: auth.tenantId, candidateId: candidate.id, ...resume, scoring, facts });
     if (opts.onStored) await opts.onStored(tx);
     return result;
   }, { timeout: STORE_TIMEOUT_MS });

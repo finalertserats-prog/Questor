@@ -9,7 +9,7 @@ import { assertDemoCreationCap } from './demoAccess.js';
 import { logAudit } from './audit.js';
 import { emitEvent } from './webhooks.js';
 import { normalizeEmail } from './userEmail.js';
-import { resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
+import { cvFactsFor, resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
 import type { AuthClaims } from './auth.js';
 
 /**
@@ -200,6 +200,8 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
   const emailNormalized = normalizeEmail(source.email);
   const resume = await latestResume(source.id);
   const scoring = resume ? await resumeScoringFor(roleId) : null;
+  // Before the transaction: reading the CV may call the configured model.
+  const facts = resume ? await cvFactsFor(resume.rawText) : null;
 
   const outcome = await inApplicationTransaction(async (tx) => {
     const existing = await findApplicationOnRole(tx, { tenantId: auth.tenantId, roleId, emailNormalized });
@@ -208,8 +210,8 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
       data: { tenantId: auth.tenantId, roleId, fullName: source.fullName, email: source.email, emailNormalized, phone: source.phone, linkedinUrl: source.linkedinUrl },
     });
     await assignCandidate(candidate.id, auth.userId, 'owner', tx);
-    const stored = resume && scoring
-      ? await storeResumeProfile(tx, { tenantId: auth.tenantId, candidateId: candidate.id, ...resume, scoring })
+    const stored = resume && scoring && facts
+      ? await storeResumeProfile(tx, { tenantId: auth.tenantId, candidateId: candidate.id, ...resume, scoring, facts })
       : null;
     const events: PipelineEvent[] = stored ? ['candidate.onboarded', 'candidate.profiled'] : ['candidate.onboarded'];
     const started = await startPipeline(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, events });
