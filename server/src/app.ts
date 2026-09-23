@@ -33,6 +33,7 @@ import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { systemHealthRouter } from './routes/systemHealth.js';
 import { dashboardRouter } from './routes/dashboard.js';
+import { reportsRouter } from './routes/reports.js';
 import { connectorsRouter } from './routes/connectors.js';
 import { atsConnectionRouter } from './routes/atsConnection.js';
 import { candidateAtsRouter } from './routes/candidateAts.js';
@@ -265,6 +266,7 @@ export function createApp() {
   app.use('/api/admin/health', rateLimit({ name: 'admin-health', windowMs: 60_000, max: 30 }), systemHealthRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
+  app.use('/api/reports', reportsRouter);
 
   app.use(errorHandler);
   return app;
