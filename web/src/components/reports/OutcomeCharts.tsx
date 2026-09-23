@@ -151,7 +151,7 @@ export function RateBarChart({ bars, title, summary, valueHeading, tableless }: 
         </svg>
       </figure>
       {!tableless && (
-        <div className="chart-data">
+        <div className="chart-data" tabIndex={0} role="region" aria-label={title}>
           <table>
             <caption className="sr-only">{title}</caption>
             <thead>
@@ -244,7 +244,7 @@ export function CountColumnChart({ columns, title, summary, medianKey }: CountCo
           })}
         </svg>
       </figure>
-      <div className="chart-data">
+      <div className="chart-data" tabIndex={0} role="region" aria-label={title}>
         <table>
           <caption className="sr-only">{title}</caption>
           <thead><tr><th scope="col">Band</th><th scope="col">Interviews</th></tr></thead>

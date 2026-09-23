@@ -93,7 +93,7 @@ export function AuditLog() {
           <div className="muted small">{hasFilter ? 'No events match these filters.' : 'No events.'}</div>
         ) : (
           <>
-            <div className="dash-table-wrap">
+            <div className="dash-table-wrap" tabIndex={0} role="region" aria-label="Audit events">
               <table aria-busy={loading}>
                 <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th></tr></thead>
                 <tbody>

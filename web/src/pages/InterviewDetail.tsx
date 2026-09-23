@@ -470,7 +470,10 @@ export function InterviewDetail() {
         ) : (turns ?? []).length === 0 ? (
           <EmptyState compact icon="interviews" title="No transcript yet" message="The conversation appears here once the candidate starts the interview." />
         ) : (
-          <div className="transcript">
+          // A scroll container a keyboard cannot reach holds the rest of the
+          // transcript hostage to a mouse: the tab stop is what makes the arrow
+          // keys work here (axe `scrollable-region-focusable`).
+          <div className="transcript" tabIndex={0} role="region" aria-label="Interview transcript">
             {turns.map((t) => (
               <div key={t.id} className={'turn ' + t.speaker}>
                 <div className="who">{t.speaker}{t.source === 'leave_button' && ' · Candidate chose to leave'}</div>
