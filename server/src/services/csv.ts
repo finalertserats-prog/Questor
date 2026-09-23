@@ -7,12 +7,16 @@
  */
 
 /**
- * One CSV cell. A value starting with =, +, -, @, tab or CR is prefixed with an
- * apostrophe so a spreadsheet opens it as text rather than running it as a
- * formula; values containing quotes, commas or newlines are quoted.
+ * One CSV cell. A value starting with =, +, -, @, tab, CR or LF is prefixed
+ * with an apostrophe so a spreadsheet opens it as text rather than running it
+ * as a formula; values containing quotes, commas or newlines are quoted.
+ *
+ * LF is in the list as well as CR because quoting is not defusing: a cell
+ * beginning with a newline is quoted by the rule below and its SECOND line is
+ * then what the spreadsheet parses, formula and all.
  */
 export function csvCell(value: string): string {
-  const defused = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+  const defused = /^[=+\-@\t\r\n]/.test(value) ? `'${value}` : value;
   return /[",\n\r]/.test(defused) ? `"${defused.replace(/"/g, '""')}"` : defused;
 }
 

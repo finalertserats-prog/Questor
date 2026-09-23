@@ -264,7 +264,7 @@ adminRouter.get('/analytics', requireCapability('assessment:read'), asyncHandler
     funnel: { roles, candidates, interviews: sessions.length, completed },
     stateCounts, recommendations: recCounts, reviews: reviews.length,
     quality: { avgEvidenceCoverage: Math.round(avgCoverage * 100) / 100 },
-    fairnessNote: 'Outcome statistics — the funnel, score distributions and how outcomes differ by interviewer, scorecard version, band, region and month — are on the Reports page (GET /api/reports/outcomes). Selection-rate monitoring ACROSS GROUPS is still not computed: it requires lawful group attributes and a configured minimum group size, and Questor collects neither.',
+    fairnessNote: 'Outcome statistics — the funnel, score distributions and how outcomes differ by interviewer, scorecard version, band, region and month — are on this console’s Analytics tab (GET /api/reports/outcomes). Selection-rate monitoring ACROSS GROUPS is still not computed: it requires lawful group attributes and a configured minimum group size, and Questor collects neither.',
   });
 }));
 

@@ -37,8 +37,8 @@ As a "deployer" of a High-Risk AI system under **Article 26**, the employer must
 > compliance claim nobody can support — correct it before the next release.
 
 **In place — outcome statistics (the measurement layer).** `GET /api/reports/outcomes` and the
-console's **Reports** page compute, per organisation and optionally per role, over a chosen
-period:
+**Analytics** tab of the console's Admin area compute, per organisation and optionally per role,
+over a chosen period:
 
 * the funnel — invited → started → completed → assessed → reviewed by a person → Proceed /
   Consider / Do not progress → hired — with each step read both against the step before it and
@@ -62,15 +62,17 @@ significant.
 
 **Retention of the measurement.** An optional monthly snapshot (`OUTCOME_SNAPSHOT_ENABLED`, off
 by default) stores each organisation-month's aggregate counts so a trend survives the candidate
-data it was computed from being erased. A snapshot holds no candidate id, no session id and no
-group smaller than five (those are summed into one "other" row), so it is not personal data and
-a candidate's erasure neither reads nor writes it.
+data it was computed from being erased. A snapshot holds no candidate id and no session id; a
+group below five keeps its size but no outcome rate, including the folded "other" row when even
+the fold is that small; and a month below five interviews keeps only its counts, because in such
+a month a median score or a median duration IS one person's interview. It is therefore not
+personal data, and a candidate's erasure neither reads nor writes it.
 
 **NOT in place — group-level adverse impact (the part Article 10 and NYC LL 144 §5-301 actually
 turn on).** Adverse impact is measured across protected groups. Questor does not collect a
 candidate's race, sex, age or disability, and nothing above is a proxy for them: every cut is by
 a property of the **job or the system**, not of the person. An impact-ratio analysis therefore
-cannot be produced from this data at all, and the Reports page states that on itself so its
+cannot be produced from this data at all, and the Analytics tab states that on itself so its
 selection rates are not mistaken for a bias audit. Building it would require a separate, prior
 decision about collecting group attributes lawfully — self-reported, optional, separated from
 the hiring record, and lawful in each jurisdiction — which has not been taken.

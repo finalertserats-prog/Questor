@@ -1,24 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, ApiError } from '../api/client';
-import { useAuth } from '../auth';
-import { can } from '../components/capabilityModel';
-import { Banner } from '../components/ui';
-import { EmptyState } from '../components/EmptyState';
-import { PageHeader } from '../components/PageHeader';
-import { formatDateTime } from '../components/dateFormat';
-import { CountColumnChart, RateBarChart } from '../components/reports/OutcomeCharts';
+import { api, ApiError } from '../../api/client';
+import { useAuth } from '../../auth';
+import { can } from '../capabilityModel';
+import { Banner } from '../ui';
+import { EmptyState } from '../EmptyState';
+import { formatDateTime } from '../dateFormat';
+import { CountColumnChart, RateBarChart } from './OutcomeCharts';
 import {
   CUT_MEASURES, PERIOD_PRESETS, cutBars, funnelBars, levelColumns, monthLabel, percent,
   periodRange, readRate, scoreColumns, spreadSentence,
   type CutGroup, type CutMeasureKey, type FunnelStep, type LevelCount, type PeriodKey,
   type Quantiles, type Rate, type ScoreBucket,
-} from '../components/reports/outcomeModel';
-import type { RoleFunnel, RoleMetricsPayload } from '../components/rolesListModel';
-import { roleDisplayLabels } from '../components/roleLabelModel';
+} from './outcomeModel';
+import type { RoleFunnel, RoleMetricsPayload } from '../rolesListModel';
+import { roleDisplayLabels } from '../roleLabelModel';
 
 /**
- * Reports: how candidates actually fare at each step, and whether outcomes
- * differ by interviewer, question set, band or month.
+ * Outcome statistics: how candidates actually fare at each step, and whether
+ * outcomes differ by interviewer, question set, band or month.
+ *
+ * WHERE IT LIVES. The Admin console's Analytics tab, not a sidebar entry of its
+ * own. Signing in should still show the four things a working day is made of —
+ * Home, Candidates, Roles, Interviews — and a monitoring surface read monthly
+ * does not belong beside them.
  *
  * WHAT THIS PAGE IS CAREFUL ABOUT. Every rate on it arrives with the count it
  * was computed from, and a rate on too small a sample says so in words rather
@@ -76,6 +80,7 @@ interface OutcomeReport {
     }>;
     readonly competencyChanges: { readonly changed: Rate; readonly aiHigher: number; readonly humanHigher: number };
   };
+  readonly agreementScopeNote?: string;
   readonly agreement: {
     readonly sampleSize: { readonly blindVerdicts: number; readonly assessmentsTotal: number };
     readonly sufficiency: { readonly statement: string };
@@ -85,6 +90,14 @@ interface OutcomeReport {
 }
 
 const VERDICT_LABELS = { PROCEED: 'Proceed', CONSIDER: 'Consider', DO_NOT_PROGRESS: 'Do not progress' } as const;
+
+/** The health measures that are rates, and what each one divides by. */
+const HEALTH_RATES: ReadonlyArray<{ key: 'nonAnswer' | 'rejoined' | 'heldFeedback' | 'degradedTurns'; label: string; of: string }> = [
+  { key: 'nonAnswer', label: 'Non-answer turns', of: 'of every turn the candidate took' },
+  { key: 'rejoined', label: 'Interviews rejoined', of: 'of the interviews in this period' },
+  { key: 'heldFeedback', label: 'Feedback emails held', of: 'of the interviews in this period' },
+  { key: 'degradedTurns', label: 'Turns below the primary model', of: 'of every turn the interviewer took' },
+];
 
 /** The plain-words note under a chart: what it does, and what it does not, tell you. */
 function Reading({ children }: { children: React.ReactNode }) {
@@ -123,7 +136,7 @@ function queryFor(period: PeriodKey, roleId: string, now: Date): string {
   return params.toString();
 }
 
-export function Reports() {
+export function OutcomePanel() {
   const { user } = useAuth();
   const allowed = can(user, 'assessment:export');
 
@@ -164,12 +177,7 @@ export function Reports() {
   }, [allowed]);
 
   if (!allowed) {
-    return (
-      <>
-        <PageHeader icon="reports" title="Reports" />
-        <Banner kind="error">Your account does not have permission to read the organisation’s outcome statistics.</Banner>
-      </>
-    );
+    return <Banner kind="error">Your account does not have permission to read the organisation’s outcome statistics.</Banner>;
   }
 
   const minSample = report?.minSample ?? 20;
@@ -180,12 +188,13 @@ export function Reports() {
 
   return (
     <>
-      <PageHeader
-        icon="reports"
-        title="Reports"
-        subtitle="What happens to candidates at each step, and where outcomes differ."
-        actions={<a className="btn" href={csvHref} download>Download CSV</a>}
-      />
+      <div className="report-head">
+        <div>
+          <h2>Analytics</h2>
+          <p className="muted small">What happens to candidates at each step, and where outcomes differ.</p>
+        </div>
+        <a className="btn secondary" href={csvHref} download>Download CSV</a>
+      </div>
 
       <div className="card report-scope">
         <p className="small" style={{ marginTop: 0 }}>
@@ -334,6 +343,10 @@ export function Reports() {
               title={`${CUT_MEASURES.find((m) => m.key === measure)?.label} by ${CUT_TABS.find((t) => t.key === cut)?.label.toLowerCase()}`}
               summary="One bar per group. Every bar carries the sample it was computed from."
               valueHeading="Rate"
+              // The full table of this cut sits directly below, with every
+              // measure in it; the chart's own table would repeat five numbers
+              // immediately above thirty.
+              tableless
             />
 
             <div className="table-wrap">
@@ -384,30 +397,20 @@ export function Reports() {
                 <span className="kpi-label">Median minutes</span>
                 <span className="kpi-hint">{spreadSentence(report.health.duration, ' min')}</span>
               </div></li>
-              <li className="kpi"><div className="kpi-link">
-                <span className="kpi-value">{readRate(report.health.nonAnswer, minSample).percent}</span>
-                <span className="kpi-label">Non-answer turns</span>
-                <span className="kpi-hint"><RateValue rate={report.health.nonAnswer} minSample={minSample} /></span>
-              </div></li>
+              {HEALTH_RATES.map((tile) => (
+                <li className="kpi" key={tile.key}><div className="kpi-link">
+                  {/* The figure itself carries the marking. A tile that showed a
+                      bold percentage and hid "too few to read" in the hint would
+                      be exactly the headline this page exists to prevent. */}
+                  <span className="kpi-value"><RateValue rate={report.health[tile.key]} minSample={minSample} /></span>
+                  <span className="kpi-label">{tile.label}</span>
+                  <span className="kpi-hint">{tile.of}</span>
+                </div></li>
+              ))}
               <li className="kpi"><div className="kpi-link">
                 <span className="kpi-value">{percent(report.health.evidenceCoverage.mean)}</span>
                 <span className="kpi-label">Mean evidence coverage</span>
                 <span className="kpi-hint">over {report.health.evidenceCoverage.n} assessment{report.health.evidenceCoverage.n === 1 ? '' : 's'}</span>
-              </div></li>
-              <li className="kpi"><div className="kpi-link">
-                <span className="kpi-value">{readRate(report.health.rejoined, minSample).percent}</span>
-                <span className="kpi-label">Interviews rejoined</span>
-                <span className="kpi-hint"><RateValue rate={report.health.rejoined} minSample={minSample} /></span>
-              </div></li>
-              <li className="kpi"><div className="kpi-link">
-                <span className="kpi-value">{readRate(report.health.heldFeedback, minSample).percent}</span>
-                <span className="kpi-label">Feedback emails held</span>
-                <span className="kpi-hint"><RateValue rate={report.health.heldFeedback} minSample={minSample} /></span>
-              </div></li>
-              <li className="kpi"><div className="kpi-link">
-                <span className="kpi-value">{readRate(report.health.degradedTurns, minSample).percent}</span>
-                <span className="kpi-label">Turns below the primary model</span>
-                <span className="kpi-hint"><RateValue rate={report.health.degradedTurns} minSample={minSample} /></span>
               </div></li>
             </ul>
             <Reading>
@@ -428,6 +431,9 @@ export function Reports() {
               </strong>
               <div style={{ marginTop: 6 }}>{report.agreement.sufficiency.statement}</div>
               <div style={{ marginTop: 6 }}>{report.agreement.gate.statement}</div>
+              {report.agreementScopeNote && (
+                <div className="small" style={{ marginTop: 8, opacity: 0.9 }}>{report.agreementScopeNote}</div>
+              )}
             </Banner>
 
             <h3 className="report-panel-title">Where reviewers changed the AI’s mind</h3>
@@ -485,5 +491,3 @@ export function Reports() {
     </>
   );
 }
-
-export default Reports;

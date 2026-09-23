@@ -4,7 +4,7 @@ import { useMeasuredWidth } from '../useMeasuredWidth';
 import type { CountColumn, RateBar } from './outcomeModel';
 
 /**
- * The Reports page's charts. Hand-drawn SVG, like the dashboard's, and for the
+ * The outcome panel's charts. Hand-drawn SVG, like the dashboard's, and for the
  * same reasons: two shapes are needed, each is a few dozen lines, and every
  * chart has to print its own numbers as text so nothing is carried by bar
  * length or colour alone.
@@ -46,6 +46,12 @@ export interface RateBarChartProps {
   readonly summary: string;
   /** Column header for the value in the table view, e.g. 'Rate'. */
   readonly valueHeading: string;
+  /**
+   * Leave out the chart's own table. Only for a chart a fuller table of the
+   * same numbers follows immediately — two tables of one thing, one after the
+   * other, is noise, and the numbers are still in text either way.
+   */
+  readonly tableless?: boolean;
 }
 
 /**
@@ -53,17 +59,22 @@ export interface RateBarChartProps {
  * two cuts read against the same ruler; a bar that fills the row means
  * everyone, not "the most of these groups".
  */
-export function RateBarChart({ bars, title, summary, valueHeading }: RateBarChartProps) {
+export function RateBarChart({ bars, title, summary, valueHeading, tableless }: RateBarChartProps) {
   const id = useId();
   const patternId = `ruled-${id.replace(/:/g, '')}`;
   const { ref, width } = useMeasuredWidth(BAR_FALLBACK_WIDTH);
 
   const labelWidths = bars.map((bar) => estimateTextWidth(bar.label, 12.5));
-  const valueWidths = bars.map((bar) => estimateTextWidth(`${bar.percent} · ${bar.counts}`, 11));
+  // Measured at 13 though it is set at 11: the value is in the monospace data
+  // face, whose every character is wider than estimateTextWidth's average for
+  // the proportional UI face. Reserving from the proportional estimate clipped
+  // the longest row's sample off the right edge — the part that must not be
+  // lost. Over-reserving only leaves a little air.
+  const valueWidths = bars.map((bar) => estimateTextWidth(`[${bar.percent}] · ${bar.counts}`, 13));
   const widest = Math.max(0, ...labelWidths);
   const stacked = widest > width * LABEL_SHARE;
   const labelW = stacked ? 0 : Math.ceil(widest) + BAR.gap * 2;
-  const valueW = Math.ceil(Math.max(0, ...valueWidths)) + BAR.gap;
+  const valueW = Math.ceil(Math.max(0, ...valueWidths)) + BAR.gap * 2;
   const plotW = Math.max(40, width - labelW - valueW - BAR.right);
   const rowHeight = stacked ? BAR.stackedRow : BAR.row;
   const height = Math.max(rowHeight, bars.length * rowHeight);
@@ -121,31 +132,43 @@ export function RateBarChart({ bars, title, summary, valueHeading }: RateBarChar
                     className="chart-witness" shapeRendering="crispEdges"
                   />
                 )}
-                <text x={labelW + w + BAR.gap} y={mid + 4} className="chart-value">
-                  {bar.percent ? `${bar.percent} · ${bar.counts}` : bar.counts}
+                <text
+                  // In the gutter past the scale's end, not at the bar's end.
+                  // Beside the bar it ran over the end tick on any row near
+                  // 100%; out here the figures also form one aligned column,
+                  // which is how the table below reads them.
+                  x={labelW + plotW + BAR.gap * 2}
+                  y={mid + 4}
+                  className={bar.readable ? 'chart-value' : 'chart-value report-value--unreadable'}
+                >
+                  {/* Bracketed exactly as in the tables, so the drawing and the
+                      numbers under it mark a small sample the same way. */}
+                  {bar.percent ? `${bar.readable ? bar.percent : `[${bar.percent}]`} · ${bar.counts}` : bar.counts}
                 </text>
               </g>
             );
           })}
         </svg>
       </figure>
-      <div className="chart-data">
-        <table>
-          <caption className="sr-only">{title}</caption>
-          <thead>
-            <tr><th scope="col">Group</th><th scope="col">{valueHeading}</th><th scope="col">Sample</th></tr>
-          </thead>
-          <tbody>
-            {bars.map((bar) => (
-              <tr key={bar.key}>
-                <th scope="row">{bar.label}</th>
-                <td>{bar.percent || '—'}</td>
-                <td>{bar.counts}{bar.readable ? '' : ` — ${bar.note}`}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {!tableless && (
+        <div className="chart-data">
+          <table>
+            <caption className="sr-only">{title}</caption>
+            <thead>
+              <tr><th scope="col">Group</th><th scope="col">{valueHeading}</th><th scope="col">Sample</th></tr>
+            </thead>
+            <tbody>
+              {bars.map((bar) => (
+                <tr key={bar.key}>
+                  <th scope="row">{bar.label}</th>
+                  <td>{bar.percent || '—'}</td>
+                  <td>{bar.counts}{bar.readable ? '' : ` — ${bar.note}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

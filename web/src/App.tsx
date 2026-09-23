@@ -43,7 +43,6 @@ import { AssessmentView } from './pages/AssessmentView';
 import BlindReview from './pages/BlindReview';
 import { Admin } from './pages/Admin';
 import { AuditLog } from './pages/AuditLog';
-import { Reports } from './pages/Reports';
 import { Portal } from './pages/Portal';
 import { InterviewRoom } from './pages/InterviewRoom';
 import { Settings } from './pages/Settings';
@@ -339,10 +338,6 @@ function Layout({ children }: { children: React.ReactNode }) {
             {can(user, 'candidate:read') && <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>}
             {can(user, 'role:read') && <NavLink to="/roles" end data-tip={tip('Roles')} data-tour="nav-roles"><Icon name="role" /><span className="nav-label">Roles</span></NavLink>}
             {can(user, 'candidate:read') && <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>}
-            {/* Outcome statistics are the organisation's whole funnel, so they
-                follow assessment:export — the capability the server gates
-                GET /api/reports/outcomes on — rather than candidate:read. */}
-            {can(user, 'assessment:export') && <NavLink to="/reports" data-tip={tip('Reports')} data-tour="nav-reports"><Icon name="reports" /><span className="nav-label">Reports</span></NavLink>}
 
             {(can(user, 'candidate:create') || can(user, 'role:create')) && <div className="nav-group">Set up</div>}
             {can(user, 'candidate:create') && <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="resume-upload" /><span className="nav-label">Add candidate</span></NavLink>}
@@ -485,7 +480,6 @@ export function App() {
       <Route path="/admin/signups" element={<Protected><SignupQueue /></Protected>} />
       {/* The console's sub-tabs; /admin itself is the System health tab. */}
       <Route path="/admin/:tab" element={<Protected><Admin /></Protected>} />
-      <Route path="/reports" element={<Protected><Reports /></Protected>} />
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="/about" element={<PublicOrApp><About /></PublicOrApp>} />

@@ -10,6 +10,22 @@
    and gets ignored, and it does not survive greyscale or a printout.
    ========================================================================== */
 
+/* The panel's own title line, since it sits inside the Admin console rather
+   than on a page of its own. */
+.report-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.report-head h2 {
+  margin: 0;
+}
+.report-head p {
+  margin: 2px 0 0;
+}
+
 .report-scope {
   border-left: 3px solid var(--rule-strong);
 }
@@ -35,7 +51,11 @@
 /* One hue per chart: these charts compare magnitudes, which is a sequential
    job. Nothing here puts --chart-a and --chart-b side by side, so the one
    colour pair the palette does not separate in dark mode never appears. */
-.report-bar {
+/* `:not(--unreadable)` rather than a plain `.report-bar`: a CSS fill beats the
+   presentation attribute that points a bar at the ruled pattern, so declaring
+   the hue here unconditionally silently un-marked every small sample — the one
+   thing on the page that must never be silent. */
+.report-bar:not(.report-bar--unreadable) {
   fill: var(--chart-b);
 }
 /* The median column of a distribution: the same hue, ringed, so the middle is
@@ -47,10 +67,16 @@
 }
 /* Ruled rather than solid: a sample too small to read is marked by line, which
    survives greyscale, colour blindness and print. The edge keeps the shape
-   legible at one or two units. */
+   legible at one or two units. The fill itself is a per-chart <pattern>, set as
+   a presentation attribute, which is why no `fill` is declared here. */
 .report-bar--unreadable {
   stroke: var(--chart-muted);
   stroke-width: 1;
+}
+/* The figure beside such a bar, bracketed and set back, exactly as in the tables. */
+.report-value--unreadable {
+  fill: var(--ink-3);
+  font-weight: 500;
 }
 
 /* --- A rate, said in full ------------------------------------------------- */
@@ -93,6 +119,18 @@
 
 .report-table {
   width: 100%;
+}
+/* A row header here is a person's or a month's name, not a column label. */
+.report-table tbody th {
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* Every table on this page scrolls inside its own box. A chart's table view is
+   the accessible equal of the drawing, so it is as wide as the drawing's data —
+   which on a phone is wider than the phone. Without this the whole document
+   scrolled sideways, and the page's own copy went with it. */
+.report-chart .chart-data {
+  overflow-x: auto;
 }
 .report-table .num {
   font-family: var(--font-data);

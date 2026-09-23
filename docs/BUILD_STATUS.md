@@ -67,7 +67,7 @@ Seams exist and are declared, but none are wired to a live third-party service:
 - Real scheduling (calendar conflict/timezone logic is minimal), reminders, no-show automation — FR-013–014
 - Multilingual models + localized voices + translated reports (language field only) — FR-044
 - **Group-level adverse-impact monitoring** — FR-042, §16. The measurement layer underneath it now
-  exists: `GET /api/reports/outcomes` and the Reports page compute the funnel, score and competency
+  exists: `GET /api/reports/outcomes` and the Admin console's Analytics tab compute the funnel, score and competency
   distributions and outcomes cut by AI interviewer, scorecard version, band, region and month, every
   rate with its denominator and marked unreadable below 20. Impact ratios ACROSS PROTECTED GROUPS are
   still not computed and cannot be from this data: Questor collects no group attributes, and that is a

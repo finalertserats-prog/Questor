@@ -77,9 +77,64 @@ describe('About trust section', () => {
     expect(textOf(section)).toContain(name);
   });
 
-  it('keeps fairness monitoring in progress, since it is still a stub', () => {
+  it('keeps outcome monitoring in progress, since group-level adverse impact is not built', () => {
     const fairness = TRUST_FRAMEWORKS.flatMap((f) => f.items).find((i) => i.key === 'ai-act-fairness');
     expect(fairness?.status).toBe('in-progress');
+  });
+});
+
+/**
+ * Fairness is two claims, not one, and they have different statuses. Splitting
+ * them is what stops a page that says "in progress" reading as though nothing
+ * about fairness is built — and stops the part that IS built swallowing the
+ * part that is not. These tests pin both halves.
+ */
+describe('the two fairness entries', () => {
+  const items = TRUST_FRAMEWORKS.flatMap((f) => f.items);
+  const fairProcess = items.find((i) => i.key === 'ai-act-fair-process');
+  const monitoring = items.find((i) => i.key === 'ai-act-fairness');
+
+  it('claims the process itself is in place', () => {
+    expect(fairProcess?.status).toBe('in-place');
+  });
+
+  it('keeps them as two separate entries, each with its own status', () => {
+    expect(fairProcess?.status).not.toBe(monitoring?.status);
+  });
+
+  it('shows both on the About page', () => {
+    expect(textOf(section)).toContain(fairProcess!.topic);
+    expect(textOf(section)).toContain(monitoring!.topic);
+  });
+
+  it('names Local Law 144’s published audit in what the law asks of monitoring', () => {
+    expect(monitoring?.asks).toMatch(/Local Law 144/);
+  });
+
+  it('says plainly that group-level analysis cannot be produced from data we do not hold', () => {
+    expect(monitoring?.questor).toMatch(/do not collect/);
+  });
+
+  it('states the small-sample rule the Reports page actually enforces', () => {
+    expect(monitoring?.questor).toMatch(/denominator/);
+  });
+
+  it('never says the scores are validated, which the assessment page denies', () => {
+    for (const entry of [fairProcess, monitoring]) {
+      expect(entry?.questor).not.toMatch(/\bvalidated\b/i);
+    }
+  });
+
+  it('does not claim a reviewer is made to read the transcript, which nothing enforces', () => {
+    expect(fairProcess?.questor).not.toMatch(/must read|required to read|cannot decide until/i);
+  });
+
+  it('does not claim every candidate on a role shares one scorecard, which versioning allows to differ', () => {
+    expect(fairProcess?.questor).not.toMatch(/the same scorecard/i);
+  });
+
+  it('keeps the independent bias audit planned, not in progress', () => {
+    expect(items.find((i) => i.key === 'll144-audit')?.status).toBe('planned');
   });
 
   it('never makes a blanket compliance claim', () => {

@@ -179,6 +179,25 @@ describe('GET /api/reports/outcomes', () => {
     expect(res.body.agreement.sufficiency.statement).toContain('No blind human verdicts');
   });
 
+  it('says out loud that the agreement figures do not follow the page’s own filters', async () => {
+    const res = await request(app).get('/api/reports/outcomes?roleId=nope').set('Authorization', `Bearer ${admin.token}`);
+    expect(res.body.agreementScopeNote).toContain('whole organisation');
+  });
+
+  it('counts a hire decided after the period ended, off an interview inside it', async () => {
+    const made = await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', humanVerdict: 'PROCEED' });
+    await prisma.candidatePipeline.create({
+      data: {
+        tenantId, roleId, candidateId: made.candidate.id, stagesJson: '', currentStageKey: 'diamond',
+        status: 'DECIDED', decision: 'APPROVED', decidedAt: new Date('2026-10-15T00:00:00.000Z'),
+      },
+    });
+    const res = await request(app)
+      .get('/api/reports/outcomes?from=2026-09-01&to=2026-10-01')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect((res.body.funnel as Array<{ key: string; count: number }>).find((s) => s.key === 'hired')?.count).toBe(1);
+  });
+
   it('scopes a manager with role assignments to the roles they hold', async () => {
     const manager = await makeUser(tenantId, 'limited@acme.test', 'manager');
     const mine = await makeRole(tenantId, 'Mine');
@@ -207,6 +226,17 @@ describe('the CSV export', () => {
     await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', humanVerdict: 'PROCEED' });
     const res = await request(app).get('/api/reports/outcomes?format=csv').set('Authorization', `Bearer ${admin.token}`);
     expect(res.text).toContain('Sample below the minimum; this rate must not be read.');
+  });
+
+  it('defuses a role title whose leading whitespace hides a formula', async () => {
+    const evil = await makeRole(tenantId, '\n=cmd|/c calc');
+    await makeInterview({ tenantId, roleId: evil.role.id, scorecardId: evil.scorecard.id, name: 'ann' });
+    const res = await request(app).get('/api/reports/outcomes?format=csv').set('Authorization', `Bearer ${admin.token}`);
+    // A cut's label is trimmed before it reaches the cell, so the newline is
+    // gone by then; what must survive is that the cell still cannot begin with
+    // a formula. csvCell's own LF rule is tested directly in csv.test.ts.
+    expect(res.text).toContain("'=cmd|/c calc v1");
+    expect(res.text).not.toMatch(/(^|,)=cmd/m);
   });
 
   it('defuses a role title a spreadsheet would otherwise run as a formula', async () => {
@@ -242,6 +272,44 @@ describe('monthly snapshots', () => {
     await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', interviewerId: 'maya' });
     const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
     expect(snapshot.cuts.interviewer.map((c) => c.label)).toEqual(['Other (groups too small to keep separately)']);
+  });
+
+  it('keeps no outcome rate even on the folded row when the fold is itself a handful of people', async () => {
+    await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', interviewerId: 'maya', humanVerdict: 'PROCEED' });
+    const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
+    expect(snapshot.cuts.interviewer[0]).toMatchObject({ n: 1, proceed: null });
+  });
+
+  it('keeps no median or health figure for a month that is one person’s interview', async () => {
+    await makeInterview({ tenantId, roleId, scorecardId, name: 'ann', overallScore: 71, humanVerdict: 'PROCEED' });
+    const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
+
+    expect(snapshot).toMatchObject({ interviews: 1, scoreMedian: null, scoreBuckets: null, health: null });
+    // The count of interviews is still kept: it identifies nobody, and losing
+    // it would leave a hole in the trend that reads as "nothing happened".
+    expect(snapshot.funnel.find((f) => f.key === 'invited')?.count).toBe(1);
+    expect(JSON.stringify(snapshot)).not.toContain('71');
+  });
+
+  it('keeps the medians once the month is big enough for them to be about nobody in particular', async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await makeInterview({ tenantId, roleId, scorecardId, name: `p${i}`, overallScore: 60 + i, humanVerdict: 'PROCEED' });
+    }
+    const snapshot = await buildSnapshot({ userId: '', tenantId, role: 'admin', email: '' }, MONTH);
+    expect(snapshot.scoreMedian).toBe(62);
+    expect(snapshot.health).not.toBeNull();
+  });
+
+  it('snapshots every organisation, not just the first page of them', async () => {
+    const extra = await prisma.tenant.create({ data: { name: 'Zed' } });
+    await runOutcomeSnapshots(now);
+    expect(await prisma.outcomeSnapshot.findFirst({ where: { tenantId: extra.id, month: MONTH } })).not.toBeNull();
+  });
+
+  it('keeps a manager out of the stored whole-organisation history', async () => {
+    const manager = await makeUser(tenantId, 'manager2@acme.test', 'manager');
+    const res = await request(app).get('/api/reports/outcomes/snapshots').set('Authorization', `Bearer ${manager.token}`);
+    expect(res.status).toBe(403);
   });
 
   it('writes one row per organisation-month and rewrites it on the next run', async () => {

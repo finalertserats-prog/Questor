@@ -61,8 +61,15 @@ reportsRouter.get('/outcomes', requireCapability('assessment:export'), asyncHand
  * from being erased. Empty until OUTCOME_SNAPSHOT_ENABLED has been on for a
  * month — an empty list means "not kept", never "nothing happened", and the
  * page says which.
+ *
+ * Gated more tightly than the live report, on `admin:manage`. A snapshot is a
+ * WHOLE-ORGANISATION aggregate: it was written by the sweep, not by a reader,
+ * and it cannot be narrowed to one manager's assigned roles after the fact
+ * without recomputing it from data that may no longer exist. Serving it on
+ * `assessment:export` would hand an assignment-limited manager the history of
+ * roles their live report is scoped away from.
  */
-reportsRouter.get('/outcomes/snapshots', requireCapability('assessment:export'), asyncHandler(async (req, res) => {
+reportsRouter.get('/outcomes/snapshots', requireCapability('admin:manage'), asyncHandler(async (req, res) => {
   z.object({}).strict().parse(req.query);
   res.json({ months: await listOutcomeSnapshots(req.auth!.tenantId) });
 }));

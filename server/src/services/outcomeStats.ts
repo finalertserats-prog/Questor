@@ -104,7 +104,21 @@ export interface OutcomeReport {
   readonly reviewerChanges: UnblindedAgreement;
   /** The blind-verdict agreement harness, verbatim: the only agreement figure about scoring validity. */
   readonly agreement: AgreementReport;
+  /**
+   * Said out loud because it is the one number on this page that does not
+   * follow the page's own filters. Reusing the harness unchanged is the point
+   * — re-scoping it here would invent a second definition of how shadow
+   * metrics are measured, and the assessment page would then disagree with
+   * this one about whether the scoring is validated.
+   */
+  readonly agreementScopeNote: string;
 }
+
+const AGREEMENT_SCOPE_NOTE =
+  'The blind-verdict agreement figures describe the whole organisation and every period, '
+  + 'whatever period or role is selected above. They come unchanged from the same harness the '
+  + 'assessment page shows (services/shadowMode.ts), so the two can never disagree about whether '
+  + 'the scoring has been validated.';
 
 /** The period the report covers: whatever the caller asked for, else the last year up to now. */
 export function resolvePeriod(options: OutcomeStatsOptions): OutcomePeriod {
@@ -239,16 +253,27 @@ export async function gatherOutcomeRows(auth: AuthClaims, options: OutcomeStatsO
     take: rowLimit,
   });
 
+  // Every one of these carries the same ceiling as the session read. Without
+  // it the "5,000 rows" the report claims to be built from would bound only
+  // one of six queries, and a long period in a large tenant would quietly
+  // load far more than that.
   const [reviews, hiredPipelines, interviewers, rejoinRows, differenceRows] = await Promise.all([
     prisma.humanReview.findMany({
       // The one completed review of each assessment. A BLIND verdict carries no
       // activeForAssessmentId and is therefore never counted as a review here.
       where: { activeForAssessmentId: { not: null }, assessment: { session: sessionWhere } },
       select: { assessmentId: true, disposition: true },
+      orderBy: [{ completedAt: 'desc' }, { id: 'desc' }],
+      take: rowLimit,
     }),
     prisma.candidatePipeline.findMany({
-      where: { tenantId, role, candidate, status: 'DECIDED', decision: 'APPROVED' },
+      // Decided at or after the period started, with no upper bound: someone
+      // interviewed inside the period and taken a fortnight later was still
+      // hired off that interview, and cutting at `to` would lose them.
+      where: { tenantId, role, candidate, status: 'DECIDED', decision: 'APPROVED', decidedAt: { gte: from } },
       select: { candidateId: true, roleId: true },
+      orderBy: [{ decidedAt: 'desc' }, { id: 'desc' }],
+      take: rowLimit,
     }),
     prisma.aIInterviewer.findMany({ select: { id: true, name: true } }),
     // By period rather than by session id, for the same bind-limit reason; a
@@ -257,10 +282,14 @@ export async function gatherOutcomeRows(auth: AuthClaims, options: OutcomeStatsO
       by: ['entityId'],
       where: { tenantId, action: REJOINED_ACTION, createdAt: { gte: from, lt: to } },
       _count: { _all: true },
+      orderBy: { entityId: 'asc' },
+      take: rowLimit,
     }),
     prisma.reviewDifference.findMany({
       where: { tenantId, assessment: { session: sessionWhere } },
       select: { aiRecommendation: true, humanDisposition: true, agreed: true, competenciesJson: true },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: rowLimit,
     }),
   ]);
 
@@ -322,7 +351,15 @@ export async function gatherOutcomeRows(auth: AuthClaims, options: OutcomeStatsO
     competencies: parseCompetencyDifferences(d.competenciesJson),
   }));
 
-  return { rows, differences, truncated: sessions.length >= rowLimit };
+  // Any read that hit its ceiling makes the whole report a report of the
+  // newest rows, not of the period, and the page must say so.
+  const truncated = sessions.length >= rowLimit
+    || reviews.length >= rowLimit
+    || hiredPipelines.length >= rowLimit
+    || rejoinRows.length >= rowLimit
+    || differenceRows.length >= rowLimit;
+
+  return { rows, differences, truncated };
 }
 
 /** The stored per-competency comparison, or nothing when the row cannot be read. */
@@ -393,5 +430,6 @@ export async function getOutcomeReport(auth: AuthClaims, options: OutcomeStatsOp
     health: healthStats(rows, OUTCOME_MIN_SAMPLE),
     reviewerChanges: unblindedAgreement(differences, OUTCOME_MIN_SAMPLE),
     agreement,
+    agreementScopeNote: AGREEMENT_SCOPE_NOTE,
   };
 }

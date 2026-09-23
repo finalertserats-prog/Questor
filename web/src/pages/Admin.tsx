@@ -2,20 +2,19 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 import { claimHealth } from '../components/healthStatusStore';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { Badge, Banner, Stat } from '../components/ui';
+import { Badge, Banner } from '../components/ui';
 import { MeetingAdapterSetup, OtherConnectorGuides, type MeetingAdapter } from '../components/ConnectorSetup';
 import { RoundMeetingSetting, type RoundMeetingStatus } from '../components/RoundMeetingSetting';
 import { HiringPolicySettings } from '../components/HiringPolicySettings';
 import { QuestionLibrarySettings } from '../components/QuestionLibrarySettings';
 import { OrgTimeZoneSetting } from '../components/OrgTimeZoneSetting';
 import { IdentityAssuranceSetting } from '../components/IdentityAssuranceSetting';
-import { formatPercent, formatScore } from '../components/scoreFormat';
-import { recommendationStatus } from '../components/statusModel';
 import { formatDateTime } from '../components/dateFormat';
 import { SystemHealthPanel } from '../components/SystemHealthPanel';
 import { PageHeader } from '../components/PageHeader';
 import { Icon } from '../components/Icon';
 import { AdminTabList } from '../components/AdminTabList';
+import { OutcomePanel } from '../components/reports/OutcomePanel';
 import { adminPanelId, adminTabFromParam, adminTabId, adminTabPath, nextAdminTab, type AdminTabKey } from '../components/adminTabsModel';
 import {
   LEGACY_OFF_CONFIRMATION, eventsForApi, eventsLabel, signatureView,
@@ -32,14 +31,6 @@ interface Providers {
   canTestMeetingConnectors?: boolean;
   /** Absent on an older server. */
   roundMeeting?: RoundMeetingStatus;
-}
-interface Analytics {
-  funnel: { roles: number; candidates: number; interviews: number; completed: number };
-  stateCounts: Record<string, number>;
-  recommendations: Record<string, number>;
-  reviews: number;
-  // Null for a tenant with nothing to average yet, which is not the same as 0.
-  quality: { avgEvidenceCoverage: number | null };
 }
 interface ModelExecution { id: string; provider: string; model: string; function: string; latencyMs: number; inputTokens: number; outputTokens: number; createdAt: string; }
 // `events` is the comma-separated string the server stores, not an array.
@@ -59,7 +50,6 @@ export function Admin() {
   // The health verdict on the tab strip belongs to this user's session only.
   useEffect(() => { claimHealth(user?.id ?? null); }, [user?.id]);
   const [providers, setProviders] = useState<Providers | null>(null);
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [executions, setExecutions] = useState<ModelExecution[]>([]);
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [v1OffEverywhere, setV1OffEverywhere] = useState(false);
@@ -103,7 +93,6 @@ export function Admin() {
 
     void Promise.allSettled([
       api.get<Providers>('/admin/providers').then(set(setProviders), note('connectors')),
-      api.get<Analytics>('/admin/analytics').then(set(setAnalytics), note('analytics')),
       api.get<{ executions: ModelExecution[] }>('/admin/model-executions')
         .then(set((ex: { executions: ModelExecution[] }) => setExecutions(ex.executions ?? [])), note('executions')),
       api.get<WebhookList>('/admin/webhooks').then(set(applyWebhooks), note('webhooks')),
@@ -356,46 +345,17 @@ export function Admin() {
       </div>
       ))}
 
+      {/* The outcome statistics live here rather than in a sidebar entry of
+          their own: signing in should still show the four things a working day
+          is made of. The old summary that sat here — four all-time counts and a
+          recommendation tally — is gone rather than kept above the new one: two
+          funnels on one tab, over different periods, would disagree with each
+          other in front of the reader. The panel fetches and reports its own
+          errors, so the console no longer calls GET /api/admin/analytics at
+          all; that endpoint stays for anything else still reading it. */}
       {panel('analytics', loaded(
       <div className="card">
-        <h2>Analytics</h2>
-        {panelErrors.analytics && <Banner kind="error">Analytics did not load. {panelErrors.analytics}</Banner>}
-        {/* A zero here is a statement about the tenant. Analytics that never
-            arrived is not, so it says so instead of reporting an empty company. */}
-        <div className="grid cols-4" style={{ marginBottom: 12 }}>
-          <Stat label="Roles" value={formatScore(analytics?.funnel.roles)} />
-          <Stat label="Candidates" value={formatScore(analytics?.funnel.candidates)} />
-          <Stat label="Interviews" value={formatScore(analytics?.funnel.interviews)} />
-          <Stat label="Completed" value={formatScore(analytics?.funnel.completed)} />
-        </div>
-        <div className="grid cols-2">
-          <div>
-            <h3>Recommendations</h3>
-            <div className="table-scroll" tabIndex={0} role="region" aria-label="Recommendations">
-            <table>
-              <tbody>
-                {/* Through the same table the badges use, so a recommendation
-                    the server adds — SCORING_UNAVAILABLE, say — is named here
-                    the way it is named everywhere else. */}
-                {Object.entries(analytics?.recommendations ?? {}).map(([k, v]) => (
-                  <tr key={k}><td>{recommendationStatus(k).label}</td><td>{v}</td></tr>
-                ))}
-                {Object.keys(analytics?.recommendations ?? {}).length === 0 && (
-                  <tr><td className="muted small">No data yet.</td></tr>
-                )}
-              </tbody>
-            </table>
-            </div>
-          </div>
-          <div>
-            <h3>Quality</h3>
-            {/* "0%" is a finding — no answer had evidence behind it. While the
-                figure is still loading, or when the server has none to give for
-                an empty tenant, saying it states something the data does not. */}
-            <Stat label="Avg evidence coverage" value={formatPercent(analytics?.quality.avgEvidenceCoverage)} />
-            <div className="muted small" style={{ marginTop: 8 }}>Human reviews: {formatScore(analytics?.reviews)}</div>
-          </div>
-        </div>
+        <OutcomePanel />
       </div>
       ))}
 

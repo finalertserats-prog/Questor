@@ -1,5 +1,5 @@
 /**
- * The Reports page's decisions, kept free of React so they can be unit tested
+ * The outcome panel's decisions, kept free of React so they can be unit tested
  * (web/tests/outcomeModel.test.ts).
  *
  * THE RULE THIS MODULE EXISTS TO ENFORCE. A percentage never appears alone. It

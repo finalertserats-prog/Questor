@@ -32,8 +32,15 @@ export const OUTCOME_SNAPSHOT_JOB = { name: 'outcome-snapshot', intervalMs: 6 * 
 
 /** Cuts smaller than this are folded into "other" so no stored group can be one person. */
 export const SNAPSHOT_MIN_GROUP = 5;
-/** Organisations handled per run; a large deployment finishes over a few runs. */
-const TENANTS_PER_RUN = 50;
+/**
+ * Organisations read per query. Every organisation is snapshotted on every
+ * run; this only bounds how many are held in memory at once.
+ *
+ * It used to be a `take` with no cursor, which meant the 51st organisation was
+ * never snapshotted at all — and would have looked, in the stored trend, like
+ * an organisation that had never hired anyone.
+ */
+const TENANT_PAGE = 50;
 
 /** A rate, stored as its counts. A percentage without its denominator is not something to keep. */
 interface StoredRate {
@@ -45,20 +52,37 @@ function stored(rate: Rate): StoredRate {
   return { n: rate.numerator, d: rate.denominator };
 }
 
+export interface SnapshotCutRow {
+  readonly label: string;
+  readonly n: number;
+  /**
+   * Null for a group below SNAPSHOT_MIN_GROUP — including the folded "other"
+   * row when even the fold is small. A count of interviews says nothing about
+   * anyone; a proceed rate over three of them is one person's outcome.
+   */
+  readonly proceed: StoredRate | null;
+}
+
 export interface OutcomeSnapshotStats {
   readonly month: string;
   readonly interviews: number;
   readonly funnel: ReadonlyArray<{ readonly key: string; readonly count: number }>;
-  readonly scoreBuckets: ReadonlyArray<{ readonly from: number; readonly to: number; readonly count: number }>;
+  /**
+   * Null for a month with fewer than SNAPSHOT_MIN_GROUP interviews. In such a
+   * month a score bucket, a median or a turn rate IS one person's interview,
+   * and a snapshot that kept it would be personal data outliving the erasure
+   * of everything it was derived from.
+   */
+  readonly scoreBuckets: ReadonlyArray<{ readonly from: number; readonly to: number; readonly count: number }> | null;
   readonly scoreMedian: number | null;
-  readonly cuts: Readonly<Record<string, ReadonlyArray<{ readonly label: string; readonly n: number; readonly proceed: StoredRate }>>>;
+  readonly cuts: Readonly<Record<string, readonly SnapshotCutRow[]>>;
   readonly health: {
     readonly medianDurationMinutes: number | null;
     readonly nonAnswer: StoredRate;
     readonly rejoined: StoredRate;
     readonly heldFeedback: StoredRate;
     readonly degradedTurns: StoredRate;
-  };
+  } | null;
 }
 
 /** The UTC month of a date, as 'YYYY-MM'. */
@@ -74,51 +98,71 @@ export function monthRange(month: string): { from: Date; to: Date } {
 }
 
 /**
- * A cut, reduced to what may be kept: the label, the size, and the proceed
- * rate as counts. Groups below SNAPSHOT_MIN_GROUP are summed into one "other"
- * row rather than dropped, so the parts still add up to the month.
+ * A cut, reduced to what may be kept: the label, the size, and — only for a
+ * group of at least SNAPSHOT_MIN_GROUP — the proceed rate as counts.
+ *
+ * Small groups are summed into one "other" row rather than dropped, so the
+ * parts still add up to the month. That fold is not automatically safe: one
+ * small group, or several that still total under the floor, leaves an "other"
+ * row that is itself a handful of people. So the floor is applied to the
+ * folded row too, and a group under it keeps its size and loses its rate.
+ * A count of interviews says nothing about anyone; a proceed rate over three
+ * of them is one person's outcome.
  */
 function storableCut(
   groups: ReadonlyArray<{ label: string; n: number; humanVerdicts: Readonly<Record<'PROCEED', Rate>> }>,
-): Array<{ label: string; n: number; proceed: StoredRate }> {
+): SnapshotCutRow[] {
   const keep = groups.filter((g) => g.n >= SNAPSHOT_MIN_GROUP);
   const small = groups.filter((g) => g.n < SNAPSHOT_MIN_GROUP);
-  const rows = keep.map((g) => ({ label: g.label, n: g.n, proceed: stored(g.humanVerdicts.PROCEED) }));
+  const rows: SnapshotCutRow[] = keep.map((g) => ({ label: g.label, n: g.n, proceed: stored(g.humanVerdicts.PROCEED) }));
   if (small.length === 0) return rows;
+  const foldedN = small.reduce((total, g) => total + g.n, 0);
   return [...rows, {
     label: 'Other (groups too small to keep separately)',
-    n: small.reduce((total, g) => total + g.n, 0),
-    proceed: {
+    n: foldedN,
+    proceed: foldedN < SNAPSHOT_MIN_GROUP ? null : {
       n: small.reduce((total, g) => total + g.humanVerdicts.PROCEED.numerator, 0),
       d: small.reduce((total, g) => total + g.humanVerdicts.PROCEED.denominator, 0),
     },
   }];
 }
 
-/** The month's statistics for one organisation, as the aggregate that is safe to keep. */
+/**
+ * The month's statistics for one organisation, as the aggregate that is safe
+ * to keep.
+ *
+ * A month below SNAPSHOT_MIN_GROUP keeps its funnel counts and nothing else.
+ * In a one-interview month the score median IS that person's score and the
+ * median duration IS their interview; keeping either would put personal data
+ * in a table designed to outlive the erasure of everything it came from.
+ * Counts are kept because "three interviews happened in September" identifies
+ * nobody, and dropping the month entirely would leave a hole in the trend
+ * that reads as "nothing happened".
+ */
 export async function buildSnapshot(auth: AuthClaims, month: string): Promise<OutcomeSnapshotStats> {
   const { rows } = await gatherOutcomeRows(auth, { period: monthRange(month) });
   const scores = scoreDistribution(rows.flatMap((r) => (r.overallScore === null ? [] : [r.overallScore])));
   const health = healthStats(rows);
+  const bigEnough = rows.length >= SNAPSHOT_MIN_GROUP;
   return {
     month,
     interviews: rows.length,
     funnel: buildFunnel(countFunnel(rows)).map((step: FunnelStep) => ({ key: step.key, count: step.count })),
-    scoreBuckets: scores.buckets,
-    scoreMedian: scores.median,
+    scoreBuckets: bigEnough ? scores.buckets : null,
+    scoreMedian: bigEnough ? scores.median : null,
     cuts: {
       interviewer: storableCut(cutBy(rows, 'interviewer')),
       experienceBand: storableCut(cutBy(rows, 'experienceBand')),
       region: storableCut(cutBy(rows, 'region')),
       scorecard: storableCut(cutBy(rows, 'scorecard')),
     },
-    health: {
+    health: bigEnough ? {
       medianDurationMinutes: health.duration.median,
       nonAnswer: stored(health.nonAnswer),
       rejoined: stored(health.rejoined),
       heldFeedback: stored(health.heldFeedback),
       degradedTurns: stored(health.degradedTurns),
-    },
+    } : null,
   };
 }
 
@@ -143,26 +187,37 @@ function tenantClaims(tenantId: string): AuthClaims {
 export async function runOutcomeSnapshots(now: Date = new Date()): Promise<string> {
   const current = snapshotMonth(now);
   const previous = snapshotMonth(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)));
-  const tenants = await prisma.tenant.findMany({
-    where: { isDemo: false },
-    select: { id: true },
-    orderBy: { id: 'asc' },
-    take: TENANTS_PER_RUN,
-  });
 
   let written = 0;
-  for (const tenant of tenants) {
-    for (const month of [previous, current]) {
-      const stats = await buildSnapshot(tenantClaims(tenant.id), month);
-      await prisma.outcomeSnapshot.upsert({
-        where: { tenantId_month: { tenantId: tenant.id, month } },
-        create: { tenantId: tenant.id, month, interviews: stats.interviews, statsJson: JSON.stringify(stats) },
-        update: { interviews: stats.interviews, statsJson: JSON.stringify(stats) },
-      });
-      written += 1;
+  let organisations = 0;
+  let cursor: string | undefined;
+  // Every organisation, a page at a time — a cursor, not a bare `take`, so the
+  // list is finished rather than restarted from the top on each run.
+  for (;;) {
+    const tenants = await prisma.tenant.findMany({
+      where: { isDemo: false },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+      take: TENANT_PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (tenants.length === 0) break;
+
+    for (const tenant of tenants) {
+      for (const month of [previous, current]) {
+        const stats = await buildSnapshot(tenantClaims(tenant.id), month);
+        await prisma.outcomeSnapshot.upsert({
+          where: { tenantId_month: { tenantId: tenant.id, month } },
+          create: { tenantId: tenant.id, month, interviews: stats.interviews, statsJson: JSON.stringify(stats) },
+          update: { interviews: stats.interviews, statsJson: JSON.stringify(stats) },
+        });
+        written += 1;
+      }
+      organisations += 1;
     }
+    cursor = tenants[tenants.length - 1].id;
   }
-  return `wrote ${written} snapshot(s) for ${tenants.length} organisation(s)`;
+  return `wrote ${written} snapshot(s) for ${organisations} organisation(s)`;
 }
 
 /** Start the sweep, unless the switch is off. Returns a stop function either way. */

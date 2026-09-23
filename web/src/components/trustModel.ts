@@ -74,10 +74,24 @@ export const TRUST_FRAMEWORKS: readonly TrustFramework[] = [
         status: 'in-place',
       },
       {
+        key: 'ai-act-fair-process',
+        topic: 'A fair process by design',
+        asks: 'A high-risk hiring system must be designed so candidates are assessed consistently against the job, and so a person stays in control of the outcome.',
+        // Every clause here was checked against the code before it was written,
+        // and several earlier drafts were cut for failing that check: we do not
+        // claim the same scorecard across a role (versions legitimately differ
+        // after an edit), we do not claim a reviewer is made to read the
+        // transcript (the page says so, the server does not enforce it), and we
+        // do not claim integrity signals are displayed (that panel is not
+        // built). What is left is what the code actually does.
+        questor: 'Every candidate is assessed against a scorecard version that was approved before their interview — approved by someone other than whoever wrote it, and recorded on their own session, so it is always possible to say which questions they were held to. Every rating Questor gives points to the moment in the transcript that supports it; where the interview produced nothing on a competency it says "not enough evidence" and awards no level at all, rather than a low one. A person records every decision, with the transcript on screen beside Questor’s reading and a reason required. Nothing starts until the candidate has read the disclosure and consented, and the disclosure is refused if it does not say an AI is conducting the interview. Integrity signals are recorded only where an organisation has turned monitoring on and the candidate has consented to it specifically, are never collected from a candidate who asked for an accommodation, and are never used to score, gate or reject anyone. By default the AI round is the third of five stages, and every interview stage after it is conducted by a person.',
+        status: 'in-place',
+      },
+      {
         key: 'ai-act-fairness',
-        topic: 'Bias and data quality (Art. 10)',
-        asks: 'The data behind the system must be relevant and checked for discriminatory bias.',
-        questor: 'The Reports page measures outcomes: the funnel from invitation to decision, score and competency distributions, and how those differ by AI interviewer, scorecard version, experience band, region and month — every rate with the sample it was computed from, and marked unreadable below 20. Group-level adverse impact is still not computed and cannot be: it needs demographic attributes we do not collect. The page says so on itself rather than letting outcome rates be mistaken for a bias audit.',
+        topic: 'Outcome monitoring (Art. 10, and NYC Local Law 144)',
+        asks: 'Art. 10 expects the data behind the system to be monitored for quality and discriminatory bias; NYC Local Law 144 expects a published annual bias audit reporting impact ratios across demographic groups.',
+        questor: 'The Analytics tab of the Admin console measures what actually happens: how many candidates get through each stage from invitation to decision, how scores and competency levels are distributed, and how those differ by AI interviewer, scorecard version, experience band, region and month. Every figure carries the number of interviews behind it, and no percentage appears anywhere without its denominator — below twenty it is marked as too few to read rather than shown as a rate. Group-level adverse impact is a different thing, and Questor cannot produce it: that analysis needs demographic data we do not collect, and deciding whether to collect it lawfully is a decision for each organisation with its own legal advice.',
         status: 'in-progress',
       },
       {
@@ -185,7 +199,7 @@ export const TRUST_FRAMEWORKS: readonly TrustFramework[] = [
         key: 'll144-audit',
         topic: 'Independent bias audit',
         asks: 'If the tool does carry that weight, it needs a yearly independent bias audit with a published summary.',
-        questor: 'No bias audit has been done. It depends on the fairness monitoring above.',
+        questor: 'No bias audit has been done. It depends on the outcome monitoring above, and on group data Questor does not collect.',
         status: 'planned',
       },
     ],
@@ -325,7 +339,7 @@ export const DPIA_SUMMARY: readonly DpiaPart[] = [
     heading: 'How they are reduced',
     points: [
       'A person decides; blind review and evidence-linked ratings work against rubber-stamping.',
-      'Fairness monitoring is in progress, and a bias audit is planned.',
+      'Outcome monitoring is in place; group-level adverse impact and a bias audit are not, and need data we do not collect.',
       'Retention windows, legal holds, erasure on request, tenant isolation and role-based access.',
       'Transcripts go only to the configured AI model provider, for scoring.',
     ],

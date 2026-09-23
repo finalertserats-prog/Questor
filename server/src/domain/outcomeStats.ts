@@ -22,7 +22,7 @@ import { VERDICTS, VERDICT_LABELS, isVerdict, type Verdict } from './verdict.js'
  * Three of four is not seventy-five per cent of anything.
  *
  * Everything in this file is pure: no database, no clock, no tenant. That is
- * what lets the arithmetic on the Reports page be checked against fixtures
+ * what lets the arithmetic on the outcome panel be checked against fixtures
  * with known answers (tests/outcomeStats.test.ts).
  */
 
