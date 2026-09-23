@@ -150,10 +150,25 @@ describe('the code step', () => {
     expect(screen.getByRole('link', { name: 'Reset it now' }).getAttribute('href')).toBe('/forgot-password?org=acme');
   });
 
-  it('goes back to the password when the code never arrived', async () => {
+  it('says when another code can be asked for, rather than offering a button that cannot work', async () => {
     await form();
     typePassword();
-    fireEvent.click(await screen.findByRole('button', { name: /Start again/ }));
+    await screen.findByLabelText('Sign-in code');
+
+    // Inside the cooldown the server answers "a code has already been sent"
+    // and sends nothing — and starting again throws away the ticket the live
+    // code is keyed on, leaving a code that can never be entered.
+    expect(screen.getByText(/ask for another in/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start again/ })).toBeNull();
+  });
+
+  it('goes back to the password once the cooldown has run out', async () => {
+    loginResult = { kind: 'code_sent', pending: 'a-ticket-value-here', destination: 'r••••@acme.test', resendAfterSeconds: 0 };
+    await form();
+    typePassword();
+    await screen.findByLabelText('Sign-in code');
+
+    fireEvent.click(screen.getByRole('button', { name: /Start again/ }));
 
     expect(screen.getByLabelText('Password')).toBeTruthy();
     expect(screen.queryByLabelText('Sign-in code')).toBeNull();

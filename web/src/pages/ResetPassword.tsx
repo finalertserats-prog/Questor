@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
 import { BrandLogo } from '../components/BrandLogo';
@@ -10,7 +10,7 @@ import {
   tokenFromHash, newPasswordProblem, PASSWORD_HINT, PASSWORD_MIN_LENGTH, LINK_DEAD_MESSAGE,
 } from '../components/passwordModel';
 
-type Check = 'checking' | 'usable' | 'dead';
+type Check = 'checking' | 'usable' | 'dead' | 'unreachable';
 
 /**
  * Setting a new password from a link.
@@ -42,9 +42,15 @@ export function ResetPassword() {
     let active = true;
     api.post<{ usable: boolean }>('/auth/password/reset/check', { token: found })
       .then((data) => { if (active) setCheck(data.usable ? 'usable' : 'dead'); })
-      // An outage is not a dead link, but there is nothing useful to offer
-      // here either: the form would only fail on submit. Say the same thing.
-      .catch(() => { if (active) setCheck('dead'); });
+      // An outage is not a dead link, and saying it is sends the person to
+      // burn one of the five links they get an hour on a link that was fine.
+      // Nothing here says whose link it is either way, so there is no reason
+      // to hide which of the two happened.
+      .catch((error: unknown) => {
+        if (!active) return;
+        const status = error instanceof ApiError ? error.status : -1;
+        setCheck(status === 0 || status >= 500 ? 'unreachable' : 'dead');
+      });
     return () => { active = false; };
   }, []);
 
@@ -77,6 +83,22 @@ export function ResetPassword() {
           <div className="brand-line" aria-hidden="true" />
 
           {check === 'checking' && <p className="muted small">Checking your link…</p>}
+
+          {check === 'unreachable' && (
+            <>
+              <h1 className="landing-title">We can't reach Questor right now</h1>
+              {/* Deliberately not "this link has expired": a person told that
+                  asks for a new one, spending one of the five they get an hour
+                  on a link that was never the problem. */}
+              <Banner kind="error">
+                Your link may well be fine — we simply could not check it. This is usually brief.
+              </Banner>
+              <button type="button" className="btn" style={{ width: '100%', marginTop: 14 }} onClick={() => window.location.reload()}>
+                Try again
+              </button>
+              <Link className="btn secondary" style={{ width: '100%', marginTop: 8 }} to="/login">Back to sign in</Link>
+            </>
+          )}
 
           {check === 'dead' && (
             <>

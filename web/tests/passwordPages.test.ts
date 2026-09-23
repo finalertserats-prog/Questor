@@ -9,6 +9,9 @@ import { ToastProvider } from '../src/components/Toast';
 // that changes a password. The point of each test is a property the feature
 // stands on, not that the markup renders.
 
+/** Stands in for the real ApiError so a status can be attached to a rejection. */
+class ApiErrorStub extends Error { status = -1; }
+
 const posts: Array<{ path: string; body: unknown }> = [];
 let postResult: (path: string) => unknown = () => ({ ok: true });
 
@@ -21,7 +24,7 @@ vi.mock('../src/api/client', () => ({
       return answer instanceof Error ? Promise.reject(answer) : Promise.resolve(answer);
     },
   },
-  ApiError: class ApiError extends Error { status = 0; },
+  ApiError: ApiErrorStub,
   getToken: () => null,
   setToken: () => {},
 }));
@@ -67,6 +70,33 @@ describe('the forgot-password page', () => {
     fireEvent.change(second.getByLabelText('Email'), { target: { value: 'rita@example.com' } });
     fireEvent.click(second.getByRole('button', { name: 'Email me a link' }));
     expect(await second.findByText(/link to set a new password is on its way/i)).toBeTruthy();
+  });
+
+  it('says so honestly when the request never reached us at all', async () => {
+    // Not an enumeration case: a connection that failed, or the whole
+    // deployment refusing while its rate-limit store is down, says nothing
+    // about this address. Telling the person a link is coming, when nothing
+    // was even attempted, sends them to wait at an inbox for an hour.
+    postResult = () => Object.assign(new ApiErrorStub('Questor could not be reached.'), { status: 0 });
+    const { ForgotPassword } = await import('../src/pages/ForgotPassword');
+    mount(createElement(ForgotPassword));
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'rita@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
+
+    expect(await screen.findByText('Questor could not be reached.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Check your email' })).toBeNull();
+  });
+
+  it('still hides a rate limit, which does say something about this address', async () => {
+    postResult = () => Object.assign(new ApiErrorStub('Too many requests. Please wait a moment and try again.'), { status: 429 });
+    const { ForgotPassword } = await import('../src/pages/ForgotPassword');
+    mount(createElement(ForgotPassword));
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'rita@example.com' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Email me a link' }));
+
+    expect(await screen.findByText(/link to set a new password is on its way/i)).toBeTruthy();
   });
 
   it('does not send an address that could not be reached', async () => {
@@ -116,6 +146,20 @@ describe('the set-a-new-password page', () => {
 
     expect(await screen.findByText(/This link is no longer valid/i)).toBeTruthy();
     expect(screen.queryByLabelText('New password')).toBeNull();
+  });
+
+  it('does not call a link expired when it simply could not be checked', async () => {
+    // "This link has expired" sends the person to ask for a new one, spending
+    // one of the five they get an hour on a link that was never the problem.
+    window.location.hash = '#a-token-value-long-enough';
+    postResult = () => Object.assign(new ApiErrorStub('This service is briefly unavailable.'), { status: 503 });
+    const { ResetPassword } = await import('../src/pages/ResetPassword');
+
+    mount(createElement(ResetPassword));
+
+    expect(await screen.findByText(/could not check it/i)).toBeTruthy();
+    expect(screen.queryByText(/This link is no longer valid/i)).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Ask for a new link' })).toBeNull();
   });
 
   it('catches a mistyped repeat before spending the link on it', async () => {

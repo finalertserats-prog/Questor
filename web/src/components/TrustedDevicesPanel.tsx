@@ -29,14 +29,21 @@ export function TrustedDevicesPanel() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // A failed read is not an empty list. "You have not asked us to remember any
+  // device" is a claim about the security state of an account, and making it
+  // out of a request that failed is how a person is reassured about something
+  // nobody actually checked.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [actingId, setActingId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (keepError = false) => {
     try {
       const data = await api.get<{ devices: Device[] }>('/auth/devices');
       setDevices(data.devices ?? []);
-      setError('');
+      setLoadFailed(false);
+      if (!keepError) setError('');
     } catch (err: unknown) {
+      setLoadFailed(true);
       setError(err instanceof Error ? err.message : 'Could not load your devices.');
     } finally {
       setLoading(false);
@@ -59,7 +66,9 @@ export function TrustedDevicesPanel() {
       );
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not remove that device.');
-      await load();
+      // Re-read so the list is true, without erasing the sentence saying the
+      // device is still remembered.
+      await load(true);
     } finally {
       setActingId(null);
     }
@@ -76,7 +85,14 @@ export function TrustedDevicesPanel() {
       </p>
       {error && <Banner kind="error">{error}</Banner>}
 
-      {devices.length === 0 ? (
+      {devices.length === 0 && loadFailed ? (
+        <div className="row" style={{ gap: 8, marginTop: 14 }}>
+          <span className="muted small">Your devices could not be read, so it is not known whether any are remembered.</span>
+          <button type="button" className="btn secondary sm" onClick={() => { setLoading(true); void load(); }}>
+            <Icon name="refresh" size={14} />Try again
+          </button>
+        </div>
+      ) : devices.length === 0 ? (
         <p className="muted small" style={{ marginTop: 14 }}>
           You have not asked us to remember any device. You will be asked for a code each time your
           organisation requires one.

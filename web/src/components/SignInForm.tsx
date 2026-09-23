@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth, type SignInStep } from '../auth';
 import { Banner } from './ui';
@@ -22,6 +22,14 @@ export function SignInForm({ orgSlug, orgName }: { orgSlug: string; orgName: str
   const [code, setCode] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Seconds until the server will send another code. Counts down on screen. */
+  const [waitSeconds, setWaitSeconds] = useState(0);
+
+  useEffect(() => {
+    if (waitSeconds <= 0) return undefined;
+    const timer = setTimeout(() => setWaitSeconds((s) => s - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [waitSeconds]);
 
   const submitPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +39,10 @@ export function SignInForm({ orgSlug, orgName }: { orgSlug: string; orgName: str
       const next = await login(email, password, { orgSlug, rememberDevice: remember });
       // 'signed_in' navigates by itself: the route guard sends a signed-in user
       // off the sign-in page, so there is nothing to do here but stop.
-      if (next.kind === 'code_sent') setStep(next);
+      if (next.kind === 'code_sent') {
+        setStep(next);
+        setWaitSeconds(next.resendAfterSeconds);
+      }
     } catch (error: unknown) {
       setErr(error instanceof Error ? error.message : 'Sign-in failed');
     } finally {
@@ -54,7 +65,15 @@ export function SignInForm({ orgSlug, orgName }: { orgSlug: string; orgName: str
     }
   };
 
-  /** Back to the password, which is also how a new code is asked for. */
+  /**
+   * Back to the password, which is how a new code is asked for.
+   *
+   * Only once the server will actually send one. Asking again inside the
+   * cooldown is met with "a code has already been sent" and no code — and
+   * throwing the ticket away on the way there leaves the person holding a code
+   * that is still live but can no longer be entered, because the entry is
+   * keyed on the ticket. The button says when instead.
+   */
   const startAgain = () => {
     setStep(null);
     setCode('');
@@ -89,9 +108,13 @@ export function SignInForm({ orgSlug, orgName }: { orgSlug: string; orgName: str
           </button>
         </form>
         <div className="small muted" style={{ marginTop: 12, textAlign: 'center' }}>
-          <button type="button" className="link-button" onClick={startAgain}>
-            Didn't get it? Start again
-          </button>
+          {waitSeconds > 0 ? (
+            <span>Didn't get it? You can ask for another in {waitSeconds}s.</span>
+          ) : (
+            <button type="button" className="link-button" onClick={startAgain}>
+              Didn't get it? Start again
+            </button>
+          )}
         </div>
         <p className="muted small" style={{ marginTop: 10 }}>
           If you did not just try to sign in, someone else has your password.{' '}

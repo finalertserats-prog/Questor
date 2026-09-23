@@ -93,11 +93,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { checkSession(); }, [checkSession]);
 
-  /** Shared by both ways in: adopt the session the server just handed back. */
+  /**
+   * Shared by both ways in: adopt the session the server just handed back.
+   *
+   * The follow-up read of /auth/me cannot be allowed to fail the sign-in it
+   * follows. The session already exists — the password was right, the code was
+   * accepted and spent — so a blip fetching the organisation's name is not a
+   * reason to tell someone their code was rejected and clear a field they can
+   * never refill. The organisation arrives on the next page load instead.
+   */
   const adopt = async (d: { token: string; user: User }) => {
     setLoadError(null);
     setToken(d.token); setUser(d.user);
-    const me = await api.get<{ tenant: Tenant | null }>('/auth/me'); setTenant(me.tenant);
+    try {
+      const me = await api.get<{ tenant: Tenant | null }>('/auth/me');
+      setTenant(me.tenant);
+    } catch {
+      setTenant(null);
+    }
   };
 
   const login = async (email: string, password: string, opts: { orgSlug?: string; rememberDevice?: boolean } = {}): Promise<SignInStep> => {

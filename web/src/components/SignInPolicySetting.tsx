@@ -42,10 +42,17 @@ export function SignInPolicySetting() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  /**
+   * `keepError` exists because the obvious shape — catch, set an error, then
+   * re-read to get back in step — wipes the error it just set, since a
+   * successful read clears it. On a security control that is the worst failure
+   * available: the radio snaps back to what it was, nothing is said, and the
+   * admin walks away believing the policy changed.
+   */
+  const load = useCallback(async (keepError = false) => {
     try {
       setSettings(await api.get<Settings>('/admin/signin-policy'));
-      setError('');
+      if (!keepError) setError('');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not load your sign-in settings.');
     }
@@ -62,7 +69,9 @@ export function SignInPolicySetting() {
       toast.show(saved.note ?? 'Saved.', { testId: 'signin-policy-saved' });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not save that.');
-      await load();
+      // Re-read so the controls show what the server actually holds, without
+      // swallowing the sentence that says the save did not happen.
+      await load(true);
     } finally {
       setBusy(false);
     }

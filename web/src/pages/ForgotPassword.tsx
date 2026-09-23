@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { api, ApiError } from '../api/client';
 import { Banner } from '../components/ui';
 import { LandingHero } from '../components/LandingHero';
 import { BrandLogo } from '../components/BrandLogo';
@@ -37,11 +37,24 @@ export function ForgotPassword() {
     try {
       await api.post('/auth/password/forgot', { email: email.trim() });
       setSent(true);
-    } catch {
-      // Even a refusal lands on the same confirmation. A rate limit or an
-      // outage answered differently would say, to anyone watching, that this
-      // particular address was worth limiting.
-      setSent(true);
+    } catch (error: unknown) {
+      // The enumeration defence needs the ANSWERED cases to be
+      // indistinguishable: an address with an account, one without, and one
+      // that has asked too often all land on the same confirmation, because
+      // any difference between them says who has an account here.
+      //
+      // Two cases are not about this address at all and are said honestly. A
+      // request that never reached us (status 0) is a fact about the visitor's
+      // own connection. A 503 is the rate-limit store being unreachable, which
+      // is the whole deployment refusing rather than anything about them —
+      // and telling them a link is coming, when nothing was even attempted,
+      // sends them to wait at an inbox for an hour.
+      const status = error instanceof ApiError ? error.status : -1;
+      if (status === 0 || status === 503) {
+        setProblem(error instanceof Error ? error.message : 'We could not send that just now. Please try again shortly.');
+      } else {
+        setSent(true);
+      }
     } finally {
       setBusy(false);
     }
