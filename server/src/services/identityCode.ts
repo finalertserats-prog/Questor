@@ -5,6 +5,7 @@ import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
 import { getEmail } from '../providers/email/index.js';
 import { renderIdentityCodeEmail } from '../providers/email/identityCodeEmail.js';
+import { classifyEmailFailure } from '../providers/email/failure.js';
 import { firstName } from '../engines/openingModel.js';
 import { logAudit } from './audit.js';
 import { lockSession, type TransactionClient } from './sessionLock.js';
@@ -83,11 +84,22 @@ export type IssueOutcome =
   | { kind: 'sent'; destination: string; expiresAt: Date; resendAfterSeconds: number }
   | { kind: 'already_verified' }
   | { kind: 'wait'; reason: 'cooldown' | 'locked' | 'hourly'; retryAfterSeconds: number }
+  /** The address refused the message outright. Trying again changes nothing; a person has to help. */
+  | { kind: 'refused' }
+  /** The mail provider declined for now. Nothing was delivered; a moment later may work. */
+  | { kind: 'deferred' }
+  /**
+   * We stopped waiting, or the connection died mid-send. The code MAY be in
+   * the candidate's inbox, so it is still live and still verifies — telling
+   * them "not sent" and cancelling it is what used to strand them.
+   */
+  | { kind: 'unconfirmed'; destination: string; expiresAt: Date; resendAfterSeconds: number }
+  /** We chose not to send: a demo sandbox may only mail its own visitor. */
   | { kind: 'not_delivered' };
 
 type Decision =
   | { kind: 'issue'; challengeId: string; code: string; retired: string[] }
-  | Exclude<IssueOutcome, { kind: 'sent' } | { kind: 'not_delivered' }>;
+  | Exclude<IssueOutcome, { kind: 'sent' } | { kind: 'refused' } | { kind: 'deferred' } | { kind: 'unconfirmed' } | { kind: 'not_delivered' }>;
 
 async function decideIssue(sessionId: string, now: Date): Promise<Decision> {
   return prisma.$transaction(async (tx) => {
@@ -160,21 +172,38 @@ export async function issueIdentityCode(sessionId: string, now = new Date()): Pr
     to: session.candidate.email, firstName: firstName(session.candidate.fullName), roleTitle: session.role.title,
     companyName: session.tenant.name, code: decision.code, validMinutes: CODE_TTL_MS / 60_000,
   });
+  const live = {
+    destination: maskEmail(session.candidate.email),
+    expiresAt: new Date(now.getTime() + CODE_TTL_MS),
+    resendAfterSeconds: RESEND_COOLDOWN_MS / 1000,
+  };
   try {
     await getEmail().send(message);
   } catch (err) {
-    logger.error({ sessionId, err: err instanceof Error ? err.message : String(err) }, 'Identity code email was not sent');
-    await undoIssue(sessionId, decision.challengeId, decision.retired, now);
-    return { kind: 'not_delivered' };
+    const failure = classifyEmailFailure(err);
+    logger.error({ sessionId, ...failure }, 'Identity code email was not sent');
+    // Audited whatever happened. Before this, a failure left NO record
+    // anywhere HR looks: the challenge was deleted, so even the count of
+    // codes sent showed nothing (docs/qa/resilience-2026-09-23.md, R6).
+    await logAudit({
+      tenantId: session.tenantId, actorType: 'system', action: 'identity.code_send_failed',
+      entityType: 'InterviewSession', entityId: sessionId,
+      after: { channel: 'email', certainty: failure.certainty, reason: failure.reason, detail: failure.detail },
+    });
+    // Only a certainty may destroy the code. An unknown outcome keeps it: the
+    // candidate may be holding it, and cancelling it tells them a code they
+    // can read off their screen has expired.
+    if (failure.certainty === 'not_delivered') {
+      await undoIssue(sessionId, decision.challengeId, decision.retired, now);
+      return failure.reason === 'refused' ? { kind: 'refused' } : { kind: 'deferred' };
+    }
+    return { kind: 'unconfirmed', ...live };
   }
   await logAudit({
     tenantId: session.tenantId, actorType: 'system', action: 'identity.code_sent',
     entityType: 'InterviewSession', entityId: sessionId, after: { channel: 'email' },
   });
-  return {
-    kind: 'sent', destination: maskEmail(session.candidate.email),
-    expiresAt: new Date(now.getTime() + CODE_TTL_MS), resendAfterSeconds: RESEND_COOLDOWN_MS / 1000,
-  };
+  return { kind: 'sent', ...live };
 }
 
 export type VerifyOutcome =
@@ -247,7 +276,18 @@ export async function verifyIdentityCode(sessionId: string, code: string, now = 
       await logAudit({ tenantId: session.tenantId, actorType: 'user', actorId: 'candidate', action: 'identity.code_confirmed', entityType: 'InterviewSession', entityId: sessionId, after: { channel } });
     }
   }
-  if (event === 'locked') logger.warn({ sessionId }, 'Identity code locked after too many wrong entries');
+  if (event === 'locked') {
+    logger.warn({ sessionId }, 'Identity code locked after too many wrong entries');
+    // The one identity-abuse signal a reviewer would want was a log line only
+    // (docs/qa/resilience-2026-09-23.md, S2). It belongs in the audit log.
+    const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { tenantId: true } });
+    if (session) {
+      await logAudit({
+        tenantId: session.tenantId, actorType: 'system', action: 'identity.code_locked',
+        entityType: 'InterviewSession', entityId: sessionId, after: { channel: 'email', attempts: MAX_ATTEMPTS },
+      });
+    }
+  }
   return outcome as VerifyOutcome;
 }
 

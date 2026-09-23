@@ -1,7 +1,7 @@
 import nodemailer from 'nodemailer';
 import { config } from '../../config.js';
 import { logger } from '../../logger.js';
-import { SMTP_KILL_DEADLINE_MS, smtpTransportOptions } from './timing.js';
+import { EMAIL_SEND_TIMEOUT_MS, SMTP_KILL_DEADLINE_MS, smtpTransportOptions } from './timing.js';
 import { sendViaSmtpChild } from './smtpChild.js';
 
 export interface EmailMessage {
@@ -63,7 +63,12 @@ class SendgridEmailProvider implements EmailProvider {
   async send(msg: EmailMessage, opts: { readonly signal?: AbortSignal } = {}) {
     const res = await fetch('https://api.sendgrid.com/v3/mail/send', {
       method: 'POST',
-      signal: opts.signal,
+      // Never unbounded. Only the feedback sender ever passed a signal, so a
+      // stalled SendGrid could hold an identity code, a reminder, the digest
+      // or a signup open indefinitely — and the identity code is sent inside
+      // the candidate's own request (docs/qa/resilience-2026-09-23.md, §1.5).
+      // SMTP has the child-process kill; this is SendGrid's equivalent.
+      signal: opts.signal ?? AbortSignal.timeout(EMAIL_SEND_TIMEOUT_MS),
       headers: { authorization: `Bearer ${this.key}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         personalizations: [{ to: [{ email: msg.to }] }],

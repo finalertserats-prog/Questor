@@ -24,7 +24,14 @@ vi.mock('../src/providers/email/index.js', async (importOriginal) => {
     getEmail: () => ({
       name: 'test', configured: true, delivers: true,
       async send(msg: { to: string; subject: string; text: string; html: string }) {
-        if (failNextSend.on) { failNextSend.on = false; throw new Error('smtp down'); }
+        if (failNextSend.on) {
+          failNextSend.on = false;
+          // A classified refusal (SMTP 550), not a bare Error: only a
+          // CERTAIN non-delivery may take the code back. An unclassifiable
+          // failure is treated as "may have arrived" and keeps the code —
+          // see tests/identityCodeSendFailure.test.ts.
+          throw Object.assign(new Error('550 5.1.1 Recipient address rejected'), { responseCode: 550, code: 'EENVELOPE' });
+        }
         sent.push(msg);
         return { status: 'sent', id: `test-${sent.length}` };
       },
@@ -124,11 +131,11 @@ describe('sending a code', () => {
     expect(out.kind).toBe(codeIn(0) === codeIn(1) ? 'verified' : 'wrong');
   });
 
-  it('does not count a send that failed against the cooldown', async () => {
+  it('does not count a refused send against the cooldown', async () => {
     failNextSend.on = true;
     const first = await issueIdentityCode(demo.sessionId);
     const second = await issueIdentityCode(demo.sessionId);
-    expect([first.kind, second.kind]).toEqual(['not_delivered', 'sent']);
+    expect([first.kind, second.kind]).toEqual(['refused', 'sent']);
   });
 
   it('sends nothing once the applicant is confirmed', async () => {

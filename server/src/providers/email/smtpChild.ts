@@ -78,7 +78,19 @@ export async function killInFlightSmtpSenders(): Promise<void> {
 
 type Reply =
   | { readonly type: 'sent'; readonly messageId: string }
-  | { readonly type: 'failed'; readonly message: string };
+  | { readonly type: 'failed'; readonly message: string; readonly responseCode?: number; readonly code?: string };
+
+/**
+ * A definite failure the relay explained. The two codes travel with it so the
+ * caller can tell a refusal — nothing was delivered — from a conversation that
+ * died halfway, whose outcome nobody knows (providers/email/failure.ts).
+ */
+export class SmtpSendError extends Error {
+  constructor(message: string, readonly responseCode?: number, readonly code?: string) {
+    super(message);
+    this.name = 'SmtpSendError';
+  }
+}
 
 export interface SmtpChildSend {
   readonly transport: Record<string, unknown>;
@@ -141,7 +153,7 @@ export function sendViaSmtpChild(send: SmtpChildSend): Promise<{ messageId: stri
       finish();
       settle(() => {
         if (reply?.type === 'sent') { resolve({ messageId: reply.messageId }); return; }
-        if (reply?.type === 'failed') { reject(new Error(reply.message)); return; }
+        if (reply?.type === 'failed') { reject(new SmtpSendError(reply.message, reply.responseCode, reply.code)); return; }
         // No reply and no timeout: the child died on us. A definite failure —
         // nothing was sent — and worth a line in the log, minus anything the
         // child might have printed about the transport (it prints nothing).

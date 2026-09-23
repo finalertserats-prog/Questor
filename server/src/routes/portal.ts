@@ -678,6 +678,33 @@ portalRouter.post('/:token/identity/code', asyncHandler(async (req, res) => {
         code: out.reason === 'locked' ? 'identity_code_locked' : 'identity_code_limit',
         retryAfterSeconds: out.retryAfterSeconds,
       });
+    case 'unconfirmed':
+      // The send did not confirm, but the code may well have arrived — and it
+      // is still live. Telling them "not sent" is what left people entering a
+      // valid code and being told it had expired
+      // (docs/qa/resilience-2026-09-23.md, R6). 200, because there may be
+      // nothing wrong from where they are sitting.
+      return res.json({
+        sent: true, unconfirmed: true, channel: 'email', destination: out.destination,
+        expiresInSeconds: CODE_TTL_MS / 1000, resendAfterSeconds: out.resendAfterSeconds,
+        note: 'The email is on its way, but our mail provider has not confirmed it yet. Check your inbox and spam folder — if it is there, the code works. If nothing arrives, ask for another in a minute.',
+      });
+    case 'deferred':
+      // Nothing was delivered, and a moment later genuinely may work.
+      res.setHeader('Retry-After', '60');
+      return res.status(503).json({
+        error: 'Our mail provider would not take the email just now. Please try again in a minute.',
+        code: 'identity_code_not_sent', retryAfterSeconds: 60,
+      });
+    case 'refused':
+      // Retrying will fail the same way for as long as the address is what it
+      // is, so the next step is a person, not a button. The team has an audit
+      // row and a "Needs you" entry for this interview
+      // (services/identityCodeTrouble.ts).
+      return res.status(502).json({
+        error: 'The email could not be delivered to the address on your application. Please reply to the email that invited you, or contact the hiring team — they can see this and will help.',
+        code: 'identity_code_refused',
+      });
     case 'not_delivered':
       return res.status(503).json({ error: 'We could not send the email just now. Please try again in a moment.', code: 'identity_code_not_sent' });
   }

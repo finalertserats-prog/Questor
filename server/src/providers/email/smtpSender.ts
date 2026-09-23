@@ -23,7 +23,26 @@ interface SendRequest {
 
 type SendReply =
   | { readonly type: 'sent'; readonly messageId: string }
-  | { readonly type: 'failed'; readonly message: string };
+  | {
+    readonly type: 'failed';
+    readonly message: string;
+    /**
+     * The SMTP reply code, where the relay gave one. The parent needs it to
+     * tell a refusal (nothing was delivered) from a connection that died
+     * mid-conversation (outcome unknown) — see providers/email/failure.ts.
+     */
+    readonly responseCode?: number;
+    /** nodemailer's own class of failure: ECONNECTION, EAUTH, ESOCKET, EENVELOPE. */
+    readonly code?: string;
+  };
+
+function numberOrUndefined(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+function stringOrUndefined(v: unknown): string | undefined {
+  return typeof v === 'string' && v ? v : undefined;
+}
 
 function reply(message: SendReply): void {
   if (process.send) process.send(message);
@@ -40,9 +59,16 @@ process.on('message', (request: SendRequest) => {
       process.exit(0);
     })
     .catch((err: unknown) => {
-      // The message only: a transport error can quote the server's reply,
-      // never our credentials, and the parent truncates it before storing.
-      reply({ type: 'failed', message: err instanceof Error ? err.message : String(err) });
+      // The message and the two codes: a transport error can quote the
+      // server's reply, never our credentials, and the parent truncates it
+      // before storing. The codes are what tell "refused" from "unknown".
+      const e = (err ?? {}) as { responseCode?: unknown; code?: unknown };
+      reply({
+        type: 'failed',
+        message: err instanceof Error ? err.message : String(err),
+        ...(numberOrUndefined(e.responseCode) !== undefined ? { responseCode: numberOrUndefined(e.responseCode) } : {}),
+        ...(stringOrUndefined(e.code) !== undefined ? { code: stringOrUndefined(e.code) } : {}),
+      });
       process.exit(0);
     });
 });
