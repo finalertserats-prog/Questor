@@ -77,7 +77,10 @@ export function useReviewTranscript(source: TranscriptSource | null) {
 /**
  * How far down the transcript block the page has been scrolled. Measured
  * from the window, because the transcript sits in the page's own flow: the
- * page IS the reading surface. Nothing is stored.
+ * page IS the reading surface.
+ *
+ * This is the label, not the gate — nothing here is stored. What the server
+ * holds the reviewer to is which turns were shown, in useTranscriptReadGate.
  */
 export function useReadProgress(ready: boolean, transcriptKey: string) {
   const blockRef = useRef<HTMLElement>(null);

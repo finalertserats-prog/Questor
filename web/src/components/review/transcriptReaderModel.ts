@@ -9,8 +9,18 @@ import { NO_SCORE } from '../scoreFormat';
  * WHY the transcript comes first: a review recorded from the AI's summary is a
  * review of the summary. The owner asked for the record itself to be in front
  * of the reviewer before the form is — and for the page to know how far they
- * have read, so the note beside the form can say so. None of this is stored:
- * it is guidance on the page, not a gate on the server.
+ * have read, so the note beside the form can say so.
+ *
+ * The arithmetic here is still only the label. It measures how far the
+ * transcript has scrolled past the viewport, which answers "how far down am
+ * I?" and nothing more; it is not stored and it is not what the server checks.
+ *
+ * The gate is a different measure and lives in transcriptReadGate.ts: which
+ * TURNS were put in front of the reviewer, reported to the server and checked
+ * there against the interview that exists. Turns rather than scroll distance
+ * because a scroll fraction is a fact about a scrollbar — a reviewer reading
+ * with a screen reader never moves one — and because a percentage is not
+ * something a server can check.
  */
 
 export interface TranscriptTurnInput {
