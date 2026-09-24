@@ -53,11 +53,23 @@ export const EXCLUSIONARY_TERMS: Array<{ re: RegExp; suggestion: string }> = [
   { re: /\b(must be able to lift|physically fit)\b/i, suggestion: 'Only include bona fide physical requirements.' },
 ];
 
+/**
+ * A labelled field from the advert's header.
+ *
+ * The capture stops at a pipe as well as a newline, because adverts habitually
+ * put several fields on one line —
+ *
+ *   Location: Bengaluru (Hybrid)  |  Employment type: Full-time  |  Level: Senior
+ *
+ * — and reading to the end of the line made the location "Bengaluru (Hybrid) |
+ * Employment type: Full-time | Level: Senior". That then printed on the
+ * exported PDF as a header with the level and the employment type in it twice.
+ */
 function detectField(text: string, labels: string[]): string {
   for (const label of labels) {
-    const re = new RegExp(`${label}\\s*[:\\-]\\s*([^\\n]+)`, 'i');
+    const re = new RegExp(`${label}\\s*[:\\-]\\s*([^\\n|·•]+)`, 'i');
     const m = text.match(re);
-    if (m) return m[1].trim().slice(0, 120);
+    if (m) return m[1].trim().replace(/[\s,;]+$/, '').slice(0, 120);
   }
   return '';
 }
