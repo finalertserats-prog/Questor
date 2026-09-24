@@ -35,12 +35,26 @@ function assemble(defs: readonly CanonicalCompetencyDef[]): CanonicalCompetency[
  * deliberately truncated stem that the closing boundary made unmatchable by
  * construction.
  */
-const INFLECTION = '(?:s|es|ing|ling|ed|led|er|ers|ors?|ies|y|ly)?';
+const INFLECTION = '(?:s|es|ing|ling|ed|led|er|ers|ors?|ies|y|ly|ation|ations|ement|ements|ance|ence)?';
+
+/**
+ * An abbreviation carrying its own word boundaries, e.g. `\bnda\b`.
+ *
+ * These sit INSIDE an alternation, so the suffix appended to the group never
+ * reaches them: `\b(…|\bmsa\b|\bnda\b|…)\b` could not match "customer MSAs and
+ * NDAs", which is the only way anybody writes it. Adding the plural to each in
+ * place is the same fix applied one level down.
+ *
+ * Two to five characters, because that is what an abbreviation is; a longer
+ * bounded word is a whole term someone chose to bound deliberately.
+ */
+const INNER_ABBREVIATION = /\\b([a-z0-9]{2,5})\\b/g;
 
 /** Let a cue's final word inflect, without loosening its start. */
 function allowInflection(re: RegExp): RegExp {
-  if (!re.source.endsWith(')\\b')) return re;
-  return new RegExp(`${re.source.slice(0, -2)}${INFLECTION}\\b`, re.flags);
+  const source = re.source.replace(INNER_ABBREVIATION, '\\b$1s?\\b');
+  if (!source.endsWith(')\\b')) return source === re.source ? re : new RegExp(source, re.flags);
+  return new RegExp(`${source.slice(0, -2)}${INFLECTION}\\b`, re.flags);
 }
 
 export const CANONICAL_COMPETENCIES: readonly CanonicalCompetency[] = [

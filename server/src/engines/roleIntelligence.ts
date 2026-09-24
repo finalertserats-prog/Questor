@@ -2,6 +2,8 @@ import { nanoid } from 'nanoid';
 import type { Competency, RoleSuccessProfile } from '../domain/types.js';
 import { canonicaliseName, locateSpan, proposeFromJd, verifySpan, type ProposedCompetency } from './jdCompetencies.js';
 import { compareToCanonicalRole, domainTagFor, type CatalogComparison } from '../domain/taxonomy/catalogMap.js';
+import type { CanonicalCompetency } from '../domain/taxonomy/types.js';
+import { maskCollaborationObjects } from './jdSections.js';
 import { competencyKeyOf } from '../domain/calibration.js';
 import { CANONICAL_COMPETENCIES } from '../domain/taxonomy/index.js';
 import { generateJson } from '../providers/llm/index.js';
@@ -205,6 +207,34 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
   };
 }
 
+/**
+ * Does this job description line actually support this competency?
+ *
+ * Asked of the model's citations, because a quote being real says only that
+ * the model did not invent it. The line is read the way the extractor reads
+ * it — other people's disciplines masked out — and then:
+ *
+ *   for a competency in the shared vocabulary, its own cues must fire on what
+ *   is left, and none of its vetoes may;
+ *
+ *   for a competency the vocabulary does not name, which a model is entitled
+ *   to propose for a specialist role, the line must at least contain the
+ *   substance of the name. That is a weaker test, deliberately: the
+ *   alternative is refusing every genuinely novel competency, and the human
+ *   still sees the span and can remove it in one action.
+ */
+function supportsCompetency(spanText: string, canonical: CanonicalCompetency | null, name: string): boolean {
+  const masked = maskCollaborationObjects(spanText);
+  if (canonical) {
+    if (canonical.notWhen?.some((re) => re.test(masked))) return false;
+    return canonical.cues.some((re) => re.test(masked));
+  }
+  const words = name.toLowerCase().split(/[^a-z0-9+#]+/).filter((w) => w.length > 3);
+  if (words.length === 0) return false;
+  const lowered = masked.toLowerCase();
+  return words.some((w) => lowered.includes(w));
+}
+
 /** The catalog's expectations for this role shape, against what the advert produced. */
 function compareForRole(
   title: string,
@@ -282,6 +312,16 @@ export async function extractRole(sourceText: string, titleHint = '', opts: Extr
     const name = canonical?.name ?? String(c.name ?? '').slice(0, 80);
     const key = competencyKeyOf(name);
     if (!name || seen.has(key)) return [];
+    // A real quote is necessary and not sufficient.
+    //
+    // "Partner with analytics and product teams to deliver trustworthy data"
+    // is a genuine line of the advert, and a model citing it for Product
+    // Management would have passed every check above — reproducing, through
+    // the model path, exactly the failure the deterministic path was built to
+    // stop. So the cited line has to survive the same reading the extractor
+    // gives it: collaboration objects masked, then the competency's own cues
+    // must actually fire on what is left.
+    if (!supportsCompetency(span.text, canonical, name)) return [];
     seen.add(key);
     return [{
       id: nanoid(8),
@@ -303,14 +343,32 @@ export async function extractRole(sourceText: string, titleHint = '', opts: Extr
     }];
   });
 
-  // The heuristic set stands unless the model produced enough properly cited
-  // competencies to be worth preferring. An uncited model is no better than
-  // the keyword table this work replaced.
-  if (merged.length < 3) return heuristic;
+  if (merged.length === 0) return heuristic;
+
+  /**
+   * Whatever the model found, the platform's own competencies still stand.
+   *
+   * The model path used to replace the heuristic set outright, which quietly
+   * dropped Communication, Problem Solving, Collaboration and Ownership &
+   * Impact — the four the product says are asked on every role. Since role
+   * creation defaults to using the model, most roles were losing them, and
+   * whether an interview asked how somebody thinks depended on how many
+   * competencies the model happened to cite properly.
+   *
+   * A model that produced only one or two well-cited competencies also used
+   * to have all of them thrown away. They are grounded in the advert and
+   * verified against it; the right thing is to keep them alongside the
+   * heuristic reading rather than to lose them for being few.
+   */
+  const heuristicKeep = heuristic.profile.competencies.filter(
+    (c) => c.origin === 'baseline' || (merged.length < 3 && !seen.has(competencyKeyOf(c.name))),
+  );
+  for (const c of heuristicKeep) seen.add(competencyKeyOf(c.name));
 
   // A required technology the model's competencies do not name still gets one.
   const band = opts.band ?? bandForRoleSeniority(heuristic.level).id;
-  const competencies = normalizeWeights([...merged, ...stackCompetencies(merged, stack, band)]);
+  const kept = [...merged, ...heuristicKeep];
+  const competencies = normalizeWeights([...kept, ...stackCompetencies(kept, stack, band)]);
   return {
     ...heuristic,
     catalogComparison: compareForRole(heuristic.title, opts.domainName, competencies),
