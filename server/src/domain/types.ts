@@ -22,6 +22,28 @@ export interface Competency {
   sourceText?: string;            // JD span the competency was derived from
   confidence?: number;            // extraction confidence 0..1
   /**
+   * The job description line this competency was derived from, kept so it can
+   * be shown beside the competency and argued with.
+   *
+   * A competency is a stronger claim than an interview evidence quote or a CV
+   * fact, because it is what every candidate for the role gets measured
+   * against — and until now it was the only one of the three that cited
+   * nothing. Anything with `origin: 'jd'` has a span; a baseline competency
+   * has none and says so rather than pretending.
+   */
+  source?: {
+    readonly text: string;
+    /** 1-based line number in the role's sourceText. */
+    readonly line: number;
+    readonly section: string;
+  };
+  /** Where it came from. Absent on competencies written before spans existed. */
+  origin?: 'jd' | 'baseline' | 'tech_stack';
+  /** Shown as uncertain rather than quietly included. */
+  lowConfidence?: boolean;
+  /** Why it was proposed, and how its weight and level were arrived at. */
+  rationale?: string;
+  /**
    * Kept for the record, no longer assessed. A competency with interview
    * history is retired rather than deleted so an older assessment, review or
    * feedback letter can still resolve its id to a name.

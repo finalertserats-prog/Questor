@@ -98,11 +98,44 @@ describe('what a section is allowed to contribute', () => {
   ].join('\n');
 
   it('ignores a technology named only in the company blurb', () => {
+    // Kubernetes appears exactly once in this advert, in the company's own
+    // description of itself. It must put nothing on the scorecard.
+    const proposals = proposeFromJd(jd, { title: 'Staff Engineer' });
+    expect(proposals.every((c) => c.spans.every((s) => s.section !== 'company'))).toBe(true);
+  });
+
+  it('still reads the requirement the advert does make', () => {
+    expect(names(jd, { title: 'Staff Engineer' })).toContain('Systems Architecture');
+  });
+
+  /**
+   * A deliberate trade, recorded so it is not mistaken for an oversight.
+   *
+   * "Strong Python and distributed systems experience" evidences both Systems
+   * Architecture and — through the bare language name — Software Engineering.
+   * The specificity rule keeps the first and folds in the second, because the
+   * alternative measures the candidate twice on one sentence. The cost is a
+   * little recall on adverts where the language really is the requirement;
+   * the benefit is that "build pipelines using Python" stops producing a
+   * generic Software Engineering competency alongside the real one. Precision
+   * is the priority here: a missing competency is visible to whoever reviews
+   * the scorecard, a spurious one looks exactly like correct output.
+   */
+  it('folds a general competency into the specific one that shares its line', () => {
     const found = names(jd, { title: 'Staff Engineer' });
-    const cloud = proposeFromJd(jd, { title: 'Staff Engineer' }).find((c) => c.name === 'Cloud & Platform Architecture');
-    expect(found).toContain('Software Engineering');
-    // Kubernetes appears once, in the company's own description of itself.
-    expect(cloud?.spans.every((s) => s.section !== 'company')).not.toBe(false);
+    expect(found).toContain('Systems Architecture');
+    expect(found).not.toContain('Software Engineering');
+  });
+
+  it('keeps Software Engineering when the line is its own', () => {
+    const backend = [
+      'Backend Engineer',
+      '',
+      'Requirements:',
+      '- Strong Java and Spring Boot.',
+      '- You practise code review and care about design patterns.',
+    ].join('\n');
+    expect(names(backend, { title: 'Backend Engineer' })).toContain('Software Engineering');
   });
 
   it('ignores a technology named only in the benefits', () => {

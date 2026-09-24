@@ -37,6 +37,19 @@ export const competencySchema = z.object({
   sourceText: shortText(2000).optional(),
   confidence: z.number().min(0).max(1).optional(),
   retired: z.boolean().optional(),
+  // A zod object strips what it does not name, and this schema is re-run on
+  // every scorecard save and again on approval. Leaving these out would have
+  // quietly deleted every source span the moment a person edited the
+  // scorecard — the citation would survive extraction and die at the first
+  // click of Save.
+  source: z.object({
+    text: shortText(2000),
+    line: z.number().int().min(0).max(100_000),
+    section: shortText(40),
+  }).optional(),
+  origin: z.enum(['jd', 'baseline', 'tech_stack']).optional(),
+  lowConfidence: z.boolean().optional(),
+  rationale: shortText(1000).optional(),
 });
 
 /** Whether a competency still counts towards the score: not retired, not non-scoring. */
