@@ -286,7 +286,7 @@ export function RoleDetail() {
         <Banner kind="info">This role is archived. Restore it to add candidates, interview or change the scorecard.</Banner>
       )}
       {approved && isRoleOpen(role.status) && (
-        <Banner kind="ok">
+        <Banner kind="ok" tourAnchor="role-scorecard-status">
           Scorecard approved — ready to interview candidates.{' '}
           {can(user, 'candidate:create') && (
             <>

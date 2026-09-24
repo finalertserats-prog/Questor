@@ -219,7 +219,7 @@ export function PipelinePanel(
 
   if (loading) {
     return (
-      <section className="card pipeline">
+      <section className="card pipeline" data-tour="candidate-pipeline">
         <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
         <Skeleton lines={3} label="Loading pipeline…" />
       </section>
@@ -228,7 +228,7 @@ export function PipelinePanel(
 
   if (loadError && (!pipeline || pipeline.candidateId !== candidateId)) {
     return (
-      <section className="card pipeline">
+      <section className="card pipeline" data-tour="candidate-pipeline">
         <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
         <Banner kind="error">Could not load this candidate&rsquo;s pipeline. {loadError}</Banner>
         <button type="button" className="btn secondary" onClick={() => setReloadKey((k) => k + 1)}>
@@ -240,7 +240,7 @@ export function PipelinePanel(
 
   if (!pipeline || pipeline.candidateId !== candidateId) {
     return (
-      <section className="card pipeline">
+      <section className="card pipeline" data-tour="candidate-pipeline">
         <h2 className="card-title"><Icon name="flag" />Hiring pipeline</h2>
         {error && <Banner kind="error">{error}</Banner>}
         <EmptyState

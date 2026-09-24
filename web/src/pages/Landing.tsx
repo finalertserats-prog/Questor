@@ -56,6 +56,7 @@ export function Landing() {
               onClick={() => select(tab.key)}
               onKeyDown={onKeyDown}
               data-testid={`landing-tab-${tab.key}`}
+              data-tour={tab.tour}
             >
               <Icon name={tab.icon} size={16} />
               {tab.label}

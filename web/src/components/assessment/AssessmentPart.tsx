@@ -26,9 +26,12 @@ export interface AssessmentPartProps {
   readonly testId?: string;
 }
 
+/** The data-tour anchors the guided demo points at, one per part (components/demo/demoScript.ts). */
+const TOUR_ANCHORS: Readonly<Record<AssessmentPartProps['number'], string>> = { 1: 'assessment-ai', 2: 'assessment-review', 3: 'assessment-differences' };
+
 export function AssessmentPart({ number, title, id, when, children, testId }: AssessmentPartProps) {
   return (
-    <section className="as-part" aria-labelledby={id} data-testid={testId ?? `assessment-part-${number}`}>
+    <section className="as-part" aria-labelledby={id} data-testid={testId ?? `assessment-part-${number}`} data-tour={TOUR_ANCHORS[number]}>
       <div className="as-part-h">
         <span className="as-part-tag">Part {number}</span>
         <h2 id={id}>{title}</h2>

@@ -582,7 +582,7 @@ export function CandidateDetail() {
         {/* Where exports for this candidate land; the server allows admins only. */}
         {user?.role === 'admin' && <CandidateAtsLink candidateId={candidate.id} />}
 
-      <div className="card">
+      <div className="card" data-tour="candidate-setup-interview">
         <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
         {createError && <Banner kind="error">{createError}</Banner>}
         {/* A form, so Enter works and the browser checks the field bounds it is
@@ -905,7 +905,7 @@ function CandidateProfileTab({
         </div>
       )}
 
-      <div className="card">
+      <div className="card" data-tour="candidate-fit">
         <h2 className="card-title"><Icon name="role-match" />What the CV says about this role</h2>
         <p className="muted small">
           Read from the resume against {role ? `the approved scorecard for ${role.title}` : "the role's approved scorecard"}, line by line.

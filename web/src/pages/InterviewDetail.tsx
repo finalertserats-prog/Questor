@@ -463,7 +463,7 @@ export function InterviewDetail() {
         )}
       </div>
 
-      <div className="card">
+      <div className="card" data-tour="interview-transcript">
         <h2 className="card-title"><Icon name="interviews" />Transcript</h2>
         {data.transcriptWithheld ? (
           <EmptyState compact icon="interviews" title="Transcript after the interview" message="The candidate was not told someone may observe, so the transcript shows once the interview ends." />

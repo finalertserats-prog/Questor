@@ -1,0 +1,196 @@
+/* ==========================================================================
+   The guided demo — the product tour's spotlight and scrim (tour.css), with a
+   player docked to the bottom of the viewport instead of a coach-mark beside
+   the element: captions are always in the same place, and the spotlight is
+   free to be anywhere on the page. A sheet on a phone. Tokens only.
+   ========================================================================== */
+
+.demo-player {
+  position: fixed;
+  z-index: 103;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  padding: 10px 16px 12px;
+  background: var(--sheet);
+  color: var(--ink);
+  border-top: var(--hair) solid var(--rule-strong);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+}
+.demo-player:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* Progress is a hairline with an accent segment, not a filled bar. */
+.demo-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 2px;
+  background: var(--rule);
+}
+.demo-progress > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-base) var(--ease-standard);
+}
+
+.demo-player-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  align-items: start;
+}
+
+.demo-count {
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  padding-top: 3px;
+  white-space: nowrap;
+}
+.demo-count small {
+  display: block;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+}
+
+.demo-caption {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.demo-controls {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-top: 4px;
+}
+.demo-controls .btn kbd {
+  font-family: var(--font-data);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--ink-3);
+  margin-left: 2px;
+}
+.demo-controls .btn.sm.secondary kbd,
+.demo-controls .btn.sm.ghost kbd {
+  color: var(--ink-3);
+}
+.demo-end {
+  margin-left: auto;
+  color: var(--stop);
+  border-color: var(--stop-edge);
+}
+.demo-end:hover {
+  color: var(--stop);
+}
+
+/* Centred cards (welcome, explore, the interview): the card casts the scrim. */
+.demo-card {
+  position: fixed;
+  z-index: 102;
+  left: 50%;
+  top: 42%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: min(420px, calc(100vw - 32px));
+  padding: 18px 20px 16px;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius-sheet);
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop), 0 0 0 200vmax var(--scrim);
+}
+.demo-card-kicker {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.demo-card h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: 600;
+}
+.demo-card p {
+  margin: 0 0 10px;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.demo-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.demo-card-actions.is-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+.demo-card-fine {
+  margin: 10px 0 0;
+  padding-top: 8px;
+  border-top: var(--hair) solid var(--rule);
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* The page behind a card is dimmed but still laid out; nothing moves. */
+.demo-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+@media (max-width: 600px) {
+  .demo-player {
+    padding: 10px 12px 12px;
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  }
+  .demo-player-inner {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .demo-caption {
+    font-size: 14px;
+  }
+  .demo-controls .btn kbd {
+    display: none;
+  }
+  /* A card on a phone sits at the top, clear of the sheet. */
+  .demo-card {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    width: auto;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-progress > i {
+    transition: none;
+  }
+}

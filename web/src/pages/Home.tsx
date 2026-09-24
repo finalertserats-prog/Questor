@@ -72,7 +72,7 @@ export function Home() {
 
       {feed && <Crew crew={feed.crew} timeZone={zone} />}
 
-      <section className="hb-block" aria-labelledby="hb-needs">
+      <section className="hb-block" aria-labelledby="hb-needs" data-tour="home-needs-you">
         <div className="hb-block-head">
           <h2 id="hb-needs">What needs you {feed && <span className="hb-count">{feed.needsYou.total}</span>}</h2>
           <small>{load.status === 'loading' ? 'Checking…' : 'Most urgent first, then oldest'}</small>

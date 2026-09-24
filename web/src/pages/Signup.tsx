@@ -163,7 +163,7 @@ export function Signup() {
                   minLength={PASSWORD_MIN_LENGTH}
                 />
 
-                <fieldset className="signup-modes">
+                <fieldset className="signup-modes" data-tour="signup-modes">
                   <legend>What are you asking for?</legend>
 
                   <label className={modeClass('new-org')}>

@@ -6,7 +6,9 @@ import { Icon } from './components/Icon';
 import { BrandLogo } from './components/BrandLogo';
 import { ProfileMenu } from './components/ProfileMenu';
 import { ProductTour } from './components/ProductTour';
-import { TourProvider } from './components/tourContext';
+import { DemoTour } from './components/demo/DemoTour';
+import { endDemo, openSampleInterview } from './components/demo/endDemo';
+import { TourProvider, useTour } from './components/tourContext';
 import { demoHasEnded, formatDemoCountdown, isFinalDemoMinute } from './components/demoModel';
 import {
   brandDisplay,
@@ -105,31 +107,15 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
   const [now, setNow] = useState(Date.now());
   const [interviewError, setInterviewError] = useState('');
   const [confirmEnd, setConfirmEnd] = useState(false);
-  // The clock ticks every second; without this the expiry effect posted
-  // /demo/end on every tick until the page finally navigated away.
-  const endingRef = useRef(false);
+  const { startTour } = useTour();
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(id); }, []);
-  const endDemo = useCallback(async () => {
-    if (endingRef.current) return;
-    endingRef.current = true;
-    try { await api.post('/demo/end', {}); } catch { /* the session is ending either way */ }
-    window.location.assign('/demo/ended');
-  }, []);
-  useEffect(() => { if (demoHasEnded(endsAt, now)) void endDemo(); }, [endsAt, now, endDemo]);
+  // Ending is shared with the guided tour (components/demo/endDemo.ts), and
+  // posts /demo/end once however many ticks arrive after the clock runs out.
+  useEffect(() => { if (demoHasEnded(endsAt, now)) void endDemo(); }, [endsAt, now]);
   const remainingMs = Date.parse(endsAt) - now;
   const openInterview = async () => {
     setInterviewError('');
-    // Opened before the request so the browser treats it as a click, not a pop-up.
-    const tab = window.open('', '_blank');
-    // The portal must not be able to reach back into this console.
-    if (tab) tab.opener = null;
-    try {
-      const { portalUrl } = await api.get<{ portalUrl: string }>('/demo/interview');
-      if (tab) tab.location.href = portalUrl; else window.location.assign(portalUrl);
-    } catch (err: unknown) {
-      tab?.close();
-      setInterviewError(err instanceof Error ? err.message : 'The sample interview could not be opened.');
-    }
+    try { await openSampleInterview(); } catch (err: unknown) { setInterviewError(err instanceof Error ? err.message : 'The sample interview could not be opened.'); }
   };
   return (
     // Not a live region itself: a countdown announced every second drowns out
@@ -139,6 +125,7 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
       <span>Demo · ends in {formatDemoCountdown(remainingMs)}</span>
       <span className="visually-hidden" role="status">{isFinalDemoMinute(remainingMs) ? 'Less than a minute of the demo is left.' : ''}</span>
       <button type="button" className="btn sm" onClick={() => void openInterview()}>Try the interview as the candidate</button>
+      <button type="button" className="btn sm ghost" onClick={startTour} data-testid="demo-replay-story">Replay the story</button>
       {confirmEnd ? (
         <>
           <span className="small">End the demo and sign out?</span>
@@ -373,7 +360,8 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Outside <main>, which is inert while the drawer is open: a tour step
           that opens the drawer to point into it must stay reachable itself. */}
-      <ProductTour isNarrow={isNarrow} setDrawerOpen={setNavOpen} />
+      {/* A demo visitor gets the narrated story (DemoTour) instead. */}
+      {!tenant?.isDemo && <ProductTour isNarrow={isNarrow} setDrawerOpen={setNavOpen} />}
     </div>
   );
 }
@@ -502,6 +490,9 @@ export function App() {
   return (
     <TourProvider>
     <RouteBoundary>
+    {/* The guided demo, above both shells: two of its beats play over the
+        public pages (the organisation's door, the account request). */}
+    <DemoTour />
     <Routes>
       <Route path="/login" element={<CandidatePage><Login /></CandidatePage>} />
       <Route path="/o/:slug" element={<CandidatePage><OrgLogin /></CandidatePage>} />

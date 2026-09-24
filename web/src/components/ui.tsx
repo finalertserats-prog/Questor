@@ -56,8 +56,8 @@ export function stateBadge(state: string) {
  * "alert"); the rest wait for a pause (role "status"), which is the difference
  * between "this needs you now" and "for your information".
  */
-export function Banner({ kind, children }: { kind: 'error' | 'info' | 'ok'; children: ReactNode }) {
-  return <div className={`banner ${kind}`} role={kind === 'error' ? 'alert' : 'status'}>{children}</div>;
+export function Banner({ kind, children, tourAnchor }: { kind: 'error' | 'info' | 'ok'; children: ReactNode; /** The data-tour anchor the guided demo points at. */ tourAnchor?: string }) {
+  return <div className={`banner ${kind}`} role={kind === 'error' ? 'alert' : 'status'} data-tour={tourAnchor}>{children}</div>;
 }
 
 export function Meter({ value }: { value: number }) {

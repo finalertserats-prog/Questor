@@ -137,6 +137,7 @@ export function VerdictPanel(props: VerdictPanelProps) {
       className={elsewhere ? 'verdict is-solo' : 'verdict'}
       aria-labelledby="verdict-heading"
       data-testid="verdict-panel"
+      data-tour="assessment-verdict"
     >
       <h2 id="verdict-heading" className="sr-only">The verdict on this interview</h2>
       {!elsewhere && <AiSide ai={props.ai as AiReading | null} />}

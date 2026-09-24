@@ -8,9 +8,10 @@
 
 export type LandingTab = 'home' | 'dashboard';
 
-export const LANDING_TABS: ReadonlyArray<{ readonly key: LandingTab; readonly label: string; readonly icon: 'inbox' | 'dashboard' }> = [
-  { key: 'home', label: 'Home', icon: 'inbox' },
-  { key: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+/** `tour` is the data-tour anchor the guided demo points at (components/demo/demoScript.ts). */
+export const LANDING_TABS: ReadonlyArray<{ readonly key: LandingTab; readonly label: string; readonly icon: 'inbox' | 'dashboard'; readonly tour: string }> = [
+  { key: 'home', label: 'Home', icon: 'inbox', tour: 'landing-tab-home' },
+  { key: 'dashboard', label: 'Dashboard', icon: 'dashboard', tour: 'landing-tab-dashboard' },
 ];
 
 export const DEFAULT_LANDING_TAB: LandingTab = 'home';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth';
 import { LandingHero } from '../components/LandingHero';
@@ -20,9 +20,13 @@ export function OrgLogin() {
   const [org, setOrg] = useState<OrgSummary | null>(null);
   const [lookup, setLookup] = useState<'loading' | 'found' | 'missing' | 'unreachable'>('loading');
 
+  // The guided demo shows a signed-in visitor this page as "the door" (?tour=door);
+  // it is only shown, never submitted, and the tour leaves it again.
+  const [params] = useSearchParams();
+  const shownByTour = params.has('tour');
   useEffect(() => {
-    if (user) nav('/');
-  }, [user, nav]);
+    if (user && !shownByTour) nav('/');
+  }, [user, nav, shownByTour]);
 
   // Through the shared client, so this page gets the same timeout, the same
   // error type and the same unreadable-body handling as everything else.
@@ -55,7 +59,7 @@ export function OrgLogin() {
       <LandingHero />
 
       <section className="landing-panel">
-        <div className="card auth-card">
+        <div className="card auth-card" data-tour="org-signin">
           <BrandLogo variant="lockup" size={34} className="auth-logo" />
           <div className="brand-line" aria-hidden="true" />
 

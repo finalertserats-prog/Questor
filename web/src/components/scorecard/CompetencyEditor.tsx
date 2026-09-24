@@ -70,7 +70,7 @@ export function CompetencyEditor({ roleId, competencies, mustPassIds, historyIds
   const confirming = confirmId ? competencies.find((c) => c.id === confirmId) : undefined;
 
   return (
-    <div className="card">
+    <div className="card" data-tour="role-competencies">
       <div className="row spread">
         <h2 className="card-title"><Icon name="skills-assessment" size={16} />Competencies</h2>
         {!adding && (
