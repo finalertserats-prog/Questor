@@ -2327,3 +2327,43 @@ model DemoSpendDay {
   calls     Int      @default(0)
   updatedAt DateTime @updatedAt
 }
+
+// A tier struck onto a candidate's journey.
+//
+// The rule that is read backwards: a tier is earned when the candidate is
+// promoted OUT of it, never when they arrive in it. Silver is struck by the
+// move to Gold, Gold by the move to Diamond, and Diamond alone by arriving —
+// so one Gold-to-Diamond promotion writes TWO rows, in one transaction.
+// Bronze is the other exception: it is earned by the CV being read against an
+// APPROVED scorecard, which no person does. See domain/candidateAwards.ts.
+//
+// Nothing is shown before it is earned: a candidate whose Silver interview is
+// finished but who has not been progressed has no row here, and therefore no
+// badge, no certificate and no export — only the reason it is not there yet.
+model CandidateAward {
+  id              String   @id @default(cuid())
+  tenantId        String
+  candidateId     String
+  roleId          String
+  tier            String   // bronze | silver | gold | diamond
+  awardedAt       DateTime @default(now())
+  /// Null only for bronze, which no human assesses. The certificate says so.
+  awardedByUserId String?
+  /// Printed on the certificate: QS-SLV-8F2K-4471
+  reference       String   @unique
+  /// The public verification path, questor.app/v/<token>. Random, not derivable:
+  /// the reference is printed on paper anyone may be handed, and a token derived
+  /// from it would let whoever reads one certificate pull the verification record
+  /// of any other they can guess the reference of.
+  verifyToken     String   @unique
+  /// The five evidence rows, FROZEN at award time. Never re-derived: a
+  /// certificate states what was true when it was struck, and re-reading the
+  /// database later would silently rewrite history. Same reasoning as
+  /// CandidateFeedbackEmail.optInAsked.
+  evidenceJson    String
+  sentToCandidateAt DateTime?
+  sentByUserId    String?
+
+  @@unique([candidateId, roleId, tier])
+  @@index([tenantId, candidateId])
+}
