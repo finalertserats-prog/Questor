@@ -159,9 +159,12 @@ describe('GET /api/demo/status', () => {
     const res = await request(app).get('/api/demo/status').set('Cookie', cookie).expect(200);
     expect(res.body.visitor).toEqual({ name: 'Dev Mehta', firstName: 'Dev' });
     expect(res.body.caps).toEqual({ roles: 2, candidates: 3, interviews: 3 });
-    // Both modes are the demo-interview lane's to switch on; until then the
-    // closing card offers neither, and says nothing about it.
-    expect(res.body.modes).toEqual({ candidate: false, observer: false });
+    // The demo-interview lane has switched these on. Watching one is always
+    // offered — it is a written interview and needs nothing to be working.
+    // Sitting one is offered only where it can be delivered properly, which a
+    // suite running the built-in writer and browser speech cannot; it is then
+    // absent from the closing card, and nothing says why.
+    expect(res.body.modes).toEqual({ candidate: false, observer: true });
     expect(res.body).not.toHaveProperty('live');
     const tenant = await prisma.tenant.findFirstOrThrow({ where: { name: 'Bright Loans (demo)' } });
     const priya = await prisma.candidate.findFirstOrThrow({ where: { tenantId: tenant.id, email: DEMO_STORY_CANDIDATE_EMAIL } });

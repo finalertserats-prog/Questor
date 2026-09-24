@@ -636,11 +636,23 @@ describe('nothing below standard is offered', () => {
     expect(res.status).toBe(201);
   });
 
+  // ONE signal, on the endpoint the tour lane already publishes. Two routers
+  // on /api/demo both declaring /status meant the first mounted won and the
+  // other was dead code.
   it('publishes one signal the tour lane and the route both read', async () => {
     const demo = await openDemo();
     const res = await asDemo(request(app).get('/api/demo/status'), demo.auth);
     expect(res.status).toBe(200);
-    expect(res.body.interview).toEqual({ candidate: false, observer: true });
+    expect(res.body.modes).toEqual({ candidate: false, observer: true });
+  });
+
+  it('turns the candidate side on in that same signal once it can be delivered', async () => {
+    const restore = makeCandidateModeDeliverable();
+    try {
+      const demo = await openDemo();
+      const res = await asDemo(request(app).get('/api/demo/status'), demo.auth);
+      expect(res.body.modes).toEqual({ candidate: true, observer: true });
+    } finally { restore(); }
   });
 
   // Decided BEFORE the start, so an interview never has to change voice
@@ -661,7 +673,7 @@ describe('nothing below standard is offered', () => {
     expect(ready.reasons.length).toBeGreaterThan(0);
     const demo = await openDemo();
     const res = await asDemo(request(app).get('/api/demo/status'), demo.auth);
-    expect(JSON.stringify(res.body)).not.toMatch(/reason|no_model|no_server/i);
+    expect(JSON.stringify(res.body.modes)).not.toMatch(/reason|no_model|no_server/i);
   });
 });
 

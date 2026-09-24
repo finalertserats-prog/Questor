@@ -54,8 +54,27 @@ export const DEMO_READ_ONLY_MESSAGE = 'This part of Questor is read-only in the 
  */
 export interface DemoInterviewModes { readonly candidate: boolean; readonly observer: boolean }
 
-export function demoInterviewModes(): DemoInterviewModes {
-  return { candidate: false, observer: false };
+/**
+ * Which ways of sitting the demo interview are on offer right now.
+ *
+ * The tour's closing card shows these and only these, and the start route
+ * enforces the same answer — one signal, so a card cannot offer something the
+ * route will refuse.
+ *
+ * Observer mode is always on: it is a written interview and needs nothing to
+ * be working. The candidate side is on only when it can be delivered
+ * PROPERLY (services/demoReadiness.ts) — a real model answering, within the
+ * day's budget, with real speech. When it cannot be, it is absent rather than
+ * disclaimed (owner, 2026-09-24): a note at the moment a prospect is deciding
+ * undercuts the product using our own words.
+ *
+ * Imported lazily for the same reason everything else in this file is: the
+ * provider layer imports this module, and readiness reads the provider layer.
+ */
+export async function demoInterviewModes(): Promise<DemoInterviewModes> {
+  const { demoInterviewReadiness } = await import('./demoReadiness.js');
+  const ready = await demoInterviewReadiness();
+  return { candidate: ready.candidate, observer: ready.observer };
 }
 
 /**

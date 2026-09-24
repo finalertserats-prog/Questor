@@ -40,7 +40,7 @@ export async function demoStatus(auth: Pick<AuthClaims, 'tenantId' | 'userId' | 
   return {
     visitor: { name, firstName: name.split(/\s+/)[0] ?? '' },
     caps: { ...DEMO_ADDED_CAPS },
-    modes: demoInterviewModes(),
+    modes: await demoInterviewModes(),
     story,
   };
 }

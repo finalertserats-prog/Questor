@@ -40,23 +40,10 @@ const startSchema = z.object({
   extraTime: z.boolean().optional(),
 }).strict();
 
-/**
- * The signal the whole demo reads before offering anything.
- *
- * Published as its own endpoint because the guided-tour lane renders the demo
- * card and must be told what to render rather than working it out: one source
- * of truth, so the card and the route can never disagree about whether the
- * candidate-side interview is on offer.
- *
- * The reasons are deliberately absent from the response. A visitor is shown a
- * demo with one option instead of two, which tells them nothing is wrong —
- * because nothing is.
- */
-demoInterviewRouter.get('/status', authenticate, asyncHandler(async (req, res) => {
-  demoAuth(req);
-  const ready = await demoInterviewReadiness();
-  res.json({ interview: { candidate: ready.candidate, observer: ready.observer } });
-}));
+// The readiness signal lives on the tour lane's GET /api/demo/status, which
+// was already mounted on this path: two routers both declaring /status meant
+// the first mounted won and the other was dead code. This lane fills its
+// `modes` field (services/demoPolicy.ts) rather than publishing a second one.
 
 /**
  * The choice screen's own content, so the two modes are described in one place

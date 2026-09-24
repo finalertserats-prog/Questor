@@ -9,13 +9,20 @@ Neither lane edits the other's files. This is what each publishes.
 
 ## What this lane publishes
 
-### `GET /api/demo/status` — the readiness signal
+### `GET /api/demo/status` — the readiness signal (the tour lane's endpoint)
 
 **Read this before rendering any demo interview affordance.**
 
 ```json
-{ "interview": { "candidate": true, "observer": true } }
+{ "visitor": {...}, "caps": {...}, "story": {...},
+  "modes": { "candidate": true, "observer": true } }
 ```
+
+`modes` is the field this lane fills. The tour lane published the endpoint and
+left `demoInterviewModes()` a stub; it now answers from
+`services/demoReadiness.ts`. There is ONE status endpoint — two routers on
+`/api/demo` both declaring `/status` meant the first mounted won and the other
+was dead code.
 
 `candidate` is false whenever the candidate-side interview cannot be delivered
 properly: no real model configured, the primary resting after an auth or quota
