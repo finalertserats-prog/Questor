@@ -1,6 +1,6 @@
 # Questor guided demo — narration script
 
-Status: **draft 2 for the owner's approval** (2026-09-24). Draft 2 moves the door to the front at the owner's request. Nothing in the tour is built until this is agreed; the narration is recorded once, so a changed word later means a re-recording.
+Status: **approved and built** (2026-09-24). Draft 2 moved the door to the front at the owner's request; draft 3 recut B19 so the closing card offers only what is on, and dropped every line that described what the demo runs on. Nothing in the tour is built until this is agreed; the narration is recorded once, so a changed word later means a re-recording.
 
 Storyboard: `scratchpad/mockups/questor-demo-storyboard.html` (one frame per beat, both themes, phone-safe).
 
@@ -33,7 +33,7 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 | Candidate (the story) | **Priya Sharma** — Senior Data Engineer, FinEdge Analytics; Snowflake, Airflow, dbt, Spark; B.Tech NIT Trichy | `DEMO_RESUME`, under her own name (decision 1) |
 | Candidate (the visitor) | the visitor's own name, same CV, interview INVITED, consent not yet given | existing provisioning — this is the interview they take at the end |
 | Interviewer | **Maya** | pinned for the seeded interview (decision 2) |
-| Interview | COMPLETED, transcript of about a dozen turns, assessment scored, **not yet reviewed** | seeded from the headless simulation's answers (decision 1) |
+| Interview | 30-minute slot, 25 turns over about 24 minutes, assessment scored, **not yet reviewed** | seeded from the headless simulation's answers (decision 1) |
 | Verdicts | Proceed · Consider · Do not progress | `verdictVocabulary.ts` |
 | Pipeline stages | Participation · Bronze · Silver · Gold · Diamond | `PipelinePanel` |
 | Sign-in | `/o/<company>-demo` — the organisation's own sign-in card, "No account yet? Ask <Company> (demo) for one"; `/signup` — "Request an account": name, email, password, then "Start a new organisation — you would be its first user" / "Join an organisation — someone there already uses Questor" | current pages at 1f41c29 |
@@ -159,7 +159,7 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 ### B16 · The decision — 4:09
 - **Screen:** `/assessments/<id>`, back to Part 2's verdict form. **Anchor:** `assessment-verdict` *(new — the VerdictPanel form)*.
 - **Narration / caption:**
-  > This is where the decision is recorded. A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you forty-five minutes deserves more than silence.
+  > This is where the decision is recorded. A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence.
 - **Duration:** 39 words · ~16 s
 
 ### B17 · Asking to be let in — 4:26
@@ -179,12 +179,12 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 ### B19 · The interview, two ways — 5:03
 - **Screen:** `/` Home. **Anchor:** none (centred card with the two choices; the choice itself is the other lane's UI — this beat hands over to it).
 - **Narration / caption:**
-  > And the best part. You can take the interview yourself, as the candidate: a real conversation with one of our interviewers, about the role you've just seen. It's a demo, so it's timed — around fifteen minutes, and it draws to a close the way a real first round does. Or, if you'd rather watch than talk, sit in as the observer and see a full interview play through. Choose when you're ready.
-- **On the card (text only):** `[ Take the interview as the candidate — about 15 minutes, timed ]` · `[ Watch an interview as the observer ]` · `[ Explore first ]` · End demo. When the server reports the live model or provider speech is off (`GET /demo/status`), one line is added under the first button: *"While the production model is off for demos, the sample interview runs on Questor's built-in interviewer and your browser's voice. The questions are real; the voice is not."* — and nothing is ever said inside the interview.
-- **Why this beat is written the way it is:** the owner's rule is that nothing may break character mid-interview — no "your limit has been reached", no countdown, no apology. So the framing happens here, once, warmly, before the choice: it is a demo, it is timed, it ends the way a real first round ends. After this the interview is the interview.
-- **Duration:** 72 words · ~29 s
+  > And the best part: the interview itself. Sit in on one, with one of our interviewers, about the role you've just seen. It's a demo, so it's short — about fifteen minutes — and it ends the way a real first round ends. Choose when you're ready.
+- **On the card (text only):** exactly the ways of sitting the interview that `GET /demo/status` reports as on offer — `[ Take the interview as the candidate — about 15 minutes ]` and/or `[ Watch an interview from the hiring team's side ]` — plus `[ Explore first ]`. An option that is not on offer is simply absent: no greyed button, no explanation. When neither is on offer the beat is not played at all. Nothing on the card or in the audio describes what the demo runs on.
+- **Why this beat is written the way it is:** the owner's rule is that nothing may break character mid-interview — no "your limit has been reached", no countdown, no apology. So the framing happens here, once, warmly, before the choice: it is a demo, it is short, it ends the way a real first round ends. After this the interview is the interview. And the audio names no mode, so the one recording holds whichever the card offers.
+- **Duration:** 45 words · ~18 s
 
-**End of narration: about 5:15 of speech, about 5:35 with navigation.** If the owner wants it shorter still, B06 (8 s) and B15 (14 s) are the two lines that can go without breaking the story.
+**End of narration: about 5:05 of speech, about 5:25 with navigation.** If the owner wants it shorter still, B06 (8 s) and B15 (14 s) are the two lines that can go without breaking the story.
 
 ---
 
@@ -210,8 +210,8 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 | B16 Decision | Assessment · 2 | assessment-verdict | 39 | 16 | 4:25 |
 | B17 Asking in | /signup | signup-modes | 46 | 18 | 4:44 |
 | B18 Explore | Home | — | 43 | 17 | 5:02 |
-| B19 Interview | Home | — | 72 | 29 | 5:32 |
-| | | **Total** | **788** | **~315 + ~18 nav** | **~5:33** |
+| B19 Interview | Home | — | 45 | 18 | 5:21 |
+| | | **Total** | **761** | **~304 + ~18 nav** | **~5:22** |
 
 Every anchor marked *new* is one `data-tour` attribute on an element that already exists. Twelve new anchors, seven existing (`nav-roles`, `nav-candidates`, `nav-interviews` are brushed in passing; `kpis`, `workflow`, `landing-tab-*`, `nav-dashboard` are landed on). The public pages (`/o/:slug`, `/signup`) were re-checked against 1f41c29: the org page is the organisation's own sign-in card with "No account yet? Ask <org> for one"; signup now asks for a password and offers "Start a new organisation" / "Join an organisation" — the B17 line was reworded to match ("starts here" / "asks to join theirs here").
 
@@ -225,7 +225,7 @@ The player is a bar docked to the bottom of the viewport (a sheet on a phone), n
 - progress as a hairline rule with an accent segment, and `8 / 19` in mono;
 - controls, all real buttons with visible labels: **Pause / Resume** (Space), **Replay this line** (R), **Skip this beat** (→), **Back** (←), **Skip the tour** (Esc), **End demo** (its own confirm, exactly the demo bar's).
 
-Focus stays in the player while the tour runs (the existing tour's focus trap); Tab wraps within it. With `prefers-reduced-motion`, the spotlight jumps instead of gliding and the page scrolls instantly (`tourMotion`). With no audio file for a beat, or audio blocked, the beat runs on its caption for the scripted duration and a small "captions only" mark shows on the player; nothing else changes. The spotlight is the existing `tour-spotlight` ring and scrim. Because B02 and B17 are public-shell pages, the overlay mounts above both shells, and End demo is on the player wherever the demo bar is not.
+Focus stays in the player while the tour runs (the existing tour's focus trap); Tab wraps within it. With `prefers-reduced-motion`, the spotlight jumps instead of gliding and the page scrolls instantly (`tourMotion`). With no audio file for a beat, or audio blocked, the beat runs on its caption for the scripted duration; nothing else changes, and nothing says so. The spotlight is the existing `tour-spotlight` ring and scrim. Because B02 and B17 are public-shell pages, the overlay mounts above both shells, and End demo is on the player wherever the demo bar is not.
 
 ---
 
@@ -237,7 +237,7 @@ Focus stays in the player while the tour runs (the existing tour's focus trap); 
 3. **The seeded scorecard contains "Product Management" and "ML / AI Engineering".** Both are real output of the heuristic on the JD ("partner with … product teams", "machine learning feature pipelines"). The narration lists only what a hiring manager would nod at; a visitor scrolling the role page will still see the other two. Recommend the demo scorecard be curated (drop Product Management; keep or drop ML / AI) — it is `status: 'approved'` seed data, not something the visitor generates. This is a judgement about how the product presents itself, so it is the owner's.
 4. **The role header reads "Bengaluru (Hybrid) | Employment type: Full-time | Level: Senior" as the location**, because `DEMO_JD` puts all three on one line and the heuristic takes the whole line. A one-line change to the seed text (three lines instead of one) fixes what the visitor sees; the engine is untouched.
 5. **Exploring lets them create, within 2 roles / 3 candidates / 3 interviews** (owner, 2026-09-24). `assertDemoCreationCap` is lowered, nothing else about the guards changes, and every refusal (a cap, `/admin`, a blocked action) is reworded to the demo's friendly form — "This is a read-only part of the demo" / "That's the demo's limit — two roles is enough to see how it works" — never an error tone. The cap numbers on the B18 card come from the server.
-6. **When the AI is degraded** (no credit: built-in writer, browser voice) the pre-recorded narration and the seeded evidence are unaffected, which is why the story is seeded rather than generated. For the live parts, the choice made here is *say it once, before, in text; never during*: the B19 card shows the one-line notice only when `GET /demo/status` reports the live model or provider speech is off, and the audio never mentions voice or model at all, so the recording is true in both states. With the owner's decision to run the real model on a budget for the candidate-side interview, the notice will normally be absent.
+6. **When the AI is degraded** (no credit: built-in writer, browser voice) the pre-recorded narration and the seeded evidence are unaffected, which is why the story is seeded rather than generated. For the live parts, the rule (owner, 2026-09-24) is that nothing below the product's standard is offered, so there is nothing to disclaim: `GET /demo/status` reports which ways of sitting the interview are on (`modes.candidate`, `modes.observer` — both the demo-interview lane's switches, in `services/demoPolicy.ts`), the B19 card renders exactly those, and the beat is not played when neither is on. The narration never mentions voice, model or mode, so one recording holds in every state. The demo bar's own "Try the interview as the candidate" button is the interview lane's to gate by the same signal.
 7. **The door opens the story (B02) and the account request closes it (B17)** — the owner's call, 2026-09-24. Both are public-shell pages, so the tour overlay mounts above both the app shell and the public shell, and the player carries End demo on them.
 
 ### Which of these gate the build
@@ -255,4 +255,4 @@ Focus stays in the player while the tour runs (the existing tour's focus trap); 
 - **Files:** one audio file per beat — `web/public/demo/narration/B01.mp3` … `B19.mp3` — plus `manifest.json` `{ beatId: { durationMs, sha256 } }`. The player looks up the manifest at start; a beat with no entry runs on its caption for the scripted seconds. **Dropping the files in later needs no code change.**
 - **Generation:** `scripts/demo-narration.mjs` reads `demoScript.ts`, calls OpenAI's speech endpoint once per beat with a single fixed voice and the "studio, conversational, unhurried" instruction, writes the files and the manifest. It needs `OPENAI_API_KEY` with credit on the account, run once from a developer machine, and the output committed (about 19 files, roughly 3–4 MB in total at 64 kbps). ~790 words ≈ 4,300 characters; at list prices for the text-to-speech models this is pennies, not dollars — well under a dollar even at the HD tier. Re-running it after a wording change costs the same again.
 - **Alternative with no credit at all:** a human read into any recorder, exported as the same 19 files, is equally valid — the player does not care where the audio came from.
-- **Until then:** the tour ships and works fully from captions; the "captions only" mark on the player is the only sign.
+- **Until then:** the tour ships and works fully from captions, and says nothing about it.
