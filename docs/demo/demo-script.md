@@ -29,7 +29,7 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 | Organisation | `<Company> (demo)` at `/o/<company>-demo` | `provisionDemoTenant` — the company on the demo request; the tenant's own slug |
 | Visitor's account | their own name, demo role | the `User` row named after the visitor |
 | Role | **Senior Data Engineer** · Senior · Full-time · Bengaluru (Hybrid) · scorecard v1 approved | `DEMO_JD` through the role heuristic |
-| Scorecard competencies (12) | SQL & Data Warehousing · Data Engineering & Pipelines · Cloud & Platform Architecture · ML / AI Engineering · Product Management · Security & Compliance · Data Modeling · Reliability & Operations · Communication · Problem Solving · Collaboration · Ownership & Impact — pass threshold 65, 3 must-pass | `extractRoleHeuristic(DEMO_JD)` (run against the release branch; see decisions 3 and 4) |
+| Scorecard competencies (11) | SQL & Data Warehousing · Data Engineering & Pipelines · Cloud & Platform Architecture · Machine Learning Engineering · Data Governance & Quality · Data Modeling · Reliability & Operations · Communication · Problem Solving · Collaboration · Ownership & Impact — pass threshold 65, 3 must-pass | `extractRoleHeuristic(DEMO_JD)` (run against the release branch; see decisions 3 and 4) |
 | Candidate (the story) | **Priya Sharma** — Senior Data Engineer, FinEdge Analytics; Snowflake, Airflow, dbt, Spark; B.Tech NIT Trichy | `DEMO_RESUME`, under her own name (decision 1) |
 | Candidate (the visitor) | the visitor's own name, same CV, interview INVITED, consent not yet given | existing provisioning — this is the interview they take at the end |
 | Interviewer | **Maya** | pinned for the seeded interview (decision 2) |

@@ -73,7 +73,12 @@ export const DEMO_SCORECARD: readonly CuratedCompetency[] = [
     indicators: ['Separates storage and compute deliberately', 'Can name the trade-off ruled out and why', 'Attributes cost to the teams that spend it'],
   },
   {
-    name: 'Security & Compliance', classification: 'preferred', weight: 0.06, requiredLevel: 2, targetLevel: 3,
+    // Named as the product's own extraction names it. The curated scorecard
+    // takes its competencies from what extractRoleHeuristic actually produces
+    // from DEMO_JD, and the guard below fails the seed if a name drifts —
+    // which is how this one was caught when the canonical taxonomy replaced
+    // "Security & Compliance" with the broader governance competency.
+    name: 'Data Governance & Quality', classification: 'preferred', weight: 0.06, requiredLevel: 2, targetLevel: 3,
     definition: 'Applies least privilege, data classification and audit trails to the data platform without slowing the analysts down.',
     indicators: ['Has implemented role- or column-level access', 'Knows where sensitive fields live and who can read them', 'Can describe an audit or governance control they built'],
   },
@@ -257,7 +262,7 @@ export const DEMO_STORY_GRADES: readonly StoryGrade[] = [
     rationale: 'The cost-versus-latency trade-off is reasoned explicitly and the one she ruled out is named. No evidence of infrastructure as code or multi-region design, so not higher.',
   },
   {
-    name: 'Security & Compliance', level: null, confidence: 0,
+    name: 'Data Governance & Quality', level: null, confidence: 0,
     evidence: [],
     rationale: 'Not reached: the interviewer ran out of time before the governance question, and said so. Nothing said counts against her, and the CV does not speak to it either. One for the next round.',
   },
@@ -303,7 +308,7 @@ const DEMO_STORY_NARRATIVE = {
   ],
   concerns: [
     'Collaboration answered in two sentences with no view of the other side; below the required level on the evidence given.',
-    'Security and governance were not reached in the interview and are not evidenced by the CV.',
+    'Data governance was not reached in the interview and is not evidenced by the CV.',
   ],
   contradictions: [],
   openQuestions: [
