@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { Banner, Meter } from '../ui';
 import { Icon } from '../Icon';
 import { formatPercent, formatScoreOutOf100, roundScore } from '../scoreFormat';
-import { EXCLUDED_SIGNALS, FIT_CAVEAT, FIT_NEVER_SHOWN_TO_CANDIDATE } from './fitVocabulary';
 import {
-  bandLabel, bandMeaning, bandTone, isDetailedFit, strengthLabel,
+  EXCLUDED_SIGNALS, FIT_CAVEAT, FIT_NEEDS_A_PERSON, FIT_NEVER_SHOWN_TO_CANDIDATE,
+  FIT_PROVISIONAL_LABEL, FIT_PROVISIONAL_NOTE,
+} from './fitVocabulary';
+import {
+  bandLabel, bandMeaning, bandOf, bandTone, isDetailedFit, isProvisionalFit, strengthLabel,
   type Fit, type FitCompetencyRead, type FitEvidence, type FitTechnologyRead,
 } from './fitModel';
 
@@ -38,12 +41,20 @@ export function FitPanel({ fit, rescoredNote }: { fit: Fit | null; rescoredNote?
   // panel reads the copy a server test keeps identical to the engine's own.
   const excluded = fit.excludedSignals ?? EXCLUDED_SIGNALS;
 
+  const provisional = isProvisionalFit(fit);
+
   return (
     <div className="fit" data-testid="fit-panel">
       <div className={`fit-head is-${tone}`}>
         <div className="fit-read">
-          <div className="fit-word" data-testid="fit-band">{bandLabel(fit)}</div>
+          <div className="fit-word" data-testid="fit-band">
+            {bandLabel(fit)}
+            {provisional && <span className="fit-tag" data-testid="fit-provisional-tag">{FIT_PROVISIONAL_LABEL}</span>}
+          </div>
           <p className="fit-meaning" data-testid="fit-meaning">{bandMeaning(fit)}</p>
+          {bandOf(fit) === 'not_enough_evidence' && (
+            <p className="fit-note" data-testid="fit-needs-a-person">{FIT_NEEDS_A_PERSON}</p>
+          )}
         </div>
         <dl className="fit-figures">
           <Figure label="Overall" value={formatScoreOutOf100(fit.overall)} testId="fit-overall">
@@ -54,6 +65,9 @@ export function FitPanel({ fit, rescoredNote }: { fit: Fit | null; rescoredNote?
         </dl>
       </div>
 
+      {provisional && (
+        <Banner kind="error"><span data-testid="fit-provisional">{FIT_PROVISIONAL_NOTE}</span></Banner>
+      )}
       <Banner kind="info">{FIT_CAVEAT}</Banner>
       <p className="fit-internal"><Icon name="lock" size={14} />{FIT_NEVER_SHOWN_TO_CANDIDATE}</p>
       {rescoredNote && <Banner kind="info">{rescoredNote}</Banner>}

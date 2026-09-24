@@ -29,13 +29,33 @@ export interface ResumeScoring {
   readonly techStack: readonly TechStackItem[];
   /** The scorecard version the fit was measured against; null when the role has none. */
   readonly scorecardVersion: number | null;
+  /**
+   * Whether a person had approved that scorecard.
+   *
+   * `scorecardForFit` falls through to the newest draft when a role has never
+   * been approved, and the resulting reading is a guess about a guess. It is
+   * carried here so the stored fit can say so in a field rather than in a
+   * docstring — see services/scorecards.ts for what a provisional reading is
+   * and is not allowed to do.
+   */
+  readonly scorecardStatus: 'approved' | 'draft' | null;
 }
 
 export async function resumeScoringFor(roleId: string | null): Promise<ResumeScoring> {
   const scorecard = await scorecardForFit(roleId);
   const role = scorecard ? parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' }) : emptyProfile();
   const roleRow = roleId ? await prisma.role.findUnique({ where: { id: roleId }, select: { id: true, techStackJson: true } }) : null;
-  return { role, techStack: roleRow ? roleTechStack(roleRow) : [], scorecardVersion: scorecard?.version ?? null };
+  return {
+    role,
+    techStack: roleRow ? roleTechStack(roleRow) : [],
+    scorecardVersion: scorecard?.version ?? null,
+    // Anything that is not the string "approved" is a draft as far as a reader
+    // of the score is concerned. Defaulting the unknown case to 'draft' is the
+    // safe direction: the cost of a wrongly-provisional label is a caveat on a
+    // screen, and the cost of a wrongly-approved one is a candidate ranked on a
+    // reading nobody checked.
+    scorecardStatus: scorecard ? (scorecard.status === 'approved' ? 'approved' : 'draft') : null,
+  };
 }
 
 /**
@@ -133,7 +153,10 @@ export function storeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeI
 async function writeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeInput) {
   const profile: NormalizedProfile = normalizeProfile(o.rawText);
   const facts = o.facts;
-  const { fit } = scoreFit(facts, o.scoring.role, o.scoring.techStack, { scorecardVersion: o.scoring.scorecardVersion });
+  const { fit } = scoreFit(facts, o.scoring.role, o.scoring.techStack, {
+    scorecardVersion: o.scoring.scorecardVersion,
+    scorecardStatus: o.scoring.scorecardStatus,
+  });
 
   const version = (await db.candidateProfileVersion.count({ where: { candidateId: o.candidateId } })) + 1;
   const profileVersion = await db.candidateProfileVersion.create({

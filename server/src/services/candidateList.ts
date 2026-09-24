@@ -21,6 +21,15 @@ export interface CandidateListQuery extends Paging {
   readonly q?: string;
 }
 
+/**
+ * Newest application first, and never by fit.
+ *
+ * Deliberate: a list ordered by a resume score is a shortlist, and this list is
+ * a record of who applied. Some of the fits on any page are provisional — read
+ * against a scorecard nobody has approved (services/scorecards.ts) — and a
+ * provisional reading may not order, filter or rank anyone. Ordering here by
+ * `fit.overall` would do all three at once, silently, for every tenant.
+ */
 const ORDER: Prisma.CandidateOrderByWithRelationInput[] = [{ createdAt: 'desc' }, { id: 'desc' }];
 
 const ROW_SELECT = {
@@ -187,6 +196,10 @@ function shapeRow(c: Row, alsoInRoles: number): Record<string, unknown> {
   return {
     id: c.id, fullName: c.fullName, email: c.email, roleId: c.roleId, roleTitle: c.role?.title ?? null,
     roleLevel: c.role?.level ?? null, roleRegionCode: c.role?.regionCode ?? null, roleExperienceBand: c.role?.experienceBand ?? null, roleCreatedAt: c.role?.createdAt ?? null,
+    // Passed through whole, `provisional` flag and all, so the row on screen
+    // can say that a number was read against an unapproved scorecard. Stripping
+    // it here would leave the browser unable to tell a checked reading from an
+    // unchecked one, which is the only difference that matters in a list.
     fit: profile ? parseJsonOptional<Record<string, unknown> | null>(profile.fitScoreJson, null, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' }) : null,
     latestInterview: c.interviews[0] ? { id: c.interviews[0].id, state: c.interviews[0].state } : null,
     stage: stageOf(c),

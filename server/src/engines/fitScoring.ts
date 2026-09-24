@@ -48,6 +48,16 @@ export interface FitResult {
 export interface ScoreFitOptions {
   readonly facts?: CvFacts;
   readonly scorecardVersion?: number | null;
+  /**
+   * Whether a person has approved the scorecard being scored against.
+   *
+   * Passed by every caller that reads a scorecard out of the database. Absent
+   * only where there is no scorecard to have a status — the demo seed scores
+   * against a fresh extraction — and absent is not the same as approved: the
+   * fields are simply not written, and `isProvisionalFit` answers false, which
+   * is what every reader did before this existed.
+   */
+  readonly scorecardStatus?: 'approved' | 'draft' | null;
   readonly now?: Date;
 }
 
@@ -226,6 +236,9 @@ export function scoreFit(facts: CvFacts, role: RoleSuccessProfile, techStack: re
     redaction: facts.redaction,
     engineVersion: FIT_ENGINE_VERSION,
     scorecardVersion: opts.scorecardVersion ?? null,
+    // Written only when the caller knows the answer, so an older stored row and
+    // a row scored without a scorecard stay the shape they always were.
+    ...(opts.scorecardStatus ? { scorecardStatus: opts.scorecardStatus, provisional: opts.scorecardStatus !== 'approved' } : {}),
     techStackFingerprint: fingerprint(techStack),
     scoredAt: now.toISOString(),
   };

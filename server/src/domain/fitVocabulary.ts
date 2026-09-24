@@ -76,6 +76,50 @@ export const FIT_CAVEAT =
 export const FIT_NEVER_SHOWN_TO_CANDIDATE = 'Internal to your team. A candidate is never shown their fit score.';
 
 /**
+ * Said wherever a provisional number appears.
+ *
+ * A provisional reading was measured against a scorecard no person has
+ * approved (services/scorecards.ts). It is shown because an unchecked reading
+ * is how an unchecked scorecard gets found out, and it is labelled because a
+ * bare number on a screen is indistinguishable from a checked one.
+ */
+export const FIT_PROVISIONAL_LABEL = 'Provisional';
+
+export const FIT_PROVISIONAL_NOTE =
+  'This reading was measured against a draft scorecard that nobody has approved yet, so it is provisional. It is not used to order, filter or compare candidates, and it will be replaced the moment the scorecard is approved.';
+
+/** The one-line version, for a table cell or a list row that has no room for the note. */
+export const FIT_PROVISIONAL_SHORT = 'Provisional — draft scorecard, not used for ordering.';
+
+/**
+ * What `not_enough_evidence` asks the reader to DO.
+ *
+ * The band says the CV is unreadable against this role; without this line a
+ * reader fills the silence in themselves, and what they fill it in with is
+ * "weak candidate". Uncertainty is a state of the document, and the action it
+ * calls for is a person, not a low number.
+ */
+export const FIT_NEEDS_A_PERSON =
+  'This one needs a person to look at the CV. Too little of it speaks to this role for the reading to mean anything either way — that is a fact about the document, not about the candidate.';
+
+/** True only when the reading was measured against a scorecard nobody approved. */
+export function isProvisionalFit(fit: { readonly provisional?: boolean } | null | undefined): boolean {
+  return fit?.provisional === true;
+}
+
+/**
+ * The number a ranking, a filter or a comparison may use, or null.
+ *
+ * Null for a provisional reading, and null for a reading with no number at all.
+ * Every caller that orders or compares candidates goes through this, so the
+ * rule lives in one place instead of in each of them.
+ */
+export function comparableFitScore(fit: { readonly provisional?: boolean; readonly overall?: unknown } | null | undefined): number | null {
+  if (!fit || isProvisionalFit(fit)) return null;
+  return typeof fit.overall === 'number' ? fit.overall : null;
+}
+
+/**
  * A competency whose score is carried at neutral because the CV neither
  * evidences it nor contradicts it. Not zero: a CV that does not mention
  * stakeholder management is not a CV that proves someone cannot do it.

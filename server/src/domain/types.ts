@@ -143,6 +143,20 @@ export interface FitScore {
   // say what it was measured against so a later reader can tell.
   engineVersion?: string;
   scorecardVersion?: number | null;
+  /**
+   * The approval state of the scorecard this fit was measured against.
+   *
+   * Absent on rows written before it existed, and on the demo seed, which
+   * scores against an extraction rather than a stored scorecard.
+   */
+  scorecardStatus?: 'approved' | 'draft';
+  /**
+   * True when the scorecard behind this reading has never been approved by a
+   * person. A provisional reading may be SHOWN, clearly labelled, and it may be
+   * used to decide what to ask. It may never order, filter, shortlist or
+   * compare candidates — see services/scorecards.ts `scorecardForFit`.
+   */
+  provisional?: boolean;
   /** Changes whenever the role's technologies change. */
   techStackFingerprint?: string;
   scoredAt?: string;

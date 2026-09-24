@@ -14,7 +14,7 @@ import { MAX_RESUME_TEXT_CHARS, isResumeMimeType } from '../engines/resumeParser
 import { RESUME_MAX_BYTES, readResumeFile, sanitizeFilename } from '../services/resumeFile.js';
 import { FIT_ENGINE_VERSION, scoreFit } from '../engines/fitScoring.js';
 import { storedCvFacts } from '../services/resumeProfile.js';
-import { FIT_CAVEAT } from '../domain/fitVocabulary.js';
+import { FIT_CAVEAT, comparableFitScore, isProvisionalFit } from '../domain/fitVocabulary.js';
 import type { FitScore } from '../domain/types.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { listCandidates } from '../services/candidateList.js';
@@ -294,17 +294,23 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
         facts,
         parseJsonStrict<RoleSuccessProfile>(currentScorecard.profileJson, { model: 'RoleScorecardVersion', id: currentScorecard.id, field: 'profileJson' }),
         currentRoleWithScorecard ? roleTechStack(currentRoleWithScorecard) : [],
-        { scorecardVersion: currentScorecard.version },
+        // Every scorecard read on this endpoint is filtered to `status: 'approved'`.
+        { scorecardVersion: currentScorecard.version, scorecardStatus: 'approved' },
       ).fit
     : null;
   const currentFit = freshFit ? publicFit(freshFit) : currentStoredFit;
   const rescored = freshFit ? stalenessOf(storedFit, freshFit) : null;
-  const currentOverall: number | null = typeof currentFit?.overall === 'number' ? currentFit.overall : null;
+  // Null for a provisional reading, which is the whole point of this endpoint's
+  // half of the rule: a number measured against a scorecard nobody approved may
+  // be shown, and may not be compared with another role's. Comparing it would
+  // tell HR to move a candidate on the strength of an unchecked extraction.
+  const currentOverall: number | null = comparableFitScore(currentFit);
+  const currentIsProvisional = isProvisionalFit(currentFit);
 
   const alternatives = scopedRoles
     .filter((r) => r.id !== candidate.roleId && r.scorecards[0])
     .map((r) => {
-      const fit = publicFit(scoreFit(facts, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' }), roleTechStack(r), { scorecardVersion: r.scorecards[0].version }).fit)!;
+      const fit = publicFit(scoreFit(facts, parseJsonStrict<RoleSuccessProfile>(r.scorecards[0].profileJson, { model: 'RoleScorecardVersion', id: r.scorecards[0].id, field: 'profileJson' }), roleTechStack(r), { scorecardVersion: r.scorecards[0].version, scorecardStatus: 'approved' }).fit)!;
       return {
         roleId: r.id,
         title: r.title,
@@ -321,6 +327,8 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
   const better = currentOverall === null ? [] : alternatives.filter((a) => a.score > currentOverall);
   const betterFitMessage = alternatives.length === 0
     ? 'There are no other approved roles in your visible scope to compare.'
+    : currentIsProvisional
+      ? "The applied role's scorecard has not been approved yet, so its reading is provisional and is not compared with anything. The other roles are listed on their own. Approve the scorecard to get a comparison."
     : currentOverall === null
       ? 'There is no fit score for the applied role yet, so the other roles are listed without a comparison.'
     : better.length === 0

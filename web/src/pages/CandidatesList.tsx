@@ -18,8 +18,10 @@ import { ListPager } from '../components/ListPager';
 import { ResponsiveList, type ListCard } from '../components/ResponsiveList';
 import { candidateNextAction } from '../components/listCardModel';
 import type { PageMeta } from '../components/listPagingModel';
+import { FIT_PROVISIONAL_LABEL, FIT_PROVISIONAL_NOTE } from '../components/fit/fitVocabulary';
 
-interface CandidateFit { overall: number; confidence: number }
+/** `provisional` is absent on a row stored before the flag existed; absent is not "yes". */
+interface CandidateFit { overall: number; confidence: number; provisional?: boolean }
 interface LatestInterview { id: string; state: string }
 interface CandidateRow {
   id: string; fullName: string; email: string;
@@ -157,8 +159,19 @@ export function CandidatesList() {
             </td>
             {/* A fit row stored before `overall` existed still has a fit
                 object, so "c.fit ?" is not the question — "is there a
-                number?" is. */}
-            <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>{formatScoreOutOf100(c.fit?.overall)}</td>
+                number?" is.
+
+                A provisional number was read against a scorecard nobody has
+                approved. It is shown, because hiding it would hide the draft
+                that produced it, and it is labelled, because this list is
+                exactly where an unlabelled number becomes a ranking in the
+                reader's head. Nothing on this page sorts or filters by it. */}
+            <td className={hasScore(c.fit?.overall) ? undefined : 'muted'}>
+              {formatScoreOutOf100(c.fit?.overall)}
+              {hasScore(c.fit?.overall) && c.fit?.provisional === true && (
+                <div className="muted small" data-testid="fit-provisional-row" title={FIT_PROVISIONAL_NOTE}>{FIT_PROVISIONAL_LABEL}</div>
+              )}
+            </td>
             <td>{interviewCell(c.latestInterview)}</td>
             <td className="muted small">{formatDate(c.createdAt)}</td>
             <td>

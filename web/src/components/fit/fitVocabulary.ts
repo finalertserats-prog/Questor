@@ -62,6 +62,24 @@ export const FIT_CAVEAT =
 
 export const FIT_NEVER_SHOWN_TO_CANDIDATE = 'Internal to your team. A candidate is never shown their fit score.';
 
+/**
+ * A reading measured against a scorecard nobody has approved.
+ *
+ * Mirrored from the server (`domain/fitVocabulary.ts`). Shown, because an
+ * unchecked reading is how an unchecked scorecard gets found out; labelled,
+ * because a bare number on a screen looks exactly like a checked one.
+ */
+export const FIT_PROVISIONAL_LABEL = 'Provisional';
+
+export const FIT_PROVISIONAL_NOTE =
+  'This reading was measured against a draft scorecard that nobody has approved yet, so it is provisional. It is not used to order, filter or compare candidates, and it will be replaced the moment the scorecard is approved.';
+
+export const FIT_PROVISIONAL_SHORT = 'Provisional — draft scorecard, not used for ordering.';
+
+/** What `not_enough_evidence` asks the reader to do, so the silence is not filled in as "weak". */
+export const FIT_NEEDS_A_PERSON =
+  'This one needs a person to look at the CV. Too little of it speaks to this role for the reading to mean anything either way — that is a fact about the document, not about the candidate.';
+
 export function isFitBand(value: unknown): value is FitBand {
   return typeof value === 'string' && (FIT_BANDS as readonly string[]).includes(value);
 }

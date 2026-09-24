@@ -15,6 +15,7 @@ import { getEmail } from '../providers/email/index.js';
 import { brandedEmail, headerSafe } from '../providers/email/branding.js';
 import { config } from '../config.js';
 import { logger } from '../logger.js';
+import { FIT_PROVISIONAL_SHORT } from '../domain/fitVocabulary.js';
 import { formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
 import { resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
@@ -562,7 +563,7 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
     where: { candidateId: pipeline.candidateId }, orderBy: { version: 'desc' }, select: { id: true, fitScoreJson: true },
   });
   const fit = profile
-    ? parseJsonStrict<{ overall?: unknown }>(profile.fitScoreJson, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' })
+    ? parseJsonStrict<{ overall?: unknown; provisional?: boolean }>(profile.fitScoreJson, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' })
     : {};
   const aiSessionIds = pipeline.rounds.filter((r) => r.conductedBy === 'AI' && r.sessionId).map((r) => r.sessionId as string);
   const assessments = aiSessionIds.length > 0
@@ -580,8 +581,16 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
       case 'intake':
         return { ...stage, hasEvidence: true, detail: 'Candidate profile onboarded.' };
       case 'profile_review':
+        // A provisional reading still says what it says, and still says that
+        // nobody has checked the scorecard behind it. A stage summary is read
+        // as a record of progress, so an unlabelled number here would become
+        // the justification for a move it is not allowed to justify.
         return typeof fit.overall === 'number'
-          ? { ...stage, hasEvidence: true, detail: `AI profile review: job fit ${Math.round(fit.overall)}/100.` }
+          ? {
+              ...stage,
+              hasEvidence: true,
+              detail: `AI profile review: job fit ${Math.round(fit.overall)}/100.${fit.provisional === true ? ` ${FIT_PROVISIONAL_SHORT}` : ''}`,
+            }
           : { ...stage, hasEvidence: false, detail: 'No AI profile review yet.' };
       case 'ai_interview': {
         const assessed = assessments.find((a) => rounds.some((r) => r.sessionId === a.sessionId));

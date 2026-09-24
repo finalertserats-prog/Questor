@@ -53,6 +53,20 @@ export interface Fit {
   engineVersion?: string;
   scorecardVersion?: number | null;
   scoredAt?: string;
+  /** The approval state of the scorecard behind this reading. Absent on older rows. */
+  scorecardStatus?: 'approved' | 'draft';
+  /** True when no person has approved that scorecard. Never used to order or compare. */
+  provisional?: boolean;
+}
+
+/**
+ * Whether this reading was measured against a scorecard nobody approved.
+ *
+ * `=== true` rather than truthiness: an older stored row has no such field, and
+ * absent means "this was written before the question was asked", not "yes".
+ */
+export function isProvisionalFit(fit: Pick<Fit, 'provisional'> | null | undefined): boolean {
+  return fit?.provisional === true;
 }
 
 /** A fit stored before the evidence-backed engine has none of the detail below. */
