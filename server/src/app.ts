@@ -30,6 +30,7 @@ import { feedbackRequestRouter } from './routes/feedbackRequest.js';
 import { feedbackConsentRouter } from './routes/feedbackConsent.js';
 import { signupRouter, signupDecisionRouter } from './routes/signup.js';
 import { demoRouter, demoDecisionRouter } from './routes/demo.js';
+import { DEMO_READ_ONLY_MESSAGE } from './services/demoPolicy.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { calibrationRouter } from './routes/calibration.js';
@@ -378,7 +379,7 @@ export function createApp() {
     try {
       if (!req.auth) { next(); return; }
       const tenant = await prisma.tenant.findUnique({ where: { id: req.auth.tenantId }, select: { isDemo: true } });
-      if (tenant?.isDemo) throw new HttpError(403, 'Not available in the demo');
+      if (tenant?.isDemo) throw new HttpError(403, DEMO_READ_ONLY_MESSAGE);
       next();
     } catch (err) { next(err); }
   };

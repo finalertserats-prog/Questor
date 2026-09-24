@@ -7,6 +7,7 @@ import { clearSession } from '../services/auth.js';
 import { rateLimit } from '../middleware/rateLimit.js';
 import { logger } from '../logger.js';
 import { decideDemoAccess, expireDemoInterviewLinks, redeemDemoAccess, requestDemoAccess, requestDemoReaccess, resolveDemoDecision } from '../services/demoAccess.js';
+import { demoStatus } from '../services/demoStatus.js';
 
 export const demoRouter = Router();
 export const demoDecisionRouter = Router();
@@ -60,6 +61,13 @@ demoRouter.get('/interview', authenticate, asyncHandler(async (req, res) => {
   const portalUrl = session?.invitation ? invitationLink(session.invitation) : null;
   if (!session || !portalUrl) throw new HttpError(404, 'The sample interview is not available.');
   res.json({ interviewId: session.id, portalUrl });
+}));
+
+// What the guided tour needs about this sandbox: who is visiting, where the
+// story's records are, the creation caps, and what the live parts run on.
+demoRouter.get('/status', authenticate, asyncHandler(async (req, res) => {
+  if (req.auth?.demo !== true || !req.auth.demoGrantId) throw new HttpError(403, 'Only available in a demo.');
+  res.json(await demoStatus(req.auth));
 }));
 
 // "End demo" ends it here, not only in the browser: the session token stops

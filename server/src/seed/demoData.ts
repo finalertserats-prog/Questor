@@ -11,7 +11,9 @@ import { assignInterviewer } from '../services/interviewers.js';
 import { composeDisclosure } from '../domain/interviewerModel.js';
 
 export const DEMO_JD = `Senior Data Engineer
-Location: Bengaluru (Hybrid)  |  Employment type: Full-time  |  Level: Senior
+Location: Bengaluru (Hybrid)
+Employment type: Full-time
+Level: Senior
 
 About the role:
 We are hiring a Senior Data Engineer to design and operate our analytical data platform. You will build and maintain reliable data pipelines, own our cloud data warehouse on Snowflake, and partner with analytics and product teams to deliver trustworthy data.
@@ -56,6 +58,36 @@ Skills: SQL, Python, Snowflake, Redshift, Airflow, dbt, Spark, Kafka, AWS, Terra
 
 Certifications:
 - AWS Certified Solutions Architect - Associate`;
+
+/**
+ * The CV the demo visitor's own candidate carries: a solid data engineer a
+ * band below the role, so the fit reads differently from Priya's and the two
+ * profiles in the sandbox are not one CV under two names. {NAME} and {EMAIL}
+ * are the visitor's own.
+ */
+export const DEMO_RESUME_VISITOR = `{NAME}
+Data Engineer | Bengaluru
+{EMAIL}
+
+Experience:
+Data Engineer, Nimbus Retail (2020 - Present)
+- Build and maintain Airflow + dbt pipelines feeding the merchandising warehouse on BigQuery (about 600 GB/day).
+- Migrated nightly batch loads to incremental models; cut the morning refresh from 3 hours to 40 minutes.
+- Added freshness and volume tests to the core marts; on the on-call rota for the data platform.
+- Wrote the team's SQL style guide and review checklist.
+
+Analytics Engineer, Kestrel Insurance (2018 - 2020)
+- Modelled policy and claims data into a star schema for the pricing team.
+- Automated weekly regulatory extracts that had been assembled by hand.
+
+Education:
+B.E., Information Science, BMS College of Engineering, Bengaluru (2018)
+
+Skills: SQL, Python, BigQuery, Airflow, dbt, Terraform (basic), Looker, data modeling`;
+
+export function visitorResume(name: string, email: string): string {
+  return DEMO_RESUME_VISITOR.replace('{NAME}', name).replace('{EMAIL}', email);
+}
 
 export interface DemoIds {
   tenantId: string; userId: string; roleId: string; scorecardId: string;

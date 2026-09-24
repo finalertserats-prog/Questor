@@ -36,6 +36,28 @@ export function inDemoContext(): boolean {
   return demoContext.getStore()?.heuristicOnly === true;
 }
 
+/** How every refusal of a write reads in a demo: a description, not an error. */
+export const DEMO_READ_ONLY_MESSAGE = 'This part of Questor is read-only in the demo.';
+
+/**
+ * Which ways of sitting the sample interview a demo offers right now. The
+ * guided tour's closing card renders exactly these and nothing else: an
+ * option that is not offered is simply absent — no greyed button, no
+ * explanation. Nothing below the product's standard is ever served, so there
+ * is nothing to disclaim.
+ *
+ * Both switches belong to the demo-interview lane (feature/demo-interview):
+ * `candidate` becomes true once the candidate-side interview runs on the
+ * production model within its budget — a demo session is heuristic-only
+ * (runAsDemo) until then; `observer` becomes true when the scripted observer
+ * interview ships. The tour only reads them.
+ */
+export interface DemoInterviewModes { readonly candidate: boolean; readonly observer: boolean }
+
+export function demoInterviewModes(): DemoInterviewModes {
+  return { candidate: false, observer: false };
+}
+
 /**
  * True when the interview belongs to a demo sandbox. The candidate side of an
  * interview runs on a link, not a session, so it is recognised by the

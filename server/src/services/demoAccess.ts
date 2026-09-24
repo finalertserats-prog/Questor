@@ -14,11 +14,15 @@ import { extractRoleHeuristic } from '../engines/roleIntelligence.js';
 import { normalizeProfile } from '../engines/resumeParser.js';
 import { computeFitScore } from '../engines/fitScoring.js';
 import { buildInterviewPlan } from '../engines/interviewPlanner.js';
-import { DEMO_JD, DEMO_RESUME } from '../seed/demoData.js';
+import { DEMO_JD, visitorResume } from '../seed/demoData.js';
+import { DEMO_STORY_INTERVIEWER, curateDemoScorecard, seedDemoStory } from '../seed/demoStory.js';
 import { slugifyCatalogName } from '../domain/catalogText.js';
 import { DEMO_ROLE } from '../domain/capabilities.js';
 import { assignInterviewer } from './interviewers.js';
 import { DEFAULT_DISCLOSURE_BODY, composeDisclosure } from '../domain/interviewerModel.js';
+import { DEMO_READ_ONLY_MESSAGE } from './demoPolicy.js';
+import { applyPipelineEvent } from './pipelineAutonomy.js';
+import type { PipelineEvent } from '../domain/pipelineAutonomy.js';
 import { renderDemoAccessEmail, renderDemoOperatorEmail, renderDemoDecisionEmail, renderDemoDeclinedEmail } from '../providers/email/demoEmail.js';
 
 const DAY_MS = 86_400_000;
@@ -69,27 +73,46 @@ async function demoCatalogRole(tx: PrismaClient): Promise<string | null> {
   return role?.id ?? null;
 }
 
-export interface ProvisionedDemoTenant { tenantId: string; userId: string; invitationToken: string; sessionId: string }
+export interface ProvisionedDemoTenant {
+  tenantId: string; userId: string; invitationToken: string; sessionId: string;
+  roleId: string; scorecardId: string; candidateId: string;
+  /** Priya Sharma's completed, unreviewed interview — the story the guided demo tells. */
+  story: { candidateId: string; sessionId: string; assessmentId: string };
+}
+
+/** Maya runs the story's interview, so the recorded narration can say her name; the visitor's own keeps the random pick. */
+async function demoStoryInterviewer(fallback: { interviewerId: string; name: string }): Promise<{ interviewerId: string; name: string }> {
+  const maya = await prisma.aIInterviewer.findFirst({ where: { name: DEMO_STORY_INTERVIEWER, active: true }, select: { id: true, name: true } });
+  return maya ? { interviewerId: maya.id, name: maya.name } : fallback;
+}
+
+/** The candidate's pipeline, moved by the same events the product itself raises. */
+async function walkPipeline(tenantId: string, candidateId: string, roleId: string, events: readonly PipelineEvent[]): Promise<void> {
+  for (const event of events) await applyPipelineEvent({ tenantId, candidateId, roleId, event, trigger: 'demo.provisioned' });
+}
 
 export async function provisionDemoTenant(input: { name: string; email: string; company: string; now?: Date }): Promise<ProvisionedDemoTenant> {
   const now = input.now ?? new Date();
   // Drawn before the transaction: the catalogue is global, not sandbox data.
   const interviewer = await assignInterviewer('random');
-  return prisma.$transaction(async (tx) => {
+  const storyInterviewer = await demoStoryInterviewer(interviewer);
+  const provisioned = await prisma.$transaction(async (tx) => {
     // Default policy and persona: the demo shows the product as a customer gets it.
     const tenant = await tx.tenant.create({ data: { name: `${input.company} (demo)`, slug: await uniqueTenantSlug(tx as PrismaClient, input.company), isDemo: true, demoExpiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });
     // The visitor's address stays on the grant and the sample candidate; the
     // login gets its own, so a demo never holds (or collides with) a real account's address.
     const user = await tx.user.create({ data: { tenantId: tenant.id, email: demoLoginEmail(), name: input.name, passwordHash: hashPassword(randomBytes(32).toString('base64url')), role: DEMO_ROLE, tourCompletedAt: null } });
     const extraction = extractRoleHeuristic(DEMO_JD, 'Senior Data Engineer');
+    // The scorecard a hiring manager approved, not the raw extraction (seed/demoStory.ts).
+    const roleProfile = curateDemoScorecard(extraction.profile);
     const role = await tx.role.create({ data: { tenantId: tenant.id, catalogRoleId: await demoCatalogRole(tx as PrismaClient), title: extraction.title, level: extraction.level, location: extraction.location, employmentType: extraction.employmentType, sourceType: 'paste', sourceText: DEMO_JD, status: 'approved', createdById: user.id } });
-    const scorecard = await tx.roleScorecardVersion.create({ data: { roleId: role.id, version: 1, status: 'approved', profileJson: JSON.stringify(extraction.profile), approvedById: user.id, approvedAt: now } });
-    const resume = DEMO_RESUME.replace('priya.sharma@example.com', input.email);
+    const scorecard = await tx.roleScorecardVersion.create({ data: { roleId: role.id, version: 1, status: 'approved', profileJson: JSON.stringify(roleProfile), approvedById: user.id, approvedAt: now } });
+    const resume = visitorResume(input.name, input.email);
     const candidate = await tx.candidate.create({ data: { tenantId: tenant.id, roleId: role.id, fullName: input.name, email: input.email, emailNormalized: normalizeEmail(input.email), phone: '' } });
     const profile = normalizeProfile(resume);
-    const { fit } = computeFitScore(profile, resume, extraction.profile);
+    const { fit } = computeFitScore(profile, resume, roleProfile);
     await tx.candidateProfileVersion.create({ data: { candidateId: candidate.id, version: 1, rawText: resume, profileJson: JSON.stringify(profile), fitScoreJson: JSON.stringify(fit) } });
-    const plan = buildInterviewPlan({ role: extraction.profile, fit, durationMinutes: 45, language: 'en', modules: [] });
+    const plan = buildInterviewPlan({ role: roleProfile, fit, durationMinutes: 45, language: 'en', modules: [] });
     // INVITED with no consent recorded: the visitor meets the consent step exactly
     // as a candidate would, which is part of what the demo is showing — including
     // the named AI disclosure, without which consent is refused.
@@ -105,8 +128,15 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
     await tx.invitation.create({ data: { sessionId: session.id, ...invitationSecretColumns(invitationToken), status: 'sent', sentAt: now, expiresAt: new Date(now.getTime() + TENANT_TTL_MS) } });
     await tx.roleAssignment.create({ data: { roleId: role.id, userId: user.id, relation: 'owner' } });
     await tx.candidateAssignment.create({ data: { candidateId: candidate.id, userId: user.id, relation: 'owner' } });
-    return { tenantId: tenant.id, userId: user.id, invitationToken, sessionId: session.id };
+    const story = await seedDemoStory(tx as PrismaClient, { tenantId: tenant.id, userId: user.id, roleId: role.id, scorecardId: scorecard.id, profile: roleProfile, interviewer: storyInterviewer, now });
+    return { tenantId: tenant.id, userId: user.id, invitationToken, sessionId: session.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, story };
   });
+  // After the commit, through the product's own autonomy: Priya's assessed
+  // interview puts her at Gold, waiting for a person; the visitor's invitation
+  // puts them at Silver.
+  await walkPipeline(provisioned.tenantId, provisioned.story.candidateId, provisioned.roleId, ['candidate.onboarded', 'candidate.profiled', 'interview.scheduled', 'interview.assessed']);
+  await walkPipeline(provisioned.tenantId, provisioned.candidateId, provisioned.roleId, ['candidate.onboarded', 'candidate.profiled', 'interview.scheduled']);
+  return provisioned;
 }
 
 /** A login address no real person can hold, so a sandbox user never takes the visitor's. */
@@ -363,9 +393,23 @@ export async function expireDemoInterviewLinks(tenantId: string, at: Date): Prom
   await prisma.invitation.updateMany({ where: { session: { tenantId, tenant: { isDemo: true } } }, data: { expiresAt: at } });
 }
 
-export async function assertNotDemoTenant(tenantId: string, message = 'Not available in the demo'): Promise<void> {
+export async function assertNotDemoTenant(tenantId: string, message = DEMO_READ_ONLY_MESSAGE): Promise<void> {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isDemo: true } });
   if (tenant?.isDemo) throw new HttpError(403, message);
+}
+
+/** What the sandbox starts with: the role, Priya and the visitor, and their two interviews. */
+const DEMO_SEEDED = { roles: 1, candidates: 2, interviews: 2 } as const;
+/** What the visitor may add on top (owner's decision, 2026-09-24). Also shown on the tour's closing card, from GET /demo/status. */
+export const DEMO_ADDED_CAPS = { roles: 2, candidates: 3, interviews: 3 } as const;
+
+const IN_WORDS = ['no', 'one', 'two', 'three', 'four', 'five'] as const;
+
+/** The cap, refused the way the demo speaks: a description of the sandbox, not an error. */
+function demoLimitMessage(kind: 'roles' | 'candidates' | 'interviews', pending: boolean): string {
+  const added = DEMO_ADDED_CAPS[kind];
+  const head = `That's the demo's limit: a demo can add up to ${IN_WORDS[added] ?? String(added)} ${kind}, and this sandbox already has them.`;
+  return pending ? `${head} If one is still being created, give it a moment.` : head;
 }
 
 /**
@@ -378,17 +422,15 @@ export async function assertNotDemoTenant(tenantId: string, message = 'Not avail
 export async function assertDemoCreationCap(tenantId: string, kind: 'roles' | 'candidates' | 'interviews'): Promise<void> {
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isDemo: true } });
   if (!tenant?.isDemo) return;
-  // The sandbox starts with one sample of each; the visitor may add this many more.
-  const added = { roles: 3, candidates: 5, interviews: 5 };
-  const caps = { roles: added.roles + 1, candidates: added.candidates + 1, interviews: added.interviews + 1 };
+  const cap = DEMO_SEEDED[kind] + DEMO_ADDED_CAPS[kind];
   const count = kind === 'roles' ? await prisma.role.count({ where: { tenantId } }) : kind === 'candidates' ? await prisma.candidate.count({ where: { tenantId } }) : await prisma.interviewSession.count({ where: { tenantId } });
-  if (count >= caps[kind]) throw new HttpError(409, `Demo limit reached: you can add at most ${added[kind]} ${kind} in the demo.`);
-  for (let slot = count; slot < caps[kind]; slot += 1) {
+  if (count >= cap) throw new HttpError(409, demoLimitMessage(kind, false));
+  for (let slot = count; slot < cap; slot += 1) {
     const verdict = await consume('demo-cap', `${tenantId}:${kind}:${slot}`, CAP_SLOT_HOLD_MS, 1, { failClosed: true });
     if (verdict.allowed) return;
     if (verdict.reason === 'unavailable') throw new HttpError(503, 'The demo is briefly unavailable. Please try again shortly.');
   }
-  throw new HttpError(409, `Demo limit reached: you can add at most ${added[kind]} ${kind} in the demo. If one is still being created, try again in a moment.`);
+  throw new HttpError(409, demoLimitMessage(kind, true));
 }
 
 export async function purgeExpiredDemoTenants(now = new Date()): Promise<number> {
