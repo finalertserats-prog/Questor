@@ -6,7 +6,6 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { isJdMimeType } from '../engines/resumeParser.js';
 import { RESUME_MAX_BYTES } from '../services/resumeFile.js';
 import { readJdFile } from '../services/jdImportFile.js';
-import { assertDemoCreationCap } from '../services/demoAccess.js';
 
 /**
  * POST /api/roles/import-file — the job description as a file.
@@ -28,7 +27,13 @@ const upload = multer({
   // Same ceiling as an uploaded CV, for the same reason: the buffer lives in
   // process memory, and one file per request keeps a single upload from
   // fanning out into repeated parses.
-  limits: { fileSize: RESUME_MAX_BYTES, files: 1 },
+  //
+  // `fields` and `parts` are named because multer leaves both at Infinity, and
+  // express.json's body limit does not apply to multipart. Without them a
+  // request carrying no file at all could still buffer thousands of text
+  // fields in memory, entirely outside the 5 MB the file cap is watching.
+  // This endpoint reads one part and wants no fields, so it says so.
+  limits: { fileSize: RESUME_MAX_BYTES, files: 1, fields: 0, parts: 2, fieldSize: 1024 },
   fileFilter: (_req, file, cb) => {
     // The list this reads is the one the extractor dispatches on
     // (engines/resumeParser.ts), so the gate and the parser cannot drift.
@@ -61,10 +66,16 @@ const importLimit = rateLimit({
 });
 
 /**
- * Gated as the creation it is a step of: `role:create`, the caller's own
- * tenant (taken from the token, never the request), and the demo cap, checked
- * before anything is parsed so a capped tenant cannot spend the server's
- * memory on documents it could not turn into a role anyway.
+ * Gated as the creation it is a step of: `role:create` and the caller's own
+ * tenant, taken from the token and never from the request.
+ *
+ * Deliberately NOT gated on the demo cap. assertDemoCreationCap does not ask
+ * whether a slot is free, it CLAIMS one and holds it for two minutes for the
+ * create that follows — and nothing is created here. Calling it would have a
+ * demo tenant spend a role on every file they read, so three imports and no
+ * create would lock role creation with "Demo limit reached" against a cap
+ * they had not reached. POST /api/roles claims the slot, where the role is
+ * actually made.
  *
  * An injection hit FLAGS, it does not refuse. Signup refuses because an
  * organisation name is one short line that reaches a model's context unread by
@@ -84,7 +95,6 @@ roleImportRouter.post(
   importLimit,
   uploadJd,
   asyncHandler(async (req, res) => {
-    await assertDemoCreationCap(req.auth!.tenantId, 'roles');
     if (!req.file) throw new HttpError(400, 'Choose a job description file to import.');
     res.json(await readJdFile(req.file));
   }),

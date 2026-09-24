@@ -230,6 +230,18 @@ export function RoleCreate() {
     return true;
   };
 
+  /**
+   * Switching source drops the file that is no longer on screen. Left set, the
+   * panel came back naming a file the text had long since stopped matching —
+   * including an "instructions to the AI" warning about a line the person had
+   * already deleted.
+   */
+  const chooseSource = (next: Source) => {
+    setSource(next);
+    setError('');
+    if (next !== 'file') setJdImport(null);
+  };
+
   const detectFromJd = async () => {
     try {
       const merged = await techTools.detect(sourceText, techStack);
@@ -305,15 +317,15 @@ export function RoleCreate() {
         <fieldset className="row" style={{ border: 0, padding: 0, gap: 16 }}>
           <legend className="small muted">Start from</legend>
           <label className="check-row">
-            <input type="radio" name="role-source" checked={source === 'paste'} onChange={() => { setSource('paste'); setError(''); }} />
+            <input type="radio" name="role-source" checked={source === 'paste'} onChange={() => chooseSource('paste')} />
             A job description
           </label>
           <label className="check-row">
-            <input type="radio" name="role-source" checked={source === 'file'} onChange={() => { setSource('file'); setError(''); }} />
+            <input type="radio" name="role-source" checked={source === 'file'} onChange={() => chooseSource('file')} />
             A job description file
           </label>
           <label className="check-row">
-            <input type="radio" name="role-source" checked={source === 'ats'} onChange={() => { setSource('ats'); setError(''); }} />
+            <input type="radio" name="role-source" checked={source === 'ats'} onChange={() => chooseSource('ats')} />
             A requisition in your ATS
           </label>
         </fieldset>
@@ -448,6 +460,15 @@ export function RoleCreate() {
             fieldId={fieldId}
             text={sourceText}
             onTextChange={(next) => { setSourceText(next); setUsedDraftId(''); setUsedDraftText(''); setDescribedUsed(false); }}
+            replaceText={(next) => {
+              // The same guard the suggested draft goes through: a file must
+              // not silently delete a job description someone already pasted.
+              if (!replaceJd(next)) return false;
+              setUsedDraftId('');
+              setUsedDraftText('');
+              setDescribedUsed(false);
+              return true;
+            }}
             imported={jdImport}
             onImported={setJdImport}
           />

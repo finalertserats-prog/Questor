@@ -14,10 +14,17 @@ import { JD_FILE_ACCEPT, extractionNotes, fileSizeLabel, jdImportMessage, type J
  * or a table of responsibilities comes out scrambled often enough that
  * handing the extraction straight to the model unseen would be the bug.
  */
-export function JdFileImport({ fieldId, text, onTextChange, imported, onImported }: {
+export function JdFileImport({ fieldId, text, onTextChange, replaceText, imported, onImported }: {
   fieldId: string;
   text: string;
+  /** An edit in the box. Always applies — the person is typing into it. */
   onTextChange: (next: string) => void;
+  /**
+   * The extraction replacing whatever was there. Separate from an edit
+   * because it may refuse: someone who has already pasted a job description
+   * is asked before a file overwrites it.
+   */
+  replaceText: (next: string) => boolean;
   imported: JdImport | null;
   onImported: (next: JdImport | null) => void;
 }) {
@@ -32,14 +39,19 @@ export function JdFileImport({ fieldId, text, onTextChange, imported, onImported
       const form = new FormData();
       form.append('file', file);
       const result = await api.postForm<JdImport>('/roles/import-file', form);
-      onImported(result);
-      onTextChange(result.text);
+      // Declined, so the file never happened: showing its name and character
+      // count beside text that did not come from it would be a lie.
+      if (replaceText(result.text)) onImported(result);
     } catch (err: unknown) {
       onImported(null);
       setError(jdImportMessage(err));
-      if (fileInput.current) fileInput.current.value = '';
     } finally {
       setReading(false);
+      // Always, not only on failure. The input fires `change` on the value
+      // changing, so after a successful read the same file could not be
+      // picked again — and re-reading the file you just mangled by hand is
+      // exactly the escape someone reaches for.
+      if (fileInput.current) fileInput.current.value = '';
     }
   };
 

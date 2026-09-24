@@ -15,7 +15,7 @@ function render(imported: JdImport | null, text = 'About the role'): string {
   const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
   try {
     return renderToStaticMarkup(createElement(JdFileImport, {
-      fieldId: 'f', text, onTextChange: () => undefined, imported, onImported: () => undefined,
+      fieldId: 'f', text, onTextChange: () => undefined, replaceText: () => true, imported, onImported: () => undefined,
     }));
   } finally {
     quiet.mockRestore();

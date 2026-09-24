@@ -17,6 +17,8 @@ export function isResumeMimeType(value: string): value is ResumeMimeType {
 }
 
 export const MARKDOWN_MIME = 'text/markdown';
+/** Still sent by some editors and by Windows for a registered .md handler. */
+export const X_MARKDOWN_MIME = 'text/x-markdown';
 /** Not a format: the browser saying it could not name one. */
 export const OCTET_STREAM_MIME = 'application/octet-stream';
 
@@ -32,7 +34,7 @@ export const OCTET_STREAM_MIME = 'application/octet-stream';
  * fileFilter and by their own extractor below, so neither gate can drift from
  * the dispatch it guards.
  */
-export const JD_MIME_TYPES = [PDF_MIME, DOCX_MIME, TEXT_MIME, MARKDOWN_MIME, OCTET_STREAM_MIME] as const;
+export const JD_MIME_TYPES = [PDF_MIME, DOCX_MIME, TEXT_MIME, MARKDOWN_MIME, X_MARKDOWN_MIME, OCTET_STREAM_MIME] as const;
 export type JdMimeType = (typeof JD_MIME_TYPES)[number];
 
 export function isJdMimeType(value: string): value is JdMimeType {
@@ -112,19 +114,23 @@ export async function extractResumeText(buffer: Buffer, declaredType: string): P
  * declared type that disagreed with the sniffed one would refuse perfectly
  * good Markdown for a reason the uploader could neither see nor fix.
  *
- * So the leniency is granted only where it costs nothing:
- * - `application/octet-stream` declares nothing, so there is no claim to check
- *   and the bytes alone choose the parser.
- * - `text/markdown` is read as plain text, which is the one branch that feeds
- *   NO parser — and the agreement check still runs, so a PDF or a ZIP calling
- *   itself Markdown is refused rather than reinterpreted.
- * - A declared PDF or DOCX is checked against the bytes exactly as before. A
- *   crafted file still cannot pick which parser it is handed to.
+ * So the leniency is granted only where it costs nothing: the three types a
+ * `.md` file arrives as — `text/markdown`, `text/x-markdown` and
+ * `application/octet-stream` — are all read as PLAIN TEXT, which is the one
+ * branch that feeds no parser at all.
+ *
+ * Note what that does NOT do. It does not let an unnamed type pick its own
+ * parser from its bytes: a ZIP declared `application/octet-stream` is refused
+ * rather than handed to mammoth, so this endpoint opens no new route to a
+ * document parser that a declared DOCX did not already have. And the
+ * agreement check still runs on the text branch, so a PDF or a ZIP calling
+ * itself Markdown is refused rather than reinterpreted. A declared PDF or
+ * DOCX is checked against the bytes exactly as before.
  */
 export async function extractJdText(buffer: Buffer, declaredType: string): Promise<string> {
   if (!isJdMimeType(declaredType)) throw new HttpError(400, JD_UNREADABLE_MESSAGE);
   try {
-    return await extractResumeText(buffer, jdDispatchType(buffer, declaredType));
+    return await extractResumeText(buffer, jdDispatchType(declaredType));
   } catch (err) {
     // The shared extractor speaks to the candidate lane; someone uploading a
     // requisition is not pasting a resume, and must be told what to do next in
@@ -137,9 +143,10 @@ export async function extractJdText(buffer: Buffer, declaredType: string): Promi
 const JD_UNREADABLE_MESSAGE =
   'Could not read the uploaded file. Please upload a text-based PDF, DOCX, TXT or Markdown file, or paste the job description instead.';
 
-function jdDispatchType(buffer: Buffer, declared: JdMimeType): ResumeMimeType {
-  if (declared === OCTET_STREAM_MIME) return sniffType(buffer);
-  if (declared === MARKDOWN_MIME) return TEXT_MIME;
+function jdDispatchType(declared: JdMimeType): ResumeMimeType {
+  if (declared === MARKDOWN_MIME || declared === X_MARKDOWN_MIME || declared === OCTET_STREAM_MIME) return TEXT_MIME;
+  // Exhaustive by construction: a type added to JD_MIME_TYPES without a branch
+  // above fails to compile here rather than silently reaching a parser.
   return declared;
 }
 
