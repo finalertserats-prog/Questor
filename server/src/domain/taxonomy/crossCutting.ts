@@ -81,7 +81,12 @@ export const CROSS_CUTTING_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Describes a difficult conversation they had', 'Explains how they grew someone', 'Names a decision they made that the team disliked'],
     aliases: ['Line Management', 'Team Leadership', 'People Management'],
     cues: [
-      /\b(line manage(ment|r)?|people (management|leadership)|manag(e|ing) a team|lead(ing)? a team of|team of \d+ (direct )?reports?)\b/i,
+      // "Lead and grow a team of six product managers" — one conjoined verb
+      // was enough to hide a people-leadership requirement completely.
+      // "line manager" as a NOUN is usually somebody else. An HR business
+      // partner who mentors line managers is not one, and matching the noun
+      // made them one. The verb forms are the duty; the noun is the audience.
+      /\b(line manage(ment|s|d)?|people (management|leadership)|(manag|lead|grow|build)\w*(\s+and\s+\w+)?\s+(a|the|your)\s+team\b|team of \d+ (direct )?reports?)\b/i,
       /\b(direct reports?|hiring and developing|performance (managing|conversations)|build(ing)? (and scaling )?(a|the) team)\b/i,
     ],
     domains: [],
@@ -112,8 +117,11 @@ export const CROSS_CUTTING_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\bmanag(e|ing) (senior |executive |multiple |competing )?stakeholders?\b/i,
       /\binfluenc(e|ing) (without authority|senior|at all levels|decision[- ]makers)\b/i,
       /\b(executive (communication|presence|reporting)|board[- ]level|c[- ]suite (engagement|reporting))\b/i,
-      /\b(present|report|communicat)(ing|ed|s)? (\w+ ){0,3}to (senior|executive|leadership|the board|c[- ]suite)/i,
-      /\bto (senior|executive) stakeholders?\b/i,
+      // "Present recommendations to client executives", "Report to the
+      // programme board and to the regional mayor's office" — the audience is
+      // rarely the word straight after "to".
+      /\b(present|report|communicat)(ing|ed|s)? (\w+ ){0,3}to (the |our |a )?(\w+ ){0,2}(senior|executive|leadership|board|c[- ]suite|minister|mayor|regulator|partner)/i,
+      /\bto (senior|executive|client) (stakeholders?|executives?|sponsors?)\b/i,
     ],
     domains: [],
   },
@@ -160,7 +168,9 @@ export const CROSS_CUTTING_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Names something important they dropped', 'Explains the constraint that forced the call', 'Describes a priority they got wrong'],
     aliases: ['Prioritization', 'Time Management', 'Workload Management'],
     cues: [
-      /\b(prioritis(e|ing|ation)|prioritiz(e|ing|ation)|competing (priorities|demands|deadlines)|manag(e|ing) multiple)\b/i,
+      // "Manage competing workstream deadlines" — one inserted noun defeated
+      // a cue that demanded the pair be adjacent.
+      /\b(prioritis(e|ing|ation)|prioritiz(e|ing|ation)|competing\s+(\w+\s+){0,2}(priorities|demands|deadlines|workstreams?)|manag(e|ing) multiple)\b/i,
       /\b(tight deadlines|time management|workload management|triag(e|ing) (requests|work))\b/i,
     ],
     domains: [],

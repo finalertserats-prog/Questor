@@ -32,7 +32,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Describes a finding that contradicted the plan', 'Explains how they avoided leading the question', 'Says what the research could not tell them'],
     aliases: ['UX Research', 'Customer Research', 'Design Research'],
     cues: [
-      /\b(user research|ux research|usability testing|customer (interviews?|discovery)|contextual inquiry|design research)\b/i,
+      // "usability test" rather than "usability testing", so the inflection
+      // allowance covers "tests", "testing" and "tested" from one stem.
+      /\b(user research|ux research|usability test|customer (interviews?|discovery)|contextual inquiry|design research)\b/i,
       /\b(personas?|journey map(ping)?|jobs[- ]to[- ]be[- ]done|\bjtbd\b)\b/i,
     ],
     domains: ['product', 'marketing', 'education', 'public_sector'],

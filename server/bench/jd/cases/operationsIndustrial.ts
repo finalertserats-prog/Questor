@@ -192,7 +192,13 @@ Benefits
 
 Kestrel Homes is an equal opportunities employer and all offers are subject to
 references and a right to work check.`,
-    expect: ['Construction & Project Delivery', 'People Leadership'],
+    // Health, Safety & Environment added for the same reason as bfsi-01 and
+    // hc-01. This case's author wrote that they "had to fold site H&S into
+    // Construction & Project Delivery" and asked for the competency. The
+    // advert says "Own health and safety on site, and stop the job when it is
+    // not right", and lists SMSTS, CSCS and first aid as essential — that is
+    // a competency in its own right, not a facet of delivery.
+    expect: ['Construction & Project Delivery', 'People Leadership', 'Health, Safety & Environment'],
     forbid: [
       // "Our procurement team places the material orders with suppliers."
       'Procurement & Vendor Management',

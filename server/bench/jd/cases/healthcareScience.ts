@@ -51,7 +51,13 @@ What we offer
 
 We are committed to equality of opportunity and we welcome applications from all
 sections of the community. This post is subject to an enhanced DBS check.`,
-    expect: ['Clinical & Patient Care', 'Mentoring & Coaching'],
+    // Safeguarding added for the same reason as bfsi-01's financial crime:
+    // this case was written when the vocabulary had no home for it, and its
+    // author's report named this advert and edu-01 as the two that carry a
+    // safeguarding requirement with nowhere to put it. The advert says
+    // "follow our safeguarding procedures"; a ward nurse's duty of care is a
+    // real, separately interviewable thing.
+    expect: ['Clinical & Patient Care', 'Mentoring & Coaching', 'Safeguarding & Duty of Care'],
     forbid: [
       // "medicines reconciliation" — the word means something entirely different here.
       'Accounting & Controls',

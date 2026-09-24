@@ -48,6 +48,7 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     cues: [
       /\b(data model(s|ling|ing)?\b|dimensional (model|schema)|star schema|snowflake schema|slowly changing dimension|scd\b|normalis(ed|ation)|denormalis)/i,
       /\b(schema design|entity relationship|data vault|semantic layer|canonical model)\b/i,
+      /\bdesign(ing)?\b[^.;]{0,20}\bschema\b/i,
     ],
     domains: ['data', 'software', 'bfsi'],
   },
@@ -104,6 +105,14 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(mlops|ml ?ops|model (registry|monitoring|governance|lifecycle)|feature store)\b/i,
       /\b(mlflow|kubeflow|sagemaker|vertex ai|weights ?(and|&) ?biases|seldon)\b/i,
       /\b(model drift|retrain(ing)? pipeline|experiment tracking|reproducib(le|ility))\b/i,
+      // "deploying and monitoring models in production" — the advert puts the
+      // verb first, and a cue demanding "model monitoring" sees nothing.
+      //
+      // "operating" is deliberately absent: an "operating model" is a
+      // consultant's word for how a business is organised and has nothing to
+      // do with machine learning, and including it put MLOps on a management
+      // consultant's scorecard.
+      /\b(deploy|monitor|retrain|serv)\w*\b[^.;]{0,24}\bmodels?\b/i,
     ],
     domains: ['ml_platform', 'frontier_ai', 'data'],
   },
@@ -133,6 +142,10 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     cues: [
       /\b(api design|rest(ful)? api|graphql|grpc|openapi|swagger|api contract|api versioning)\b/i,
       /\b(microservices?|service[- ]oriented|event[- ]driven architecture|message (queue|broker)|webhooks?)\b/i,
+      // "decomposition of our booking monolith into services with contracts
+      // that will survive their second consumer" is the requirement written
+      // out in full, and named none of the nouns above.
+      /\b(service (contracts?|boundaries|interfaces)|decompos\w*\b[^.;]{0,40}\b(monolith|services)|break\w*\b[^.;]{0,20}\bmonolith)\b/i,
     ],
     domains: ['software', 'cloud', 'bfsi', 'retail'],
   },
@@ -156,9 +169,12 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Explains a release they could not roll back', 'Describes offline and battery trade-offs', 'Reasons about store review and versioning'],
     aliases: ['iOS Development', 'Android Development', 'Mobile Development'],
     cues: [
-      // Kotlin and Swift are both written server-side; only iOS, Android and
-      // the cross-platform frameworks actually mean "mobile".
-      /\b(ios\b|android\b|react native|flutter|mobile app(lication)?s?)\b/i,
+      // Kotlin is genuinely common server-side, so it is not a cue here — it
+      // was making every JVM backend advert a mobile role. Swift is kept:
+      // server-side Swift exists but is vanishingly rare in a job advert, and
+      // without it an iOS role's own Swift lines went unclaimed and picked up
+      // a generic Software Engineering competency on top of Mobile.
+      /\b(ios\b|android\b|swift\b|swiftui|react native|flutter|mobile app(lication)?s?)\b/i,
       /\b(app store|play store|push notifications|offline[- ]first)\b/i,
     ],
     // A web app being fast on an Android handset is a front-end requirement,
@@ -218,6 +234,10 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['QA', 'Test Automation', 'Quality Assurance', 'SDET'],
     cues: [
       /\b(test automation|automated test|unit test|integration test|end[- ]to[- ]end test|e2e test|regression (test|suite))\b/i,
+      // "unit and snapshot tests", "unit and integration tests" — adverts
+      // coordinate the adjectives and leave one noun at the end, so a cue
+      // requiring the pair adjacent sees nothing.
+      /\b(unit|integration|snapshot|regression|acceptance|smoke|contract)\b[^.;]{0,24}\btests?\b/i,
       /\b(selenium|cypress|playwright|junit|pytest|jest\b|testng)\b/i,
       /\b(quality (assurance|engineering)|test strateg|test coverage|\btdd\b|\bbdd\b)\b/i,
     ],

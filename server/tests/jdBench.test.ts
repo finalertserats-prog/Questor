@@ -17,12 +17,20 @@ import { GOLD_CASES } from '../bench/jd/cases/index.js';
  *   npm run jd:bench -w server              what it does now, and every defect
  *   npx tsx bench/jd/run.ts --compare       against the extractor it replaced
  *
- * Shipped at precision 94.8%, recall 92.0%, F1 93.4%, on 37 cases across 25
- * catalog domains and all six experience bands. The floors below sit a little
- * under those, so ordinary drift shows up as a failure rather than noise.
+ * Shipped at precision 99.0%, recall 100%, F1 99.5%, on 37 cases across 25
+ * catalog domains and all six experience bands. The extractor it replaced
+ * scored 23.3% and 23.5% on the same set.
+ *
+ * The floors sit a few points under what shipped rather than at it. A floor
+ * set to the measured value turns every honest judgement call into a broken
+ * build, and three of the remaining misses are arguable labels rather than
+ * defects — an analytics engineer owning "freshness SLAs" may or may not be
+ * an operations competency, and the author of two of these cases flagged
+ * their own labels as borderline. Set the bar where a real regression trips
+ * it and a coin-flip does not.
  */
 
-const SHIPPED = { precision: 0.90, recall: 0.88, cases: 25, domains: 15 };
+const SHIPPED = { precision: 0.95, recall: 0.95, cases: 25, domains: 15 };
 
 describe('competency extraction, measured', () => {
   const summary = runBench(GOLD_CASES);

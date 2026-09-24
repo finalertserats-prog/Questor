@@ -54,7 +54,12 @@ const INNER_ABBREVIATION = /\\b([a-z0-9]{2,5})\\b/g;
 function allowInflection(re: RegExp): RegExp {
   const source = re.source.replace(INNER_ABBREVIATION, '\\b$1s?\\b');
   if (!source.endsWith(')\\b')) return source === re.source ? re : new RegExp(source, re.flags);
-  return new RegExp(`${source.slice(0, -2)}${INFLECTION}\\b`, re.flags);
+  // An alternative can carry its own closing boundary too — "…|product
+  // manager\b)" — and that inner \b blocks the inflection before it is ever
+  // reached, so "leading product managers" matched nothing. It is redundant
+  // with the group's own closing boundary, so it goes.
+  const body = source.slice(0, -2).replace(/\\b\)$/, ')');
+  return new RegExp(`${body}${INFLECTION}\\b`, re.flags);
 }
 
 export const CANONICAL_COMPETENCIES: readonly CanonicalCompetency[] = [
