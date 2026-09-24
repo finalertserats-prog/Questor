@@ -195,7 +195,7 @@ export function RoleCreate() {
         techStack: [...techStack],
         addToCatalog: offerCatalogAdd ? addToCatalog : false,
         jdDraftId: usedDraftId || undefined,
-        jdOrigin: jdOriginForSubmit({ source: source === 'ats' ? 'ats' : 'paste', sourceText, draftText: usedDraftText, describedUsed }),
+        jdOrigin: jdOriginForSubmit({ source, sourceText, draftText: usedDraftText, describedUsed }),
       };
       // Whatever the source, the create call is the one it always was: the
       // reviewed text as sourceText. sourceType only records how it arrived.

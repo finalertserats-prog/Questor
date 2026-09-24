@@ -1,6 +1,6 @@
 
 export interface LintHit { readonly term: string; readonly suggestion: string }
-export type JdOrigin = 'draft' | 'described' | 'pasted' | 'ats' | '';
+export type JdOrigin = 'draft' | 'described' | 'pasted' | 'file' | 'ats' | '';
 
 export type DraftPanelState =
   | { readonly kind: 'idle' }
@@ -53,10 +53,18 @@ export function appendTechStack(text: string, techStack: readonly string[]): str
   return `${text.trim()}\n\nTech stack: ${stack.join(', ')}.`;
 }
 
-export function jdOriginForSubmit(input: { readonly source: 'paste' | 'ats'; readonly sourceText: string; readonly draftText: string; readonly describedUsed: boolean }): JdOrigin {
+/**
+ * How the job description actually arrived.
+ *
+ * A file import was being recorded as "pasted", which is the one thing it is
+ * not: the text was extracted from a document nobody retyped. `sourceType`
+ * already said `file`, so the two columns disagreed about the same role — and
+ * `jdOrigin` is what the reporting reads.
+ */
+export function jdOriginForSubmit(input: { readonly source: 'paste' | 'file' | 'ats'; readonly sourceText: string; readonly draftText: string; readonly describedUsed: boolean }): JdOrigin {
   if (input.source === 'ats') return 'ats';
   if (input.draftText && input.sourceText.trim()) return 'draft';
   if (input.describedUsed && input.sourceText.trim()) return 'described';
-  if (input.sourceText.trim()) return 'pasted';
-  return '';
+  if (!input.sourceText.trim()) return '';
+  return input.source === 'file' ? 'file' : 'pasted';
 }

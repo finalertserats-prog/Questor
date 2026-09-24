@@ -106,7 +106,10 @@ const createSchema = z.object({
   // Full items, or the bare names older pages still send.
   techStack: techStackInputSchema.default([]),
   jdDraftId: z.string().cuid().optional(),
-  jdOrigin: z.enum(['draft', 'described', 'pasted', 'ats', '']).default(''),
+  // `file` exists because a JD extracted from an uploaded document was being
+  // recorded as `pasted`, disagreeing with the `sourceType` column on the same
+  // row. jdOrigin is what the reporting reads.
+  jdOrigin: z.enum(['draft', 'described', 'pasted', 'file', 'ats', '']).default(''),
 });
 
 // Create a role from JD / ATS + auto-extract a draft scorecard (FR-001..004)
