@@ -66,7 +66,12 @@ const PROHIBITED_PATTERNS: Array<{ re: RegExp; category: string }> = [
 // Detection NEVER penalises the candidate: the flag is context for the human
 // who reads the transcript, and nothing in the engine scores or rejects on it.
 const INJECTION_PATTERNS: RegExp[] = [
-  /ignore (all |your |previous )?(instructions|rubric|system prompt)/i,
+  // One modifier, and only one, was allowed — so "ignore all instructions" was
+  // caught and "ignore all previous instructions", which is the phrasing
+  // almost everyone actually writes, was not. A Duke study of 200,000 real
+  // CVs found about 1% carried hidden instructions like these, so this is a
+  // pattern that gets exercised, not a hypothetical.
+  /ignore (?:all |any |your |my |the |these |those |previous |prior |above |preceding |earlier |former )*(instructions|rubric|system prompt)/i,
   /(reveal|show|tell me|what is) (the |your )?(rubric|scoring|system prompt|hidden)/i,
   /you are now|new instructions|disregard (the|your)/i,
   /give me (a|the) (perfect|full|maximum) score/i,

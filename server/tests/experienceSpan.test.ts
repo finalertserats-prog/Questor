@@ -118,3 +118,52 @@ describe('adding the ranges up', () => {
     expect(totalExperienceYears('Engineer, Acme 1960 - Present', NOW)).toBeLessThanOrEqual(45);
   });
 });
+
+describe('what an adversarial CV cannot do', () => {
+  /**
+   * A CV is a file a stranger uploads. Every pattern here can backtrack, and
+   * before the scan was chunked, 200,000 characters of "1" — the extraction
+   * cap, on one line — held a CPU core for 78 seconds, and 200,000 dashes for
+   * 75. One file at a time, against a public upload endpoint.
+   */
+  it('reads a CV of nothing but digits in well under a second', () => {
+    const started = Date.now();
+    expect(totalExperienceYears('1'.repeat(200_000), NOW)).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('reads a CV of nothing but dashes in well under a second', () => {
+    const started = Date.now();
+    expect(totalExperienceYears('-'.repeat(200_000), NOW)).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it('masks a document of digits without stalling', () => {
+    const started = Date.now();
+    proseOnly('9'.repeat(200_000));
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+});
+
+describe('the edges Codex found', () => {
+  it('reads a two-digit end year across a century', () => {
+    // "1998 - 02" is 2002. Taking the start's century made it 1902, which
+    // ends before it starts, so the role was thrown away and the candidate
+    // lost four years.
+    expect(totalExperienceYears('Engineer, Acme 1998 - 02', NOW)).toBe(5);
+  });
+
+  it('does not take "presently" for "present"', () => {
+    // No trailing boundary meant "2019 - presently reviewing" read as a role
+    // still running today.
+    expect(experienceRanges('Engineer, Acme 2019 - 2020. Presently reviewing offers.', NOW)[0].ongoing).toBe(false);
+  });
+
+  it('does not take "dates" or "dated" for "to date"', () => {
+    expect(experienceRanges('Engineer, Acme 2019 - dates vary', NOW)).toEqual([]);
+  });
+
+  it('does not take "nowhere" for "now"', () => {
+    expect(experienceRanges('Engineer, Acme 2019 - nowhere near done', NOW)).toEqual([]);
+  });
+});

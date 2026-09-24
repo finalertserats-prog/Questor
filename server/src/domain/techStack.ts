@@ -120,9 +120,16 @@ const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * characters that cannot continue an identifier. Letters, digits and the
  * symbols technology names end in (+ # .) count as continuing it, so "C" does
  * not match "C++" and "Go" does not match "Google".
+ *
+ * A hyphen continues one too, for short names only. It was left out, so "Go"
+ * matched inside "go-to-market" and "go-live" — and on a marketing advert that
+ * is not a stray word, it is most of the document. Short names alone, because
+ * a hyphen genuinely separates for longer ones: "React-based" is React, and
+ * "Python-first" is Python.
  */
 export function technologyPattern(name: string): RegExp {
-  return new RegExp(`(?<![\\w+#.])${escapeRegex(name)}(?![\\w+#])`, 'i');
+  const tail = name.length <= 3 ? '\\w+#\\-' : '\\w+#';
+  return new RegExp(`(?<![\\w+#.${name.length <= 3 ? '\\-' : ''}])${escapeRegex(name)}(?![${tail}])`, 'i');
 }
 
 export function mentionsTechnology(text: string, name: string): boolean {

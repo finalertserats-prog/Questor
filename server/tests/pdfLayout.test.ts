@@ -121,3 +121,47 @@ describe('columns', () => {
     expect(lines[1]).toBe('Engineer, Acme   2018 - 2021');
   });
 });
+
+describe('a right-aligned date column is not a second column', () => {
+  /**
+   * The commonest CV layout there is: the job on the left, its dates at the
+   * right margin, on every role line. Every test a gutter has to pass — a
+   * clean vertical band, text on both sides, line after line — this layout
+   * passes perfectly, and splitting on it lifts every date away from the job
+   * it belongs to and stacks them together at the end of the section.
+   *
+   * What tells them apart is how much text each side carries. A date column
+   * carries a tenth of what the column beside it does; a real second column
+   * carries a third or more.
+   */
+  const datedRoles: TextItem[] = [
+    at('WORK EXPERIENCE', 20, 800, 80),
+    at('Senior Marketing Manager, Genesys International', 20, 780, 190), at('2024 - Present', 470, 780, 55),
+    at('Led B2B campaigns across email, social and events', 30, 760, 200),
+    at('Senior Digital Marketing Specialist, Gartner', 20, 740, 180), at('2021 - 2024', 470, 740, 50),
+    at('Managed outbound campaigns via Eloqua', 30, 720, 160),
+    at('Senior Marketing Executive, Galaxy Office', 20, 700, 175), at('2020 - 2021', 470, 700, 50),
+    at('Planned B2B campaigns for enterprise brands', 30, 680, 180),
+    at('Marketing Executive, Softcell Technologies', 20, 660, 175), at('2018 - 2020', 470, 660, 50),
+    at('Led business development across West India', 30, 640, 175),
+    at('Marketing Associate, Redington India', 20, 620, 160), at('2016 - 2018', 470, 620, 50),
+    at('Served as SPOC for Oracle BU marketing', 30, 600, 165),
+  ];
+
+  it('keeps each date on the line of the job it belongs to', () => {
+    const lines = renderTextItems(datedRoles).split('\n');
+    expect(lines[1]).toContain('Genesys International');
+    expect(lines[1]).toContain('2024 - Present');
+  });
+
+  it('does not stack the dates together at the end', () => {
+    const lines = renderTextItems(datedRoles);
+    expect(lines).not.toMatch(/2024 - Present\n2021 - 2024/);
+  });
+
+  it('still reads the roles in the order they were written', () => {
+    const lines = renderTextItems(datedRoles).split('\n');
+    expect(lines.findIndex((l) => l.includes('Gartner')))
+      .toBeLessThan(lines.findIndex((l) => l.includes('Redington')));
+  });
+});

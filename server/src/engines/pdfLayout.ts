@@ -62,6 +62,13 @@ const GUTTER_MIN_SHARE = 0.55;
 const GUTTER_MIN_LINES = 4;
 
 /**
+ * The thinner side of a real gutter still carries at least this share of the
+ * thicker side's text. Below it, the "column" is a margin note or a date
+ * column, not a column.
+ */
+const GUTTER_MIN_MASS = 0.25;
+
+/**
  * Some PDFs encode their spaces as tabs — the two CVs above both did, which is
  * why "JATIN\tKUMAR" reached the parser. A tab inside a text item is a space
  * that was written oddly, never structure, because structure in a PDF is
@@ -142,6 +149,8 @@ export function findGutter(lines: readonly Piece[][]): number | null {
     let bothSides = 0;
     let leftOnly = 0;
     let rightOnly = 0;
+    let leftChars = 0;
+    let rightChars = 0;
     for (const span of spans) {
       // A line straddles the gutter only if a single piece crosses it; a line
       // with a piece each side is exactly what a two-column row looks like.
@@ -149,6 +158,10 @@ export function findGutter(lines: readonly Piece[][]): number | null {
       if (crosses) { straddling += 1; continue; }
       const hasLeft = span.pieces.some((p) => p.x + p.w <= x);
       const hasRight = span.pieces.some((p) => p.x >= x);
+      for (const p of span.pieces) {
+        if (p.x + p.w <= x) leftChars += p.s.trim().length;
+        else if (p.x >= x) rightChars += p.s.trim().length;
+      }
       if (hasLeft && hasRight) bothSides += 1;
       else if (hasLeft) leftOnly += 1;
       else if (hasRight) rightOnly += 1;
@@ -159,6 +172,15 @@ export function findGutter(lines: readonly Piece[][]): number | null {
     // Both columns must carry content of their own. A gutter with nothing but
     // paired rows is a table, and a table reads correctly left to right.
     if (leftOnly + bothSides < GUTTER_MIN_LINES || rightOnly + bothSides < GUTTER_MIN_LINES) continue;
+    // And both must carry a comparable amount of it. This is what tells a
+    // second column from a right-aligned date column, which is the commonest
+    // CV layout there is: every role line has "2018 - 2021" at the right
+    // margin, so the paired-row test above passes perfectly, and splitting
+    // there would lift every date away from the job it belongs to and stack
+    // them at the end of the section. A date column carries a tenth of the
+    // text of the column beside it; a real second column carries a third or
+    // more.
+    if (Math.min(leftChars, rightChars) < Math.max(leftChars, rightChars) * GUTTER_MIN_MASS) continue;
     const score = bothSides + respecting;
     if (!best || score > best.score) best = { x, score };
   }
@@ -228,15 +250,28 @@ export function renderTextItems(items: readonly TextItem[]): string {
 }
 
 /**
- * The page renderer pdf-parse takes as an option. Any failure falls back to
- * pdf-parse's own rendering rather than losing the page: a badly laid out CV
- * still beats no CV.
+ * The page renderer pdf-parse takes as an option.
+ *
+ * A failure here must not cost the page. Returning '' — which this did —
+ * silently deletes it: a three-page CV comes back as two pages of text, the
+ * recruiter is shown a shorter history than the candidate wrote, and nothing
+ * anywhere says a page went missing. So a failure falls back to joining the
+ * items plainly, which is pdf-parse's own reading and the behaviour we had
+ * before this module existed. A badly laid out page still beats no page.
  */
 export function pdfPageRenderer(page: {
   getTextContent: (opts: Record<string, boolean>) => Promise<{ items: TextItem[] }>;
 }): Promise<string> {
   return page
-    .getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
-    .then((content) => renderTextItems(content.items))
+    .getTextContent({ normalizeWhitespace: false })
+    .then((content) => {
+      try {
+        const laid = renderTextItems(content.items);
+        if (laid.trim()) return laid;
+      } catch {
+        // Fall through to the plain reading below.
+      }
+      return content.items.map((it) => cleanItemText(String(it?.str ?? ''))).join(' ').trim();
+    })
     .catch(() => '');
 }

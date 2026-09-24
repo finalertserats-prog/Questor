@@ -40,7 +40,14 @@ const MONTHS: Record<string, number> = {
 const MONTH_WORD = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?';
 const YEAR = '(?:19|20)\\d{2}';
 const DASH = '(?:-|–|—|~|to|through|until|till)';
-const ONGOING = '(?:present|current|now|to\\s*date|till\\s*date|ongoing|date)';
+/**
+ * The trailing boundary is not optional. Without it "present" matched inside
+ * "presently", "now" inside "nowhere", and bare "date" inside "dated" and
+ * "dates" — so "Engineer, Acme 2019 - dates vary" became a role still running
+ * today. Bare "date" is kept only because "to date" and "till date" are
+ * written both ways, with and without the preposition.
+ */
+const ONGOING = '(?:present|current|now|to\\s*date|till\\s*date|ongoing|date)(?![a-z])';
 
 /**
  * A range, in the shapes CVs actually write:
@@ -89,11 +96,55 @@ const VERSIONED_PRODUCT = new RegExp(
   'gi',
 );
 
-/** Blank out anything a date cannot legitimately be found inside. */
-export function proseOnly(text: string): string {
-  let out = text.replace(VERSIONED_PRODUCT, (m) => ' '.repeat(m.length));
+/**
+ * The longest run of text scanned as one piece.
+ *
+ * Every pattern here can backtrack, and backtracking cost grows faster than
+ * the length of the unbroken run it is working on. The input is a CV, which
+ * an attacker supplies: 200,000 characters of "1" — the extraction cap, on
+ * one line — took 78 seconds of CPU, and 200,000 dashes took 75. That is a
+ * denial of service against a public upload endpoint, one file at a time.
+ *
+ * A real CV line runs to a few hundred characters; a date range and a phone
+ * number are both far shorter. Nothing legitimate is lost by refusing to
+ * treat a 200,000-character run as a single line, and capping it turns the
+ * worst case linear in the size of the document.
+ */
+const MAX_SCAN_RUN = 2000;
+
+/** Long runs split into scannable pieces, at a space where there is one. */
+function scannableRuns(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    if (line.length <= MAX_SCAN_RUN) { out.push(line); continue; }
+    for (let i = 0; i < line.length; i += MAX_SCAN_RUN) {
+      // Overlap each piece with the last, so a range sitting on a boundary is
+      // still read whole.
+      out.push(line.slice(Math.max(0, i - 40), i + MAX_SCAN_RUN));
+    }
+  }
+  return out;
+}
+
+function maskRun(run: string): string {
+  let out = run.replace(VERSIONED_PRODUCT, (m) => ' '.repeat(m.length));
   for (const re of NOT_PROSE) out = out.replace(re, (m) => ' '.repeat(m.length));
   return out;
+}
+
+/**
+ * Blank out anything a date cannot legitimately be found inside.
+ *
+ * Chunked for the same reason as the scan above, and length-preserving, so
+ * every character keeps its position. Nothing this masks — an email, a URL, a
+ * phone number, a product version — is ever written across a line break, so
+ * chunking costs no coverage in any real document.
+ */
+export function proseOnly(text: string): string {
+  if (text.length <= MAX_SCAN_RUN) return maskRun(text);
+  const out: string[] = [];
+  for (let i = 0; i < text.length; i += MAX_SCAN_RUN) out.push(maskRun(text.slice(i, i + MAX_SCAN_RUN)));
+  return out.join('');
 }
 
 function monthIndex(word: string | undefined): number | null {
@@ -113,8 +164,16 @@ function absMonth(year: number, month: number | null, fallback: number): number 
  * function of its inputs and a test can say what "Present" means.
  */
 export function experienceRanges(text: string, now = new Date()): ExperienceRange[] {
-  const scannable = proseOnly(text);
   const nowMonth = now.getFullYear() * 12 + now.getMonth();
+  const out: ExperienceRange[] = [];
+  for (const run of scannableRuns(text)) {
+    out.push(...rangesInRun(run, nowMonth));
+  }
+  return out;
+}
+
+function rangesInRun(run: string, nowMonth: number): ExperienceRange[] {
+  const scannable = proseOnly(run);
   const out: ExperienceRange[] = [];
   for (const m of scannable.matchAll(RANGE)) {
     const startYear = Number(m[2]);
@@ -129,10 +188,17 @@ export function experienceRanges(text: string, now = new Date()): ExperienceRang
       end = nowMonth;
     } else {
       const raw = m[5];
-      // "2017 - 18" means 2018, in the start's century.
-      const endYear = raw.length === 2
-        ? Math.floor(startYear / 100) * 100 + Number(raw)
-        : Number(raw);
+      // "2017 - 18" means 2018. Taking the start's century outright breaks
+      // across one: "1998 - 02" would become 1902, which ends before it
+      // starts and was therefore thrown away entirely, losing the role. A
+      // two-digit end that lands before its start belongs to the next
+      // century, because a range runs forwards.
+      let endYear = Number(raw);
+      if (raw.length === 2) {
+        const century = Math.floor(startYear / 100) * 100;
+        endYear = century + Number(raw);
+        if (endYear < startYear) endYear += 100;
+      }
       const endMonthWord = monthIndex(m[4]);
       end = absMonth(endYear, endMonthWord, 11);
     }

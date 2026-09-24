@@ -184,6 +184,9 @@ function stripBullet(line: string): string {
 const SECTION_HEADINGS = new Set([
   'experience', 'work experience', 'professional experience', 'employment', 'employment history',
   'work history', 'career history', 'career timeline', 'education', 'academic', 'qualifications',
+  'professional background', 'background', 'career summary', 'experience summary',
+  'relevant experience', 'related experience', 'industry experience', 'professional history',
+  'career', 'career experience', 'positions held', 'appointments', 'roles', 'work',
   'projects', 'project', 'key projects', 'skills', 'technical skills', 'core skills',
   'core competencies', 'competencies', 'key skills', 'areas of expertise', 'expertise',
   'certifications', 'certification', 'certificates', 'licenses', 'licences', 'training',
@@ -210,10 +213,40 @@ function headingKey(line: string): string | null {
   // TRAINING", "Education and Qualifications", "Skills / Tools". Every part
   // has to be a heading in its own right, so "Experience at Gartner and
   // Genesys" is still a sentence.
-  const parts = bare.split(/\s*(?:&|\/|\||,|and)\s*/).map((p) => p.trim()).filter(Boolean);
+  const parts = bare.split(/\s*(?:&|\/|\||,|\band\b)\s*/).map((p) => p.trim()).filter(Boolean);
   if (parts.length < 2 || parts.length > 3) return null;
   return parts.every((p) => SECTION_HEADINGS.has(p)) ? parts[0] : null;
 }
+
+/**
+ * The document with these sections removed, everything else left in place.
+ *
+ * Used for counting years, where the question is which text CANNOT contain
+ * employment dates rather than which text can. Reading the experience section
+ * alone looked like the obvious answer and was wrong: CVs put sub-headings
+ * inside it — "Key Highlights", "Achievements" — and the section stops at the
+ * first of them, so one real CV lost five of its six jobs and reported one
+ * year instead of six. Cutting out education and training instead makes no
+ * assumption about where the jobs end.
+ */
+function withoutSections(text: string, headers: readonly string[]): string {
+  const wanted = new Set(headers);
+  const out: string[] = [];
+  let dropping = false;
+  for (const line of text.split('\n')) {
+    const key = headingKey(line);
+    if (key) dropping = wanted.has(key);
+    out.push(dropping ? '' : line);
+  }
+  return out.join('\n');
+}
+
+/** Sections whose dates are never time spent employed. */
+const NON_EMPLOYMENT_SECTIONS = [
+  'education', 'academic', 'qualifications',
+  'certifications', 'certification', 'certificates', 'licenses', 'licences',
+  'training', 'courses', 'coursework',
+];
 
 /** The lines under one of these headings, ending at the next heading of any kind. */
 function sectionBody(text: string, headers: string[]): string {
@@ -246,6 +279,15 @@ function sectionBody(text: string, headers: string[]): string {
 const EXPERIENCE_HEADINGS = [
   'experience', 'work experience', 'professional experience', 'employment',
   'employment history', 'work history', 'career history',
+  // Without these a CV headed "Professional Background" or "Relevant
+  // Experience" produced no employment at all — no jobs shown to the
+  // recruiter, on a CV that plainly lists them. Since the section no longer
+  // falls back to the whole document, an unlisted heading is not a degraded
+  // reading any more; it is silence.
+  'professional background', 'background', 'career summary', 'experience summary',
+  'relevant experience', 'related experience', 'industry experience',
+  'professional history', 'career', 'career experience', 'positions held',
+  'appointments', 'roles', 'work', 'work history & projects',
 ];
 
 const DEGREE_RE = /\b(b\.?tech|b\.?e\.?|bachelor|master|m\.?tech|m\.?s\.?|mba|mca|bca|phd|doctorate|b\.?sc|m\.?sc|b\.?a\.?|m\.?a\.?|b\.?com|m\.?com|bbs|bba|llb|llm|diploma|hnd|btec|a[- ]levels?)\b/i;
@@ -322,7 +364,7 @@ export function normalizeProfile(text: string): NormalizedProfile {
     const line = stripBullet(raw);
     // "Digital Marketing Master's Program" is a course, and the word "Master"
     // in it is a marketing decision rather than an academic one.
-    if (DEGREE_RE.test(line) && !/(program|programme|course|bootcamp|training|certification|certificate)/i.test(line)) {
+    if (DEGREE_RE.test(line) && !/\b(program|programme|course|bootcamp|training|certification|certificate)\b/i.test(line)) {
       const year = line.match(dateRe)?.[0];
       // "— MBA" and "▪ B.Tech" are the glyphs a PDF leaves behind, not part of
       // anyone's degree.
@@ -357,7 +399,12 @@ export function normalizeProfile(text: string): NormalizedProfile {
   // Years of experience: the union of the date ranges the CV writes down.
   // engines/experienceSpan.ts has the candidate who was credited with 31 years
   // because 1995 appears in her email address.
-  const totalYears = totalExperienceYears(clean);
+  //
+  // Everything except education and training. Scanning the whole document
+  // counts a course dated "Jul 2019 - Oct 2019" and a degree dated
+  // "2010 - 2013" as time employed, and where those fall in a gap between
+  // jobs they add years nobody worked.
+  const totalYears = totalExperienceYears(withoutSections(clean, NON_EMPLOYMENT_SECTIONS));
 
   return {
     // A CV this parser could not find a single job in still has jobs. The
