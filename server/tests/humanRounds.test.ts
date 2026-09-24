@@ -363,74 +363,191 @@ describe('two interviewers on one candidate at one stage', () => {
 describe('who may record what a round showed', () => {
   beforeEach(async () => { await wipe(); });
 
-  /** A colleague who may see their assigned candidates and nothing more — the SME's shape. */
-  async function reviewerOnly(tenantId: string, handle: string) {
+  /**
+   * A real subject-matter expert, as capabilities.ts ships one: they hold
+   * `sme:assigned_read` and `sme:review` and nothing else — not
+   * `candidate:read`, not `interview:schedule`. Every assertion below is about
+   * that account, not a stand-in with a friendlier capability list.
+   */
+  async function expert(tenantId: string, handle: string) {
     const user = await prisma.user.create({
-      data: { tenantId, email: `${handle}@demo.local`, name: handle, passwordHash: 'x', role: 'reviewer' },
+      data: { tenantId, email: `${handle}@demo.local`, name: handle, passwordHash: 'x', role: 'sme' },
     });
-    return { id: user.id, auth: `Bearer ${signToken({ userId: user.id, tenantId, role: 'reviewer', email: user.email })}` };
+    return { id: user.id, auth: `Bearer ${signToken({ userId: user.id, tenantId, role: 'sme', email: user.email })}` };
   }
 
-  // The point of the lane. An SME is given a candidate so they can conduct one
-  // round; scheduling is not theirs. A round only a scheduler could close would
-  // leave the person who actually ran it unable to record what they saw.
-  it('lets the person who conducted the round record it, without scheduling rights', async () => {
-    const ids = await seeded();
-    const sme = await reviewerOnly(ids.tenantId, 'sme-conductor');
+  async function roundFor(ids: Seeded, sme: { id: string }) {
     const pipelineId = await pipelineAt(ids.auth, ids.candidateId, 'gold');
     const booked = await book(ids.auth, pipelineId, {
       stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [sme.id],
     });
+    return { pipelineId, roundId: booked.body.round.id as string };
+  }
 
-    const res = await complete(sme.auth, pipelineId, booked.body.round.id as string, A_NOTES);
+  // The point of the lane. An expert is asked to conduct one round; scheduling
+  // is not theirs and neither is the candidate list. A round only a scheduler
+  // could close would leave the person who ran it unable to record what they
+  // saw.
+  it('lets the expert who conducted the round record it', async () => {
+    const ids = await seeded();
+    const sme = await expert(ids.tenantId, 'sme-conductor');
+    const { pipelineId, roundId } = await roundFor(ids, sme);
+
+    const res = await complete(sme.auth, pipelineId, roundId, A_NOTES);
 
     expect(res.status).toBe(200);
   });
 
   it('names them on the record they wrote', async () => {
     const ids = await seeded();
-    const sme = await reviewerOnly(ids.tenantId, 'sme-named');
-    const pipelineId = await pipelineAt(ids.auth, ids.candidateId, 'gold');
-    const booked = await book(ids.auth, pipelineId, {
-      stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [sme.id],
-    });
-    await complete(sme.auth, pipelineId, booked.body.round.id as string, A_NOTES);
+    const sme = await expert(ids.tenantId, 'sme-named');
+    const { pipelineId, roundId } = await roundFor(ids, sme);
+    await complete(sme.auth, pipelineId, roundId, A_NOTES);
 
     const [round] = await roundsOf(ids.auth, pipelineId);
 
     expect(round.recordedBy?.userId).toBe(sme.id);
   });
 
-  // A colleague entitled to the candidate but not in the room has nothing
-  // first-hand to record, and a record they wrote would be attributed to them
-  // as though they had been there.
-  it('refuses someone who was neither in the room nor schedules rounds', async () => {
+  it('gives them the scorecard their record is filed against', async () => {
     const ids = await seeded();
-    const sme = await reviewerOnly(ids.tenantId, 'sme-in-room');
-    const bystander = await reviewerOnly(ids.tenantId, 'sme-bystander');
-    const pipelineId = await pipelineAt(ids.auth, ids.candidateId, 'gold');
-    const booked = await book(ids.auth, pipelineId, {
-      stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [sme.id, bystander.id],
-    });
-    // Unseat the bystander, leaving them assigned the candidate but off the round.
-    await prisma.roundInterviewer.deleteMany({ where: { roundId: booked.body.round.id as string, userId: bystander.id } });
+    const sme = await expert(ids.tenantId, 'sme-scorecard');
+    const { pipelineId } = await roundFor(ids, sme);
 
-    const res = await complete(bystander.auth, pipelineId, booked.body.round.id as string, A_NOTES);
+    const res = await request(app).get(`/api/pipelines/${pipelineId}/competencies`).set('Authorization', sme.auth);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('lets them file claims against it', async () => {
+    const ids = await seeded();
+    const sme = await expert(ids.tenantId, 'sme-files');
+    const { pipelineId, roundId } = await roundFor(ids, sme);
+    const listed = await request(app).get(`/api/pipelines/${pipelineId}/competencies`).set('Authorization', sme.auth);
+    const [first] = listed.body.competencies as Array<{ id: string }>;
+
+    const res = await request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/complete`)
+      .set('Authorization', sme.auth)
+      .send({ notes: A_NOTES, evidence: [{ competencyId: first.id, claim: 'Owned the incident end to end.', quote: 'I paged myself at 2am and ran it.' }] });
+
+    expect(res.status).toBe(200);
+  });
+
+  // The seat reaches this lane and nothing else. Their view of the candidate
+  // arrives through /api/sme, which has its own assignment and capability.
+  it('does not open the candidate\u2019s pipeline to them', async () => {
+    const ids = await seeded();
+    const sme = await expert(ids.tenantId, 'sme-no-pipeline');
+    const { pipelineId } = await roundFor(ids, sme);
+
+    const res = await request(app).get(`/api/pipelines/${pipelineId}`).set('Authorization', sme.auth);
 
     expect(res.status).toBe(403);
   });
 
-  it('still lets a recruiter who schedules rounds close one they did not conduct', async () => {
+  // The hazard services/access.ts documents: a CandidateAssignment outlives a
+  // role change, so a row minted for an expert would still be there on the day
+  // their account was re-roled to recruiter, silently handing them the full
+  // candidate scope over someone they had only been asked to advise on.
+  it('mints no candidate assignment for an expert, which a later role change would inherit', async () => {
     const ids = await seeded();
-    const sme = await reviewerOnly(ids.tenantId, 'sme-elsewhere');
+    const sme = await expert(ids.tenantId, 'sme-no-grant');
+    await roundFor(ids, sme);
+
+    const rows = await prisma.candidateAssignment.count({ where: { userId: sme.id } });
+
+    expect(rows).toBe(0);
+  });
+
+  it('still gives the candidate to a colleague who works in candidate scope', async () => {
+    const ids = await seeded();
+    const colleague = await recruiter(ids.tenantId, 'recruiter-seated');
     const pipelineId = await pipelineAt(ids.auth, ids.candidateId, 'gold');
-    const booked = await book(ids.auth, pipelineId, {
-      stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [sme.id],
+    await book(ids.auth, pipelineId, {
+      stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [colleague.id],
     });
 
-    const res = await complete(ids.auth, pipelineId, booked.body.round.id as string, A_NOTES);
+    const res = await request(app).get(`/api/pipelines/${pipelineId}`).set('Authorization', colleague.auth);
 
     expect(res.status).toBe(200);
+  });
+
+  // A colleague entitled to the candidate but not in the room has nothing
+  // first-hand to record, and a record they wrote would be attributed to them
+  // as though they had been there.
+  it('refuses an expert who was never seated on the round', async () => {
+    const ids = await seeded();
+    const sme = await expert(ids.tenantId, 'sme-in-room');
+    const bystander = await expert(ids.tenantId, 'sme-bystander');
+    const { pipelineId, roundId } = await roundFor(ids, sme);
+
+    const res = await complete(bystander.auth, pipelineId, roundId, A_NOTES);
+
+    expect(res.status).toBe(404);
+  });
+
+  // The sharp case. Being seated on ONE round reaches the pipeline, so the
+  // per-round seat check is the only thing standing between an expert and
+  // writing the record of a colleague's round — which would put their account
+  // on evidence for a conversation they were not in, and is the same anchoring
+  // problem the peer quarantine exists to prevent, from the writing end.
+  it('refuses an expert closing a peer round at the same stage, though they are seated on their own', async () => {
+    const ids = await seeded();
+    const a = await expert(ids.tenantId, 'sme-peer-a');
+    const b = await expert(ids.tenantId, 'sme-peer-b');
+    const pipelineId = await pipelineAt(ids.auth, ids.candidateId, 'gold');
+    const roundA = await book(ids.auth, pipelineId, {
+      stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [a.id],
+    });
+    await book(ids.auth, pipelineId, {
+      stageKey: 'gold', scheduledAt: '2026-10-09T09:00:00.000Z', interviewerUserIds: [b.id],
+    });
+
+    const res = await complete(b.auth, pipelineId, roundA.body.round.id as string, A_NOTES);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('leaves that peer round open and unattributed', async () => {
+    const ids = await seeded();
+    const a = await expert(ids.tenantId, 'sme-peer-c');
+    const b = await expert(ids.tenantId, 'sme-peer-d');
+    const pipelineId = await pipelineAt(ids.auth, ids.candidateId, 'gold');
+    const roundA = await book(ids.auth, pipelineId, {
+      stageKey: 'gold', scheduledAt: '2026-10-08T09:00:00.000Z', interviewerUserIds: [a.id],
+    });
+    await book(ids.auth, pipelineId, {
+      stageKey: 'gold', scheduledAt: '2026-10-09T09:00:00.000Z', interviewerUserIds: [b.id],
+    });
+    await complete(b.auth, pipelineId, roundA.body.round.id as string, A_NOTES);
+
+    const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundA.body.round.id as string } });
+
+    expect([saved.status, saved.recordedByUserId]).toEqual(['SCHEDULED', null]);
+  });
+
+  it('still lets a recruiter who schedules rounds close one they did not conduct', async () => {
+    const ids = await seeded();
+    const sme = await expert(ids.tenantId, 'sme-elsewhere');
+    const { pipelineId, roundId } = await roundFor(ids, sme);
+
+    const res = await complete(ids.auth, pipelineId, roundId, A_NOTES);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses an auditor, who holds neither capability', async () => {
+    const ids = await seeded();
+    const sme = await expert(ids.tenantId, 'sme-audited');
+    const { pipelineId, roundId } = await roundFor(ids, sme);
+    const user = await prisma.user.create({
+      data: { tenantId: ids.tenantId, email: 'auditor@demo.local', name: 'Auditor', passwordHash: 'x', role: 'auditor' },
+    });
+    const auth = `Bearer ${signToken({ userId: user.id, tenantId: ids.tenantId, role: 'auditor', email: user.email })}`;
+
+    const res = await complete(auth, pipelineId, roundId, A_NOTES);
+
+    expect(res.status).toBe(403);
   });
 });
 

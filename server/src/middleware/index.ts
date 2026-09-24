@@ -222,6 +222,31 @@ export function requireCapability(cap: Capability) {
   };
 }
 
+/**
+ * Any one of several capabilities is enough.
+ *
+ * For a route two different kinds of account reach for different reasons — a
+ * recruiter running the process, and a subject-matter expert who was asked to
+ * conduct one round. Listing both is honest about that; widening either role's
+ * grant so a single name covers them would give the expert a capability the
+ * rest of the product is gated on, which is exactly what their narrow role
+ * exists to avoid (domain/capabilities.ts).
+ *
+ * Still only half the question. The object scope check is as required here as
+ * anywhere else, and is what stops "an expert somewhere" meaning "this
+ * candidate".
+ */
+export function requireAnyCapability(...caps: readonly Capability[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.auth) return res.status(401).json({ error: 'Not authenticated' });
+    const held = capabilitiesOf(req.auth.role);
+    if (!caps.some((cap) => held.includes(cap))) {
+      return res.status(403).json({ error: 'Your account does not have permission to do that.' });
+    }
+    next();
+  };
+}
+
 /** Wrap async route handlers to funnel errors to the error middleware. */
 export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {
   return (req: Request, res: Response, next: NextFunction) => {

@@ -2,8 +2,10 @@ import { Router, type Request } from 'express';
 import { z } from 'zod';
 import type { CandidatePipeline, InterviewRound } from '@prisma/client';
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
-import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { assignCandidate, assertCanAccessCandidate, assertCanAccessRole, hasCapability } from '../services/access.js';
+import { asyncHandler, authenticate, requireAnyCapability, requireCapability, HttpError } from '../middleware/index.js';
+import {
+  assignCandidate, assertCanAccessCandidate, assertCanAccessRole, capabilitiesOf, hasCapability,
+} from '../services/access.js';
 import { aiConclusionVisible } from '../services/shadowMode.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice } from '../services/roundCandidateNotice.js';
 import { sendInterviewSchedule, writeSessionSchedule } from './interviews.js';
@@ -197,6 +199,39 @@ export async function loadPipeline(req: Request, id: string): Promise<PipelineWi
   if (!pipeline) throw new HttpError(404, 'Pipeline not found');
   // Pipelines inherit the candidate's scope rather than defining their own.
   await assertCanAccessCandidate(req.auth!, pipeline.candidateId);
+  return pipeline;
+}
+
+/**
+ * The two capabilities that reach a round's own endpoints: the ordinary one,
+ * and the subject-matter expert's. An expert holds neither `candidate:read` nor
+ * `interview:schedule` by design, so naming only the first would leave the
+ * person who actually conducted the round unable to record what they saw.
+ */
+const MAY_REACH_A_ROUND = requireAnyCapability('candidate:read', 'sme:assigned_read');
+
+/**
+ * A pipeline this caller may work with, reached EITHER the ordinary way — they
+ * are entitled to the candidate — OR because they are seated on one of its
+ * rounds.
+ *
+ * The seat is the narrower and more accurate fact, and it is deliberately not
+ * expressed as a candidate assignment. `CandidateAssignment` rows outlive a
+ * role change, so a grant minted here would still be sitting there on the day
+ * an expert's account was re-roled to recruiter, silently handing them the full
+ * candidate scope over someone they had only been asked to advise on — the
+ * hazard services/access.ts `assignedCandidateIds` documents and excludes the
+ * `sme` relation to avoid. A seat cannot widen like that: nothing but this
+ * round reads it, and it disappears with the round.
+ */
+async function loadPipelineForPanel(req: Request, id: string): Promise<PipelineWithRounds> {
+  const pipeline = await prisma.candidatePipeline.findFirst({
+    where: { id, tenantId: req.auth!.tenantId }, include: withRounds,
+  });
+  if (!pipeline) throw new HttpError(404, 'Pipeline not found');
+  const seated = pipeline.rounds.some((round) => round.panel.some((seat) => seat.userId === req.auth!.userId));
+  // Not seated: the ordinary scope check, and its 404, apply unchanged.
+  if (!seated) await assertCanAccessCandidate(req.auth!, pipeline.candidateId);
   return pipeline;
 }
 
@@ -394,8 +429,8 @@ async function noticeForNewRound(
 async function resolvePanel(tenantId: string, userIds: readonly string[]) {
   const unique = [...new Set(userIds)];
   if (unique.length === 0) return [];
-  const users = await prisma.user.findMany({ where: { id: { in: unique }, tenantId }, select: { id: true } });
-  const found = new Set(users.map((u) => u.id));
+  const users = await prisma.user.findMany({ where: { id: { in: unique }, tenantId }, select: { id: true, role: true } });
+  const found = new Map(users.map((u) => [u.id, u.role]));
   const missing = unique.filter((id) => !found.has(id));
   if (missing.length > 0) {
     throw new HttpError(400, `${missing.length === 1 ? 'One of the people' : 'Some of the people'} named to conduct this round is not a colleague in your organisation.`);
@@ -403,7 +438,15 @@ async function resolvePanel(tenantId: string, userIds: readonly string[]) {
   // The first person named leads, and the lead is the name a certificate
   // prints. Order is the booker's stated intent, so it is kept rather than
   // re-derived from a seniority the system does not know about.
-  return unique.map((userId, index) => ({ userId, seat: index === 0 ? 'lead' : 'panel' }));
+  return unique.map((userId, index) => ({
+    userId,
+    seat: index === 0 ? 'lead' : 'panel',
+    // Whether a candidate assignment would mean anything to them. An expert
+    // holds no capability that a candidate-scoped route is gated on, so a row
+    // minted for them grants nothing today and becomes a real grant the day
+    // their account is re-roled — see loadPipelineForPanel.
+    scoped: capabilitiesOf(found.get(userId) ?? '').includes('candidate:read'),
+  }));
 }
 
 const roundSchema = z.object({
@@ -531,11 +574,17 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
       await tx.roundInterviewer.createMany({
         data: panel.map((seat) => ({ tenantId, roundId: created.id, userId: seat.userId, seat: seat.seat })),
       });
-      // Booking someone to interview this candidate is what gives them the
-      // candidate. An SME assigned a round they cannot open has been assigned
-      // nothing, and would have to be granted access by a second, separate
-      // action that nobody would remember to take.
-      for (const seat of panel) await assignCandidate(pipeline.candidateId, seat.userId, 'interviewer', tx);
+      // Booking a colleague who works in candidate scope gives them the
+      // candidate, so they can find the round on the candidate's page.
+      //
+      // An expert gets no such row. Their seat already reaches everything this
+      // lane offers them (loadPipelineForPanel), the row would grant nothing
+      // they can currently use, and it would outlive a later role change as a
+      // silent claim on a named person. What they see of the candidate arrives
+      // through /api/sme, which has its own assignment and its own capability.
+      for (const seat of panel.filter((s) => s.scoped)) {
+        await assignCandidate(pipeline.candidateId, seat.userId, 'interviewer', tx);
+      }
     }
     return { round: created, noticeAdded, rebookedFrom };
   });
@@ -567,10 +616,11 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     after: {
       roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy,
       scheduledAt: booked.at.toISOString(), scheduledTimeZone: booked.timeZone,
-      // Who was seated, and therefore who was granted this candidate by the
-      // booking. An access grant that leaves no trace is not an access grant
-      // anybody can review.
+      // Who was seated, and separately who the booking granted the candidate
+      // to. An access grant that leaves no trace is not one anybody can review,
+      // and the two lists differ whenever an expert is in the room.
       interviewerUserIds: panel.map((seat) => seat.userId),
+      grantedCandidateTo: panel.filter((seat) => seat.scoped).map((seat) => seat.userId),
     },
   });
 
@@ -637,8 +687,8 @@ async function roleCompetencies(roleId: string): Promise<{ id: string; name: str
 // The scorecard a round's evidence is filed against. Read-only, and scoped
 // through the pipeline's candidate, which is how an SME reaches the approved
 // scorecard for the role they are interviewing for without reaching the role.
-pipelinesRouter.get('/:id/competencies', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
-  const pipeline = await loadPipeline(req, req.params.id);
+pipelinesRouter.get('/:id/competencies', MAY_REACH_A_ROUND, asyncHandler(async (req, res) => {
+  const pipeline = await loadPipelineForPanel(req, req.params.id);
   res.json({ competencies: await roleCompetencies(pipeline.roleId) });
 }));
 
@@ -652,9 +702,9 @@ pipelinesRouter.get('/:id/competencies', requireCapability('candidate:read'), as
 // would leave the person who actually ran it unable to record what they saw —
 // which is the whole reason the round exists. Whoever closes it is named on the
 // record either way (recordedByUserId).
-pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+pipelinesRouter.post('/:id/rounds/:roundId/complete', MAY_REACH_A_ROUND, asyncHandler(async (req, res) => {
   const { notes, evidence } = completeSchema.parse(req.body);
-  const pipeline = await loadPipeline(req, req.params.id);
+  const pipeline = await loadPipelineForPanel(req, req.params.id);
   const round = pipeline.rounds.find((r) => r.id === req.params.roundId);
   if (!round) throw new HttpError(404, 'Round not found');
 
