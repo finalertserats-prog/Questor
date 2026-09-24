@@ -12,6 +12,14 @@ web/.env
 *.sqlite
 *.sqlite-journal
 *.db
+# SQLite writes a sidecar while a transaction is open, and the test databases
+# are created and destroyed constantly. Without this the journals sit untracked
+# in server/prisma/data/ and a blanket `git add` sweeps them in — which is the
+# 2026-04-23 scar, where exactly that pattern leaked a file carrying SSH
+# credentials into a push.
+*.db-journal
+*.db-wal
+*.db-shm
 server/prisma/*.db
 server/prisma/dev.db*
 server/data/
