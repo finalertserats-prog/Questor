@@ -7,7 +7,7 @@
 // a header on state-changing calls — the double-submit pattern the server
 // enforces on cookie-authenticated writes.
 
-import { interpretResponse, isNetworkFailure, NETWORK_MESSAGE, TIMEOUT_MESSAGE } from './responseModel';
+import { interpretResponse, isNetworkFailure, NETWORK_MESSAGE, TIMEOUT_MESSAGE, UNREADABLE_MESSAGE } from './responseModel';
 
 const CSRF_COOKIE = 'questor_csrf';
 // Long enough for the slowest thing the API does honestly (an LLM-backed
@@ -128,8 +128,67 @@ function isAbort(err: unknown): boolean {
   return err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError');
 }
 
+/** The name the server gave the file, out of `Content-Disposition`. */
+function attachmentName(header: string | null): string | null {
+  const quoted = /filename="([^"]+)"/.exec(header ?? '')?.[1];
+  return quoted?.trim() || null;
+}
+
+/**
+ * Hand a generated file to the browser.
+ *
+ * A revoked object URL is not optional housekeeping: without it the blob stays
+ * alive for the life of the tab, and a scorecard PDF is megabytes each time
+ * someone clicks.
+ */
+function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  // Firefox only dispatches the click on a link that is in the document.
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * A file the server renders rather than a JSON payload — today, the approved
+ * scorecard as a PDF.
+ *
+ * No CSRF header: it is the double-submit half of a *state-changing* call, and
+ * the server asks for it on unsafe methods only. The session still travels in
+ * the cookie, so `credentials: 'include'` is what makes this work when the API
+ * is on another origin than the SPA.
+ *
+ * A refusal arrives as JSON with a 4xx. Reading the body as a file regardless
+ * of status is how a download button ends up saving a file containing the word
+ * "Forbidden", so the bytes are only treated as a file once the answer is ok;
+ * anything else goes through the same interpretation as every other call and
+ * reaches the page as an ApiError it already knows how to show.
+ */
+async function download(path: string, fallbackFilename: string, opts?: RequestOptions): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, { method: 'GET', credentials: 'include', signal: requestSignal(opts?.signal) });
+  } catch (err: unknown) {
+    if (isAbort(err)) throw new ApiError(0, TIMEOUT_MESSAGE);
+    if (isNetworkFailure(err)) throw new ApiError(0, NETWORK_MESSAGE);
+    throw err;
+  }
+  if (!res.ok) {
+    const outcome = interpretResponse({ ok: false, status: res.status, statusText: res.statusText, text: await res.text() });
+    if (outcome.kind === 'error') throw new ApiError(outcome.status, outcome.message, outcome.code);
+    throw new ApiError(res.status, UNREADABLE_MESSAGE);
+  }
+  saveBlob(await res.blob(), attachmentName(res.headers.get('Content-Disposition')) ?? fallbackFilename);
+}
+
 export const api = {
   get: <T>(p: string, opts?: RequestOptions) => req<T>('GET', p, undefined, false, opts),
+  /** Saves the answer as a file instead of parsing it; see `download` above. */
+  download,
   post: <T>(p: string, body?: unknown) => req<T>('POST', p, body),
   put: <T>(p: string, body?: unknown) => req<T>('PUT', p, body),
   patch: <T>(p: string, body?: unknown) => req<T>('PATCH', p, body),

@@ -62,6 +62,7 @@ export function RoleDetail() {
   const [saving, setSaving] = useState(false);
   const [approving, setApproving] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   // Hidden once the server says the archive endpoint is missing or not for
   // this user, rather than offering a button that always fails.
   const [archiveUnavailable, setArchiveUnavailable] = useState(false);
@@ -209,6 +210,21 @@ export function RoleDetail() {
     }
   };
 
+  // Only an approved scorecard exports, so the button is not offered before
+  // then — a control that can only answer 409 teaches nothing.
+  const downloadPdf = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    setActionError('');
+    try {
+      await api.download(`/roles/${id}/export.pdf`, `${role.title}-scorecard-v${scorecard?.version ?? 1}.pdf`);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Could not download the scorecard.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const changeStatus = async () => {
     if (archiving) return;
     setArchiving(true);
@@ -269,6 +285,19 @@ export function RoleDetail() {
               // A recruiter drafts; someone else signs off. Said here rather
               // than as a button that can only answer "permission denied".
               <span className="muted small" data-testid="awaiting-approval">[ awaiting approval ] {onlyWhoCan('role:approve_scorecard', 'approve the scorecard')}</span>
+            )}
+            {approved && (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => void downloadPdf()}
+                disabled={downloading}
+                data-testid="download-scorecard-pdf"
+                title="The approved scorecard as a PDF, with the job description and every competency's source line."
+              >
+                <Icon name={downloading ? 'hourglass' : 'export'} size={16} />
+                {downloading ? 'Preparing…' : 'Download PDF'}
+              </button>
             )}
             {mayApprove && !archiveUnavailable && (
               <button type="button" className="btn ghost" onClick={() => void changeStatus()} disabled={archiving}>
