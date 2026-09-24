@@ -170,6 +170,12 @@ export async function wipe(): Promise<void> {
   // standing: the shared catalog is not any tenant's data. Named explicitly
   // rather than relying on the tenant cascade, so the order stays readable.
   await prisma.tenantBusinessArea.deleteMany();
+  // The demo interview's rows, which hold foreign keys onto Tenant. Each one
+  // is also deleted by the demo purge; this is the test lane's equivalent.
+  // DemoSpendDay is deliberately absent — it belongs to no tenant.
+  await prisma.demoFeedback.deleteMany();
+  await prisma.demoModelSpend.deleteMany();
+  await prisma.demoInterviewRun.deleteMany();
   await prisma.user.deleteMany();
   await prisma.tenant.deleteMany();
 }
