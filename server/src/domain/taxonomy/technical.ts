@@ -46,7 +46,7 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Explains a modelling decision and what it cost', 'Handles slowly changing dimensions and grain', 'Describes how the model survived a requirement change'],
     aliases: ['Dimensional Modelling', 'Dimensional Modeling', 'Schema Design', 'Data Architecture'],
     cues: [
-      /\b(data model(l)?ing|dimensional model|star schema|snowflake schema|slowly changing dimension|scd\b|normalis(ed|ation)|denormalis)/i,
+      /\b(data model(s|ling|ing)?\b|dimensional (model|schema)|star schema|snowflake schema|slowly changing dimension|scd\b|normalis(ed|ation)|denormalis)/i,
       /\b(schema design|entity relationship|data vault|semantic layer|canonical model)\b/i,
     ],
     domains: ['data', 'software', 'bfsi'],
@@ -111,10 +111,14 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['Programming', 'Coding', 'Software Development', 'Application Development'],
     cues: [
       /\b(software (engineering|development)|writ(e|ing) (clean|maintainable|production) code|object[- ]oriented|functional programming)\b/i,
-      /\b(java\b|python\b|typescript|javascript|golang|\bgo\b|rust\b|c\+\+|c#|kotlin|swift|scala|ruby|php)\b/i,
+      // "Go" needs the hyphen excluded on both sides or it matches inside
+      // "Go-to-market" and "Go-live", which appear on adverts that have
+      // nothing to do with the language.
+      /\b(java\b|python\b|typescript|javascript|golang|(?<![\w-])go(?![\w-])|rust\b|c\+\+|c#|kotlin|swift|scala|ruby|php)\b/i,
       /\b(code review|refactor(ing)?|design patterns|clean code|solid principles)\b/i,
     ],
     domains: ['software', 'frontier_ai', 'cloud', 'semiconductor', 'media'],
+    general: true,
   },
   {
     name: 'API & Service Design',

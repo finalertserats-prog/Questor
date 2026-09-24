@@ -269,7 +269,7 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['Research', 'R&D', 'Applied Research', 'Laboratory Science'],
     cues: [
       /\b(research (design|methodology|programme|program)|experimental design|hypothes(is|es)|peer[- ]reviewed|publications?)\b/i,
-      /\b(laborator(y|ies)|assay|in ?vitro|in ?vivo|clinical trial (design|protocol)|\bgcp\b|\bglp\b)\b/i,
+      /\b(laborator(y|ies)|assay|in ?vitro|in ?vivo|clinical trial (design|protocol)|good clinical practice|good laboratory practice)\b/i,
       /\b(\bphd\b|postdoctoral|grant (funding|applications?)|principal investigator)\b/i,
     ],
     domains: ['science', 'life_sciences', 'healthcare', 'education', 'frontier_ai'],

@@ -57,6 +57,16 @@ export interface CanonicalCompetency {
   /** Where this competency is ordinarily asked for. Empty means every domain. */
   readonly domains: readonly DomainTag[];
   /**
+   * A broad umbrella that a more specific competency should beat.
+   *
+   * "Build streaming pipelines using Python" evidences Data Engineering and,
+   * through the bare word Python, Software Engineering too. Proposing both
+   * measures the candidate twice on one sentence and buries the specific
+   * requirement under a generic one. A general competency therefore has to
+   * earn a line of its own — see `proposeFromJd`.
+   */
+  readonly general?: boolean;
+  /**
    * True for competencies the platform proposes on every role regardless of
    * what the advert says (Communication, Problem Solving, …). They carry no JD
    * span because they do not come from the JD, and they are labelled as such

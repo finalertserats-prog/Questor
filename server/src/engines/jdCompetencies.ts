@@ -118,6 +118,31 @@ function gather(sourceText: string): Map<string, Gathered> {
 }
 
 /**
+ * A broad competency has to earn a line of its own.
+ *
+ * "Build and operate batch and streaming pipelines using Python, Airflow and
+ * Spark" evidences Data Engineering & Pipelines, and — through the bare word
+ * Python — Software Engineering as well. Proposing both measures the candidate
+ * twice on one sentence, and buries the requirement the advert actually made
+ * under a generic one it did not.
+ *
+ * So a `general` competency survives only on a line that no more specific
+ * competency already claims, and not from the nice-to-haves: an umbrella named
+ * once as a bonus is not what this job is for. A backend advert reading
+ * "Strong Java, design patterns and code review" keeps Software Engineering,
+ * because that line is its own.
+ */
+function earnedTheirPlace(gathered: readonly Gathered[]): Gathered[] {
+  const specificLines = new Set(
+    gathered.filter((g) => !g.canonical.general).flatMap((g) => g.spans.map((s) => s.line)),
+  );
+  return gathered.filter(({ canonical, spans }) => {
+    if (!canonical.general) return true;
+    return spans.some((s) => !specificLines.has(s.line) && s.section !== 'nice_to_have');
+  });
+}
+
+/**
  * How hard the advert is pushing for this.
  *
  * A requirement stated three times in the requirements section outweighs one
@@ -211,7 +236,7 @@ function normalise(
  */
 export function proposeFromJd(sourceText: string, opts: ProposeOptions = {}): ProposedCompetency[] {
   const band = bandFrom(opts);
-  const gathered = [...gather(sourceText).values()];
+  const gathered = earnedTheirPlace([...gather(sourceText).values()]);
 
   const fromJd = gathered.map(({ canonical, spans }) => {
     const classification = classificationOf(spans);
