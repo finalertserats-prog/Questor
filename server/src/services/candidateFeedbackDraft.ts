@@ -76,12 +76,16 @@ function isEvidenced(c: CompetencyScore): boolean {
  * own words attached, but that the grader could not score, is evidenced in the
  * transcript and ungraded in our system — a fact about us.
  *
- * `gradingUnavailable` counts as covered whether or not spans survived: a
- * failed rubric call tells us nothing whatever about whether the question was
- * asked, so it can never be the basis for saying it was not.
+ * The candidate's own words are the evidence that it came up, and they are the
+ * only evidence either letter has. A failed rubric call that left no spans at
+ * all is indistinguishable from a competency the interview never reached, so
+ * it is reported the same way in both letters — `coverageMarker` in
+ * feedbackContentModel.ts draws the line in exactly the same place, and two
+ * candidate-facing paths that disagree about the same assessment would be a
+ * second version of the defect this file was fixed for.
  */
 function wasCovered(c: CompetencyScore): boolean {
-  return c.gradingUnavailable === true || (Array.isArray(c.evidence) && c.evidence.length > 0);
+  return Array.isArray(c.evidence) && c.evidence.length > 0;
 }
 
 /**

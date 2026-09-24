@@ -368,6 +368,23 @@ describe('P7 — the candidate\'s own question gets an answer', () => {
     expect(answer).not.toMatch(/^This is the Data Engineer role\./);
   });
 
+  it('answers the second question when it arrives without its question mark', () => {
+    // Spoken aloud, or typed in a hurry. Splitting on "?" alone left this one
+    // in a trailing remainder and answered only the first.
+    const answer = answerFromRoleFacts(
+      'What technology stack does the team use? And how is success measured in the first few months',
+      ROLE_FACTS,
+    );
+    expect(answer).toMatch(/Python/);
+    expect(answer).toMatch(/first few months/i);
+  });
+
+  it('does not mistake a trailing sign-off for a second question', () => {
+    const answer = answerFromRoleFacts('What technology stack does the team use? Thanks, that is all from me', ROLE_FACTS);
+    expect(answer).toMatch(/Python/);
+    expect(answer).not.toMatch(/hiring team/i);
+  });
+
   it('says plainly when it does not know, rather than reciting the role', () => {
     const answer = answerFromRoleFacts('What does the salary band look like for this one?', ROLE_FACTS);
     expect(answer).toMatch(/hiring team/i);

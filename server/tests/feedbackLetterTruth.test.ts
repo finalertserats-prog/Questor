@@ -111,6 +111,17 @@ describe('the letter never says a topic did not come up when it did', () => {
     expect(draft.notCovered).toEqual([]);
   });
 
+  it('says the same thing as the automatic letter about a grading failure with no evidence', () => {
+    // Two candidate-facing paths that disagree about one assessment would be a
+    // second version of this defect. With no spans at all, a failed grader is
+    // indistinguishable from a competency the interview never reached, and
+    // both letters say so.
+    const competency = score({ id: 'c_sql', name: 'SQL & Data Warehousing', gradingUnavailable: true, evidence: [] });
+    expect(coverageMarker(competency)).toBe('not-covered');
+    const draft = buildFeedbackDraft({ ...NAMES, assessment: assessment([competency]) });
+    expect(draft.notCovered).toEqual(['SQL & Data Warehousing']);
+  });
+
   it('keeps the "not enough to say" letter honest when nothing came up at all', () => {
     const draft = buildFeedbackDraft({
       ...NAMES,

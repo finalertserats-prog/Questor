@@ -659,8 +659,24 @@ function questionsIn(text: string): string[] {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   const asked = parts.filter((s) => s.endsWith('?'));
-  return asked.length ? asked : [text];
+  if (!asked.length) return [text];
+  // The LAST question often arrives without its question mark — spoken aloud,
+  // or typed in a hurry: "What stack does the team use? And how is success
+  // measured in the first few months". Splitting on "?" leaves that one in a
+  // trailing remainder, and dropping it answers the first question and
+  // silently ignores the second, which is the failure this function exists to
+  // fix, one question further along.
+  const tail = parts[parts.length - 1];
+  if (!tail.endsWith('?') && READS_AS_A_QUESTION.test(tail)) asked.push(tail);
+  return asked;
 }
+
+/**
+ * A trailing fragment that is asking something: it opens as a continuation of
+ * the previous question, or carries an interrogative of its own. Deliberately
+ * narrow — "Thanks, that's all from me" is a sign-off, not a question.
+ */
+const READS_AS_A_QUESTION = /^(?:and|also|and also|or|plus|then)\b|\b(?:what|which|how|who|where|when|why|whether|is there|are there|do you|does the|can i|could i|will i)\b/i;
 
 /**
  * Answer a candidate's question from what the role actually says — its title,
