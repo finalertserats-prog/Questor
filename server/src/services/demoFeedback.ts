@@ -112,8 +112,9 @@ export interface FeedbackScreening {
  * because it is the only free text in the product written by someone with no
  * account, no organisation and no reason to be careful.
  *
- * FLAGGING IS NOT REFUSING. The visitor's words are kept exactly as typed and
- * shown to the owner with the flag beside them. Rejecting the text would lose
+ * FLAGGING IS NOT REFUSING. The words are stored as written — trimmed at the
+ * ends and capped in length, and otherwise untouched — and shown to the owner
+ * with the flag beside them. Rejecting the text would lose
  * the one thing the form exists to collect, and would tell an attacker which
  * payloads get through; the safety comes from the text never reaching a model,
  * not from it never reaching the database.

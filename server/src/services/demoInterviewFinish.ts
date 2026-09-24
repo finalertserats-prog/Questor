@@ -1,6 +1,7 @@
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { finalizeInterview } from '../realtime/interviewEngine.js';
+import { runAsDemo } from './demoPolicy.js';
 import { mustFinalise } from '../domain/demoInterview.js';
 import { DEMO_OBSERVER_SCRIPT } from '../domain/demoObserverScript.js';
 import { playUpTo } from './demoObserverPlayer.js';
@@ -54,10 +55,14 @@ export async function finishDemoRun(run: DemoRunRow, reason: 'cap' | 'demo_ended
     return 'already_ended';
   }
 
-  if (run.mode === 'observer') {
-    // The rest of the written conversation lands quickly rather than the
-    // transcript stopping mid-answer. A watcher must see an interview that
-    // ended, not one that was switched off.
+  // THE BOX MAY HURRY THE SCRIPT. THE VISITOR MAY NOT.
+  //
+  // At the box the rest of the written conversation lands quickly, so a
+  // watcher sees an interview that ended rather than one that was switched
+  // off. But a visitor pressing End demo — or calling the finish route from a
+  // console — must not be able to skip the pacing and read the whole
+  // transcript and its assessment at once: the pace IS the mode.
+  if (run.mode === 'observer' && reason === 'cap') {
     await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, now, hurry: true, script: DEMO_OBSERVER_SCRIPT });
   }
 
@@ -94,7 +99,12 @@ export async function finishDemoRun(run: DemoRunRow, reason: 'cap' | 'demo_ended
   }
 
   try {
-    await finalizeInterview(run.sessionId);
+    // Finalised INSIDE the demo context, so `generateJson` answers null for
+    // every call it makes whether or not that call passes a session id. The
+    // tenant check alone was a reason to believe observer mode never reaches a
+    // model; this makes it true by construction, for the sweep job and the
+    // routes alike.
+    await runAsDemo(() => finalizeInterview(run.sessionId));
     await noteStageForRun(run.id, 'assessed');
     return 'assessed';
   } catch (err) {
@@ -157,9 +167,15 @@ export async function sweepDemoInterviews(now = new Date()): Promise<{ swept: nu
 }
 
 /**
- * Observer sittings whose script has played out are finished without waiting
- * for the box: the watcher should see the interview end when the interview
- * ends.
+ * Tidy up observer sittings whose script is already fully written but which
+ * were never closed.
+ *
+ * DOES NOT PLAY ANYTHING. It used to, and that quietly contradicted the whole
+ * lazy-playback design: a watcher who closed the tab left this job writing
+ * their transcript out a minute at a time for nobody. Playback belongs to
+ * whoever is watching (the watch route) and to the box (the sweep below).
+ * What is left here is the narrow case where every line was written but the
+ * response that should have finished the run never landed.
  */
 export async function finishPlayedOutObserverRuns(now = new Date()): Promise<number> {
   const open = await prisma.demoInterviewRun.findMany({
@@ -170,8 +186,8 @@ export async function finishPlayedOutObserverRuns(now = new Date()): Promise<num
   for (const { id } of open) {
     const run = await runById(id);
     if (!run) continue;
-    const played = await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, now });
-    if (!played.complete) continue;
+    const written = await prisma.turn.count({ where: { sessionId: run.sessionId } });
+    if (written < DEMO_OBSERVER_SCRIPT.length) continue;
     if ((await finishDemoRun(run, 'completed', now)) === 'assessed') finished += 1;
   }
   return finished;

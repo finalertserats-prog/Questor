@@ -194,7 +194,9 @@ describe('"Watch one happen"', () => {
   it('produces a real assessment from the written transcript when it plays out', async () => {
     const demo = await openDemo();
     const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    // As a watcher's poll does: the playback belongs to whoever is watching.
     const afterScript = new Date(run.startedAt.getTime() + DEMO_CAP_MS - 60_000);
+    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, now: afterScript });
     await finishPlayedOutObserverRuns(afterScript);
     const assessment = await prisma.assessmentVersion.findFirst({ where: { sessionId: run.sessionId } });
     expect(assessment).not.toBeNull();
@@ -206,7 +208,9 @@ describe('"Watch one happen"', () => {
   it('scores the thin competency below the strong ones', async () => {
     const demo = await openDemo();
     const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
-    await finishPlayedOutObserverRuns(new Date(run.startedAt.getTime() + DEMO_CAP_MS - 60_000));
+    const afterScript = new Date(run.startedAt.getTime() + DEMO_CAP_MS - 60_000);
+    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, now: afterScript });
+    await finishPlayedOutObserverRuns(afterScript);
     const assessment = await prisma.assessmentVersion.findFirst({ where: { sessionId: run.sessionId } });
     const result = JSON.parse(assessment?.resultJson ?? '{}') as { competencies?: { competencyId?: string; score?: number }[] };
     expect(Array.isArray(result.competencies)).toBe(true);
@@ -350,7 +354,7 @@ describe('the spend ceiling on candidate mode', () => {
   it('gives the last sitting of the day to exactly one of two racing starts', async () => {
     await prisma.demoSpendDay.create({ data: { dayKey: new Date().toISOString().slice(0, 10), calls: 240 - 12 } });
     const [a, b] = await Promise.all([reserveSitting(), reserveSitting()]);
-    expect([a, b].filter((n) => n > 0)).toHaveLength(1);
+    expect([a, b].filter((r) => r.calls > 0)).toHaveLength(1);
     expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(240);
   });
 
@@ -784,14 +788,15 @@ describe('what round two of the review found', () => {
       const demo = await openDemo();
       await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'candidate' });
       const before = await prisma.demoSpendDay.findFirst().then((d) => d?.calls ?? 0);
-      await releaseSitting();
+      await releaseSitting(new Date().toISOString().slice(0, 10));
       expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(before - 12);
     } finally { restore(); }
   });
 
   it('never lets a release push the day below zero and hand out free sittings', async () => {
-    await releaseSitting();
-    await releaseSitting();
+    const today = new Date().toISOString().slice(0, 10);
+    await releaseSitting(today);
+    await releaseSitting(today);
     const day = await prisma.demoSpendDay.findFirst();
     expect(day?.calls ?? 0).toBeGreaterThanOrEqual(0);
   });
@@ -1021,5 +1026,65 @@ describe('the written interview names the interviewer this sandbox has', () => {
     await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, hurry: true });
     const opening = await prisma.turn.findFirst({ where: { sessionId: run.sessionId, index: 0 } });
     expect(opening?.text).toContain(OBSERVER_NOTICE);
+  });
+});
+
+describe('what round three of the review found', () => {
+  // The box may hurry the script. The visitor may not: the pace IS the mode,
+  // and a finish route that revealed the whole transcript and its assessment
+  // at once would let anyone skip straight past it.
+  it('does not let a visitor skip the pacing by ending the demo early', async () => {
+    const demo = await openDemo();
+    const started = await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+    const run = await runById(started.body.runId);
+    await playUpTo({ sessionId: run!.sessionId, startedAt: run!.startedAt, now: new Date(run!.startedAt.getTime() + 20_000) });
+    const partWay = await prisma.turn.count({ where: { sessionId: run!.sessionId } });
+    expect(partWay).toBeLessThan(DEMO_OBSERVER_SCRIPT.length);
+
+    await asDemo(request(app).post(`/api/demo/interview/run/${run!.id}/finish`), demo.auth).send({});
+    expect(await prisma.turn.count({ where: { sessionId: run!.sessionId } })).toBe(partWay);
+  });
+
+  it('does hurry the rest of it when the box arrives, so nothing stops mid-answer', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    await sweepDemoInterviews(new Date(run.startedAt.getTime() + DEMO_CAP_MS + 1_000));
+    expect(await prisma.turn.count({ where: { sessionId: run.sessionId } })).toBe(DEMO_OBSERVER_SCRIPT.length);
+  });
+
+  // The sweep used to play every open observer run, which quietly contradicted
+  // the whole lazy-playback design: a watcher who closed the tab left it
+  // writing their transcript a minute at a time for nobody.
+  it('writes nothing for a sitting nobody is watching and that is inside its box', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    const written = await prisma.turn.count({ where: { sessionId: run.sessionId } });
+    await finishPlayedOutObserverRuns(new Date(run.startedAt.getTime() + 5 * 60_000));
+    expect(await prisma.turn.count({ where: { sessionId: run.sessionId } })).toBe(written);
+    expect(await runById(run.id).then((r) => r?.endedAt)).toBeNull();
+  });
+
+  // A sitting spends the allowance it reserved, so the record of the spend has
+  // to name the day the allowance came out of — not the day the call landed on.
+  it('charges a call to the day the sitting reserved from', async () => {
+    const demo = await openDemo();
+    const session = await prisma.interviewSession.findFirst({ where: { tenantId: demo.tenantId }, select: { id: true } });
+    const yesterday = new Date(Date.now() - 20 * 60 * 60_000);
+    const run = await prisma.demoInterviewRun.create({
+      data: {
+        tenantId: demo.tenantId, demoGrantId: demo.grantId, sessionId: session!.id, mode: 'candidate',
+        startedAt: yesterday, capAt: new Date(yesterday.getTime() + DEMO_CAP_MS + 60 * 60_000), reservedCalls: 12,
+      },
+    });
+    expect(await claimModelCall('live_interviewer', run.sessionId)).toBe(true);
+    const spend = await prisma.demoModelSpend.findFirst({ where: { runId: run.id } });
+    expect(spend?.dayKey).toBe(yesterday.toISOString().slice(0, 10));
+  });
+
+  it('refunds the day it reserved from, not the day it happened to fail on', async () => {
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60_000).toISOString().slice(0, 10);
+    await prisma.demoSpendDay.create({ data: { dayKey: twoDaysAgo, calls: 24 } });
+    await releaseSitting(twoDaysAgo);
+    expect(await prisma.demoSpendDay.findUnique({ where: { dayKey: twoDaysAgo } }).then((d) => d?.calls)).toBe(12);
   });
 });

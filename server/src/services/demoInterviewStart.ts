@@ -154,8 +154,8 @@ export async function startCandidateMode(opts: {
   // Claiming it before the planning work meant a transient failure there
   // withdrew candidate mode for the rest of the day on behalf of an interview
   // that never happened.
-  const reservedCalls = await reserveSitting();
-  if (reservedCalls <= 0) throw new HttpError(409, 'Watch an interview instead.', 'offer_observer');
+  const reservation = await reserveSitting();
+  if (reservation.calls <= 0) throw new HttpError(409, 'Watch an interview instead.', 'offer_observer');
 
   try {
     const run = await startRun({
@@ -164,14 +164,14 @@ export async function startCandidateMode(opts: {
       sessionId: session.id,
       mode: 'candidate',
       extendTime: opts.extendTime,
-      reservedCalls,
+      reservedCalls: reservation.calls,
     });
     return { run, portalUrl: invitationLink(session.invitation) };
   } catch (err) {
     // No sitting owns the reservation, so hand it back. Best effort and
     // logged: a refund that fails leaves the day's ceiling wrong in the
     // direction that costs money rather than the direction that loses a demo.
-    await releaseSitting();
+    await releaseSitting(reservation.dayKey);
     // `sessionId` is unique: a racing start got there first. Hand back what it
     // made rather than an internal error — pressing a button twice is not a
     // failure the visitor should read about.

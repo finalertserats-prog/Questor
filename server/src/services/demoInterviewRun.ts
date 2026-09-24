@@ -227,7 +227,11 @@ export async function claimModelCall(fn: string, sessionId: string | undefined, 
 
   try {
     await prisma.demoModelSpend.create({
-      data: { runId: run.id, tenantId: run.tenantId, dayKey: spendDayKey(now), fn },
+      // The day this sitting's allowance came OUT of, not the day the call
+      // happens to land on. A sitting that starts at 23:58 and answers at
+      // 00:05 spent yesterday's reservation, and the record has to agree with
+      // the counter or the two cannot be reconciled.
+      data: { runId: run.id, tenantId: run.tenantId, dayKey: spendDayKey(run.startedAt), fn },
     });
   } catch (err) {
     // The unit is already claimed. Losing the audit row is worth a log, not a
@@ -251,7 +255,7 @@ export async function claimModelCall(fn: string, sessionId: string | undefined, 
  * path that can itself fail, leaving the day's ceiling wrong in the direction
  * that costs money.
  */
-export async function reserveSitting(now = new Date()): Promise<number> {
+export async function reserveSitting(now = new Date()): Promise<Reservation> {
   const dayKey = spendDayKey(now);
   // A conditional increment by the whole reservation, so two starts cannot
   // both take the day's last sitting.
@@ -259,34 +263,44 @@ export async function reserveSitting(now = new Date()): Promise<number> {
     where: { dayKey, calls: { lte: DEMO_SPEND_PER_DAY - DEMO_SPEND_PER_RUN } },
     data: { calls: { increment: DEMO_SPEND_PER_RUN } },
   });
-  if (taken.count === 1) return DEMO_SPEND_PER_RUN;
+  if (taken.count === 1) return { calls: DEMO_SPEND_PER_RUN, dayKey };
 
   try {
     await prisma.demoSpendDay.create({ data: { dayKey, calls: DEMO_SPEND_PER_RUN } });
-    return DEMO_SPEND_PER_RUN;
+    return { calls: DEMO_SPEND_PER_RUN, dayKey };
   } catch {
     const retried = await prisma.demoSpendDay.updateMany({
       where: { dayKey, calls: { lte: DEMO_SPEND_PER_DAY - DEMO_SPEND_PER_RUN } },
       data: { calls: { increment: DEMO_SPEND_PER_RUN } },
     });
-    if (retried.count === 1) return DEMO_SPEND_PER_RUN;
+    if (retried.count === 1) return { calls: DEMO_SPEND_PER_RUN, dayKey };
   }
   logger.warn({ dayKey }, 'The day has no room for another demo interview; the candidate-side mode is withdrawn until tomorrow');
-  return 0;
+  return { calls: 0, dayKey };
+}
+
+/** What a start claimed, and the day it claimed it from. */
+export interface Reservation {
+  readonly calls: number;
+  /** The day whose ceiling this came out of — NOT the day the calls happen. */
+  readonly dayKey: string;
 }
 
 /**
  * Hand a reservation back, for a start that claimed one and then failed.
  *
- * Clamped at zero so a double release can never push the day's count negative
- * and hand out free sittings. Best effort: a refund that fails leaves the
- * ceiling wrong in the direction that costs money rather than the direction
- * that loses a demo.
+ * Takes the day it was claimed FROM rather than reading the clock again: a
+ * start that reserved at 23:59 and failed at 00:01 would otherwise refund
+ * tomorrow, leaving yesterday over-counted and handing today free capacity.
+ *
+ * Clamped at zero so a double release can never push a day's count negative.
+ * Best effort: a refund that fails leaves the ceiling wrong in the direction
+ * that costs money rather than the direction that loses a demo.
  */
-export async function releaseSitting(now = new Date()): Promise<void> {
+export async function releaseSitting(dayKey: string): Promise<void> {
   try {
     await prisma.demoSpendDay.updateMany({
-      where: { dayKey: spendDayKey(now), calls: { gte: DEMO_SPEND_PER_RUN } },
+      where: { dayKey, calls: { gte: DEMO_SPEND_PER_RUN } },
       data: { calls: { decrement: DEMO_SPEND_PER_RUN } },
     });
   } catch (err) {

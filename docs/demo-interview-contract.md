@@ -42,16 +42,22 @@ back `409` with `code: "offer_observer"`, which means "re-read the offer", not
 worded. The tour should link to `/demo/interview` rather than composing its own
 copy, so there is one place the fifteen minutes is explained.
 
-### The feedback ticket — what End demo must do
+### The feedback ticket — what End demo does, and must keep doing
 
 `POST /api/demo/end` clears the session, so the feedback form cannot
-authenticate as the visitor. Before clearing it:
+authenticate as the visitor. The order is:
 
 ```
 POST /api/demo/interview/feedback-ticket   → { token, expiresAt }
+POST /api/demo/end
+navigate to /demo/feedback/<token>
 ```
 
-Then end the demo and send the visitor to `/demo/feedback/<token>`.
+**This lane has already wired that into the demo bar's End demo handler**
+(`web/src/App.tsx`, `endDemo`) rather than leaving the feedback step
+unreachable. Failing to get a ticket does not stop the demo ending — the
+visitor just goes to `/demo/ended` as before. If the guided-tour lane rebuilds
+that control, keep the three steps in that order.
 
 The ticket is hashed at rest, single use, good for 24 hours, and works after
 the session is gone — which is also what lets a visitor who closed the tab come
@@ -90,7 +96,8 @@ Small, deliberate edits, listed so a rebase is readable:
   the explore caps are the owner's numbers.
 - `server/src/seed/demoData.ts` — `wipe()` clears the new tables.
 - `server/src/app.ts`, `server/src/index.ts` — mounts and the sweep job.
-- `web/src/App.tsx`, `web/src/main.tsx` — routes and the stylesheet import.
+- `web/src/App.tsx`, `web/src/main.tsx` — routes, the stylesheet import, the
+  demo bar's interview link, and the three-step End demo handler above.
 
 ## The one rule that binds both lanes
 
