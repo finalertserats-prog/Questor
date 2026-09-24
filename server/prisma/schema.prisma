@@ -2113,6 +2113,16 @@ model DemoInterviewRun {
   // than folded into capAt so the console can tell an extended demo from a
   // long one.
   extendedMs  Int      @default(0)
+  // Reactive model calls claimed from the DAY's ceiling when this sitting
+  // started, and how many of them it has used.
+  //
+  // Reserved up front, in one conditional statement, rather than taken a call
+  // at a time: readiness promised this visitor a properly delivered interview,
+  // and a promise that is re-checked per turn is not a promise. It also makes
+  // the per-turn gate a single atomic increment against `reservedCalls`, which
+  // is what stops two concurrent turns both spending the sitting's last unit.
+  reservedCalls Int    @default(0)
+  modelCalls    Int    @default(0)
   endedAt     DateTime?
   // cap | completed | withdrawn | abandoned | demo_ended | engine_unavailable
   endReason   String?
@@ -2153,6 +2163,16 @@ model DemoFeedback {
   // JSON array of the patterns that fired, kept as the audit trail.
   injectionMatched String   @default("[]")
   ticketHash       String   @unique
+  // "<tenantId>:<grantId>" while this row is still unanswered, null once it is
+  // submitted.
+  //
+  // A real unique key rather than a lock, because "look for an open row, then
+  // create one" is read-then-write however carefully it is guarded: two End
+  // demo presses both find nothing and both create, and the owner reads one
+  // visitor's single opinion as two. A null is distinct from every other null
+  // in both SQLite and Postgres, so answered rows accumulate freely while at
+  // most one may be open.
+  openKey          String?  @unique
   ticketExpiresAt  DateTime
   submittedAt      DateTime?
   createdAt        DateTime @default(now())

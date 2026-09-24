@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { HttpError } from '../middleware/index.js';
@@ -56,31 +57,45 @@ export async function issueFeedbackTicket(input: {
   const now = input.now ?? new Date();
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + TICKET_TTL_MS);
+  const openKey = `${input.tenantId}:${input.demoGrantId ?? 'none'}`;
 
-  const open = await prisma.demoFeedback.findFirst({
-    where: { tenantId: input.tenantId, demoGrantId: input.demoGrantId, submittedAt: null },
-    select: { id: true },
+  // Update-first, then create, and let the unique key settle the race.
+  //
+  // "Find an open row, else create one" is read-then-write however carefully it
+  // is guarded: two End demo presses both find nothing and both create, and
+  // the owner reads one visitor's single opinion as two. `openKey` is unique
+  // and null once answered, so the database decides.
+  const updated = await prisma.demoFeedback.updateMany({
+    where: { openKey, submittedAt: null },
+    data: { ticketHash: hashTicket(token), ticketExpiresAt: expiresAt, runId: input.runId, mode: input.mode, stage: input.stage },
   });
-  if (open) {
-    await prisma.demoFeedback.update({
-      where: { id: open.id },
-      data: { ticketHash: hashTicket(token), ticketExpiresAt: expiresAt, runId: input.runId, mode: input.mode, stage: input.stage },
+  if (updated.count === 1) return { token, expiresAt };
+
+  try {
+    await prisma.demoFeedback.create({
+      data: {
+        tenantId: input.tenantId,
+        demoGrantId: input.demoGrantId,
+        runId: input.runId,
+        mode: input.mode,
+        stage: input.stage,
+        openKey,
+        ticketHash: hashTicket(token),
+        ticketExpiresAt: expiresAt,
+      },
     });
     return { token, expiresAt };
+  } catch (err) {
+    // A racing press created it first. Take its row over rather than making a
+    // second one; the caller gets a working ticket either way.
+    if (!(err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')) throw err;
+    const retried = await prisma.demoFeedback.updateMany({
+      where: { openKey, submittedAt: null },
+      data: { ticketHash: hashTicket(token), ticketExpiresAt: expiresAt, runId: input.runId, mode: input.mode, stage: input.stage },
+    });
+    if (retried.count !== 1) throw new HttpError(409, 'Could not open the feedback form just now.');
+    return { token, expiresAt };
   }
-
-  await prisma.demoFeedback.create({
-    data: {
-      tenantId: input.tenantId,
-      demoGrantId: input.demoGrantId,
-      runId: input.runId,
-      mode: input.mode,
-      stage: input.stage,
-      ticketHash: hashTicket(token),
-      ticketExpiresAt: expiresAt,
-    },
-  });
-  return { token, expiresAt };
 }
 
 export interface FeedbackScreening {
@@ -144,6 +159,9 @@ export async function submitFeedback(input: {
       injectionFlagged: screening.flagged,
       injectionMatched: JSON.stringify(screening.matched),
       submittedAt: now,
+      // Releases the unique open slot. Answered rows are all null here, and a
+      // null collides with nothing, so they accumulate freely.
+      openKey: null,
     },
   });
   if (saved.count !== 1) throw new HttpError(410, 'This feedback link is no longer open.', 'ticket_spent');

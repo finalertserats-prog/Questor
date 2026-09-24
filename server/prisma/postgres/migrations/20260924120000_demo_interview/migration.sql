@@ -9,6 +9,8 @@ CREATE TABLE "DemoInterviewRun" (
     "startedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "capAt" TIMESTAMP(3) NOT NULL,
     "extendedMs" INTEGER NOT NULL DEFAULT 0,
+    "reservedCalls" INTEGER NOT NULL DEFAULT 0,
+    "modelCalls" INTEGER NOT NULL DEFAULT 0,
     "endedAt" TIMESTAMP(3),
     "endReason" TEXT,
     "stage" TEXT NOT NULL DEFAULT 'chose_mode',
@@ -31,6 +33,7 @@ CREATE TABLE "DemoFeedback" (
     "injectionFlagged" BOOLEAN NOT NULL DEFAULT false,
     "injectionMatched" TEXT NOT NULL DEFAULT '[]',
     "ticketHash" TEXT NOT NULL,
+    "openKey" TEXT,
     "ticketExpiresAt" TIMESTAMP(3) NOT NULL,
     "submittedAt" TIMESTAMP(3),
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -73,6 +76,9 @@ CREATE INDEX "DemoInterviewRun_endedAt_capAt_idx" ON "DemoInterviewRun"("endedAt
 
 -- CreateIndex
 CREATE UNIQUE INDEX "DemoFeedback_ticketHash_key" ON "DemoFeedback"("ticketHash");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "DemoFeedback_openKey_key" ON "DemoFeedback"("openKey");
 
 -- CreateIndex
 CREATE INDEX "DemoFeedback_tenantId_submittedAt_idx" ON "DemoFeedback"("tenantId", "submittedAt");

@@ -6,7 +6,9 @@ import { withObserverNotice } from './observerPolicy.js';
 import { invitationLink } from './invitations.js';
 import { DEMO_CAP_MS, type DemoMode } from '../domain/demoInterview.js';
 import { DEMO_SCRIPT_CANDIDATE, DEMO_SCRIPT_ID } from '../domain/demoObserverScript.js';
-import { startRun, liveRunForGrant, type DemoRunRow } from './demoInterviewRun.js';
+import { startRun, liveRunForGrant, reserveSitting, type DemoRunRow } from './demoInterviewRun.js';
+import { consume } from '../middleware/rateLimit.js';
+import { Prisma } from '@prisma/client';
 import type { RoleSuccessProfile } from '../domain/types.js';
 
 /**
@@ -68,6 +70,19 @@ async function loadSandbox(tenantId: string): Promise<Sandbox> {
   };
 }
 
+/**
+ * Hold the visitor's one starting slot while a start is in flight.
+ *
+ * Checking for an open sitting and then creating one is read-then-write: two
+ * tabs, or a double press, both see nothing open and both create. The shared
+ * atomic counter is the same mechanism the demo creation caps already use for
+ * exactly this, which is why it is reached for rather than a second one.
+ */
+async function holdStartSlot(demoGrantId: string, mode: DemoMode): Promise<boolean> {
+  const verdict = await consume('demo-interview-start', `${demoGrantId}:${mode}`, 30_000, 1, { failClosed: true });
+  return verdict.allowed;
+}
+
 export interface StartedDemoInterview {
   readonly run: DemoRunRow;
   /** Candidate mode only: where the visitor goes to sit the interview. */
@@ -104,6 +119,15 @@ export async function startCandidateMode(opts: {
     }
     throw new HttpError(409, 'This demo interview has already been taken.', 'already_taken');
   }
+  if (!(await holdStartSlot(opts.demoGrantId, 'candidate'))) {
+    throw new HttpError(409, 'This demo interview is already starting.', 'already_starting');
+  }
+
+  // The whole sitting's model allowance, claimed from the day now. Refused
+  // means the day is full: the mode is withdrawn rather than started and
+  // silently degraded, which is the rule the owner set.
+  const reservedCalls = await reserveSitting();
+  if (reservedCalls <= 0) throw new HttpError(409, 'Watch an interview instead.', 'offer_observer');
 
   const plan = buildInterviewPlan({ role: sandbox.profile, durationMinutes: DEMO_PLAN_MINUTES, language: 'en', modules: [] });
   await prisma.$transaction([
@@ -115,14 +139,27 @@ export async function startCandidateMode(opts: {
     }),
   ]);
 
-  const run = await startRun({
-    tenantId: opts.tenantId,
-    demoGrantId: opts.demoGrantId,
-    sessionId: session.id,
-    mode: 'candidate',
-    extendTime: opts.extendTime,
-  });
-  return { run, portalUrl: invitationLink(session.invitation) };
+  try {
+    const run = await startRun({
+      tenantId: opts.tenantId,
+      demoGrantId: opts.demoGrantId,
+      sessionId: session.id,
+      mode: 'candidate',
+      extendTime: opts.extendTime,
+      reservedCalls,
+    });
+    return { run, portalUrl: invitationLink(session.invitation) };
+  } catch (err) {
+    // `sessionId` is unique: a racing start got there first. Hand back what it
+    // made rather than an internal error — pressing a button twice is not a
+    // failure the visitor should read about.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const run = await liveRunForGrant(opts.demoGrantId);
+      if (run) return { run, portalUrl: invitationLink(session.invitation) };
+      throw new HttpError(409, 'This demo interview has already been taken.', 'already_taken');
+    }
+    throw err;
+  }
 }
 
 /**
@@ -147,6 +184,11 @@ export async function startObserverMode(opts: {
 
   const open = await liveRunForGrant(opts.demoGrantId);
   if (open?.mode === 'observer') return { run: open, portalUrl: null };
+  if (!(await holdStartSlot(opts.demoGrantId, 'observer'))) {
+    const racing = await liveRunForGrant(opts.demoGrantId);
+    if (racing) return { run: racing, portalUrl: null };
+    throw new HttpError(409, 'This demo interview is already starting.', 'already_starting');
+  }
 
   const plan = buildInterviewPlan({ role: sandbox.profile, durationMinutes: DEMO_PLAN_MINUTES, language: 'en', modules: [] });
   const created = await prisma.$transaction(async (tx) => {

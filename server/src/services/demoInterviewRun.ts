@@ -26,11 +26,14 @@ export interface DemoRunRow extends DemoRunClock {
   readonly scriptId: string;
   readonly endReason: string | null;
   readonly stage: string;
+  readonly reservedCalls: number;
+  readonly modelCalls: number;
 }
 
 const SELECT = {
   id: true, tenantId: true, demoGrantId: true, sessionId: true, mode: true, scriptId: true,
   startedAt: true, capAt: true, extendedMs: true, endedAt: true, endReason: true, stage: true,
+  reservedCalls: true, modelCalls: true,
 } as const;
 
 function asRow(row: { mode: string } & Omit<DemoRunRow, 'mode'>): DemoRunRow {
@@ -64,6 +67,8 @@ export async function startRun(input: {
   mode: DemoMode;
   scriptId?: string;
   extendTime?: boolean;
+  /** Reactive model calls already claimed from the day for this sitting. */
+  reservedCalls?: number;
   now?: Date;
 }): Promise<DemoRunRow> {
   const now = input.now ?? new Date();
@@ -80,6 +85,7 @@ export async function startRun(input: {
       startedAt: now,
       capAt: capAtFor(now, extendedMs),
       extendedMs,
+      reservedCalls: input.reservedCalls ?? 0,
       stage: 'chose_mode',
     },
     select: SELECT,
@@ -126,13 +132,17 @@ export async function endRun(runId: string, reason: DemoEndReason, now = new Dat
 export async function extendRun(runId: string): Promise<DemoRunRow> {
   const run = await runById(runId);
   if (!run) throw new HttpError(404, 'That demo interview is not running.');
-  if (!mayExtend(run)) throw new HttpError(409, 'This demo has already been given extra time.');
-  const row = await prisma.demoInterviewRun.update({
-    where: { id: runId },
+  if (run.endedAt) throw new HttpError(409, 'That demo interview has finished.');
+  // Conditional, so a double press cannot extend twice; and the loser of the
+  // race is handed the already-extended clock rather than an error, because
+  // pressing a button twice is not a mistake worth explaining.
+  await prisma.demoInterviewRun.updateMany({
+    where: { id: runId, endedAt: null, extendedMs: 0 },
     data: { extendedMs: DEMO_EXTENSION_MS, capAt: capAtFor(run.startedAt, DEMO_EXTENSION_MS) },
-    select: SELECT,
   });
-  return asRow(row);
+  const row = await runById(runId);
+  if (!row) throw new HttpError(404, 'That demo interview is not running.');
+  return row;
 }
 
 export interface DemoClockView {
@@ -174,9 +184,10 @@ export async function sessionMustFinalise(sessionId: string, now = new Date()): 
  * Claim one reactive model call for this interview, or refuse.
  *
  * Claims BEFORE the call, not after: a call that is made and then counted lets
- * a burst of concurrent turns all read the same count and all spend. The day's
- * unit is taken with a single conditional statement (see `claimDayUnit`), so
- * two instances cannot both believe they hold the day's last one.
+ * a burst of concurrent turns all read the same count and all spend. The claim
+ * is one conditional statement against this sitting's own reservation, so the
+ * database decides who gets its last unit rather than whichever turn read
+ * first. The DAY was claimed whole, once, when the sitting started.
  *
  * Refusing is silent by design. The interview carries on with the built-in
  * writer and the visitor is told nothing, because there is nothing they could
@@ -188,24 +199,36 @@ export async function claimModelCall(fn: string, sessionId: string | undefined, 
   const run = await runForSession(sessionId);
   if (!run) return false;
 
-  const dayKey = spendDayKey(now);
-  const runSpent = await prisma.demoModelSpend.count({ where: { runId: run.id } });
-  const day = await prisma.demoSpendDay.findUnique({ where: { dayKey }, select: { calls: true } });
-
-  const verdict = spendVerdict(fn, { mode: run.mode, ended: run.endedAt !== null, runSpent, daySpent: day?.calls ?? 0 });
+  const verdict = spendVerdict(fn, {
+    mode: run.mode,
+    ended: run.endedAt !== null,
+    runSpent: run.modelCalls,
+    reserved: run.reservedCalls,
+  });
   if (verdict !== 'allow') {
     if (refusalIsNotable(verdict)) {
       logger.warn(
-        { dayKey, daySpent: day?.calls ?? 0, ceiling: DEMO_SPEND_PER_DAY },
-        'Demo model spend for today is used up; demo interviews are now running on the built-in writer',
+        { runId: run.id, reserved: run.reservedCalls },
+        'A demo interview has used its whole model allowance; the rest of it runs on the built-in writer',
       );
     }
     return false;
   }
-  if (!(await claimDayUnit(dayKey))) return false;
+
+  // ONE conditional statement. The read above is only to decide WHY a refusal
+  // happened; the claim itself is this, and the `modelCalls < reservedCalls`
+  // guard lives in the WHERE clause. Read-then-write is exactly how two
+  // concurrent turns both read eleven, both pass the ceiling, and both spend.
+  const claimed = await prisma.demoInterviewRun.updateMany({
+    where: { id: run.id, endedAt: null, modelCalls: { lt: run.reservedCalls } },
+    data: { modelCalls: { increment: 1 } },
+  });
+  if (claimed.count !== 1) return false;
 
   try {
-    await prisma.demoModelSpend.create({ data: { runId: run.id, tenantId: run.tenantId, dayKey, fn } });
+    await prisma.demoModelSpend.create({
+      data: { runId: run.id, tenantId: run.tenantId, dayKey: spendDayKey(now), fn },
+    });
   } catch (err) {
     // The unit is already claimed. Losing the audit row is worth a log, not a
     // refund: handing it back would need a second statement that can fail too.
@@ -215,32 +238,41 @@ export async function claimModelCall(fn: string, sessionId: string | undefined, 
 }
 
 /**
- * Take one of the day's units, or answer no.
+ * Claim a whole sitting's worth of the day's allowance, or answer no.
  *
- * A conditional increment in ONE statement, because read-then-write is exactly
- * how a burst of concurrent turns all read the same count and all spend. The
- * `calls < ceiling` guard lives in the WHERE clause, so the database decides
- * who gets the last unit rather than whichever instance read first.
+ * Taken ONCE, before the interview starts, for two reasons that both come from
+ * the owner. Nothing may break character once an interview is under way, so
+ * the decision has to be made before it begins. And readiness has already told
+ * this visitor their interview would be properly delivered: a promise that is
+ * re-checked every turn is not a promise.
+ *
+ * A sitting that ends early does not hand its unused reservation back. That is
+ * deliberate and it is the conservative direction: the alternative is a refund
+ * path that can itself fail, leaving the day's ceiling wrong in the direction
+ * that costs money.
  */
-async function claimDayUnit(dayKey: string): Promise<boolean> {
+export async function reserveSitting(now = new Date()): Promise<number> {
+  const dayKey = spendDayKey(now);
+  // A conditional increment by the whole reservation, so two starts cannot
+  // both take the day's last sitting.
   const taken = await prisma.demoSpendDay.updateMany({
-    where: { dayKey, calls: { lt: DEMO_SPEND_PER_DAY } },
-    data: { calls: { increment: 1 } },
+    where: { dayKey, calls: { lte: DEMO_SPEND_PER_DAY - DEMO_SPEND_PER_RUN } },
+    data: { calls: { increment: DEMO_SPEND_PER_RUN } },
   });
-  if (taken.count === 1) return true;
+  if (taken.count === 1) return DEMO_SPEND_PER_RUN;
 
-  // No row for today yet. Create it already holding this call; if another
-  // instance created it first, take the ordinary path once more.
   try {
-    await prisma.demoSpendDay.create({ data: { dayKey, calls: 1 } });
-    return true;
+    await prisma.demoSpendDay.create({ data: { dayKey, calls: DEMO_SPEND_PER_RUN } });
+    return DEMO_SPEND_PER_RUN;
   } catch {
     const retried = await prisma.demoSpendDay.updateMany({
-      where: { dayKey, calls: { lt: DEMO_SPEND_PER_DAY } },
-      data: { calls: { increment: 1 } },
+      where: { dayKey, calls: { lte: DEMO_SPEND_PER_DAY - DEMO_SPEND_PER_RUN } },
+      data: { calls: { increment: DEMO_SPEND_PER_RUN } },
     });
-    return retried.count === 1;
+    if (retried.count === 1) return DEMO_SPEND_PER_RUN;
   }
+  logger.warn({ dayKey }, 'The day has no room for another demo interview; the candidate-side mode is withdrawn until tomorrow');
+  return 0;
 }
 
 export const DEMO_SPEND_CEILINGS = { perRun: DEMO_SPEND_PER_RUN, perDay: DEMO_SPEND_PER_DAY } as const;

@@ -46,10 +46,7 @@ export type DemoFinishOutcome = 'assessed' | 'abandoned' | 'already_ended' | 'no
 export async function finishDemoRun(run: DemoRunRow, reason: 'cap' | 'demo_ended' | 'completed', now = new Date()): Promise<DemoFinishOutcome> {
   if (run.endedAt) return 'already_ended';
 
-  const session = await prisma.interviewSession.findUnique({
-    where: { id: run.sessionId },
-    select: { state: true },
-  });
+  const session = await prisma.interviewSession.findUnique({ where: { id: run.sessionId }, select: { state: true } });
   if (!session) {
     // The sandbox went while the sitting was open. Nothing to finalise, and
     // nothing to be sorry about: the data is gone because it was meant to be.
@@ -62,29 +59,44 @@ export async function finishDemoRun(run: DemoRunRow, reason: 'cap' | 'demo_ended
     // transcript stopping mid-answer. A watcher must see an interview that
     // ended, not one that was switched off.
     await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, now, hurry: true, script: DEMO_OBSERVER_SCRIPT });
-  } else if (reason === 'cap' && (await visitorHasGone(run.sessionId, now))) {
-    await endRun(run.id, 'abandoned', now);
+  }
+
+  const walkedAway = run.mode === 'candidate' && reason === 'cap' && (await visitorHasGone(run.sessionId, now));
+
+  // CLAIM THE SITTING BEFORE DOING ANYTHING SLOW TO IT.
+  //
+  // The sweep job, a second sweep on another instance and the visitor's own
+  // finish request all reach this function for the same run. Finalising first
+  // and recording afterwards let the loser of that race overwrite the winner's
+  // outcome — a sitting that was assessed could end up filed as
+  // `engine_unavailable` because the second caller's finalize threw on a
+  // session the first had already moved on. `endRun` is a conditional update
+  // on `endedAt IS NULL`, so exactly one caller proceeds.
+  const claimed = await endRun(run.id, walkedAway ? 'abandoned' : reason, now);
+  if (!claimed) return 'already_ended';
+
+  if (walkedAway) {
+    // An interruption is not a performance. The transcript is kept and nothing
+    // is scored — the same answer the product gives a real candidate whose
+    // network died, which is itself worth a prospect seeing.
     await noteStageForRun(run.id, 'interviewing');
     logger.info({ runId: run.id }, 'Demo interview abandoned part-way; transcript kept, nothing scored');
     return 'abandoned';
   }
 
   const state = (await prisma.interviewSession.findUnique({ where: { id: run.sessionId }, select: { state: true } }))?.state ?? session.state;
-  if (!FINALIZABLE.has(state)) {
-    await endRun(run.id, reason, now);
-    return 'not_finalizable';
-  }
+  if (!FINALIZABLE.has(state)) return 'not_finalizable';
 
   try {
     await finalizeInterview(run.sessionId);
-    await endRun(run.id, reason === 'cap' ? 'cap' : reason, now);
     await noteStageForRun(run.id, 'assessed');
     return 'assessed';
   } catch (err) {
-    // The interviewer's own failure, not the visitor's. Recorded as ours so
-    // the owner's console does not read it as a prospect who gave up.
+    // The interviewer's own failure, not the visitor's. The sitting is already
+    // closed; only the reason is corrected, so the owner's console does not
+    // read our outage as a prospect who gave up.
     logger.error({ err: err instanceof Error ? err.message : String(err), runId: run.id }, 'Could not finalise a demo interview');
-    await endRun(run.id, 'engine_unavailable', now);
+    await prisma.demoInterviewRun.updateMany({ where: { id: run.id }, data: { endReason: 'engine_unavailable' } });
     return 'failed';
   }
 }

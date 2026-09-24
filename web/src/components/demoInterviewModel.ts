@@ -130,7 +130,7 @@ export function failureCopy(kind: DemoFailure): FailureCopy {
     default:
       return {
         title: 'Something did not work',
-        message: 'We could not do that. Nothing has been lost.',
+        message: 'That did not go through. Nothing has been lost, and opening this page again picks up where you were.',
         action: 'Try again',
       };
   }

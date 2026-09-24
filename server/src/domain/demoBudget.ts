@@ -14,13 +14,14 @@
  *
  *   - by MODE: only a 'candidate' run, where a person is actually answering.
  *     Observer mode is a written script and never calls a model at all.
- *   - by FUNCTION: only the interviewer reacting to what the visitor just said
- *     and the intent read that keeps "stop" from being treated as an answer.
- *     The scaffolding — opening, transitions, close, sign-off, scoring, the
- *     written report — stays on the built-in writer.
- *   - by RUN: a fixed number of reactive turns per sitting.
+ *   - by FUNCTION: only the interviewer reacting to what the visitor just
+ *     said. The scaffolding — opening, transitions, close, sign-off — and all
+ *     of the scoring and the written report stay on the built-in writer.
+ *   - by RUN: a fixed number of reactive turns per sitting, claimed as a whole
+ *     when the sitting starts and spent one atomic increment at a time.
  *   - by DAY: a fixed number across every demo, so one busy afternoon cannot
- *     spend the month.
+ *     spend the month. Reaching it does not degrade a running interview — it
+ *     withdraws the candidate-side offer before anyone else starts one.
  *
  * Past any of those, `generateJson` returns null and the built-in writer takes
  * the turn. The visitor is NOT told. There is nothing for them to do about it,
@@ -32,18 +33,23 @@
  * The model calls a demo interview may make, by the `fn` name the provider
  * layer logs them under.
  *
- * `live_interviewer` is the reactive turn: it is handed the candidate's own
- * words and told to interrogate what they actually said. `candidate_intent`
- * is the read that distinguishes "I'd like to stop" from an answer, and is
- * included because getting that wrong in front of a prospect — carrying on
- * after someone has asked to stop — is the worst thing the demo could do.
+ * EXACTLY ONE. `live_interviewer` is the reactive turn: it is handed the
+ * candidate's own words and told to interrogate what they actually said. That
+ * is the whole of what the owner authorised — "the interviewer reacting to
+ * what the visitor actually says" — and this set is the literal reading of it.
  *
- * Everything absent from this set is deliberate. `candidate_question`
- * (answering the visitor's question at the close), `competency_grader` and
- * `report_writer` are all built-in in a demo: they are not the part a prospect
- * is judging the conversation by, and the grader runs once per competency.
+ * `candidate_intent` was in here, on the argument that mistaking "I'd like to
+ * stop" for an answer is the worst thing a demo could do. Codex was right that
+ * this is an argument for widening the exception, not a thing the owner
+ * granted, and a budget exception that grows by good argument is how these
+ * stop being exceptions. The intent read keeps its deterministic pattern
+ * check, which is what kept "stop" working before any model existed.
+ *
+ * Everything else absent is equally deliberate: `candidate_question`
+ * (answering the visitor at the close), `competency_grader` and
+ * `report_writer` are all built-in in a demo.
  */
-export const DEMO_SPENDABLE_FUNCTIONS: ReadonlySet<string> = new Set(['live_interviewer', 'candidate_intent']);
+export const DEMO_SPENDABLE_FUNCTIONS: ReadonlySet<string> = new Set(['live_interviewer']);
 
 export function isSpendableFunction(fn: string): boolean {
   return DEMO_SPENDABLE_FUNCTIONS.has(fn);
@@ -75,21 +81,27 @@ export interface DemoSpendState {
   readonly mode: string;
   readonly ended: boolean;
   readonly runSpent: number;
-  readonly daySpent: number;
+  /** What this sitting claimed from the day's ceiling when it started. */
+  readonly reserved: number;
 }
 
-export type DemoSpendVerdict = 'allow' | 'not_reactive' | 'not_candidate_mode' | 'run_exhausted' | 'day_exhausted' | 'ended';
+export type DemoSpendVerdict = 'allow' | 'not_reactive' | 'not_candidate_mode' | 'run_exhausted' | 'ended';
 
 /**
- * Whether this call may reach a paid model. Pure: the counters are read and
- * written by the service, so the rule itself can be reasoned about alone.
+ * Whether this call may reach a paid model.
+ *
+ * There is no day check here any more. The day is claimed ONCE, as a whole
+ * sitting's worth, when the sitting starts (services/demoInterviewRun.ts,
+ * `reserveSitting`). Checking it per call was both a race — concurrent turns
+ * all read the same count and all spent — and a broken promise: readiness had
+ * already told this visitor their interview would be properly delivered, and a
+ * promise re-checked every turn is not a promise.
  */
 export function spendVerdict(fn: string, state: DemoSpendState): DemoSpendVerdict {
   if (!isSpendableFunction(fn)) return 'not_reactive';
   if (state.mode !== 'candidate') return 'not_candidate_mode';
   if (state.ended) return 'ended';
-  if (state.runSpent >= DEMO_SPEND_PER_RUN) return 'run_exhausted';
-  if (state.daySpent >= DEMO_SPEND_PER_DAY) return 'day_exhausted';
+  if (state.runSpent >= state.reserved) return 'run_exhausted';
   return 'allow';
 }
 
@@ -100,10 +112,12 @@ export function maySpend(fn: string, state: DemoSpendState): boolean {
 /**
  * Whether a refused spend is worth an operator's attention.
  *
- * A run running out is ordinary — it means a demo went the distance. A DAY
- * running out means prospects after this one are getting the built-in writer,
- * which is exactly the thing the owner does not want happening unnoticed.
+ * A sitting exhausting its reservation means an interview ran longer than the
+ * allowance written for it — which is worth knowing, because from that turn on
+ * a prospect is reading the built-in writer. The DAY running out is no longer
+ * a refusal at all: it withdraws the candidate-side offer before anyone starts
+ * (services/demoReadiness.ts), which is the point.
  */
 export function refusalIsNotable(verdict: DemoSpendVerdict): boolean {
-  return verdict === 'day_exhausted';
+  return verdict === 'run_exhausted';
 }

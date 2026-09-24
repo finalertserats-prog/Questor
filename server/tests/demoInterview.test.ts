@@ -26,8 +26,8 @@ import { purgeExpiredDemoTenants } from '../src/services/demoAccess.js';
 import { DEMO_CAP_MS, DEMO_CLOSING_RESERVE_MS, DEMO_EXTENSION_MS, staysInCharacter } from '../src/domain/demoInterview.js';
 import { DEMO_OBSERVER_SCRIPT, DEMO_SCRIPT_CANDIDATE } from '../src/domain/demoObserverScript.js';
 import { playUpTo, revealedCount } from '../src/services/demoObserverPlayer.js';
-import { sweepDemoInterviews, finishPlayedOutObserverRuns, DEMO_IDLE_MS } from '../src/services/demoInterviewFinish.js';
-import { claimModelCall, runById } from '../src/services/demoInterviewRun.js';
+import { sweepDemoInterviews, finishPlayedOutObserverRuns, finishDemoRun, DEMO_IDLE_MS } from '../src/services/demoInterviewFinish.js';
+import { claimModelCall, reserveSitting, runById } from '../src/services/demoInterviewRun.js';
 import { startObserverMode } from '../src/services/demoInterviewStart.js';
 import { screenFeedback, listDemoFeedback } from '../src/services/demoFeedback.js';
 import { assertDemoCreationCap } from '../src/services/demoAccess.js';
@@ -250,8 +250,12 @@ describe('the fifteen-minute cap, held on the server', () => {
     expect(first.status).toBe(200);
     const run = await runById(started.body.runId);
     expect(run?.capAt.getTime()).toBe(run!.startedAt.getTime() + DEMO_CAP_MS + DEMO_EXTENSION_MS);
+    // A double press is not a mistake worth explaining: the second press is
+    // handed the already-extended clock rather than an error.
     const second = await asDemo(request(app).post(`/api/demo/interview/run/${started.body.runId}/extra-time`), demo.auth).send({});
-    expect(second.status).toBe(409);
+    expect([second.status, second.body.mayExtend]).toEqual([200, false]);
+    const after = await runById(started.body.runId);
+    expect(after?.capAt.getTime()).toBe(after!.startedAt.getTime() + DEMO_CAP_MS + DEMO_EXTENSION_MS);
   });
 
   // Taking the extension on the way in is what keeps it from being a control
@@ -281,31 +285,32 @@ describe('the fifteen-minute cap, held on the server', () => {
 });
 
 describe('the spend ceiling on candidate mode', () => {
-  async function candidateRun(demo: Demo): Promise<string> {
+  async function candidateRun(demo: Demo, reservedCalls = 12): Promise<string> {
     const session = await prisma.interviewSession.findFirst({ where: { tenantId: demo.tenantId }, select: { id: true } });
     const run = await prisma.demoInterviewRun.create({
-      data: { tenantId: demo.tenantId, demoGrantId: demo.grantId, sessionId: session!.id, mode: 'candidate', capAt: new Date(Date.now() + DEMO_CAP_MS) },
+      data: {
+        tenantId: demo.tenantId, demoGrantId: demo.grantId, sessionId: session!.id, mode: 'candidate',
+        capAt: new Date(Date.now() + DEMO_CAP_MS), reservedCalls,
+      },
     });
     return run.sessionId;
   }
 
   it('spends on the interviewer reacting to what was said', async () => {
     const demo = await openDemo();
-    const sessionId = await candidateRun(demo);
-    expect(await claimModelCall('live_interviewer', sessionId)).toBe(true);
+    expect(await claimModelCall('live_interviewer', await candidateRun(demo))).toBe(true);
   });
 
-  // The line the owner asked to be drawn explicitly: the scaffolding and the
-  // scoring stay built-in however much budget is left.
-  it('never spends on the scaffolding, the grading or the written report', async () => {
+  // The line the owner asked to be drawn explicitly.
+  it('never spends on the scaffolding, the grading, the report or the intent read', async () => {
     const demo = await openDemo();
     const sessionId = await candidateRun(demo);
-    for (const fn of ['candidate_question', 'competency_grader', 'report_writer']) {
+    for (const fn of ['candidate_question', 'competency_grader', 'report_writer', 'candidate_intent']) {
       expect(await claimModelCall(fn, sessionId)).toBe(false);
     }
   });
 
-  it('stops at the sitting\'s allowance and keeps going silently after it', async () => {
+  it('stops at what the sitting reserved and keeps going silently after it', async () => {
     const demo = await openDemo();
     const sessionId = await candidateRun(demo);
     let allowed = 0;
@@ -313,22 +318,46 @@ describe('the spend ceiling on candidate mode', () => {
     expect(allowed).toBe(12);
   });
 
-  it('counts every sitting against the same day', async () => {
+  // The blocker Codex found: read-then-write let concurrent turns all read the
+  // same count and all spend. The claim is now one conditional statement.
+  it('lets concurrent turns spend no more than the sitting reserved', async () => {
     const demo = await openDemo();
-    const sessionId = await candidateRun(demo);
-    await claimModelCall('live_interviewer', sessionId);
-    const day = await prisma.demoSpendDay.findFirst();
-    expect(day?.calls).toBe(1);
+    const sessionId = await candidateRun(demo, 3);
+    const results = await Promise.all(Array.from({ length: 12 }, () => claimModelCall('live_interviewer', sessionId)));
+    expect(results.filter(Boolean)).toHaveLength(3);
+    const run = await prisma.demoInterviewRun.findFirst({ where: { sessionId } });
+    expect(run?.modelCalls).toBe(3);
   });
 
-  // A sandbox retired early must not hand its spend back to the day's ceiling.
-  it('keeps the day\'s count when the sandbox that spent it is purged', async () => {
+  it('spends nothing for a sitting that reserved nothing', async () => {
     const demo = await openDemo();
-    const sessionId = await candidateRun(demo);
-    await claimModelCall('live_interviewer', sessionId);
+    expect(await claimModelCall('live_interviewer', await candidateRun(demo, 0))).toBe(false);
+  });
+
+  it('takes a whole sitting out of the day when one starts, not a call at a time', async () => {
+    const restore = makeCandidateModeDeliverable();
+    try {
+      const demo = await openDemo();
+      await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'candidate' });
+      expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(12);
+    } finally { restore(); }
+  });
+
+  // Two starts must not both take the day's last sitting.
+  it('gives the last sitting of the day to exactly one of two racing starts', async () => {
+    await prisma.demoSpendDay.create({ data: { dayKey: new Date().toISOString().slice(0, 10), calls: 240 - 12 } });
+    const [a, b] = await Promise.all([reserveSitting(), reserveSitting()]);
+    expect([a, b].filter((n) => n > 0)).toHaveLength(1);
+    expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(240);
+  });
+
+  it('keeps the count for the day when the sandbox that spent it is purged', async () => {
+    const demo = await openDemo();
+    await claimModelCall('live_interviewer', await candidateRun(demo));
+    await reserveSitting();
     await prisma.tenant.update({ where: { id: demo.tenantId }, data: { demoExpiresAt: new Date(Date.now() - 1000) } });
     await purgeExpiredDemoTenants();
-    expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(1);
+    expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(12);
     expect(await prisma.demoModelSpend.count()).toBe(0);
   });
 
@@ -626,5 +655,91 @@ describe('nothing below standard is offered', () => {
     const demo = await openDemo();
     const res = await asDemo(request(app).get('/api/demo/status'), demo.auth);
     expect(JSON.stringify(res.body)).not.toMatch(/reason|no_model|no_server/i);
+  });
+});
+
+describe('the races Codex found', () => {
+  it('gives two racing observer starts one sitting, not two', async () => {
+    const demo = await openDemo();
+    const [a, b] = await Promise.all([
+      asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' }),
+      asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' }),
+    ]);
+    expect(await prisma.demoInterviewRun.count({ where: { tenantId: demo.tenantId } })).toBe(1);
+    expect([a.status, b.status].filter((st) => st === 201).length).toBeGreaterThanOrEqual(1);
+    expect([a.status, b.status].every((st) => st < 500)).toBe(true);
+  });
+
+  it('gives two racing feedback tickets one row, not two', async () => {
+    const demo = await openDemo();
+    await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+    await Promise.all([
+      asDemo(request(app).post('/api/demo/interview/feedback-ticket'), demo.auth),
+      asDemo(request(app).post('/api/demo/interview/feedback-ticket'), demo.auth),
+    ]);
+    expect(await prisma.demoFeedback.count({ where: { tenantId: demo.tenantId } })).toBe(1);
+  });
+
+  // Finalising first and recording afterwards let the loser of the race
+  // overwrite the winner's outcome: an assessed sitting filed as a failure.
+  it('records one outcome when the sweep and the visitor finish the same sitting', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    const past = new Date(run.startedAt.getTime() + DEMO_CAP_MS + 1_000);
+    await Promise.all([finishDemoRun(run, 'cap', past), finishDemoRun(run, 'demo_ended', past)]);
+    const after = await runById(run.id);
+    expect(after?.endReason).not.toBe('engine_unavailable');
+    expect(await prisma.assessmentVersion.count({ where: { sessionId: run.sessionId } })).toBeLessThanOrEqual(1);
+  });
+
+  // The watcher stops polling when it sees the script complete, so the
+  // assessment has to exist in that same response.
+  it('has the assessment ready in the response that completes the script', async () => {
+    const demo = await openDemo();
+    const started = await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+    await prisma.demoInterviewRun.updateMany({
+      where: { id: started.body.runId },
+      data: { startedAt: new Date(Date.now() - 12 * 60_000) },
+    });
+    const res = await asDemo(request(app).get(`/api/demo/interview/run/${started.body.runId}/watch`), demo.auth);
+    expect(res.body.complete).toBe(true);
+    expect(res.body.assessmentId).not.toBeNull();
+  });
+
+  it('answers a malformed feedback ticket exactly as it answers an unknown one', async () => {
+    const shape = (r: { status: number; body: Record<string, unknown> }) => [r.status, r.body.error, r.body.code];
+    const short = await request(app).post('/api/demo-feedback').send({ token: 'x', body: 'Hello.' });
+    const unknown = await request(app).post('/api/demo-feedback').send({ token: 'y'.repeat(43), body: 'Hello.' });
+    expect(shape(short)).toEqual(shape(unknown));
+  });
+});
+
+describe('observer mode reaches no model, proved rather than asserted', () => {
+  // Constraint 1 is absolute, and "generateJson returns null for demo tenants"
+  // is a reason to believe it rather than a proof. This stands a provider in
+  // that records every call and drives a whole observer sitting — opening,
+  // playback, finalisation, evidence extraction, grading and the written
+  // report — through it.
+  it('makes no provider call at any point in a whole scripted sitting', async () => {
+    const calls: string[] = [];
+    _setLlmForTests({
+      name: 'recording-provider',
+      enabled: true,
+      generate: async (messages: unknown, opts?: { purpose?: string }) => {
+        calls.push(opts?.purpose ?? 'unknown');
+        return { text: '{}' };
+      },
+    } as never);
+    try {
+      const demo = await openDemo();
+      const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+      await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, hurry: true });
+      await finishDemoRun(run, 'completed', new Date(run.startedAt.getTime() + 11 * 60_000));
+      expect(await prisma.assessmentVersion.count({ where: { sessionId: run.sessionId } })).toBe(1);
+      expect(calls).toEqual([]);
+      expect(await prisma.demoModelSpend.count()).toBe(0);
+    } finally {
+      _resetLlm();
+    }
   });
 });

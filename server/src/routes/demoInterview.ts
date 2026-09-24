@@ -143,8 +143,13 @@ demoInterviewRouter.get('/interview/run/:id/watch', authenticate, asyncHandler(a
   if (run.mode !== 'observer') throw new HttpError(409, 'That demo interview is not one you are watching.');
 
   if (!run.endedAt) {
-    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt });
+    const played = await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt });
     await noteStage(run.sessionId, 'interviewing');
+    // Finished HERE, in the response that completes the script, rather than
+    // waiting for the sweep. The page stops polling when it sees `complete`,
+    // so a run finalised a minute later would leave the watcher looking at an
+    // interview that had ended with no assessment to open.
+    if (played.complete) await finishDemoRun(run, 'completed');
   }
   const turns = await prisma.turn.findMany({
     where: { sessionId: run.sessionId },
@@ -153,7 +158,9 @@ demoInterviewRouter.get('/interview/run/:id/watch', authenticate, asyncHandler(a
   });
   const session = await prisma.interviewSession.findUnique({
     where: { id: run.sessionId },
-    select: { state: true, candidate: { select: { fullName: true } }, personaJson: true, invitation: { select: { tokenSealed: true, token: true } } },
+    // No invitation columns: this route never returns a link, and the sealed
+    // token has no business being read into memory on a page that cannot use it.
+    select: { state: true, candidate: { select: { fullName: true } }, personaJson: true },
   });
   const assessment = await prisma.assessmentVersion.findFirst({
     where: { sessionId: run.sessionId }, orderBy: { createdAt: 'desc' }, select: { id: true },
@@ -234,7 +241,11 @@ demoInterviewRouter.post('/interview/feedback-ticket', authenticate, asyncHandle
 export const demoFeedbackRouter = Router();
 
 const feedbackSchema = z.object({
-  token: z.string().min(24).max(128),
+  // Deliberately loose. A length check here would answer a short token with a
+  // validation error and a well-formed unknown one with 410 — which is a way
+  // to learn the shape of a real ticket. Every unusable ticket, of any shape,
+  // is answered by submitFeedback with the same 410.
+  token: z.string().min(1).max(512),
   body: z.string().min(1).max(4_000),
   /**
    * 'spoken' means the browser's own recogniser produced these words. What is

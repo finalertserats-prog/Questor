@@ -152,17 +152,18 @@ describe('the interviewer never breaks character', () => {
 
 describe('the spend ceiling', () => {
   const state = (over: Partial<Parameters<typeof spendVerdict>[1]> = {}) =>
-    ({ mode: 'candidate', ended: false, runSpent: 0, daySpent: 0, ...over });
+    ({ mode: 'candidate', ended: false, runSpent: 0, reserved: DEMO_SPEND_PER_RUN, ...over });
 
-  it('spends only on the interviewer reacting and on reading intent', () => {
+  // EXACTLY ONE function, which is the literal reading of what the owner
+  // authorised. candidate_intent was in here on a good argument; a budget
+  // exception that grows by good argument stops being an exception.
+  it('spends only on the interviewer reacting to what was said', () => {
     expect(isSpendableFunction('live_interviewer')).toBe(true);
-    expect(isSpendableFunction('candidate_intent')).toBe(true);
+    expect(isSpendableFunction('candidate_intent')).toBe(false);
   });
 
-  // The scaffolding and the scoring stay on the built-in writer however much
-  // budget is left. This is the line the owner asked to be drawn explicitly.
   it('never spends on the scaffolding, the grading or the written report', () => {
-    for (const fn of ['candidate_question', 'competency_grader', 'report_writer', 'role_extraction']) {
+    for (const fn of ['candidate_question', 'competency_grader', 'report_writer', 'role_extraction', 'candidate_intent']) {
       expect(spendVerdict(fn, state())).toBe('not_reactive');
     }
   });
@@ -175,13 +176,15 @@ describe('the spend ceiling', () => {
     expect(spendVerdict('live_interviewer', state({ ended: true }))).toBe('ended');
   });
 
-  it('stops at the per-sitting ceiling', () => {
+  it('stops at what this sitting reserved, not at a global count', () => {
     expect(maySpend('live_interviewer', state({ runSpent: DEMO_SPEND_PER_RUN - 1 }))).toBe(true);
     expect(spendVerdict('live_interviewer', state({ runSpent: DEMO_SPEND_PER_RUN }))).toBe('run_exhausted');
   });
 
-  it('stops at the per-day ceiling across every demo', () => {
-    expect(spendVerdict('live_interviewer', state({ daySpent: DEMO_SPEND_PER_DAY }))).toBe('day_exhausted');
+  // A sitting that reserved nothing may spend nothing — which is what makes
+  // "the day is full" a decision taken before the start rather than during.
+  it('spends nothing at all when the sitting reserved nothing', () => {
+    expect(spendVerdict('live_interviewer', state({ reserved: 0 }))).toBe('run_exhausted');
   });
 
   it('keys the day counter on the calendar day in UTC', () => {
@@ -189,11 +192,14 @@ describe('the spend ceiling', () => {
     expect(spendDayKey(new Date('2026-09-25T00:00:01.000Z'))).toBe('2026-09-25');
   });
 
-  // A run running out is a demo that went the distance. A DAY running out
-  // means every prospect after this one silently gets the built-in writer.
-  it('treats only the day running out as worth an operator knowing', () => {
-    expect(refusalIsNotable('run_exhausted')).toBe(false);
-    expect(refusalIsNotable('day_exhausted')).toBe(true);
+  it('reserves whole sittings out of the day, not single calls', () => {
+    expect(DEMO_SPEND_PER_DAY % DEMO_SPEND_PER_RUN).toBe(0);
+    expect(DEMO_SPEND_PER_DAY / DEMO_SPEND_PER_RUN).toBe(20);
+  });
+
+  it('treats a sitting outrunning its allowance as worth an operator knowing', () => {
+    expect(refusalIsNotable('run_exhausted')).toBe(true);
+    expect(refusalIsNotable('not_reactive')).toBe(false);
   });
 });
 
