@@ -12,7 +12,10 @@ import { dismissTour, jobDescription, roleTitle, runId } from './helpers';
 test('creates a role from an uploaded Markdown job description', async ({ page }) => {
   const id = runId();
   const title = roleTitle(id);
-  const marker = `E2E corrected line ${id}`;
+  // Verb-led on purpose: the role page lists the responsibilities the extractor
+  // recognised, and it recognises them by their verb. A markerless-of-verb line
+  // would reach the role and still be rendered nowhere.
+  const marker = `Maintain the E2E corrected dataset ${id}`;
 
   await page.goto('/roles/new');
   await dismissTour(page);
@@ -43,12 +46,22 @@ test('creates a role from an uploaded Markdown job description', async ({ page }
 
   // What the file was, beside what came out of it.
   await expect(page.getByTestId('jd-extraction')).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText('senior-data-engineer.md')).toBeVisible();
+  // Scoped to the facts list: the file's name is also on the button that
+  // detaches it, and an unscoped match is two elements, not one.
+  await expect(page.getByTestId('jd-file-facts').getByText('senior-data-engineer.md')).toBeVisible();
   const extracted = page.getByRole('textbox', { name: /edit anything the file got wrong/i });
   await expect(extracted).toHaveValue(/About the role/);
 
   // The extraction is a draft, not a verdict: correct it before creating.
-  await extracted.fill(`${await extracted.inputValue()}\n\n${marker}`);
+  //
+  // The correction goes in as a responsibility rather than a line appended to
+  // the end. The role page shows a PARSED job description — outcomes,
+  // responsibilities — so a trailing orphan line reaches `sourceText` (it does;
+  // it is in the database) but belongs to no section and is rendered nowhere.
+  // Asserting on it would have failed a working import.
+  const drafted = await extracted.inputValue();
+  expect(drafted).toContain('Responsibilities:\n');
+  await extracted.fill(drafted.replace('Responsibilities:\n', `Responsibilities:\n- ${marker}\n`));
 
   await page.getByRole('button', { name: /^Create role$/ }).click();
   const continueButton = page.getByRole('button', { name: /Continue to the role/ });
