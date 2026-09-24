@@ -38,7 +38,10 @@ describe('resumeParser + fitScoring', () => {
   const profile = normalizeProfile(DEMO_RESUME);
   const role = extractRoleHeuristic(DEMO_JD).profile;
   it('extracts skills and employment', () => {
-    expect(profile.skills).toContain('Sql');
+    // 'Sql', once. Skills used to be title-cased from whatever the match
+    // string happened to be, so the hiring team read "Sql", "Nlp" and
+    // "Power Bi" beside the candidate's name. They carry their real names now.
+    expect(profile.skills).toContain('SQL');
     expect(profile.employment.length).toBeGreaterThan(0);
   });
   it('produces a bounded fit score with components', () => {

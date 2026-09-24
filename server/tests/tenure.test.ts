@@ -23,9 +23,17 @@ describe('total years of experience', () => {
     }
   });
 
-  it('leaves a fully dated history alone', () => {
+  /**
+   * This once expected 7 — the span from the degree to the end of the last
+   * job. That is graduation, not employment, and the two are not the same
+   * number: a CV showing one job from 2018 to 2021 says four years of
+   * experience however long before it the person was at university. Counting
+   * everything between the first and last year on the page is what credited a
+   * marketing manager with 31 years because 1995 appears in her email address.
+   */
+  it('counts the years worked, not the years since the degree', () => {
     const cv = `X\n\nExperience:\nEngineer, Acme (2018 - 2021)\n\nEducation:\nB.Sc. (2014)\n`;
-    expect(normalizeProfile(cv).totalYears).toBe(7);
+    expect(normalizeProfile(cv).totalYears).toBe(4);
   });
 
   it('still reports nothing when there are no usable dates', () => {

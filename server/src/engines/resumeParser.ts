@@ -2,6 +2,9 @@ import mammoth from 'mammoth';
 import { HttpError } from '../middleware/index.js';
 import type { NormalizedProfile } from '../domain/types.js';
 import { extractCvFacts } from './cvFacts.js';
+import { pdfPageRenderer } from './pdfLayout.js';
+import { totalExperienceYears } from './experienceSpan.js';
+import { matchSkills } from './skillVocabulary.js';
 
 export const PDF_MIME = 'application/pdf';
 export const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -47,6 +50,8 @@ export function isJdMimeType(value: string): value is JdMimeType {
  *  normalization, storage, or any LLM call priced per token. */
 export const MAX_RESUME_TEXT_CHARS = 200_000;
 
+type PdfParse = (input: Buffer, opts?: Record<string, unknown>) => Promise<{ text?: string }>;
+
 const PDF_MAGIC = Buffer.from('%PDF', 'ascii');
 // DOCX is an OOXML package, i.e. a ZIP archive, so it opens with the ZIP local
 // file header rather than anything Word-specific.
@@ -84,11 +89,12 @@ export async function extractResumeText(buffer: Buffer, declaredType: string): P
   try {
     if (declaredType === PDF_MIME) {
       // Import the library file directly to avoid pdf-parse's debug harness.
-      const mod = (await import('pdf-parse/lib/pdf-parse.js')) as {
-        default?: (input: Buffer) => Promise<{ text?: string }>;
-      };
-      const pdfParse = mod.default ?? (mod as unknown as (input: Buffer) => Promise<{ text?: string }>);
-      const data = await pdfParse(buffer);
+      const mod = (await import('pdf-parse/lib/pdf-parse.js')) as { default?: PdfParse };
+      const pdfParse = mod.default ?? (mod as unknown as PdfParse);
+      // Our own page renderer, not pdf-parse's: see engines/pdfLayout.ts for
+      // the two-column CVs and side-by-side date strips its default reading
+      // turned into nonsense.
+      const data = await pdfParse(buffer, { pagerender: pdfPageRenderer });
       return capped(String(data.text ?? ''));
     }
     if (declaredType === DOCX_MIME) {
@@ -154,22 +160,74 @@ function capped(text: string): string {
   return text.slice(0, MAX_RESUME_TEXT_CHARS).trim();
 }
 
-const SKILL_HINTS = [
-  'sql', 'python', 'java', 'javascript', 'typescript', 'react', 'node', 'aws', 'azure', 'gcp',
-  'kubernetes', 'docker', 'terraform', 'spark', 'airflow', 'dbt', 'snowflake', 'bigquery', 'redshift',
-  'postgres', 'mysql', 'kafka', 'pandas', 'tensorflow', 'pytorch', 'machine learning', 'nlp',
-  'salesforce', 'excel', 'tableau', 'power bi', 'figma', 'jira', 'agile', 'scrum', 'go', 'rust', 'c++',
-];
+/**
+ * Bullet glyphs a PDF actually leaves in the text. The list used to be
+ * `- * •`, so the square and round bullets that Word and Canva templates
+ * favour were kept as part of the value: certifications reached the hiring
+ * team reading "▪ Google Ads Fundamentals".
+ */
+const BULLET_PREFIX = /^[\s\-*+>•▪▫●○■□◦‣⁃·∙・›»⁃−]+/;
 
+function stripBullet(line: string): string {
+  return line.replace(BULLET_PREFIX, '').trim();
+}
+
+/**
+ * Every heading a CV uses for a section that is not the one we are reading.
+ *
+ * A section ends where the next heading starts, so this list is what stops one
+ * running on. It used to name nine headings, and a CV whose certifications
+ * were followed by "LANGUAGES" had "English, Hindi" and the two paragraphs
+ * after it filed as certifications, because "languages" was not on the list
+ * and nothing else ended the section.
+ */
+const SECTION_HEADINGS = new Set([
+  'experience', 'work experience', 'professional experience', 'employment', 'employment history',
+  'work history', 'career history', 'career timeline', 'education', 'academic', 'qualifications',
+  'projects', 'project', 'key projects', 'skills', 'technical skills', 'core skills',
+  'core competencies', 'competencies', 'key skills', 'areas of expertise', 'expertise',
+  'certifications', 'certification', 'certificates', 'licenses', 'licences', 'training',
+  'summary', 'profile', 'profile summary', 'professional summary', 'objective', 'about',
+  'awards', 'honors', 'honours', 'achievements', 'key highlights', 'highlights',
+  'publications', 'patents', 'languages', 'interests', 'hobbies', 'activities',
+  'volunteering', 'volunteer experience', 'references', 'contact', 'personal details',
+  'tools', 'technologies', 'affiliations', 'memberships', 'courses', 'coursework',
+]);
+
+/**
+ * The section this line is the heading of, or null if it is content.
+ *
+ * Named headings are matched whole, not by prefix. "Experience" is a heading;
+ * "Experienced in B2B campaigns across EMEA" is a sentence that starts with
+ * the same letters, and reading the second as the first silently moved the
+ * section boundary into the middle of someone's job.
+ */
+function headingKey(line: string): string | null {
+  const bare = stripBullet(line).replace(/[:\s]+$/, '').toLowerCase();
+  if (!bare || bare.length > 48) return null;
+  if (SECTION_HEADINGS.has(bare)) return bare;
+  // Compound headings are the norm, not the exception: "CERTIFICATIONS &
+  // TRAINING", "Education and Qualifications", "Skills / Tools". Every part
+  // has to be a heading in its own right, so "Experience at Gartner and
+  // Genesys" is still a sentence.
+  const parts = bare.split(/\s*(?:&|\/|\||,|and)\s*/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 3) return null;
+  return parts.every((p) => SECTION_HEADINGS.has(p)) ? parts[0] : null;
+}
+
+/** The lines under one of these headings, ending at the next heading of any kind. */
 function sectionBody(text: string, headers: string[]): string {
   const lines = text.split('\n');
-  const lower = lines.map((l) => l.toLowerCase().trim());
-  const startIdx = lower.findIndex((l) => headers.some((h) => l === h || l.startsWith(h)));
+  const wanted = new Set(headers);
+  let startIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const key = headingKey(lines[i]);
+    if (key && wanted.has(key)) { startIdx = i; break; }
+  }
   if (startIdx < 0) return '';
-  const nextHeaderRe = /^(experience|employment|work history|education|projects?|skills|certifications?|summary|objective|awards|publications)\b/i;
   const out: string[] = [];
   for (let i = startIdx + 1; i < lines.length; i++) {
-    if (nextHeaderRe.test(lines[i].trim()) && lines[i].trim().length < 40) break;
+    if (headingKey(lines[i])) break;
     out.push(lines[i]);
   }
   return out.join('\n');
@@ -184,81 +242,122 @@ function sectionBody(text: string, headers: string[]): string {
  * which carries provenance and has protected detail removed first — so the two
  * are deliberately separate things with separate jobs.
  */
+/** Headings a CV puts its jobs under. */
+const EXPERIENCE_HEADINGS = [
+  'experience', 'work experience', 'professional experience', 'employment',
+  'employment history', 'work history', 'career history',
+];
+
+const DEGREE_RE = /\b(b\.?tech|b\.?e\.?|bachelor|master|m\.?tech|m\.?s\.?|mba|mca|bca|phd|doctorate|b\.?sc|m\.?sc|b\.?a\.?|m\.?a\.?|b\.?com|m\.?com|bbs|bba|llb|llm|diploma|hnd|btec|a[- ]levels?)\b/i;
+
+/**
+ * Whether a line names a certification rather than being prose that happened
+ * to sit under the heading.
+ *
+ * Two ways to qualify: it says what kind of thing it is (certified, course,
+ * programme, licence), or it is short and title-shaped — a name and an issuer,
+ * not a sentence. Anything with a full stop mid-line, or more than about a
+ * dozen words, is prose.
+ */
+function looksLikeCertification(line: string): boolean {
+  if (/\.\s+[A-Z]/.test(line)) return false;
+  const words = line.split(/\s+/).filter(Boolean).length;
+  if (words > 14) return false;
+  if (/\b(certifi\w*|certificate|credential|licen[cs]e\w*|accredit\w*|course|programme|program|training|diploma|badge|associate|professional|specialist|practitioner|foundation|fundamentals)\b/i.test(line)) return true;
+  // A short line carrying a recognised issuer or a year in brackets reads as a
+  // credential even when it never uses the word.
+  return words <= 10 && /\b(google|microsoft|aws|amazon|azure|oracle|salesforce|hubspot|cisco|pmi|pmp|prince2|scrum|comptia|sap|tableau|meta|adobe|ibm|isaca|acca|cima|cfa|cipd)\b/i.test(line);
+}
+
 export function normalizeProfile(text: string): NormalizedProfile {
   const clean = text.replace(/\r/g, '');
-  const lower = clean.toLowerCase();
 
-  // Skills
-  const skills = Array.from(new Set(SKILL_HINTS.filter((s) => lower.includes(s)))).map((s) =>
-    s.replace(/\b\w/g, (c) => c.toUpperCase()),
-  );
+  // Skills. Word-boundary matching against a vocabulary that covers more than
+  // one profession — see engines/skillVocabulary.ts for the senior marketing
+  // manager whose CV came back as ["Salesforce", "Go"], the second of which
+  // was the word "Google".
+  const skills = matchSkills(clean);
 
   // Employment: lines that look like "Title, Company (dates)" or "Title at Company"
   const employment: NormalizedProfile['employment'] = [];
-  const expBody = sectionBody(clean, ['experience', 'employment', 'work history']) || clean;
+  // No fallback to the whole document. Treating every line as the experience
+  // section is the swallowing bug in its purest form: a CV with no recognised
+  // heading had its education, its skills list and its address read as jobs.
+  // A CV we cannot find an experience section in has no employment we can
+  // state, and the evidence parser below is the one that gets to try next.
+  const expBody = sectionBody(clean, EXPERIENCE_HEADINGS);
   const dateRe = /(19|20)\d{2}/g;
-  const roleLineRe = /^(.{3,60}?)(?:\s+(?:at|@|,|-)\s+)(.{2,60}?)(?:\s*[\(\|].*)?$/;
+  const roleLineRe = /^(.{3,60}?)(?:\s+(?:at|@|,|-|–|—|\|)\s+)(.{2,60}?)(?:\s*[\(\|].*)?$/;
   const bulletBuf: string[] = [];
   let current: NormalizedProfile['employment'][number] | null = null;
   for (const raw of expBody.split('\n')) {
     const line = raw.trim();
     if (!line) continue;
-    const isBullet = /^[\-\*•]/.test(raw) || /^\s{2,}/.test(raw);
+    const isBullet = BULLET_PREFIX.test(raw) || /^\s{2,}/.test(raw);
     const m = line.match(roleLineRe);
-    if (m && !isBullet && line.length < 90) {
+    // A line that is only dates, or begins with one, is the date line under a
+    // heading — not a job title. A career-timeline strip is made entirely of
+    // those, and reading them as jobs is how "2017" became an employer.
+    const isDateLine = /^[\s(]*(?:(?:19|20)\d{2}|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(line)
+      && !/[a-z]{4,}/i.test(line.replace(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*/gi, ''));
+    if (m && !isBullet && !isDateLine && line.length < 90) {
       if (current) { current.bullets = bulletBuf.slice(); employment.push(current); bulletBuf.length = 0; }
       const dates = line.match(dateRe) ?? [];
       current = { title: m[1].trim(), company: m[2].replace(/[\(\|].*$/, '').trim(), start: dates[0], end: dates[1] ?? (/present|current/i.test(line) ? 'Present' : undefined), bullets: [] };
+    } else if (current && isDateLine && !current.start) {
+      // The dates for the role above, written on their own line beneath it.
+      const dates = line.match(dateRe) ?? [];
+      current.start = dates[0];
+      current.end = dates[1] ?? (/present|current/i.test(line) ? 'Present' : undefined);
     } else if (current && (isBullet || line.length > 20)) {
-      bulletBuf.push(line.replace(/^[\-\*•\s]+/, ''));
+      bulletBuf.push(stripBullet(line));
     }
   }
   if (current) { current.bullets = bulletBuf.slice(); employment.push(current); }
 
   // Education
   const education: NormalizedProfile['education'] = [];
-  const eduBody = sectionBody(clean, ['education']);
+  const eduBody = sectionBody(clean, ['education', 'academic', 'qualifications']);
   for (const raw of eduBody.split('\n')) {
-    const line = raw.trim();
-    if (/\b(b\.?tech|b\.?e\.?|bachelor|master|m\.?tech|m\.?s\.?|mba|phd|b\.?sc|m\.?sc|diploma)\b/i.test(line)) {
+    const line = stripBullet(raw);
+    // "Digital Marketing Master's Program" is a course, and the word "Master"
+    // in it is a marketing decision rather than an academic one.
+    if (DEGREE_RE.test(line) && !/(program|programme|course|bootcamp|training|certification|certificate)/i.test(line)) {
       const year = line.match(dateRe)?.[0];
-      education.push({ degree: line.replace(dateRe, '').replace(/[,|].*$/, '').trim().slice(0, 80), institution: '', year });
+      // "— MBA" and "▪ B.Tech" are the glyphs a PDF leaves behind, not part of
+      // anyone's degree.
+      const degree = line.replace(dateRe, '').replace(/[,|].*$/, '').replace(/^[\s\-–—:]+/, '').trim().slice(0, 80);
+      if (degree) education.push({ degree, institution: '', year });
     }
+    if (education.length >= 6) break;
   }
 
   // Projects
   const projects: NormalizedProfile['projects'] = [];
-  const projBody = sectionBody(clean, ['projects', 'project']);
+  const projBody = sectionBody(clean, ['projects', 'project', 'key projects']);
   for (const raw of projBody.split('\n')) {
-    const line = raw.trim().replace(/^[\-\*•\s]+/, '');
+    const line = stripBullet(raw);
     if (line.length > 15) projects.push({ name: line.slice(0, 60), summary: line });
     if (projects.length >= 6) break;
   }
 
   // Certifications
+  //
+  // A certification is a named award, not a sentence. Without that test the
+  // section picked up whatever followed it — one CV contributed "LANGUAGES"
+  // and "English, Hindi" — and the list is shown to the hiring team as fact.
   const certifications: string[] = [];
-  const certBody = sectionBody(clean, ['certifications', 'certification', 'certificate']);
+  const certBody = sectionBody(clean, ['certifications', 'certification', 'certificates', 'licenses', 'licences', 'training', 'courses', 'coursework']);
   for (const raw of certBody.split('\n')) {
-    const line = raw.trim().replace(/^[\-\*•\s]+/, '');
-    if (line.length > 4) certifications.push(line.slice(0, 80));
+    const line = stripBullet(raw);
+    if (line.length > 4 && line.length <= 120 && looksLikeCertification(line)) certifications.push(line.slice(0, 80));
     if (certifications.length >= 8) break;
   }
 
-  // Rough total years.
-  //
-  // "Present" is not a year, and a CV that reads "2004 - Present" therefore used
-  // to measure as zero years of experience: the span between the earliest and
-  // latest years actually WRITTEN DOWN. Every currently-employed candidate was
-  // understated, and the longer their tenure the worse the error.
-  //
-  // That fed band calibration, which read a twenty-two year director as
-  // `developing` and interviewed them at a level meant for two-to-five years.
-  // The questions were not the bug; this was.
-  const thisYear = new Date().getFullYear();
-  const years = (clean.match(dateRe) ?? []).map(Number).filter((y) => y > 1980 && y <= thisYear);
-  // An ongoing role means the range runs to today, whether or not the CV says so.
-  if (/\b(present|current|now|to date|ongoing|till date)\b/i.test(clean) && years.length) years.push(thisYear);
-  const totalYears = years.length >= 2 ? Math.min(45, Math.max(...years) - Math.min(...years)) : undefined;
+  // Years of experience: the union of the date ranges the CV writes down.
+  // engines/experienceSpan.ts has the candidate who was credited with 31 years
+  // because 1995 appears in her email address.
+  const totalYears = totalExperienceYears(clean);
 
   return {
     // A CV this parser could not find a single job in still has jobs. The
