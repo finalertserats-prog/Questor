@@ -39,6 +39,8 @@ const RESEND_EVERY_MS = 10 * 60_000;
 /** How long a creation slot is held: longer than any one create request takes. */
 const CAP_SLOT_HOLD_MS = 2 * 60_000;
 const TOKEN_SHAPE = /^[A-Za-z0-9_-]{24,128}$/;
+/** How long provisioning a sandbox, story and all, may take before it is given up. */
+const PROVISION_TIMEOUT_MS = 30_000;
 
 type Decision = 'approve' | 'decline';
 
@@ -130,7 +132,10 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
     await tx.candidateAssignment.create({ data: { candidateId: candidate.id, userId: user.id, relation: 'owner' } });
     const story = await seedDemoStory(tx as PrismaClient, { tenantId: tenant.id, userId: user.id, roleId: role.id, scorecardId: scorecard.id, profile: roleProfile, interviewer: storyInterviewer, now });
     return { tenantId: tenant.id, userId: user.id, invitationToken, sessionId: session.id, roleId: role.id, scorecardId: scorecard.id, candidateId: candidate.id, story };
-  });
+  // The story is some sixty rows (a transcript, an assessment, two artifacts);
+  // on a busy box that outran Prisma's five-second default and left the visitor
+  // with no sandbox and no error. Atomic still: all of it lands, or none.
+  }, { timeout: PROVISION_TIMEOUT_MS, maxWait: PROVISION_TIMEOUT_MS });
   // After the commit, through the product's own autonomy: Priya's assessed
   // interview puts her at Gold, waiting for a person; the visitor's invitation
   // puts them at Silver.

@@ -35,7 +35,9 @@ beforeAll(async () => {
   await ensureCatalogSeeded();
   config.signupApproverEmail = 'operator@example.com';
   sandbox = await provisionDemoTenant(VISITOR);
-});
+// Provisioning writes the whole story; under the full suite's load it needs
+// more than the default hook allowance.
+}, 90_000);
 
 async function priyaSession() {
   const candidate = await prisma.candidate.findFirstOrThrow({ where: { tenantId: sandbox.tenantId, email: DEMO_STORY_CANDIDATE_EMAIL } });
