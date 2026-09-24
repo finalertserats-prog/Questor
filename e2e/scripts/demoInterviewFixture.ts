@@ -59,6 +59,11 @@ async function newestDemoTenant(): Promise<string> {
 }
 
 async function startCandidate(): Promise<string> {
+  // Starting a candidate sitting claims a whole sitting's worth of the day's
+  // model budget, and a suite run repeatedly exhausts it — which is the budget
+  // working. Cleared here so the fixture is about the interview rather than
+  // about the ceiling, which has its own tests.
+  await prisma.demoSpendDay.deleteMany({ where: { dayKey: new Date().toISOString().slice(0, 10) } });
   const tenantId = await newestDemoTenant();
   const grant = await prisma.demoGrant.findFirst({ where: { tenantId }, orderBy: { createdAt: 'desc' }, select: { id: true } });
   if (!grant) throw new Error('no demo grant to work with');
