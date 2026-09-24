@@ -177,10 +177,16 @@ describe('excludedBy', () => {
     { line: 'We welcome applicants regardless of race, religion, gender or age.', rule: 'dei_statement' },
     { line: 'All offers are subject to a background check and right to work.', rule: 'legal_notice' },
     { line: 'Acme was founded in 2014 and is headquartered in Bengaluru.', rule: 'company_blurb' },
-    { line: 'Our mission is to make financial data trustworthy.', rule: 'company_blurb' },
+    { line: 'Our mission is to make financial data trustworthy.', rule: 'company_commitment' },
+    { line: 'We make accounting software that does not make people cry.', rule: 'company_narrative' },
+    { line: 'Our infrastructure runs on Azure.', rule: 'company_narrative' },
+    { line: 'You will not line manage anyone.', rule: 'negated_requirement' },
+    { line: 'You are not the product owner.', rule: 'negated_requirement' },
+    { line: 'Our CMO owns demand generation and the campaign calendar.', rule: 'other_team_tool' },
+    { line: 'Finance or accounting buyers.', rule: 'customer_function' },
     { line: 'Apply now via our careers page with a cover letter.', rule: 'application_process' },
     { line: 'The platform team owns the Kubernetes cluster.', rule: 'other_team_tool' },
-    { line: 'Our CI pipeline is maintained by the developer experience team.', rule: 'other_team_tool' },
+    { line: 'Our CI pipeline is maintained by the developer experience team.', rule: 'other_team_owns' },
   ];
 
   for (const { line, rule } of cases) {

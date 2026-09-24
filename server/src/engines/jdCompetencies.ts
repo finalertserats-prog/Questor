@@ -1,6 +1,6 @@
 import type { Competency, Proficiency } from '../domain/types.js';
 import { baselineCompetencies, extractableCompetencies, resolveCanonical } from '../domain/taxonomy/index.js';
-import type { CanonicalCompetency } from '../domain/taxonomy/types.js';
+import type { CanonicalCompetency, DomainTag } from '../domain/taxonomy/types.js';
 import { contributingLines, maskCollaborationObjects, sectionWeight, type JdLine, type JdSectionKind } from './jdSections.js';
 import type { BandId } from './experienceBands.js';
 
@@ -54,6 +54,8 @@ export interface ProposeOptions {
   readonly band?: BandId;
   /** Seniority word from the advert, used when no band was chosen. */
   readonly level?: string;
+  /** The catalog domain the role sits in, used to weigh an out-of-domain proposal. */
+  readonly domain?: DomainTag | null;
 }
 
 /** Below this nothing is proposed at all: a single glancing mention is not a requirement. */
@@ -106,6 +108,8 @@ function gather(sourceText: string): Map<string, Gathered> {
     const masked = maskCollaborationObjects(line.text);
     for (const canonical of extractableCompetencies()) {
       if (!canonical.cues.some((re) => re.test(masked))) continue;
+      // A veto beats every cue: the word is there and means something else.
+      if (canonical.notWhen?.some((re) => re.test(masked))) continue;
       const entry = found.get(canonical.key) ?? { canonical, spans: [] };
       // The same requirement repeated on one line is one span, not two.
       if (!entry.spans.some((s) => s.line === line.line)) {
@@ -132,14 +136,41 @@ function gather(sourceText: string): Map<string, Gathered> {
  * "Strong Java, design patterns and code review" keeps Software Engineering,
  * because that line is its own.
  */
-function earnedTheirPlace(gathered: readonly Gathered[]): Gathered[] {
+function earnedTheirPlace(gathered: readonly Gathered[], domain: DomainTag | null): Gathered[] {
   const specificLines = new Set(
     gathered.filter((g) => !g.canonical.general).flatMap((g) => g.spans.map((s) => s.line)),
   );
   return gathered.filter(({ canonical, spans }) => {
-    if (!canonical.general) return true;
-    return spans.some((s) => !specificLines.has(s.line) && s.section !== 'nice_to_have');
+    if (canonical.general && !spans.some((s) => !specificLines.has(s.line) && s.section !== 'nice_to_have')) {
+      return false;
+    }
+    return !isPassingIndustryMention(canonical, spans, domain);
   });
+}
+
+/**
+ * "Nice to have: experience in logistics." — a domain, not a competency.
+ *
+ * A backend advert that would like someone who has seen freight before is not
+ * hiring a supply chain planner, and a product advert that mentions KYC in its
+ * bonus list is not hiring a credit risk manager. Both were reaching
+ * scorecards, and both look the same: a competency that belongs to another
+ * domain entirely, mentioned once, in the section the advert uses for things
+ * it does not insist on.
+ *
+ * Two of those three conditions is not enough. A competency out of its usual
+ * domain but asked for twice, or asked for in the requirements, is a genuine
+ * cross-over requirement and is kept — a fintech backend role really can need
+ * risk knowledge, and it will say so more than once.
+ */
+function isPassingIndustryMention(
+  canonical: CanonicalCompetency,
+  spans: readonly CompetencySpan[],
+  domain: DomainTag | null,
+): boolean {
+  if (!domain || canonical.domains.length === 0) return false;
+  if (canonical.domains.includes(domain)) return false;
+  return spans.length === 1 && spans[0].section === 'nice_to_have';
 }
 
 /**
@@ -236,7 +267,7 @@ function normalise(
  */
 export function proposeFromJd(sourceText: string, opts: ProposeOptions = {}): ProposedCompetency[] {
   const band = bandFrom(opts);
-  const gathered = earnedTheirPlace([...gather(sourceText).values()]);
+  const gathered = earnedTheirPlace([...gather(sourceText).values()], opts.domain ?? null);
 
   const fromJd = gathered.map(({ canonical, spans }) => {
     const classification = classificationOf(spans);

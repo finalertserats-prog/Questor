@@ -62,7 +62,7 @@ export function runCase(gold: JdGoldCase, engine: 'current' | 'legacy' = 'curren
       spans: [] as unknown[],
       origin: 'jd' as const,
     }))
-    : proposeFromJd(gold.jd, { title: gold.title, band: gold.band }).filter((p) => p.origin === 'jd');
+    : proposeFromJd(gold.jd, { title: gold.title, band: gold.band, domain: gold.domain }).filter((p) => p.origin === 'jd');
 
   const proposedKeys = new Set(fromJd.map((p) => p.key ?? competencyKeyOf(p.name)));
   const expected = keys(gold.expect);

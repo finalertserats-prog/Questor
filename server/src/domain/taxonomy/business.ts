@@ -58,7 +58,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     cues: [
       /\b(sales (quota|target|cycle|pipeline|process)|quota[- ]carrying|closing deals|new business|business development)\b/i,
       /\b(prospect(ing|s)?|lead generation|cold (call|outreach)|\bmeddic\b|\bbant\b|qualif(y|ication) (leads|opportunities))\b/i,
-      /\b(salesforce|hubspot|\bcrm\b|outreach\.io|deal desk)\b/i,
+      // HubSpot is a marketing automation tool before it is a CRM, and naming
+      // it here put Sales Execution on a marketing manager's scorecard.
+      /\b(salesforce|\bcrm\b|outreach\.io|deal desk)\b/i,
       /\b(account (executive|management)|territory plan|renewals? (target|quota)|upsell|cross[- ]sell)\b/i,
     ],
     domains: ['sales', 'customer_success', 'retail', 'bfsi'],
@@ -120,7 +122,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['FP&A', 'Financial Planning', 'Financial Modelling', 'Finance', 'Finance & Analysis'],
     cues: [
       /\b(financial (analysis|model(l)?ing|planning|reporting)|\bfp&a\b|budgeting and forecasting|variance analysis)\b/i,
-      /\b(\bp&l\b|profit and loss|cash ?flow|balance sheet|management accounts|cost centre|\bopex\b|\bcapex\b)\b/i,
+      // The management accounts and the balance sheet are the bookkeeper's
+      // output, not the planner's, and they belong to Accounting & Controls.
+      /\b(\bp&l\b|profit and loss|cash ?flow|cost centre|\bopex\b|\bcapex\b)\b/i,
       /\b(three[- ]statement model|\bdcf\b|scenario (analysis|planning)|unit economics)\b/i,
     ],
     domains: ['finance', 'bfsi', 'strategy', 'retail'],
@@ -132,7 +136,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Describes a reconciliation that did not balance', 'Explains a control they designed', 'Reasons about materiality'],
     aliases: ['Accounting', 'Financial Control', 'Audit', 'Statutory Reporting'],
     cues: [
-      /\b(accounting|\bgaap\b|\bifrs\b|month[- ]end close|year[- ]end close|reconciliation|general ledger|journal entries)\b/i,
+      // "Reconciliation" unqualified matched "medicines reconciliation" on a
+      // nursing advert, so it has to name what is being reconciled.
+      /\b(accounting|\bgaap\b|\bifrs\b|month[- ]end close|year[- ]end close|general ledger|journal entries|management accounts|balance sheet|(account|bank|ledger|invoice|payment|intercompany|balance sheet)\s+reconciliation)\b/i,
       /\b(internal controls?|\bsox\b|statutory (accounts|reporting)|external audit|tax compliance|\bvat\b|payroll processing)\b/i,
     ],
     domains: ['finance', 'bfsi', 'public_sector'],
@@ -158,7 +164,10 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['Legal Counsel', 'Contract Management', 'Commercial Law', 'Contract Negotiation'],
     cues: [
       /\b(contract (negotiation|drafting|management|review)|legal (advice|counsel|review)|\bmsa\b|\bnda\b|\bsow\b|terms of service)\b/i,
-      /\b(intellectual property|licensing agreements?|commercial terms|indemnit|liability cap|dispute resolution)\b/i,
+      // "Commercial terms" belongs to Negotiation: a salesperson negotiating
+      // them is not practising law, and this made every account executive a
+      // contracts lawyer.
+      /\b(intellectual property|licensing agreements?|indemnit|liability cap|dispute resolution)\b/i,
     ],
     domains: ['legal', 'bfsi', 'strategy'],
   },
@@ -170,7 +179,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['Compliance', 'Governance & Compliance', 'Regulatory Affairs'],
     cues: [
       /\b(regulatory (compliance|affairs|reporting|submission)|compliance (programme|program|framework|monitoring))\b/i,
-      /\b(\bfca\b|\bsec\b|\bfda\b|\bmhra\b|\bce mark|\biso ?\d{4,5}\b|\bsoc ?2\b|audit readiness|regulatory inspection)\b/i,
+      // ISO 9001 is the quality standard and belongs to Quality Management;
+      // naming it here made every quality engineer a compliance officer too.
+      /\b(\bfca\b|\bsec\b|\bfda\b|\bmhra\b|\bce mark|\biso ?(?!9001)\d{4,5}\b|\bsoc ?2\b|audit readiness|regulatory inspection)\b/i,
     ],
     domains: ['legal', 'bfsi', 'healthcare', 'life_sciences', 'public_sector', 'energy'],
   },
@@ -185,6 +196,10 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(competitive (analysis|landscape|positioning)|business case|\bm&a\b|due diligence|value creation plan)\b/i,
       /\b(management consult|transformation (programme|program)|operating model design)\b/i,
     ],
+    // In compliance, "enhanced" and "customer" due diligence are anti-money-
+    // laundering checks on a person, not a transaction. Same two words,
+    // entirely different job.
+    notWhen: [/\b(enhanced|customer|client|ongoing) due diligence\b|\b(edd|cdd|kyc|aml)\b/i],
     domains: ['strategy', 'finance', 'bfsi', 'public_sector'],
   },
   {

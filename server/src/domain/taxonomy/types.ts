@@ -54,6 +54,17 @@ export interface CanonicalCompetency {
    * reason this file exists.
    */
   readonly cues: readonly RegExp[];
+  /**
+   * Lines where a cue fires but means something else entirely.
+   *
+   * Real collisions, all found by the bench: "GCP" is Google Cloud Platform on
+   * a cloud advert and Good Clinical Practice on a trials advert;
+   * "reconciliation" is a ledger on a finance advert and medicines on a
+   * nursing one; a "post-mortem" is an outage to an engineer and a finished
+   * campaign to a marketer. A veto is checked against the same line as the
+   * cues and beats all of them.
+   */
+  readonly notWhen?: readonly RegExp[];
   /** Where this competency is ordinarily asked for. Empty means every domain. */
   readonly domains: readonly DomainTag[];
   /**

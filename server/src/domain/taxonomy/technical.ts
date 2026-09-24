@@ -58,7 +58,10 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['States the question before the chart', 'Explains a confounder they found', 'Says what the analysis could not settle'],
     aliases: ['Data Analysis', 'Business Intelligence', 'BI', 'Reporting & Analytics', 'Insights'],
     cues: [
-      /\b(data analysis|business intelligence|\bbi\b|dashboards?|reporting suite|self-service analytics)\b/i,
+      // A dashboard has to be one this role BUILDS. Everybody has a dashboard
+      // with their numbers on it, and the bare noun made iOS engineers analysts.
+      /\b(data analysis|business intelligence|\bbi\b|reporting suite|self-service analytics)\b/i,
+      /\b(build|built|building|maintain|create|design|own|develop|produce)\w*\s+(?:\w+\s+){0,2}(dashboards?|reports?)\b/i,
       /\b(tableau|power ?bi|looker|qlik|metabase|superset|mode analytics)\b/i,
       /\b(cohort analysis|funnel analysis|ab test|a\/b test|experimentation|statistical significance)\b/i,
     ],
@@ -86,7 +89,8 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     cues: [
       /\b(large language model|\bllm(s)?\b|generative ai|gen ?ai\b|foundation model)\b/i,
       /\b(rag\b|retrieval[- ]augmented|vector (database|store|search)|embeddings?|prompt engineering)\b/i,
-      /\b(agentic|ai agents?|fine[- ]tun(e|ing)|model evaluation harness|guardrails)\b/i,
+      // "Guardrails" is security's word too — it has to be the model's.
+      /\b(agentic|ai agents?|fine[- ]tun(e|ing)|model evaluation harness|(model|ai|llm|safety)\s+guardrails)\b/i,
     ],
     domains: ['frontier_ai', 'ml_platform', 'software', 'product'],
   },
@@ -152,9 +156,14 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     indicators: ['Explains a release they could not roll back', 'Describes offline and battery trade-offs', 'Reasons about store review and versioning'],
     aliases: ['iOS Development', 'Android Development', 'Mobile Development'],
     cues: [
-      /\b(ios\b|android\b|swift\b|kotlin\b|react native|flutter|mobile app(lication)?s?)\b/i,
+      // Kotlin and Swift are both written server-side; only iOS, Android and
+      // the cross-platform frameworks actually mean "mobile".
+      /\b(ios\b|android\b|react native|flutter|mobile app(lication)?s?)\b/i,
       /\b(app store|play store|push notifications|offline[- ]first)\b/i,
     ],
+    // A web app being fast on an Android handset is a front-end requirement,
+    // not a mobile-engineering one.
+    notWhen: [/\b(core web vitals|browser|web app|responsive)\b/i],
     domains: ['software', 'product', 'retail', 'media'],
   },
   {
@@ -168,6 +177,7 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(kubernetes|k8s\b|docker|containeris|containeriz|serverless|lambda functions|ecs\b|eks\b)\b/i,
       /\b(terraform|pulumi|cloudformation|infrastructure as code|\biac\b|ansible|helm)\b/i,
     ],
+    notWhen: [/good clinical practice|\bich\b|clinical trial/i],
     domains: ['cloud', 'software', 'ml_platform', 'security'],
   },
   {
@@ -182,6 +192,7 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(prometheus|grafana|datadog|splunk|opentelemetry|pagerduty|new relic)\b/i,
       /\b(uptime|fault toleran|disaster recovery|high availability|capacity planning)\b/i,
     ],
+    notWhen: [/campaign|marketing|project post[- ]?mortem/i],
     domains: ['cloud', 'software', 'data', 'energy'],
   },
   {

@@ -1,4 +1,4 @@
-import { COLLABORATION_VERB, isDropped, reclassifiedSection } from './jdExclusions.js';
+import { COLLABORATION_VERB, isDropped, otherPartyClause, otherPartyObject, reclassifiedSection } from './jdExclusions.js';
 
 /**
  * A job description, read as the structured document it actually is.
@@ -178,6 +178,23 @@ const MASK = '…';
  * competency on a data engineering role.
  */
 export function maskCollaborationObjects(line: string): string {
+  let masked = maskAfterCollaborationVerb(line);
+  // Once another team becomes the subject, the rest of that clause is theirs.
+  const clause = otherPartyClause(masked);
+  if (clause) masked = `${masked.slice(0, clause.from)}${MASK}${masked.slice(clause.to)}`;
+  // A plain "with the procurement team" names somebody else just as squarely
+  // as "partner with" does, and adverts use it constantly.
+  const other = otherPartyObject(masked);
+  if (other) masked = masked.replace(other[1], MASK);
+  // "Sit with our front-end engineers, who build in React, while they
+  // implement your work." Masking the people left the relative clause behind,
+  // and "build in React" made a designer a front-end engineer. The clause
+  // describes what THEY do, so it goes with them.
+  masked = masked.replace(/…\s*,?\s*who\b[^.;]*/i, MASK);
+  return masked.replace(/\s+/g, ' ').trimEnd();
+}
+
+function maskAfterCollaborationVerb(line: string): string {
   const verb = COLLABORATION_VERB();
   const match = verb.exec(line);
   if (!match) return line;

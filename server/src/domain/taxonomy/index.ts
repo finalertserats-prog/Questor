@@ -13,7 +13,34 @@ export type { CanonicalCompetency, CanonicalCompetencyDef, DomainTag, CanonicalR
  * rename can never leave a stale key behind pointing at nothing.
  */
 function assemble(defs: readonly CanonicalCompetencyDef[]): CanonicalCompetency[] {
-  return defs.map((def) => ({ ...def, key: competencyKeyOf(def.name) }));
+  return defs.map((def) => ({
+    ...def,
+    key: competencyKeyOf(def.name),
+    cues: def.cues.map(allowInflection),
+  }));
+}
+
+/**
+ * Endings a cue's last word may take and still be the same requirement.
+ *
+ * A cue written as `\b(rest api|integration test|nda)\b` cannot match "REST
+ * APIs", "integration tests" or "NDAs": the closing word boundary lands
+ * between "api" and "s", where there is no boundary at all. Adverts are
+ * written in the plural and the gerund far more often than the singular, so
+ * this was not an edge case — it cost a lawyer the whole Legal & Contracting
+ * competency, because "customer MSAs and NDAs" and "liability caps,
+ * indemnities" both failed on nothing but a trailing "s".
+ *
+ * `indemnit` is the proof that it was a mistake rather than a choice: it is a
+ * deliberately truncated stem that the closing boundary made unmatchable by
+ * construction.
+ */
+const INFLECTION = '(?:s|es|ing|ling|ed|led|er|ers|ors?|ies|y|ly)?';
+
+/** Let a cue's final word inflect, without loosening its start. */
+function allowInflection(re: RegExp): RegExp {
+  if (!re.source.endsWith(')\\b')) return re;
+  return new RegExp(`${re.source.slice(0, -2)}${INFLECTION}\\b`, re.flags);
 }
 
 export const CANONICAL_COMPETENCIES: readonly CanonicalCompetency[] = [
