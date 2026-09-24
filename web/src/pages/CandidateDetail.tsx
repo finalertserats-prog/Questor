@@ -10,6 +10,8 @@ import { SmeReviewPanel } from '../components/sme/SmeReviewPanel';
 import { CandidateAtsLink } from '../components/CandidateAtsLink';
 import { useAuth } from '../auth';
 import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
+import { CandidateAwards } from '../components/CandidateAwards';
+import type { AwardResponseRow } from '../components/candidateAwardsModel';
 import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
 import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
@@ -160,6 +162,7 @@ const DETAIL_LABELS: Readonly<Record<string, string>> = {
   role: 'Role',
   interviews: 'Interviews',
   pipeline: 'Pipeline',
+  awards: 'Badges',
 };
 
 const SESSIONS_PAGE_SIZE = 100;
@@ -194,6 +197,7 @@ export function CandidateDetail() {
   const [sessions, setSessions] = useState<Record<string, SessionSummary>>({});
   const [role, setRole] = useState<JourneyRole | null>(null);
   const [pipeline, setPipeline] = useState<PipelineResp | null>(null);
+  const [awards, setAwards] = useState<readonly AwardResponseRow[]>([]);
   const [missingEvidence, setMissingEvidence] = useState<string[]>([]);
   const [assessment, setAssessment] = useState<JourneyAssessment | null>(null);
   const [assessmentBlockedReason, setAssessmentBlockedReason] = useState<string | null>(null);
@@ -336,6 +340,14 @@ export function CandidateDetail() {
         clearDetail('pipeline');
       })
       .catch((err: unknown) => { if (!cancelled) noteDetail('pipeline', err); });
+
+    // The badges struck so far, and the reason the next one is not there yet.
+    // Read from the server rather than worked out here: whether a tier is
+    // earned is the one rule this feature exists to keep, and a second copy of
+    // it in the browser is where it would drift.
+    api.get<{ awards: AwardResponseRow[] }>(`/candidates/${encodeURIComponent(id ?? '')}/awards`)
+      .then((d) => { if (!cancelled) { setAwards(d.awards ?? []); clearDetail('awards'); } })
+      .catch((err: unknown) => { if (!cancelled) noteDetail('awards', err); });
 
     return () => { cancelled = true; };
   }, [id, version, noteDetail, clearDetail]);
@@ -567,6 +579,8 @@ export function CandidateDetail() {
           </Banner>
         )}
         {journey && <CandidateJourneyBoard journey={journey} />}
+
+        <CandidateAwards awards={awards} candidateName={candidate.fullName} />
 
         <PipelinePanel
           candidateId={candidate.id}
