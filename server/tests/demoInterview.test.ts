@@ -32,6 +32,27 @@ import { startObserverMode } from '../src/services/demoInterviewStart.js';
 import { screenFeedback, listDemoFeedback } from '../src/services/demoFeedback.js';
 import { assertDemoCreationCap } from '../src/services/demoAccess.js';
 import { signToken } from '../src/services/auth.js';
+import { _setLlmForTests, _resetLlm } from '../src/providers/llm/index.js';
+import { demoInterviewReadiness } from '../src/services/demoReadiness.js';
+
+/**
+ * Make the candidate-side interview deliverable: a real provider answering and
+ * real speech configured. Without all of it the demo deliberately does not
+ * offer that mode at all, which is what most of these tests are about.
+ */
+function makeCandidateModeDeliverable(): () => void {
+  const before = { tts: config.tts.provider, stt: config.stt.provider, key: config.llm.openaiKey };
+  _setLlmForTests({ name: 'test-provider', enabled: true, generate: async () => ({ text: '{}' }) } as never);
+  (config.tts as { provider: string }).provider = 'openai';
+  (config.stt as { provider: string }).provider = 'whisper';
+  (config.llm as { openaiKey: string }).openaiKey = 'test-key-not-a-real-one';
+  return () => {
+    _resetLlm();
+    (config.tts as { provider: string }).provider = before.tts;
+    (config.stt as { provider: string }).provider = before.stt;
+    (config.llm as { openaiKey: string | undefined }).openaiKey = before.key;
+  };
+}
 
 const app = createApp();
 const OPERATOR = 'owner@questor.test';
@@ -78,11 +99,14 @@ beforeEach(async () => {
 
 describe('the choice between the two modes', () => {
   it('offers both, and says how long each runs, before either starts', async () => {
-    const demo = await openDemo();
-    const res = await asDemo(request(app).get('/api/demo/interview/choices'), demo.auth);
-    expect(res.status).toBe(200);
-    expect(res.body.choices.map((c: { mode: string }) => c.mode)).toEqual(['candidate', 'observer']);
-    for (const choice of res.body.choices) expect(choice.timing).toMatch(/15 minutes/);
+    const restore = makeCandidateModeDeliverable();
+    try {
+      const demo = await openDemo();
+      const res = await asDemo(request(app).get('/api/demo/interview/choices'), demo.auth);
+      expect(res.status).toBe(200);
+      expect(res.body.choices.map((c: { mode: string }) => c.mode)).toEqual(['candidate', 'observer']);
+      for (const choice of res.body.choices) expect(choice.timing).toMatch(/15 minutes/);
+    } finally { restore(); }
   });
 
   it('says plainly that the watched candidate is not a real person', async () => {
@@ -543,5 +567,64 @@ describe('nothing in the demo breaks character', () => {
     for (const line of DEMO_OBSERVER_SCRIPT.filter((l) => l.speaker === 'agent')) {
       expect({ line: line.text.slice(0, 40), ok: staysInCharacter(line.text) }).toEqual({ line: line.text.slice(0, 40), ok: true });
     }
+  });
+});
+
+describe('nothing below standard is offered', () => {
+  // Owner, 2026-09-24: when the candidate-side interview cannot be delivered
+  // properly it is ABSENT — not greyed out, not offered with a note saying the
+  // questions are real but the voice is not. A disclaimer at the moment a
+  // prospect is deciding undercuts the product using our own words.
+  it('drops the candidate-side mode entirely when there is no real model', async () => {
+    const demo = await openDemo();
+    const res = await asDemo(request(app).get('/api/demo/interview/choices'), demo.auth);
+    expect(res.body.choices.map((c: { mode: string }) => c.mode)).toEqual(['observer']);
+  });
+
+  it('never explains its absence to the visitor', async () => {
+    const demo = await openDemo();
+    const res = await asDemo(request(app).get('/api/demo/interview/choices'), demo.auth);
+    expect(JSON.stringify(res.body)).not.toMatch(/unavailable|not available|cannot|budget|quota|credit|model/i);
+  });
+
+  // The ROUTE is gated, not only the button.
+  it('turns a deep link to the candidate-side interview into the offer that stands', async () => {
+    const demo = await openDemo();
+    const res = await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'candidate' });
+    expect([res.status, res.body.code]).toEqual([409, 'offer_observer']);
+  });
+
+  it('always offers the written interview, whatever is or is not working', async () => {
+    const demo = await openDemo();
+    const res = await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+    expect(res.status).toBe(201);
+  });
+
+  it('publishes one signal the tour lane and the route both read', async () => {
+    const demo = await openDemo();
+    const res = await asDemo(request(app).get('/api/demo/status'), demo.auth);
+    expect(res.status).toBe(200);
+    expect(res.body.interview).toEqual({ candidate: false, observer: true });
+  });
+
+  // Decided BEFORE the start, so an interview never has to change voice
+  // halfway through: the day must have room for a WHOLE sitting, not one call.
+  it('withdraws the candidate-side mode once the day has no room for a whole sitting', async () => {
+    const restore = makeCandidateModeDeliverable();
+    try {
+      expect((await demoInterviewReadiness()).candidate).toBe(true);
+      await prisma.demoSpendDay.create({ data: { dayKey: new Date().toISOString().slice(0, 10), calls: 235 } });
+      const ready = await demoInterviewReadiness();
+      expect(ready.candidate).toBe(false);
+      expect(ready.reasons).toContain('day_budget_spent');
+    } finally { restore(); }
+  });
+
+  it('keeps its reasons for the operator and out of the response', async () => {
+    const ready = await demoInterviewReadiness();
+    expect(ready.reasons.length).toBeGreaterThan(0);
+    const demo = await openDemo();
+    const res = await asDemo(request(app).get('/api/demo/status'), demo.auth);
+    expect(JSON.stringify(res.body)).not.toMatch(/reason|no_model|no_server/i);
   });
 });

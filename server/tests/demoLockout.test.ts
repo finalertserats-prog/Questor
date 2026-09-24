@@ -304,7 +304,8 @@ describe('L14: demo creation caps under concurrency', () => {
   it('lets no more creations through than the cap leaves room for when checks race', async () => {
     await requestDemo();
     const tenant = await prisma.tenant.findFirstOrThrow({ where: { isDemo: true } });
-    // The sandbox holds its sample role and the visitor may add three more.
+    // The sandbox holds its sample role and the visitor may add two more
+    // (owner, 2026-09-24 — was three).
     const results = await Promise.allSettled(Array.from({ length: 6 }, () => assertDemoCreationCap(tenant.id, 'roles')));
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);

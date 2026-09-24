@@ -244,3 +244,16 @@ async function claimDayUnit(dayKey: string): Promise<boolean> {
 }
 
 export const DEMO_SPEND_CEILINGS = { perRun: DEMO_SPEND_PER_RUN, perDay: DEMO_SPEND_PER_DAY } as const;
+
+/**
+ * Whether this interview may use the paid voice.
+ *
+ * True only for a live candidate-side sitting — the one the readiness check
+ * declined to offer at all unless real speech was configured. Observer mode is
+ * written and never speaks; every other demo surface keeps the browser's own
+ * voice, as it always has.
+ */
+export async function demoInterviewUsesRealVoice(sessionId: string): Promise<boolean> {
+  const run = await runForSession(sessionId);
+  return run !== null && run.mode === 'candidate' && run.endedAt === null;
+}

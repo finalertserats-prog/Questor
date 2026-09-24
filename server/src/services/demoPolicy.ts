@@ -127,5 +127,15 @@ export async function demoRecipientBlocked(tenantId: string, to: string): Promis
  */
 export async function serverSpeechAllowed(sessionId: string, ready: () => boolean): Promise<boolean> {
   if (!ready()) return false;
-  return !(await isHeuristicOnlySession(sessionId));
+  if (!(await isHeuristicOnlySession(sessionId))) return true;
+  // The same narrow exception the model has, for the same reason.
+  //
+  // A candidate-side demo interview is only OFFERED when real speech is
+  // configured (services/demoReadiness.ts) — precisely so a prospect never
+  // meets the browser's robotic voice and a note explaining it. Having
+  // promised that by offering it, this is where it is kept. Every other demo
+  // session, and the whole of observer mode, still falls back to the browser's
+  // own voice and recognition.
+  const { demoInterviewUsesRealVoice } = await import('./demoInterviewRun.js');
+  return demoInterviewUsesRealVoice(sessionId);
 }

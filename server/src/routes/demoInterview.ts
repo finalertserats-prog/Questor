@@ -13,6 +13,7 @@ import { clockView, endRun, extendRun, liveRunForGrant, noteStage, runById, runF
 import { finishDemoRun } from '../services/demoInterviewFinish.js';
 import { playUpTo } from '../services/demoObserverPlayer.js';
 import { issueFeedbackTicket, submitFeedback } from '../services/demoFeedback.js';
+import { demoInterviewReadiness } from '../services/demoReadiness.js';
 
 /**
  * The demo interview, from the choice of mode to the feedback form.
@@ -40,6 +41,24 @@ const startSchema = z.object({
 }).strict();
 
 /**
+ * The signal the whole demo reads before offering anything.
+ *
+ * Published as its own endpoint because the guided-tour lane renders the demo
+ * card and must be told what to render rather than working it out: one source
+ * of truth, so the card and the route can never disagree about whether the
+ * candidate-side interview is on offer.
+ *
+ * The reasons are deliberately absent from the response. A visitor is shown a
+ * demo with one option instead of two, which tells them nothing is wrong —
+ * because nothing is.
+ */
+demoInterviewRouter.get('/status', authenticate, asyncHandler(async (req, res) => {
+  demoAuth(req);
+  const ready = await demoInterviewReadiness();
+  res.json({ interview: { candidate: ready.candidate, observer: ready.observer } });
+}));
+
+/**
  * The choice screen's own content, so the two modes are described in one place
  * and the page cannot drift from what the server will actually do.
  */
@@ -47,10 +66,15 @@ demoInterviewRouter.get('/interview/choices', authenticate, asyncHandler(async (
   const { tenantId, demoGrantId } = demoAuth(req);
   const open = await liveRunForGrant(demoGrantId);
   const role = await prisma.role.findFirst({ where: { tenantId }, orderBy: { createdAt: 'asc' }, select: { title: true } });
+  const ready = await demoInterviewReadiness();
+  const offered = DEMO_MODES.filter((mode) => mode === 'observer' || ready.candidate);
   res.json({
     roleTitle: role?.title ?? null,
     open: open ? { runId: open.id, mode: open.mode, ...clockView(open) } : null,
-    choices: DEMO_MODES.map((mode: DemoMode) => ({
+    // Only what can be delivered properly. A mode that is absent needs no
+    // explanation; a mode that is present and disclaimed needs one, and the
+    // explanation is what does the damage.
+    choices: offered.map((mode: DemoMode) => ({
       mode,
       label: modeLabel(mode),
       // Said BEFORE they choose. Saying it here is what buys the right to say
@@ -71,6 +95,13 @@ const startLimit = rateLimit({ name: 'demo-interview-start', windowMs: 60 * 60_0
 demoInterviewRouter.post('/interview/start', authenticate, startLimit, asyncHandler(async (req, res) => {
   const { tenantId, demoGrantId } = demoAuth(req);
   const body = startSchema.parse(req.body);
+  // The ROUTE is gated, not only the button. A visitor who deep-links to the
+  // candidate-side interview while it cannot be delivered properly is sent
+  // back to an offer they can take, never into an interview that would have
+  // to degrade partway through.
+  if (body.mode === 'candidate' && !(await demoInterviewReadiness()).candidate) {
+    throw new HttpError(409, 'Watch an interview instead.', 'offer_observer');
+  }
   const started = await startDemoInterview({ mode: body.mode, tenantId, demoGrantId, extendTime: body.extraTime });
   await noteStage(started.run.sessionId, 'chose_mode');
   res.status(201).json({

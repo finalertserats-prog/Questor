@@ -7,7 +7,7 @@ import { BrandLogo } from './components/BrandLogo';
 import { ProfileMenu } from './components/ProfileMenu';
 import { ProductTour } from './components/ProductTour';
 import { DemoTour } from './components/demo/DemoTour';
-import { endDemo, openSampleInterview } from './components/demo/endDemo';
+import { endDemo } from './components/demo/endDemo';
 import { TourProvider, useTour } from './components/tourContext';
 import { demoHasEnded, formatDemoCountdown, isFinalDemoMinute } from './components/demoModel';
 import {
@@ -32,6 +32,10 @@ import { TeamUsers } from './pages/TeamUsers';
 import { SignupDecision } from './pages/SignupDecision';
 import { DemoRequest } from './pages/DemoRequest';
 import { DemoEnded, DemoRedeem } from './pages/DemoRedeem';
+import { DemoInterviewChoice } from './pages/DemoInterviewChoice';
+import { DemoObserverRoom } from './pages/DemoObserverRoom';
+import { DemoFeedback } from './pages/DemoFeedback';
+import { DemoFeedbackAdmin } from './pages/DemoFeedbackAdmin';
 import { DemoDecision } from './pages/DemoDecision';
 import { SignupQueue } from './pages/SignupQueue';
 import { Onboard } from './pages/Onboard';
@@ -105,7 +109,6 @@ function useIsNarrowViewport(): boolean {
  */
 function DemoBanner({ endsAt }: { endsAt: string }) {
   const [now, setNow] = useState(Date.now());
-  const [interviewError, setInterviewError] = useState('');
   const [confirmEnd, setConfirmEnd] = useState(false);
   // Whether sitting the interview is on offer at all. The tour asks the same
   // question of the same endpoint and leaves the option out of its closing
@@ -127,10 +130,6 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
   // posts /demo/end once however many ticks arrive after the clock runs out.
   useEffect(() => { if (demoHasEnded(endsAt, now)) void endDemo(); }, [endsAt, now]);
   const remainingMs = Date.parse(endsAt) - now;
-  const openInterview = async () => {
-    setInterviewError('');
-    try { await openSampleInterview(); } catch (err: unknown) { setInterviewError(err instanceof Error ? err.message : 'The sample interview could not be opened.'); }
-  };
   return (
     // Not a live region itself: a countdown announced every second drowns out
     // everything else a screen reader has to say. Only the final minute and
@@ -138,8 +137,13 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
     <div className="banner" style={{ borderRadius: 0, margin: 0, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
       <span>Demo · ends in {formatDemoCountdown(remainingMs)}</span>
       <span className="visually-hidden" role="status">{isFinalDemoMinute(remainingMs) ? 'Less than a minute of the demo is left.' : ''}</span>
+      {/* Gated by the tour lane's own readiness signal, and now a CHOICE of
+          two modes rather than one jump into the portal. Same tab: the choice
+          screen explains the fifteen minutes before anything starts, and a new
+          tab would put that explanation somewhere the visitor did not ask for
+          it. */}
       {offersInterview && (
-        <button type="button" className="btn sm" onClick={() => void openInterview()}>Try the interview as the candidate</button>
+        <Link className="btn sm" to="/demo/interview">Try the interview</Link>
       )}
       <button type="button" className="btn sm ghost" onClick={startTour} data-testid="demo-replay-story">Replay the story</button>
       {confirmEnd ? (
@@ -151,7 +155,6 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
       ) : (
         <button type="button" className="btn sm secondary" onClick={() => setConfirmEnd(true)}>End demo</button>
       )}
-      {interviewError && <span className="small" role="alert">{interviewError}</span>}
     </div>
   );
 }
@@ -527,6 +530,13 @@ export function App() {
       <Route path="/signup/decision/:token" element={<CandidatePage><SignupDecision /></CandidatePage>} />
       <Route path="/demo" element={<DemoRequest />} />
       <Route path="/demo/ended" element={<DemoEnded />} />
+      {/* The demo interview. Declared before /demo/:token, which would
+          otherwise swallow them as redemption links. */}
+      <Route path="/demo/interview" element={<Protected><DemoInterviewChoice /></Protected>} />
+      <Route path="/demo/watch/:runId" element={<Protected><DemoObserverRoom /></Protected>} />
+      {/* Signed out by design: End demo clears the session before this is
+          reached, so the ticket in the address is the credential. */}
+      <Route path="/demo/feedback/:token" element={<CandidatePage><DemoFeedback /></CandidatePage>} />
       <Route path="/demo/:token" element={<DemoRedeem />} />
       <Route path="/demo/decision/:token" element={<CandidatePage><DemoDecision /></CandidatePage>} />
       <Route path="/portal/:token" element={<Portal />} />
@@ -568,6 +578,9 @@ export function App() {
       {/* Before /admin/:tab, which would otherwise swallow it. */}
       <Route path="/admin/users" element={<Protected><AdminOnly><TeamUsers /></AdminOnly></Protected>} />
       <Route path="/admin/signups" element={<Protected><AdminOnly><SignupQueue /></AdminOnly></Protected>} />
+      {/* Platform owner only, and the page refuses anyone else itself — the
+          owner is not necessarily an admin of the tenant they sign in to. */}
+      <Route path="/admin/demo-feedback" element={<Protected><DemoFeedbackAdmin /></Protected>} />
       {/* The console's sub-tabs; /admin itself is the System health tab. */}
       <Route path="/admin/:tab" element={<Protected><AdminOnly><Admin /></AdminOnly></Protected>} />
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
