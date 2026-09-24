@@ -27,9 +27,15 @@ test('adds a drafted competency, removes a suggested one, and the weights still 
   await expect(page.getByTestId('weights-total')).toHaveText(totalText);
 
   // A JD-suggested competency goes too: no interview has used it, so it is deleted.
-  const firstRow = page.locator('tr.comp-row').first();
+  //
+  // Found by its own button rather than by position. A competency an interview
+  // has already assessed is RETIRED, not removed — it keeps its row and its
+  // history — so a test that takes the first row and expects "Remove" is
+  // really asserting an ordering, and it broke the day extraction proposed the
+  // competencies in a different order.
+  const firstRow = page.locator('tr.comp-row').filter({ has: page.getByRole('button', { name: 'Remove', exact: true }) }).first();
   const firstName = await firstRow.locator('input[aria-label^="Name of competency"]').inputValue();
-  await firstRow.getByRole('button', { name: 'Remove' }).click();
+  await firstRow.getByRole('button', { name: 'Remove', exact: true }).click();
   await expect(page.getByTestId('competency-confirm')).toContainText(`Remove ${firstName}?`);
   await page.getByTestId('competency-confirm-yes').click();
   await expect(page.getByText(`${firstName} removed from the scorecard.`)).toBeVisible();
