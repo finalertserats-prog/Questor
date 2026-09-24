@@ -12,7 +12,7 @@ import {
   cancelMeeting, isStaleCreation, markRoundCancelled, rescheduleMeeting, retryMeeting, setManualLink, MEETING_STATUS,
   type MeetingOutcome, type RoundContext,
 } from '../services/roundMeeting.js';
-import { labelOf, loadPipeline, presentRound, type PipelineWithRounds } from './pipelines.js';
+import { labelOf, loadPipeline, presentRound, roundInclude, roundViewer, type PipelineWithRounds } from './pipelines.js';
 import { durationSchema, meetingUrlSchema } from './roundMeetingSchemas.js';
 import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 
@@ -51,8 +51,14 @@ async function respond(req: Request, pipeline: PipelineWithRounds, roundId: stri
       after: { roundId, operation, provider: meeting.provider, status: meeting.status },
     });
   }
-  const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
-  return { round: presentRound(round), meeting };
+  const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId }, include: roundInclude });
+  // The pipeline is read again rather than reused: a meeting move can change
+  // the round, and the viewer that decides what this reader may see is built
+  // from every round on the pipeline, not from the one in hand.
+  const fresh = await prisma.candidatePipeline.findUniqueOrThrow({
+    where: { id: pipeline.id }, include: { rounds: { orderBy: { scheduledAt: 'asc' }, include: roundInclude } },
+  });
+  return { round: presentRound(round, await roundViewer(req, fresh)), meeting };
 }
 
 /**

@@ -91,6 +91,7 @@ model User {
   approvedFeedbackDeliveries CandidateFeedbackDelivery[]
   roleAssignments      RoleAssignment[]
   candidateAssignments CandidateAssignment[]
+  roundSeats           RoundInterviewer[]
   shortlisted          CandidateShortlist[]
   demoGrants   DemoGrant[]
   catalogRefreshRuns CatalogRefreshRun[] @relation("CatalogRefreshTriggeredBy")
@@ -1452,8 +1453,61 @@ model InterviewRound {
   meetingError      String?
   meetingUpdatedAt  DateTime?
 
+  // The Questor user who recorded the round's evidence. interviewersJson says
+  // who was expected in the room; this says who actually wrote the record, and
+  // the two are not always the same person. A certificate naming an interviewer
+  // reads from here, so "the hiring team" is never the strongest attribution a
+  // human round can offer.
+  recordedByUserId  String?
+  /// The interviewer's structured record: JSON
+  /// [{competencyId, competencyName, claim, quote}]. One entry per scorecard
+  /// competency they are speaking to, each claim carrying the words it rests
+  /// on. Separate from `notes`, which is the round's prose summary: a summary
+  /// says what the interviewer concluded, and a conclusion with no quote under
+  /// it is the thing this product refuses to treat as evidence. Still the
+  /// interviewer's own record and not a recording — see domain/roundEvidence.ts,
+  /// which is careful never to let it be read as one.
+  evidenceJson      String   @default("[]")
+  // Whether a PEER round's notes at this same stage were readable by the
+  // recorder at the moment they wrote this one. Three-state, exactly as
+  // HumanReview.aiVisibleBefore: null means the round predates the record, and
+  // claiming either ordering for it would be inventing evidence about the
+  // independence of a second opinion. See domain/roundEvidence.ts.
+  peerNotesSeenBefore Boolean?
+  panel             RoundInterviewer[]
+
   @@index([pipelineId])
   @@index([tenantId])
+  // Peer quarantine reads a candidate's other rounds at one stage on every
+  // round read (domain/roundEvidence.ts); without this that is a table scan.
+  @@index([pipelineId, stageKey])
+}
+
+// A Questor user conducting a round, as opposed to the free-text names in
+// InterviewRound.interviewersJson.
+//
+// Both exist deliberately. The free-text list reaches the candidate's status
+// page and may name an external panellist who has no Questor account; this
+// table names people the system can attribute a record to — the SME or
+// recruiter whose id goes on a certificate, and whose own round is the one
+// round they may always read. A name cannot do either job: two colleagues share
+// a first name, and a typed name proves nothing about who wrote the evidence.
+model RoundInterviewer {
+  id        String   @id @default(cuid())
+  tenantId  String
+  roundId   String
+  round     InterviewRound @relation(fields: [roundId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  /// lead | panel. The lead is the name a certificate prints; a round has at
+  /// most one, and the first person named when it was booked becomes it.
+  seat      String   @default("lead")
+  createdAt DateTime @default(now())
+
+  // One seat per person per round: booking the same colleague twice is a
+  // mis-click, not a second interviewer.
+  @@unique([roundId, userId])
+  @@index([tenantId, userId])
 }
 
 // ---- ATS integration, owned by the tenant ----

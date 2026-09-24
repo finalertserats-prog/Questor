@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { CandidatePipeline, InterviewRound } from '@prisma/client';
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { assertCanAccessCandidate, assertCanAccessRole, hasCapability } from '../services/access.js';
+import { assignCandidate, assertCanAccessCandidate, assertCanAccessRole, hasCapability } from '../services/access.js';
 import { aiConclusionVisible } from '../services/shadowMode.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice } from '../services/roundCandidateNotice.js';
 import { sendInterviewSchedule, writeSessionSchedule } from './interviews.js';
@@ -20,8 +20,14 @@ import { formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
 import { resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 import {
-  DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, stagesSchema, type PipelineStage,
+  DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, roundRolesFor, roundRolesForConductor,
+  ROUND_CONDUCTORS, stagesSchema, type PipelineStage, type RoundConductor,
 } from '../domain/pipelineStages.js';
+import {
+  checkEvidenceEntries, evidenceKindOf, evidenceView, parseEvidenceEntries, peerNotesWereVisible, peerQuarantine,
+  MAX_ENTRY_CHARS, MAX_EVIDENCE_ENTRIES, type QuarantineInput,
+} from '../domain/roundEvidence.js';
+import { scorecardForFit } from '../services/scorecards.js';
 import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
 import { decidePipeline } from '../services/pipelineAutonomy.js';
 import { humanReviewCheck } from '../services/humanReviewGate.js';
@@ -39,9 +45,72 @@ import { meetingUrlSchema, durationSchema } from './roundMeetingSchemas.js';
 export const pipelinesRouter = Router();
 pipelinesRouter.use(authenticate);
 
-export type PipelineWithRounds = CandidatePipeline & { rounds: InterviewRound[] };
+/** A round with everything a reader needs: who is seated on it, and what it captured. */
+export const roundInclude = {
+  panel: { orderBy: { createdAt: 'asc' as const }, include: { user: { select: { id: true, name: true } } } },
+  observation: { select: { status: true, _count: { select: { segments: true } } } },
+};
 
-export function presentRound(round: InterviewRound) {
+export type RoundRow = InterviewRound & {
+  panel: Array<{ userId: string; seat: string; user: { id: string; name: string } }>;
+  observation: { status: string; _count: { segments: number } } | null;
+};
+
+export type PipelineWithRounds = CandidatePipeline & { rounds: RoundRow[] };
+
+/**
+ * Who is reading, and what else is on this candidate's pipeline. Both are
+ * needed to answer the peer-quarantine question (domain/roundEvidence.ts),
+ * which cannot be decided from one round in isolation.
+ */
+export interface RoundViewer {
+  readonly userId: string;
+  readonly decides: boolean;
+  readonly pipeline: { readonly status: string; readonly currentStageKey: string };
+  readonly rounds: QuarantineInput['rounds'];
+  /** Names of everyone a round on this pipeline names, by user id. */
+  readonly names: Readonly<Record<string, string>>;
+}
+
+export async function roundViewer(req: Request, pipeline: PipelineWithRounds): Promise<RoundViewer> {
+  // The person who wrote a round's record is often not seated on it — a
+  // recruiter closes the round the SME conducted — so their name cannot be read
+  // off the panel. Resolved once for the whole pipeline rather than per round.
+  const recorders = pipeline.rounds.map((r) => r.recordedByUserId).filter((id): id is string => id !== null);
+  const users = recorders.length > 0
+    ? await prisma.user.findMany({ where: { id: { in: recorders }, tenantId: pipeline.tenantId }, select: { id: true, name: true } })
+    : [];
+  const names: Record<string, string> = {};
+  for (const round of pipeline.rounds) for (const seat of round.panel) names[seat.userId] = seat.user.name;
+  for (const user of users) names[user.id] = user.name;
+  return {
+    userId: req.auth!.userId,
+    decides: hasCapability(req.auth!, 'assessment:review'),
+    pipeline: { status: pipeline.status, currentStageKey: pipeline.currentStageKey },
+    rounds: pipeline.rounds.map((r) => ({
+      id: r.id, stageKey: r.stageKey, conductedBy: r.conductedBy,
+      panelUserIds: r.panel.map((p) => p.userId), hasNotes: r.notes.trim().length > 0,
+    })),
+    names,
+  };
+}
+
+export function presentRound(round: RoundRow, viewer: RoundViewer) {
+  const quarantine = peerQuarantine({
+    round: { id: round.id, stageKey: round.stageKey, conductedBy: round.conductedBy },
+    viewerUserId: viewer.userId, viewerDecides: viewer.decides, rounds: viewer.rounds, pipeline: viewer.pipeline,
+  });
+  // Computed from what the round actually holds, never from what this reader is
+  // allowed to see: a round whose record is quarantined has still been recorded,
+  // and saying otherwise to a colleague would be a lie about the process rather
+  // than a protection of it.
+  const entries = parseEvidenceEntries(parseJsonOptional<unknown>(round.evidenceJson, [], { model: 'InterviewRound', id: round.id, field: 'evidenceJson' }));
+  const evidence = evidenceView(evidenceKindOf({
+    notes: round.notes,
+    structuredCount: entries.length,
+    observationStatus: round.observation?.status ?? null,
+    segmentCount: round.observation?._count.segments ?? 0,
+  }));
   return {
     id: round.id,
     stageKey: round.stageKey,
@@ -50,6 +119,9 @@ export function presentRound(round: InterviewRound) {
     hrMayObserve: round.hrMayObserve,
     sessionId: round.sessionId,
     interviewers: parseJsonOptional<string[]>(round.interviewersJson, [], { model: 'InterviewRound', id: round.id, field: 'interviewersJson' }),
+    // The Questor users conducting it. Separate from `interviewers` above,
+    // which is typed names and may hold an external panellist with no account.
+    panel: round.panel.map((seat) => ({ userId: seat.userId, name: seat.user.name, seat: seat.seat })),
     scheduledAt: round.scheduledAt,
     // The zone it was booked in; null for the older offset-only form.
     scheduledTimeZone: round.scheduledTimeZone,
@@ -61,7 +133,27 @@ export function presentRound(round: InterviewRound) {
     // showed. It travels under the same candidate scope as the round itself, and
     // retention clears it from the row (services/dataRights.ts), so a round past
     // its window honestly returns ''.
-    notes: round.notes,
+    //
+    // One reader is held back: another interviewer on this candidate at this
+    // same stage, until the team has decided. They are there to form a second
+    // opinion, and an opinion formed after reading the first is not one.
+    notes: quarantine.withheld ? '' : round.notes,
+    // The structured record travels with the prose and is withheld with it:
+    // a peer who could read the claims and quotes would be anchored by exactly
+    // the part of the record that is meant to persuade.
+    evidenceEntries: quarantine.withheld ? [] : entries,
+    // Why both are empty, so a withheld round never reads as a round that
+    // showed nothing. '' whenever nothing is being withheld.
+    notesWithheld: quarantine.reason,
+    evidence,
+    // Who wrote the record, for a certificate that would otherwise have to say
+    // "the hiring team". Null on a round closed before the author was stored.
+    recordedBy: round.recordedByUserId
+      ? { userId: round.recordedByUserId, name: viewer.names[round.recordedByUserId] ?? '' }
+      : null,
+    // Whether a peer round's record was readable when this one was written.
+    // Null means the round predates the record; see roundEvidence.ts.
+    peerNotesSeenBefore: round.peerNotesSeenBefore,
     completedAt: round.completedAt,
     createdAt: round.createdAt,
     durationMinutes: round.durationMinutes,
@@ -79,7 +171,7 @@ export function presentRound(round: InterviewRound) {
   };
 }
 
-function presentPipeline(pipeline: PipelineWithRounds) {
+function presentPipeline(pipeline: PipelineWithRounds, viewer: RoundViewer) {
   return {
     id: pipeline.id,
     candidateId: pipeline.candidateId,
@@ -91,13 +183,13 @@ function presentPipeline(pipeline: PipelineWithRounds) {
     decisionReason: pipeline.decisionReason,
     decidedAtStageKey: pipeline.decidedAtStageKey,
     decidedAt: pipeline.decidedAt,
-    rounds: pipeline.rounds.map(presentRound),
+    rounds: pipeline.rounds.map((round) => presentRound(round, viewer)),
     createdAt: pipeline.createdAt,
     updatedAt: pipeline.updatedAt,
   };
 }
 
-const withRounds = { rounds: { orderBy: { scheduledAt: 'asc' as const } } };
+const withRounds = { rounds: { orderBy: { scheduledAt: 'asc' as const }, include: roundInclude } };
 
 /** A pipeline in the caller's organisation AND object scope; 404 otherwise. */
 export async function loadPipeline(req: Request, id: string): Promise<PipelineWithRounds> {
@@ -146,7 +238,7 @@ pipelinesRouter.post('/', requireCapability('interview:create'), asyncHandler(as
     action: 'pipeline.created', entityType: 'CandidatePipeline', entityId: pipeline.id,
     after: { candidateId: candidate.id, roleId: candidate.roleId, stages: stages.map((s) => s.key) },
   });
-  res.status(201).json({ pipeline: presentPipeline(pipeline) });
+  res.status(201).json({ pipeline: presentPipeline(pipeline, await roundViewer(req, pipeline)) });
 }));
 
 // A candidate's pipelines. Scoped through the candidate, so naming a candidate
@@ -159,11 +251,33 @@ pipelinesRouter.get('/', requireCapability('candidate:read'), asyncHandler(async
     orderBy: { createdAt: 'desc' },
     include: withRounds,
   });
-  res.json({ pipelines: pipelines.map(presentPipeline) });
+  const presented = await Promise.all(pipelines.map(async (p) => presentPipeline(p, await roundViewer(req, p))));
+  res.json({ pipelines: presented });
+}));
+
+/**
+ * The colleagues who can be named to conduct a round.
+ *
+ * A denylist rather than an allowlist, deliberately. The SME role is being
+ * added in its own lane; an allowlist built from the roles that exist today
+ * would silently omit it, and the first SME booked would be refused by a rule
+ * nobody remembered writing. Only the auditor is excluded, because compliance
+ * is defined as seeing that things happened rather than seeing candidates.
+ */
+pipelinesRouter.get('/interviewers', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
+  const users = await prisma.user.findMany({
+    where: { tenantId: req.auth!.tenantId, role: { not: 'auditor' } },
+    orderBy: { name: 'asc' },
+    // Names and roles only: nothing here needs an email address, and a staff
+    // directory is not what booking an interview asked for.
+    select: { id: true, name: true, role: true },
+  });
+  res.json({ interviewers: users });
 }));
 
 pipelinesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
-  res.json({ pipeline: presentPipeline(await loadPipeline(req, req.params.id)) });
+  const pipeline = await loadPipeline(req, req.params.id);
+  res.json({ pipeline: presentPipeline(pipeline, await roundViewer(req, pipeline)) });
 }));
 
 pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyncHandler(async (req, res) => {
@@ -188,7 +302,8 @@ pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyn
     action: 'pipeline.advanced', entityType: 'CandidatePipeline', entityId: pipeline.id,
     before: { stage: pipeline.currentStageKey }, after: { stage: next },
   });
-  res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
+  const fresh = await reload(pipeline.id);
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)) });
 }));
 
 interface SchedulingNotice {
@@ -268,6 +383,29 @@ async function noticeForNewRound(
   });
 }
 
+/**
+ * The colleagues named to conduct a round, checked against this organisation.
+ *
+ * Every id has to resolve, and resolve inside the tenant. A silently dropped id
+ * would leave a round whose record nobody can be held to — the failure the
+ * certificate's "Interviewed by" line exists to prevent — and would do it
+ * without telling the person who booked it.
+ */
+async function resolvePanel(tenantId: string, userIds: readonly string[]) {
+  const unique = [...new Set(userIds)];
+  if (unique.length === 0) return [];
+  const users = await prisma.user.findMany({ where: { id: { in: unique }, tenantId }, select: { id: true } });
+  const found = new Set(users.map((u) => u.id));
+  const missing = unique.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    throw new HttpError(400, `${missing.length === 1 ? 'One of the people' : 'Some of the people'} named to conduct this round is not a colleague in your organisation.`);
+  }
+  // The first person named leads, and the lead is the name a certificate
+  // prints. Order is the booker's stated intent, so it is kept rather than
+  // re-derived from a seniority the system does not know about.
+  return unique.map((userId, index) => ({ userId, seat: index === 0 ? 'lead' : 'panel' }));
+}
+
 const roundSchema = z.object({
   stageKey: z.string().min(1),
   // A date, time and zone, or the older offset-aware instant (see
@@ -276,6 +414,14 @@ const roundSchema = z.object({
   ...scheduleTimeFields,
   sessionId: z.string().min(1).optional(),
   interviewers: z.array(z.string().trim().min(1).max(120)).max(10).optional(),
+  // The colleagues conducting it, as Questor users. Separate from the typed
+  // names above so an external panellist can still be named without an account,
+  // and so the certificate has an id rather than a string to attribute to.
+  interviewerUserIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
+  // Which conductor the team wants. Omitted, the stage's own kind decides, so
+  // every caller written before Silver could hold a human round keeps booking
+  // exactly what it booked before.
+  conductedBy: z.enum(ROUND_CONDUCTORS).optional(),
   durationMinutes: durationSchema.optional(),
   // A link the recruiter already has. Human rounds only; skips vendor creation.
   meetingUrl: meetingUrlSchema.optional(),
@@ -292,11 +438,23 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   }
 
   const stage = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }).find((s) => s.key === body.stageKey);
-  const roles = stage ? roundRolesFor(stage.kind) : null;
-  if (!stage || !roles) throw new HttpError(409, `${stage?.label ?? 'This stage'} is not an interview stage.`);
+  if (!stage) throw new HttpError(409, 'This stage is not an interview stage.');
+  // The conductor the caller asked for, else whoever the stage implies.
+  const conductor: RoundConductor = body.conductedBy ?? roundRolesFor(stage.kind)?.conductedBy ?? 'HUMAN';
+  const roles = roundRolesForConductor(stage.kind, conductor);
+  if (!roles) {
+    throw new HttpError(409, conductor === 'AI'
+      ? `${stage.label} is conducted by a person; the AI does not run it.`
+      : `${stage.label} is not an interview stage.`);
+  }
   const humanRound = roles.conductedBy === 'HUMAN';
   if (body.meetingUrl && !humanRound) throw new HttpError(400, 'The AI interview runs in the Questor room; it takes no meeting link.');
   const meetingFields = humanRound ? initialMeetingFields(await tenantMeetingProvider(tenantId), body.meetingUrl) : {};
+
+  // Resolved before anything is written: a round booked with an interviewer who
+  // turns out not to exist would otherwise sit in the pipeline attributed to
+  // nobody, and the person who booked it would have been told it was fine.
+  const panel = await resolvePanel(tenantId, body.interviewerUserIds ?? []);
 
   if (body.sessionId) {
     const session = await prisma.interviewSession.findFirst({
@@ -366,6 +524,19 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         ...meetingFields,
       },
     });
+    // Seated in the same transaction as the round: a round that exists with
+    // nobody on it, because the second insert failed, is a round that quietly
+    // lost its interviewer.
+    if (panel.length > 0) {
+      await tx.roundInterviewer.createMany({
+        data: panel.map((seat) => ({ tenantId, roundId: created.id, userId: seat.userId, seat: seat.seat })),
+      });
+      // Booking someone to interview this candidate is what gives them the
+      // candidate. An SME assigned a round they cannot open has been assigned
+      // nothing, and would have to be granted access by a second, separate
+      // action that nobody would remember to take.
+      for (const seat of panel) await assignCandidate(pipeline.candidateId, seat.userId, 'interviewer', tx);
+    }
     return { round: created, noticeAdded, rebookedFrom };
   });
 
@@ -393,7 +564,14 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   await logAudit({
     tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.round_scheduled', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    after: { roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy, scheduledAt: booked.at.toISOString(), scheduledTimeZone: booked.timeZone },
+    after: {
+      roundId: round.id, stage: stage.key, conductedBy: roles.conductedBy,
+      scheduledAt: booked.at.toISOString(), scheduledTimeZone: booked.timeZone,
+      // Who was seated, and therefore who was granted this candidate by the
+      // booking. An access grant that leaves no trace is not an access grant
+      // anybody can review.
+      interviewerUserIds: panel.map((seat) => seat.userId),
+    },
   });
 
   // The booking is saved above; the meeting is set up now, outside the
@@ -419,27 +597,103 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
     link, aiRound, meetingUrl: meeting?.url ?? null,
   });
 
-  const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
+  const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id }, include: roundInclude });
   const candidateNotice = await noticeForNewRound(req, saved, { pipeline, stageLabel: stage.label, aiRound });
-  res.status(201).json({ round: presentRound(saved), notification, meeting, candidateNotice });
+  // Re-read the pipeline rather than reusing the one loaded above: the round
+  // just booked is part of what decides who may read what, and a viewer built
+  // without it would answer the quarantine question about the wrong pipeline.
+  const after = await reload(pipeline.id);
+  res.status(201).json({ round: presentRound(saved, await roundViewer(req, after)), notification, meeting, candidateNotice });
 }));
 
 const completeSchema = z.object({
   notes: z.string().trim().min(20, 'Record what the round showed — this is the evidence for the stage.').max(10000),
+  // The structured record: one entry per competency the interviewer is speaking
+  // to, each claim carrying the words it rests on. Optional, because a role
+  // with no approved scorecard has no competencies to file under and a round
+  // must still be closeable — but it is what makes the round comparable with
+  // the AI's reading of the same scorecard, so the UI asks for it first.
+  evidence: z.array(z.object({
+    competencyId: z.string().trim().min(1).max(64),
+    claim: z.string().trim().max(MAX_ENTRY_CHARS),
+    quote: z.string().trim().max(MAX_ENTRY_CHARS),
+  })).max(MAX_EVIDENCE_ENTRIES).optional(),
 });
+
+/** The competencies a round's evidence may be filed under: the role's approved scorecard. */
+async function roleCompetencies(roleId: string): Promise<{ id: string; name: string }[]> {
+  const scorecard = await scorecardForFit(roleId);
+  if (!scorecard) return [];
+  const profile = parseJsonOptional<{ competencies?: unknown }>(
+    scorecard.profileJson, {}, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' },
+  );
+  const list = Array.isArray(profile.competencies) ? profile.competencies : [];
+  return list.flatMap((c) => (typeof c === 'object' && c !== null
+    && typeof (c as { id?: unknown }).id === 'string' && typeof (c as { name?: unknown }).name === 'string'
+    ? [{ id: (c as { id: string }).id, name: (c as { name: string }).name }]
+    : []));
+}
+
+// The scorecard a round's evidence is filed against. Read-only, and scoped
+// through the pipeline's candidate, which is how an SME reaches the approved
+// scorecard for the role they are interviewing for without reaching the role.
+pipelinesRouter.get('/:id/competencies', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const pipeline = await loadPipeline(req, req.params.id);
+  res.json({ competencies: await roleCompetencies(pipeline.roleId) });
+}));
 
 // Closing a round with what it showed. The interviewers' notes are the
 // assessment; an AI observer, where both parties agreed, only adds a transcript
 // and verbatim quotes beside them.
-pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
-  const { notes } = completeSchema.parse(req.body);
+//
+// Held to candidate:read at the door and narrowed below, rather than to
+// interview:schedule. An SME is given a candidate so they can conduct one
+// round; scheduling is not theirs, and a round nobody but a scheduler may close
+// would leave the person who actually ran it unable to record what they saw —
+// which is the whole reason the round exists. Whoever closes it is named on the
+// record either way (recordedByUserId).
+pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const { notes, evidence } = completeSchema.parse(req.body);
   const pipeline = await loadPipeline(req, req.params.id);
   const round = pipeline.rounds.find((r) => r.id === req.params.roundId);
   if (!round) throw new HttpError(404, 'Round not found');
 
+  // Either someone who runs the process, or the person who was in the room.
+  // Not "anyone entitled to the candidate": a colleague who did not conduct
+  // this round has nothing first-hand to record, and a record they wrote would
+  // be attributed to them as though they had.
+  const seated = round.panel.some((seat) => seat.userId === req.auth!.userId);
+  if (!seated && !hasCapability(req.auth!, 'interview:schedule')) {
+    throw new HttpError(403, 'Only someone who conducted this round, or who schedules rounds, can record what it showed.');
+  }
+
+  // Checked against the role's own scorecard, and the competency NAMES stored
+  // here come from it rather than from the request: a name the client chose
+  // would let the record claim a competency the role is not assessed on while
+  // passing the id check.
+  const checked = evidence && evidence.length > 0
+    ? checkEvidenceEntries(evidence, await roleCompetencies(pipeline.roleId))
+    : ({ ok: true, entries: [] } as const);
+  if (!checked.ok) throw new HttpError(400, checked.problem);
+
+  // Whether this writer could already read a peer round's record, measured now,
+  // against the rules and the pipeline position in force as they wrote. Stored
+  // rather than recomputed later: both move on, and a record of independence
+  // that can be re-derived under tomorrow's rules is a record of tomorrow's
+  // rules. Same reasoning as HumanReview.aiVisibleBefore.
+  const viewer = await roundViewer(req, pipeline);
+  const peerNotesSeenBefore = peerNotesWereVisible({
+    round: { id: round.id, stageKey: round.stageKey, conductedBy: round.conductedBy },
+    viewerUserId: viewer.userId, viewerDecides: viewer.decides, rounds: viewer.rounds, pipeline: viewer.pipeline,
+  });
+
   const completed = await prisma.interviewRound.updateMany({
     where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED' },
-    data: { status: 'COMPLETED', notes, completedAt: new Date() },
+    data: {
+      status: 'COMPLETED', notes, completedAt: new Date(),
+      recordedByUserId: req.auth!.userId, peerNotesSeenBefore,
+      evidenceJson: JSON.stringify(checked.entries),
+    },
   });
   if (completed.count !== 1) throw new HttpError(409, 'This round has already been completed or cancelled.');
 
@@ -456,9 +710,15 @@ pipelinesRouter.post('/:id/rounds/:roundId/complete', requireCapability('intervi
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.round_completed', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    after: { roundId: round.id, stage: round.stageKey },
+    after: {
+      roundId: round.id, stage: round.stageKey, recordedBy: req.auth!.userId, peerNotesSeenBefore,
+      // Counts and headings only. The claims and the quotes are candidate
+      // personal data under a retention window; the audit log has neither.
+      competencies: checked.entries.map((entry) => entry.competencyId),
+    },
   });
-  res.json({ round: presentRound(await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } })) });
+  const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id }, include: roundInclude });
+  res.json({ round: presentRound(saved, await roundViewer(req, await reload(pipeline.id))) });
 }));
 
 // Finalising a candidate: the one move to the last stage (Diamond) that the
@@ -498,7 +758,8 @@ pipelinesRouter.post('/:id/finalize', requireCapability('assessment:review'), as
     action: 'pipeline.finalized', entityType: 'CandidatePipeline', entityId: pipeline.id,
     before: { stage: transition.from }, after: { stage: transition.to, humanReview: review.record },
   });
-  res.json({ pipeline: presentPipeline(await reload(pipeline.id)) });
+  const fresh = await reload(pipeline.id);
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)) });
 }));
 
 const decisionSchema = z.object({
@@ -546,7 +807,8 @@ pipelinesRouter.post('/:id/decision', requireCapability('assessment:review'), as
     // the stage this decision was about: the same answer as a contended write.
     throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
   }
-  res.json({ pipeline: presentPipeline(await reload(pipeline.id)), effect: result.effect });
+  const fresh = await reload(pipeline.id);
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), effect: result.effect });
 }));
 
 interface StageSummary extends PipelineStage {
@@ -575,8 +837,15 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
     userId: req.auth!.userId, canReview: hasCapability(req.auth!, 'assessment:review'), tenantId: req.auth!.tenantId,
   });
 
+  // Completed human rounds with something written, at any stage. Silver holds
+  // these as well as the AI interview once a team books an SME alongside it.
+  const humanEvidence = (stageKey: string) => pipeline.rounds.filter((r) =>
+    r.stageKey === stageKey && r.conductedBy === 'HUMAN' && r.status === 'COMPLETED' && r.notes.trim().length > 0);
+
   const summarise = (stage: PipelineStage): StageSummary => {
     const rounds = pipeline.rounds.filter((r) => r.stageKey === stage.key);
+    const human = humanEvidence(stage.key);
+    const alsoHuman = human.length > 0 ? ` ${human.length} completed human round(s) beside it.` : '';
     switch (stage.kind) {
       case 'intake':
         return { ...stage, hasEvidence: true, detail: 'Candidate profile onboarded.' };
@@ -595,16 +864,19 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
       case 'ai_interview': {
         const assessed = assessments.find((a) => rounds.some((r) => r.sessionId === a.sessionId));
         if (assessed && !visible.has(assessed.id)) {
-          return { ...stage, hasEvidence: true, detail: 'AI interview assessed. Record your own verdict to see its recommendation.' };
+          return { ...stage, hasEvidence: true, detail: `AI interview assessed. Record your own verdict to see its recommendation.${alsoHuman}` };
         }
-        return assessed
-          ? { ...stage, hasEvidence: true, detail: `AI interview assessed: ${assessed.recommendation}.` }
+        if (assessed) return { ...stage, hasEvidence: true, detail: `AI interview assessed: ${assessed.recommendation}.${alsoHuman}` };
+        // A team that books an SME at Silver has evidence for Silver even
+        // before the AI interview is assessed. Reporting "no evidence" here
+        // would tell them the round they ran and wrote up does not count.
+        return human.length > 0
+          ? { ...stage, hasEvidence: true, detail: `No assessed AI interview yet. ${human.length} completed human round(s) with recorded evidence.` }
           : { ...stage, hasEvidence: false, detail: 'No assessed AI interview yet.' };
       }
       case 'human_interview': {
-        const completed = rounds.filter((r) => r.status === 'COMPLETED' && r.notes.trim().length > 0);
-        return completed.length > 0
-          ? { ...stage, hasEvidence: true, detail: `${completed.length} completed round(s) with recorded evidence.` }
+        return human.length > 0
+          ? { ...stage, hasEvidence: true, detail: `${human.length} completed round(s) with recorded evidence.` }
           : { ...stage, hasEvidence: false, detail: 'No completed human round with recorded evidence yet.' };
       }
       default: {

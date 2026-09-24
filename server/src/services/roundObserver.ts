@@ -3,7 +3,8 @@ import { prisma, parseJson } from '../db.js';
 import { config } from '../config.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
-import { assertCanAccessCandidate } from './access.js';
+import { assertCanAccessCandidate, hasCapability } from './access.js';
+import { peerQuarantine } from '../domain/roundEvidence.js';
 import type { AuthClaims } from './auth.js';
 import { findInvitationByToken, invitationSecretColumns, mintInvitationToken, openInvitationToken } from './invitations.js';
 
@@ -44,14 +45,47 @@ const CONFLICT = 'The observer changed while you were working. Reload and try ag
 
 export type RoundWithPipeline = InterviewRound & { pipeline: { candidateId: string; roleId: string; stagesJson: string } };
 
-/** A round in the caller's organisation and candidate scope; 404 otherwise. */
+/**
+ * A round in the caller's organisation and candidate scope; 404 otherwise.
+ *
+ * The peer quarantine is applied here rather than in the routes, so it covers
+ * the whole observer — reading a transcript, but equally consenting to or
+ * starting an observer on a colleague's round, which would put a second SME in
+ * the room for the interview they are meant to be a second opinion on.
+ */
 export async function loadRoundForStaff(auth: AuthClaims, roundId: string): Promise<RoundWithPipeline> {
   const round = await prisma.interviewRound.findFirst({
     where: { id: roundId, tenantId: auth.tenantId },
-    include: { pipeline: { select: { candidateId: true, roleId: true, stagesJson: true } } },
+    include: {
+      pipeline: {
+        select: {
+          candidateId: true, roleId: true, stagesJson: true, status: true, currentStageKey: true,
+          rounds: { select: { id: true, stageKey: true, conductedBy: true, notes: true, panel: { select: { userId: true } } } },
+        },
+      },
+    },
   });
   if (!round) throw new HttpError(404, 'Round not found');
   await assertCanAccessCandidate(auth, round.pipeline.candidateId);
+
+  const quarantine = peerQuarantine({
+    round: { id: round.id, stageKey: round.stageKey, conductedBy: round.conductedBy },
+    viewerUserId: auth.userId,
+    // The same helper the pipeline route uses, not an equivalent expression.
+    // The two answer the same question today; the moment one of them learns
+    // about a grant that is not the role string, a reviewer would be
+    // quarantined from the transcript on one route and not the other.
+    viewerDecides: hasCapability(auth, 'assessment:review'),
+    rounds: round.pipeline.rounds.map((r) => ({
+      id: r.id, stageKey: r.stageKey, conductedBy: r.conductedBy,
+      panelUserIds: r.panel.map((p) => p.userId), hasNotes: r.notes.trim().length > 0,
+    })),
+    pipeline: { status: round.pipeline.status, currentStageKey: round.pipeline.currentStageKey },
+  });
+  // 403 rather than the usual 404: this reader is entitled to the candidate and
+  // knows the round exists — they can see it on the pipeline. Pretending it is
+  // missing would send them to look for a bug instead of reading the reason.
+  if (quarantine.withheld) throw new HttpError(403, quarantine.reason);
   return round;
 }
 

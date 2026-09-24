@@ -122,6 +122,49 @@ describe('retention of human round notes', () => {
     expect(await candidateExists(candidateId)).toBe(false);
   });
 
+  // A round scheduled long ago but written up TODAY holds a record written
+  // today, and the window runs from when the record was written. The sweep
+  // selects such a round on its scheduled date when it has no completion time,
+  // so the clearing step has to check the window again against the same cutoff
+  // — otherwise a record can be selected while incomplete and cleared moments
+  // after the interviewer finally writes it.
+  it('spares a round scheduled long ago but written up just now', async () => {
+    const { roundId } = await completedGoldRound(longAgo());
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { completedAt: new Date() } });
+
+    await runRetentionSweep(new Date());
+
+    expect(await notesOf(roundId)).toBe(NOTES);
+  });
+
+  // The structured record quotes the candidate, so it is at least as much
+  // personal data as the prose beside it and must go on the same timer.
+  it('clears the claims and quotes along with the notes', async () => {
+    const { roundId } = await completedGoldRound(longAgo(), longAgo());
+    await prisma.interviewRound.update({
+      where: { id: roundId },
+      data: { evidenceJson: JSON.stringify([{ competencyId: 'c1', competencyName: 'Incident response', claim: 'Owned it.', quote: 'I paged myself at 2am.' }]) },
+    });
+
+    await runRetentionSweep(new Date());
+
+    expect((await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } })).evidenceJson).toBe('[]');
+  });
+
+  // A round whose prose was cleared by an earlier sweep, before the structured
+  // record existed, must still have its quotes collected now.
+  it('collects a round whose prose was already cleared but whose quotes were not', async () => {
+    const { roundId } = await completedGoldRound(longAgo(), longAgo());
+    await prisma.interviewRound.update({
+      where: { id: roundId },
+      data: { notes: '', evidenceJson: JSON.stringify([{ competencyId: 'c1', competencyName: 'Incident response', claim: 'Owned it.', quote: 'I paged myself at 2am.' }]) },
+    });
+
+    await runRetentionSweep(new Date());
+
+    expect((await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } })).evidenceJson).toBe('[]');
+  });
+
   it('audits the purge without recording the notes themselves', async () => {
     const { pipelineId } = await completedGoldRound(longAgo(), longAgo());
 

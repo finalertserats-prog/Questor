@@ -290,6 +290,9 @@ export async function eraseCandidate(o: {
     // first or the delete below fails the constraint and erasure — a legal
     // obligation — errors out entirely.
     await deleteCandidateObservations(tx, o.candidateId, count);
+    // The interviewers seated on those rounds key onto InterviewRound, so they
+    // go before it for the same reason as the observations above.
+    await count('roundInterviewers', () => tx.roundInterviewer.deleteMany({ where: { round: { pipeline: { candidateId: o.candidateId } } } }));
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
@@ -540,6 +543,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         // Same foreign-key ordering as erasure: assignment rows reference the
         // candidate and must go first.
         await deleteCandidateObservations(tx, candidateId, count);
+        await count('roundInterviewers', () => tx.roundInterviewer.deleteMany({ where: { round: { pipeline: { candidateId } } } }));
         await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId } } }));
         await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId } }));
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));
@@ -622,25 +626,31 @@ export async function purgeExpiredArtifacts(now = new Date()): Promise<number> {
 }
 
 /**
- * Clear the notes of completed human interview rounds past the retention window.
+ * Clear the record of completed human interview rounds past the retention window.
  *
- * Round notes are candidate personal data written by interviewers. A human round
- * has no interview session, so session-level retention never reaches it, and a
- * candidate with other lawfully kept data is never purged as a whole — without
- * this step those notes would outlive every window. The round row itself stays,
+ * Round notes are candidate personal data written by interviewers, and so is the
+ * structured record beside them — more so, because it quotes the candidate. A
+ * human round has no interview session, so session-level retention never reaches
+ * it, and a candidate with other lawfully kept data is never purged as a whole —
+ * without this step both would outlive every window. The round row itself stays,
  * holding no free text, so the pipeline still shows that the round happened.
  */
 export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> {
   const cutoff = new Date(now.getTime() - retentionDays() * DAY_MS);
   const expired = await prisma.interviewRound.findMany({
     where: {
-      notes: { not: '' },
-      // Counted from completion, when the notes were written. A round with notes
-      // but no completion time (never marked complete) falls back to its
-      // scheduled date rather than keeping its notes for ever.
-      OR: [
-        { completedAt: { lte: cutoff } },
-        { completedAt: null, scheduledAt: { lte: cutoff } },
+      // Two independent conditions, so they are AND-ed explicitly: a second
+      // bare `OR:` key would silently replace the first, and the sweep would
+      // quietly stop checking the window it exists to enforce.
+      AND: [
+        // Either half of the record is enough to collect the round: a round
+        // whose prose was cleared by an earlier sweep, before the structured
+        // record existed, must still have its quotes cleared now.
+        { OR: [{ notes: { not: '' } }, { evidenceJson: { notIn: ['[]', ''] } }] },
+        // Counted from completion, when the record was written. A round with a
+        // record but no completion time (never marked complete) falls back to
+        // its scheduled date rather than keeping it for ever.
+        { OR: [{ completedAt: { lte: cutoff } }, { completedAt: null, scheduledAt: { lte: cutoff } }] },
       ],
       // A legal hold on any of the candidate's sessions or artifacts spares
       // their round notes too, matching the rest of the sweep.
@@ -653,20 +663,28 @@ export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> 
   const ids = expired.map((r) => r.id);
   const heldCandidate = { interviews: { some: { legalHold: true } } };
   const { count } = await prisma.interviewRound.updateMany({
-    // The hold is checked again at the moment of clearing: a hold placed after
-    // the rounds were selected must still spare their notes.
+    // Both conditions are checked again at the moment of clearing, against the
+    // same cutoff the selection used.
+    //
+    // The hold, because one placed after the rounds were selected must still
+    // spare their record. And the window, because a round selected while it had
+    // no completion time can be completed in between — the interviewer writing
+    // it up minutes after the sweep read the row — and clearing it then would
+    // delete a record written today under a rule about records written months
+    // ago. Rechecking costs nothing; the round simply survives to the next sweep.
     where: {
       id: { in: ids },
-      notes: { not: '' },
+      OR: [{ notes: { not: '' } }, { evidenceJson: { notIn: ['[]', ''] } }],
+      AND: [{ OR: [{ completedAt: { lte: cutoff } }, { completedAt: null, scheduledAt: { lte: cutoff } }] }],
       pipeline: { candidate: { NOT: [heldCandidate, { artifacts: { some: { legalHold: true } } }] } },
     },
-    data: { notes: '' },
+    data: { notes: '', evidenceJson: '[]' },
   });
   if (count === 0) return 0;
 
   // Audit only what was actually cleared, not what was selected.
   const cleared = await prisma.interviewRound.findMany({
-    where: { id: { in: ids }, notes: '' },
+    where: { id: { in: ids }, notes: '', evidenceJson: '[]' },
     select: { pipelineId: true, tenantId: true },
   });
 
@@ -679,7 +697,7 @@ export async function purgeExpiredRoundNotes(now = new Date()): Promise<number> 
     await logAudit({
       tenantId, actorType: 'system', actorId: 'retention-sweep',
       action: 'pipeline.round_notes_purged', entityType: 'CandidatePipeline', entityId: pipelineId,
-      after: { reason: 'retention window elapsed', rounds, retentionDays: retentionDays() },
+      after: { reason: 'retention window elapsed', rounds, retentionDays: retentionDays(), cleared: ['notes', 'evidence'] },
     });
   }
   logger.info({ count }, 'Cleared interview round notes past their retention window');

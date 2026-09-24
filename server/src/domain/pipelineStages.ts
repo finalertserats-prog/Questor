@@ -8,7 +8,11 @@ import { CorruptRecordError, type CorruptRecordRef } from '../db.js';
  * which HR may silently observe. Every other interview stage is conducted by a
  * person, with the AI as a silent observer that, when both parties agree,
  * transcribes and quotes (never summarises or judges; services/roundObserver.ts).
- * Silver and Gold hold as many interviews as the team wants. Events in the
+ * The AI stage may hold person-conducted rounds too — an SME sitting in at
+ * Silver is a human round at an AI stage, not a second AI stage, so it carries
+ * the human round's promises (see roundRolesForConductor). Silver and Gold hold
+ * as many interviews as the team wants, each with its own date, its own
+ * interviewer and its own record. Events in the
  * process move a candidate forward on their own (domain/pipelineAutonomy.ts);
  * Diamond — the finalised candidate — and every final outcome are a person's
  * decision.
@@ -81,4 +85,35 @@ export function roundRolesFor(kind: StageKind): RoundRoles | null {
   if (kind === 'ai_interview') return { conductedBy: 'AI', aiObserver: false, hrMayObserve: true };
   if (kind === 'human_interview') return { conductedBy: 'HUMAN', aiObserver: true, hrMayObserve: false };
   return null;
+}
+
+export const ROUND_CONDUCTORS = ['AI', 'HUMAN'] as const;
+export type RoundConductor = (typeof ROUND_CONDUCTORS)[number];
+
+/**
+ * Who runs a round the team has explicitly asked for, rather than whoever the
+ * stage's kind implies.
+ *
+ * Silver and Gold hold as many rounds as the team wants, and a team that wants
+ * an SME in the room at Silver as well as the AI must be able to book that. The
+ * stage's kind still decides what is POSSIBLE: an AI-conducted stage may hold
+ * both kinds of round, a human-conducted one only human rounds, because nothing
+ * conducts a Gold interview but a person. A round's roles are taken from the
+ * conductor rather than from the stage, so a human round booked at Silver gets
+ * the human round's AI observer instead of the AI round's HR observation — the
+ * two are different promises made to the candidate, and swapping them would
+ * offer HR a silent seat in a conversation nobody consented to.
+ *
+ * Returns null when the stage holds no interviews at all, and when the
+ * conductor asked for cannot run a round at that stage.
+ */
+export function roundRolesForConductor(kind: StageKind, conductor: RoundConductor): RoundRoles | null {
+  if (kind !== 'ai_interview' && kind !== 'human_interview') return null;
+  if (conductor === 'AI' && kind !== 'ai_interview') return null;
+  return conductor === 'AI' ? roundRolesFor('ai_interview') : roundRolesFor('human_interview');
+}
+
+/** Whether a stage can hold a person-conducted round at all. Every interview stage can. */
+export function allowsHumanRound(kind: StageKind): boolean {
+  return kind === 'ai_interview' || kind === 'human_interview';
 }
