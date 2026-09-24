@@ -61,8 +61,13 @@ orgsRouter.get('/', asyncHandler(async (req, res) => {
     select: { name: true, slug: true },
     orderBy: { name: 'asc' },
   });
+  // The slug matches too, because it is what someone reads in the address bar
+  // and types back: an organisation found at /o/questor-pilot that answers
+  // "we can't find that organisation" to "questor-pilot" is the product
+  // contradicting itself. Still a prefix, so it discloses nothing the name
+  // search did not already.
   const orgs = candidates
-    .filter((org) => org.name.toLowerCase().startsWith(needle))
+    .filter((org) => org.name.toLowerCase().startsWith(needle) || (org.slug ?? '').startsWith(needle))
     .slice(0, MAX_RESULTS);
   res.json({ orgs });
 }));

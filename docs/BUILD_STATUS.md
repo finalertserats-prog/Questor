@@ -97,7 +97,7 @@ Seams exist and are declared, but none are wired to a live third-party service:
 
 ```bash
 npm install && cp .env.example server/.env && npm run setup && npm run dev
-# Recruiter: http://localhost:5173  ·  demo@questor.local / questor123
+# Recruiter: http://localhost:5173  ·  demo@questor.local (password: see server/src/seed/demoData.ts)
 npm test -w server            # 31 unit + API tests
 npm run test:e2e -w server    # full headless interview + assessment
 ```

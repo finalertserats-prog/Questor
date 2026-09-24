@@ -56,8 +56,12 @@ Open **http://localhost:5173** and sign in with the seeded recruiter:
 
 ```
 Email:    demo@questor.local
-Password: questor123
+Password: the value of `password` in server/src/seed/demoData.ts
 ```
+
+The seeded password is not written here on purpose. It is a local fixture, and a
+credential printed in a README is the kind of thing that ends up reused on a
+deployed demo; the seeder already refuses to run with `NODE_ENV=production`.
 
 You'll find a ready-made **Senior Data Engineer** role (approved) and candidate **Priya Sharma**
 (resume parsed, fit scored) with an interview already set up. Open the interview, **Send invitation**,
