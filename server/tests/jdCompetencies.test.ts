@@ -239,3 +239,48 @@ describe('verifySpan', () => {
     expect(verifySpan('Requirements:\n- Advanced SQL.\n', 'Deep Kubernetes expertise.')).toBe(false);
   });
 });
+
+describe('a tool is not the job it is usually used for', () => {
+  /**
+   * A marketing advert naming the stack the marketer works in was earning
+   * Sales Execution — a competency about carrying a quota and closing deals.
+   *
+   * HubSpot had already been taken out of that cue for this reason, with a
+   * comment saying so; Salesforce and the bare word CRM were still in it, so
+   * "marketing automation and CRM — HubSpot and Salesforce preferred" put
+   * selling on a marketing manager's scorecard. That is not a mislabelled
+   * competency, it is a different job: the interview then asks them to walk
+   * through a deal they lost.
+   *
+   * Found on an advert written to test the extractor against something the
+   * gold set had never seen.
+   */
+  const MARKETING_JD = [
+    'Senior Marketing Manager',
+    '',
+    'What we are looking for',
+    'Six or more years in B2B marketing, at least three in demand generation.',
+    'Demonstrable experience with marketing automation and CRM — HubSpot and',
+    'Salesforce preferred.',
+    'Strong analytical skills: comfortable in GA4 and building attribution models.',
+  ].join('\n');
+
+  const SALES_JD = [
+    'Enterprise Account Executive',
+    '',
+    'What we are looking for',
+    'You will carry an annual quota and own the full sales cycle.',
+    'Demonstrable experience closing deals with enterprise buyers.',
+    'You will build and qualify your own pipeline.',
+  ].join('\n');
+
+  it('does not put Sales Execution on a marketer for naming their CRM', () => {
+    expect(names(MARKETING_JD, { title: 'Senior Marketing Manager', band: 'senior', domainName: 'marketing' }))
+      .not.toContain('Sales Execution');
+  });
+
+  it('still reads selling as selling when the advert describes it', () => {
+    expect(names(SALES_JD, { title: 'Enterprise Account Executive', band: 'senior', domainName: 'sales' }))
+      .toContain('Sales Execution');
+  });
+});

@@ -62,7 +62,14 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(prospect(ing|s)?|lead generation|cold (call|outreach)|\bmeddic\b|\bbant\b|qualif(y|ication) (leads|opportunities))\b/i,
       // HubSpot is a marketing automation tool before it is a CRM, and naming
       // it here put Sales Execution on a marketing manager's scorecard.
-      /\b(salesforce|\bcrm\b|outreach\.io|deal desk)\b/i,
+      //
+      // Salesforce and the bare word CRM went the same way, for the same
+      // reason. An advert reading "marketing automation and CRM — HubSpot
+      // and Salesforce preferred" is naming the stack a marketer works in,
+      // not asking them to carry a quota. A tool alone no longer carries
+      // this competency: selling shows up as selling — a quota, a pipeline,
+      // a deal, a renewal — and every one of those cues is still here.
+      /\b(outreach\.io|deal desk)\b/i,
       /\b(account (executive|management)|territory plan|renewals? (target|quota)|upsell|cross[- ]sell)\b/i,
     ],
     domains: ['sales', 'customer_success', 'retail', 'bfsi'],
