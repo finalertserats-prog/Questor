@@ -196,7 +196,24 @@ export function Portal() {
     } catch { setErr('Microphone permission is required for the voice interview.'); }
   };
 
-  const testSpeaker = () => { speak('Audio check. If you can hear this clearly, your speaker is working.', () => setSpeaker(true)); };
+  // The speaker is only "ok" if a sound was actually made.
+  //
+  // This used to set it true from any end at all — including the browser not
+  // supporting speech, synthesis erroring, and a watchdog firing after silence.
+  // A candidate whose speakers were muted got a green tick and walked into a
+  // voice interview believing audio had been verified. The check now says what
+  // happened instead, and never claims a speaker works on the strength of
+  // nothing having been heard.
+  const testSpeaker = () => {
+    setErr('');
+    speak('Audio check. If you can hear this clearly, your speaker is working.', (outcome) => {
+      if (outcome === 'spoke') { setSpeaker(true); return; }
+      setSpeaker(false);
+      setErr(outcome === 'unsupported'
+        ? 'This browser cannot play the check. You can still answer by typing, or try Chrome or Edge.'
+        : 'We could not play the check. Turn your volume up and try again — or answer by typing instead.');
+    });
+  };
 
   // A failed tech check used to reject silently: the button did nothing, twice,
   // and the candidate had no idea why they were still on this screen.

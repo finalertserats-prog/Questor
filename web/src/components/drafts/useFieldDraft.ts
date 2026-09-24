@@ -152,7 +152,16 @@ export function useFieldDraft(opts: FieldDraftOptions): FieldDraft {
 // Tidy up what I wrote
 // ---------------------------------------------------------------------------
 
-export type TidyPhase = 'idle' | 'working' | 'ready' | 'nothing';
+/**
+ * `nothing` means the model read the text and had nothing to suggest.
+ * `failed` means we never got an answer.
+ *
+ * They were the same state, so a network error was reported to a reviewer as
+ * "Nothing to tidy — it reads well as it is." — a positive judgement on
+ * interview feedback that feeds a hiring decision, produced by a request that
+ * never completed.
+ */
+export type TidyPhase = 'idle' | 'working' | 'ready' | 'nothing' | 'failed';
 
 export interface TidyState {
   readonly phase: TidyPhase;
@@ -204,7 +213,7 @@ export function useTidyUp(opts: {
       if (askedFor.current !== submitted) return;
       setState(reply.text.trim() === '' ? { phase: 'nothing', text: '' } : { phase: 'ready', text: reply.text });
     } catch {
-      if (askedFor.current === submitted) setState({ phase: 'nothing', text: '' });
+      if (askedFor.current === submitted) setState({ phase: 'failed', text: '' });
     }
   }, [opts.field, opts.value]);
 

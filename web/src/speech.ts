@@ -60,8 +60,19 @@ function pickVoice(): SpeechSynthesisVoice | null {
  * `<female|male>:<n>` hint, so each interviewer keeps a distinct system voice
  * when there is no server voice; without one the long-standing default is used.
  */
-export function speak(text: string, onDone?: () => void, voiceHint?: string): void {
-  if (!ttsSupported()) { onDone?.(); return; }
+/**
+ * How a spoken line ended.
+ *
+ * `spoke` means the browser told us synthesis actually began. The other three
+ * are all ways of ending without a sound having been made, and the caller has
+ * to be able to tell them apart: the speaker check reported "ok" on every one
+ * of them, so a candidate whose speakers were muted was shown a green tick and
+ * walked into a voice interview believing audio had been verified.
+ */
+export type SpeechOutcome = 'spoke' | 'unsupported' | 'error' | 'timeout';
+
+export function speak(text: string, onDone?: (outcome: SpeechOutcome) => void, voiceHint?: string): void {
+  if (!ttsSupported()) { onDone?.('unsupported'); return; }
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   const v = voiceHint ? pickBrowserVoice(window.speechSynthesis.getVoices(), voiceHint) ?? pickVoice() : pickVoice();
@@ -70,18 +81,28 @@ export function speak(text: string, onDone?: () => void, voiceHint?: string): vo
   u.pitch = 1.0;
   const id = nextUtterance();
   let fired = false;
-  const finish = () => { if (fired) return; fired = true; emitActivity({ type: 'end', id }); onDone?.(); };
-  u.onstart = () => emitActivity({ type: 'start', id, text, audio: null });
+  // Whether the browser ever told us synthesis began. `onend` fires both for a
+  // line that was spoken and for one that was cancelled before it started, so
+  // the end event alone cannot answer "was there a sound".
+  let started = false;
+  const finish = (outcome: SpeechOutcome) => {
+    if (fired) return;
+    fired = true;
+    emitActivity({ type: 'end', id });
+    onDone?.(outcome);
+  };
+  u.onstart = () => { started = true; emitActivity({ type: 'start', id, text, audio: null }); };
   // Word boundaries are the browser voice's only progress signal; many voices
   // never send them, and the room estimates from the text instead.
   u.onboundary = (e) => { if (e.name === 'word') emitActivity({ type: 'boundary', id, charIndex: e.charIndex }); };
-  u.onend = finish;
-  u.onerror = finish;
+  u.onend = () => finish(started ? 'spoke' : 'error');
+  u.onerror = () => finish('error');
   // Watchdog: some browsers never fire onend when synthesis silently fails.
-  // Estimate a max duration (~2.5 words/sec) and proceed regardless.
+  // Estimate a max duration (~2.5 words/sec) and proceed regardless — but say
+  // that is what happened, rather than reporting it as a line that was spoken.
   const words = text.split(/\s+/).length;
   const maxMs = Math.min(60000, (words / 2.5) * 1000 + 4000);
-  setTimeout(finish, maxMs);
+  setTimeout(() => finish(started ? 'spoke' : 'timeout'), maxMs);
   window.speechSynthesis.speak(u);
 }
 
@@ -466,7 +487,7 @@ export async function speakNudge(token: string, index: number, voiceHint?: strin
     if (header) text = decodeURIComponent(header);
 
     if (res.status === 204 || !res.ok) {
-      if (text) await new Promise<void>((done) => speak(text, done, voiceHint));
+      if (text) await new Promise<void>((done) => speak(text, () => done(), voiceHint));
       return text;
     }
 
@@ -489,7 +510,7 @@ export async function speakNudge(token: string, index: number, voiceHint?: strin
   } catch {
     // A failed check-in must never end the turn. Silence is recoverable; a
     // dropped answer is not.
-    if (text) await new Promise<void>((done) => speak(text, done, voiceHint));
+    if (text) await new Promise<void>((done) => speak(text, () => done(), voiceHint));
     return text;
   }
 }

@@ -83,6 +83,20 @@ export function TidyUp({ tidy, value }: { readonly tidy: FieldTidy; readonly val
     );
   }
 
+  // A request that never answered says so, and offers the retry. It used to
+  // render the line above: a reviewer whose connection dropped was told their
+  // feedback read well, by a check that had not run.
+  if (tidy.state.phase === 'failed') {
+    return (
+      <p className="sug-acts" data-testid="tidy-failed">
+        <span className="sug-quiet">Could not check it just now.</span>
+        <button type="button" className="btn secondary sm" onClick={tidy.run} data-testid="tidy-retry">
+          <Icon name="sparkle" size={14} />Try again
+        </button>
+      </p>
+    );
+  }
+
   if (!tidy.offered) return null;
 
   return (

@@ -5,9 +5,12 @@ needs to change something here, it says so rather than changing it quietly —
 today a competency rename in one lane broke another lane's seeded demo, and it
 only surfaced at merge.
 
-Design approved: `scratchpad/mockups/questor-credentials.html` (artifact
-GZHSbCjZQQJ9M3L4ZPgM7x). The badge is **the Milled Planchet**; the certificate
-is **the Struck Seal**.
+Design approved: **`docs/design/questor-credentials.html`** — committed to the
+repository rather than left in a scratchpad, because four lanes were pointed at
+a file that existed only in a temporary directory and one of them had to read
+it out of a published artifact to build against it. A reference the build
+depends on has to live where the build lives. The badge is **the Milled
+Planchet**; the certificate is **the Struck Seal**.
 
 ---
 
