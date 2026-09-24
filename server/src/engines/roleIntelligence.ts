@@ -149,6 +149,28 @@ function asCompetency(p: ProposedCompetency): Competency {
   };
 }
 
+/**
+ * The competencies a role's technology list earns, labelled as such.
+ *
+ * They carry no job-description span, because they do not come from the
+ * advert — they come from the stack the hiring team configured. Without the
+ * label the role page had to guess, and guessed the only other thing a
+ * span-less competency can be: "added by hand, or drafted before source lines
+ * were kept". Both are wrong, and the second is misleading about a scorecard
+ * drafted this morning.
+ */
+function fromTechStack(
+  existing: readonly Competency[],
+  techStack: readonly TechStackItem[],
+  band: BandId,
+): Competency[] {
+  return stackCompetencies(existing, techStack, band).map((c) => ({
+    ...c,
+    origin: 'tech_stack' as const,
+    rationale: c.rationale ?? `Asked because this role's technology list names ${c.sourceText || 'it'}, not because a line of the advert did.`,
+  }));
+}
+
 /** Heuristic role extraction (always available). */
 export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: ExtractOptions = {}): RoleExtraction {
   const text = sourceText.replace(/\r/g, '');
@@ -181,7 +203,7 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
       rationale: 'The job description does not say enough to name a specific skill. Replace this with what the role actually needs.',
     });
   }
-  competencies = normalizeWeights([...competencies, ...stackCompetencies(competencies, opts.techStack ?? [], band)]);
+  competencies = normalizeWeights([...competencies, ...fromTechStack(competencies, opts.techStack ?? [], band)]);
 
   const jdWarnings = EXCLUSIONARY_TERMS.filter((e) => e.re.test(text)).map((e) => ({
     term: text.match(e.re)?.[0] ?? '', suggestion: e.suggestion,
@@ -380,7 +402,7 @@ export async function extractRole(sourceText: string, titleHint = '', opts: Extr
   // A required technology the model's competencies do not name still gets one.
   const band = opts.band ?? bandForRoleSeniority(heuristic.level).id;
   const kept = [...merged, ...heuristicKeep];
-  const competencies = normalizeWeights([...kept, ...stackCompetencies(kept, stack, band)]);
+  const competencies = normalizeWeights([...kept, ...fromTechStack(kept, stack, band)]);
   return {
     ...heuristic,
     catalogComparison: compareForRole(heuristic.title, opts.domainName, competencies),
