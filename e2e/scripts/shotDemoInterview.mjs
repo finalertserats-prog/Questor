@@ -30,6 +30,14 @@ function fixture(command) {
 
 const browser = await chromium.launch();
 
+/**
+ * The guided tour offers its start card on a new sandbox and makes the app
+ * behind it inert. It has its own screenshots; these are of the interview.
+ */
+const WITHOUT_THE_STORY = () => {
+  try { window.sessionStorage.setItem('questor-demo-tour-seen', '1'); } catch { /* blocked storage */ }
+};
+
 /** One page, at both widths and in both themes. `prepare` runs per shot. */
 async function shoot(label, prepare, { storageState } = {}) {
   for (const [width, w, h] of sizes) {
@@ -44,6 +52,7 @@ async function shoot(label, prepare, { storageState } = {}) {
       await ctx.addInitScript((t) => {
         try { window.localStorage.setItem('questor-theme', t); } catch { /* blocked storage */ }
       }, theme);
+      await ctx.addInitScript(WITHOUT_THE_STORY);
       const page = await ctx.newPage();
       await prepare(page);
       await page.addStyleTag({ content: '*, *::before, *::after { animation: none !important; transition: none !important; }' });
@@ -60,6 +69,7 @@ async function shoot(label, prepare, { storageState } = {}) {
 async function demoSession() {
   const token = fixture('link');
   const ctx = await browser.newContext({ baseURL: base });
+  await ctx.addInitScript(WITHOUT_THE_STORY);
   const page = await ctx.newPage();
   await page.goto(`/demo/${token}`);
   await page.getByRole('button', { name: 'Start demo' }).click();
@@ -81,6 +91,7 @@ await shoot('choice', async (page) => {
 const watching = await demoSession();
 const runId = await (async () => {
   const ctx = await browser.newContext({ baseURL: base, storageState: watching });
+  await ctx.addInitScript(WITHOUT_THE_STORY);
   const page = await ctx.newPage();
   await page.goto('/demo/interview');
   await page.getByRole('button', { name: 'Watch one happen — start' }).click();
@@ -108,6 +119,7 @@ await shoot('ended', async (page) => {
 // 4. The candidate status page — the handoff a real candidate sees.
 const statusToken = await (async () => {
   const ctx = await browser.newContext({ baseURL: base, storageState: watching });
+  await ctx.addInitScript(WITHOUT_THE_STORY);
   const page = await ctx.newPage();
   await page.goto('/demo/interview');
   const link = await page.evaluate(async () => {
@@ -128,6 +140,7 @@ if (statusToken) {
 // 5. The feedback form, which runs signed out.
 const ticket = await (async () => {
   const ctx = await browser.newContext({ baseURL: base, storageState: watching });
+  await ctx.addInitScript(WITHOUT_THE_STORY);
   const page = await ctx.newPage();
   await page.goto('/demo/interview');
   const value = await page.evaluate(async () => {

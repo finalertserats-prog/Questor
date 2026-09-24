@@ -74,20 +74,26 @@ one, so it is safe to call on every End demo press.
 If End demo is pressed with no interview taken, call it anyway: the row records
 `mode: "none"` and the owner still gets the feedback.
 
-## What this lane expects from the guided-tour lane
+## Where the two lanes meet, as shipped
 
-1. **The demo bar's interview button now goes to `/demo/interview`.** This lane
-   changed it (`web/src/App.tsx`) from opening the portal in a new tab to
-   linking to the choice screen, because the fifteen minutes has to be
-   explained before anything starts. If the tour rebuilds that bar, keep the
-   link.
-2. **End demo mints a feedback ticket first**, as above.
-3. **Explore caps are 2 roles / 3 candidates / 3 interviews** (owner,
-   2026-09-24). This lane changed `assertDemoCreationCap` in
-   `server/src/services/demoAccess.ts` from 3/5/5. What the demo itself
-   provisions — observer mode's written candidate and its session — is excluded
-   from the count, so watching an interview does not cost the visitor one of
-   theirs.
+1. **`demoInterviewModes()` is filled.** The tour left it a stub returning both
+   modes off; it now answers from `services/demoReadiness.ts`. The bar's button
+   and the tour's closing card follow it without further wiring.
+2. **The bar's gate reads EITHER mode.** It asked only about the candidate
+   side, from before watching one existed — which hid the button on every
+   deployment without a live model, exactly the deployment the written
+   interview is for.
+3. **Both closing choices go to `/demo/interview?start=<mode>`.** The card
+   offered both but handled only `candidate`, by opening the sample interview's
+   portal link directly. That path plans no sitting, claims no allowance and
+   records no run, so the fifteen minutes would not have been enforced on it.
+   `openSampleInterview` is retired with its last caller.
+4. **End demo mints a feedback ticket first**, in the shared
+   `components/demo/endDemo.ts`, as above.
+5. **Explore caps.** `assertDemoCreationCap` keeps the tour lane's
+   DEMO_SEEDED + DEMO_ADDED_CAPS shape; what the demo itself provisions —
+   observer mode's written candidate and its session — is excluded from the
+   count, so watching an interview does not cost the visitor one of theirs.
 
 ## Shared files this lane touched
 
