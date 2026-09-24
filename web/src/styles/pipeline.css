@@ -91,6 +91,36 @@
   margin-top: 0;
 }
 
+/* One competency the interviewer is speaking to, while they close a round.
+   Ruled apart rather than tinted: a filled block would read as a state marker,
+   and these rows are all in the same state. */
+.round-evidence {
+  margin: 10px 0;
+}
+.round-evidence-row {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+}
+.round-evidence-row legend {
+  padding: 0 4px;
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* A recorded claim and the words it rests on. The quote is indented off the
+   claim so the two are never read as one statement. */
+.round-evidence-entry {
+  margin: 0 0 10px;
+}
+.round-evidence-entry blockquote {
+  margin: 4px 0 0;
+  padding-left: 10px;
+  border-left: 2px solid var(--rule);
+  color: var(--ink-2);
+}
+
 .evidence-list {
   display: grid;
   gap: 6px;

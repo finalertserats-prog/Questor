@@ -24,7 +24,7 @@ import {
 } from './roundMeetingModel';
 import { useToast } from './Toast';
 
-interface Round {
+export interface Round {
   id: string;
   stageKey: string;
   conductedBy: 'AI' | 'HUMAN';
@@ -32,12 +32,80 @@ interface Round {
   hrMayObserve: boolean;
   sessionId: string | null;
   interviewers: string[];
+  /** The colleagues conducting it, as Questor users. Absent on an older server. */
+  panel?: Array<{ userId: string; name: string; seat: string }>;
   scheduledAt: string;
   /** The zone it was booked in; null or absent when booked without one. */
   scheduledTimeZone?: string | null;
   status: string;
+  /** What the interviewer recorded; '' before the round is closed. */
+  notes?: string;
+  /** Why the record is not shown to this reader; '' when nothing is withheld. */
+  notesWithheld?: string;
+  /** What the round holds, so the page never implies a transcript it lacks. */
+  evidence?: { kind: string; label: string; detail: string };
+  /** Claims filed by competency, each with the words it rests on. */
+  evidenceEntries?: Array<{ competencyId: string; competencyName: string; claim: string; quote: string }>;
+  recordedBy?: { userId: string; name: string } | null;
   /** Absent on an older server; null for AI rounds. */
   meeting?: RoundMeetingView | null;
+}
+
+interface TeamInterviewer {
+  id: string;
+  name: string;
+  role: string;
+}
+
+interface Competency {
+  id: string;
+  name: string;
+}
+
+/** One competency the interviewer is speaking to, and the words the claim rests on. */
+export interface EvidenceDraft {
+  competencyId: string;
+  claim: string;
+  quote: string;
+}
+
+/**
+ * The entries to send with the round.
+ *
+ * Only the rows the interviewer never touched are dropped — the form offers
+ * every competency and most rounds reach some of them, so an untouched row is
+ * the ordinary case. A HALF-written row is kept, deliberately, even though the
+ * server will refuse it.
+ *
+ * Dropping half a row instead would lose evidence silently: closing a round is
+ * one-shot (SCHEDULED to COMPLETED, and the route refuses a second attempt), so
+ * a competency quietly omitted because the interviewer tabbed away mid-row is
+ * omitted for good, and they would be looking at a round that closed
+ * successfully. A refusal they have to fix is the better failure, and
+ * `completeRound` stops the submission before it reaches the server at all.
+ */
+export function readyEntries(draft: readonly EvidenceDraft[]): EvidenceDraft[] {
+  return draft.filter((entry) => entry.claim.trim().length > 0 || entry.quote.trim().length > 0);
+}
+
+/**
+ * What to tell an interviewer who wrote a claim but no quote, or the reverse.
+ *
+ * Silence would be worse than a refusal: they would press Complete, watch the
+ * round close, and never learn that the competency they typed into was dropped.
+ */
+export function evidenceDraftWarning(draft: readonly EvidenceDraft[], competencies: readonly Competency[]): string {
+  const half = draft.filter((entry) => {
+    const claim = entry.claim.trim().length > 0;
+    const quote = entry.quote.trim().length > 0;
+    return claim !== quote;
+  });
+  if (half.length === 0) return '';
+  const names = half
+    .map((entry) => competencies.find((c) => c.id === entry.competencyId)?.name ?? entry.competencyId)
+    .join(', ');
+  return `${names}: a claim needs the words it rests on, and a quote needs the claim it supports. `
+    + 'Fill both or leave both empty — half an entry is not recorded.';
 }
 
 interface Pipeline {
@@ -101,6 +169,50 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Something went wrong';
 }
 
+/**
+ * Who conducted a human round. The named colleagues come first, because they
+ * are the people the record can be attributed to; typed names follow, and are
+ * all there is for an external panellist with no Questor account.
+ */
+export function ledBy(round: Round): string {
+  const named = (round.panel ?? []).map((seat) => seat.name);
+  const typed = round.interviewers.filter((name) => !named.includes(name));
+  return [...named, ...typed].join(', ') || 'Human interviewer';
+}
+
+/**
+ * What a round left behind. Three things a reader has to be able to tell apart,
+ * and which a bare empty cell would run together: a round nobody has written
+ * up, a round whose record is deliberately held back from THIS reader, and a
+ * round that was written up and can be read.
+ */
+export function RoundRecord({ round }: { round: Round }) {
+  if (round.conductedBy !== 'HUMAN') return <span className="muted small">—</span>;
+  if (round.notesWithheld) {
+    return <span className="muted small" data-testid="round-notes-withheld">{round.notesWithheld}</span>;
+  }
+  const notes = round.notes ?? '';
+  if (!notes.trim()) return <span className="muted small">{round.evidence?.label ?? 'Nothing recorded yet'}</span>;
+  return (
+    <details data-testid="round-record">
+      <summary>{round.evidence?.label ?? 'Interviewer’s written record'}</summary>
+      {round.recordedBy?.name && <p className="muted small">Recorded by {round.recordedBy.name}.</p>}
+      {(round.evidenceEntries ?? []).map((entry) => (
+        <div key={entry.competencyId} className="round-evidence-entry">
+          <b>{entry.competencyName}</b>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{entry.claim}</p>
+          {/* The quote is set apart from the claim on purpose: the two are
+              different kinds of statement, and running them together is how a
+              conclusion comes to look like the thing that supports it. */}
+          <blockquote>{entry.quote}</blockquote>
+        </div>
+      ))}
+      <p style={{ whiteSpace: 'pre-wrap' }}>{notes}</p>
+      {round.evidence?.detail && <p className="muted small">{round.evidence.detail}</p>}
+    </details>
+  );
+}
+
 function StageBadge({ stageKey }: { stageKey: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return <span className="pipeline-badge pipeline-badge-fallback" aria-hidden="true" />;
@@ -139,11 +251,18 @@ export function PipelinePanel(
   const [roundDraft, setRoundDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
   const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
   const [interviewers, setInterviewers] = useState('');
+  // Who will conduct the round. Only asked at the AI's own stage, which is the
+  // only stage where there is a choice to make.
+  const [conductedBy, setConductedBy] = useState<'AI' | 'HUMAN'>('AI');
+  const [panelIds, setPanelIds] = useState<string[]>([]);
+  const [team, setTeam] = useState<TeamInterviewer[]>([]);
   const [sessionId, setSessionId] = useState('');
   const [decision, setDecision] = useState<Decision>('APPROVED');
   const [reason, setReason] = useState('');
   const [roundToComplete, setRoundToComplete] = useState('');
   const [roundNotes, setRoundNotes] = useState('');
+  const [competencies, setCompetencies] = useState<Competency[]>([]);
+  const [evidenceDraft, setEvidenceDraft] = useState<EvidenceDraft[]>([]);
   const [schedulingNotice, setSchedulingNotice] = useState<SchedulingNotice | null>(null);
   const [meetingLink, setMeetingLink] = useState('');
   const [durationMinutes, setDurationMinutes] = useState<number>(60);
@@ -202,6 +321,31 @@ export function PipelinePanel(
       .catch(() => { if (!cancelled) setMeetingProvider(null); });
     return () => { cancelled = true; };
   }, [maySchedule]);
+
+  // The colleagues who can be named to conduct a round. Read once per panel and
+  // only by someone who can schedule; a failure leaves the picker out rather
+  // than blocking the booking, which still works with typed names.
+  useEffect(() => {
+    if (!maySchedule) return undefined;
+    let cancelled = false;
+    api.get<{ interviewers: TeamInterviewer[] }>('/pipelines/interviewers')
+      .then((resp) => { if (!cancelled) setTeam(resp.interviewers); })
+      .catch(() => { if (!cancelled) setTeam([]); });
+    return () => { cancelled = true; };
+  }, [maySchedule]);
+
+  // The competencies a round's record is filed under. Read from the pipeline
+  // rather than the role, which is how an interviewer with no access to the
+  // role still reaches the scorecard for the candidate they are interviewing.
+  useEffect(() => {
+    const id = pipeline?.id;
+    if (!id) return undefined;
+    let cancelled = false;
+    api.get<{ competencies: Competency[] }>(`/pipelines/${id}/competencies`)
+      .then((resp) => { if (!cancelled) setCompetencies(resp.competencies); })
+      .catch(() => { if (!cancelled) setCompetencies([]); });
+    return () => { cancelled = true; };
+  }, [pipeline?.id]);
 
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
@@ -266,6 +410,9 @@ export function PipelinePanel(
   const labelFor = (key: string | null) => pipeline.stages.find((s) => s.key === key)?.label ?? key ?? '';
   const isInterviewStage = current?.kind === 'ai_interview' || current?.kind === 'human_interview';
   const openHumanRounds = pipeline.rounds.filter((r) => r.conductedBy === 'HUMAN' && r.status === 'SCHEDULED');
+  // Which set of fields the booking form asks for. A human round at the AI's
+  // stage needs the human round's fields, not the AI's.
+  const humanRoundForm = current?.kind === 'human_interview' || (current?.kind === 'ai_interview' && conductedBy === 'HUMAN');
 
   const scheduleRound = (e: React.FormEvent) => {
     e.preventDefault();
@@ -279,7 +426,10 @@ export function PipelinePanel(
       return;
     }
     const names = interviewers.split(',').map((n) => n.trim()).filter(Boolean);
-    const human = current.kind === 'human_interview';
+    // Gold and Diamond are conducted by a person whatever is selected; Silver
+    // offers the choice, because a team may want an SME in the room as well as
+    // the AI interview.
+    const human = current.kind === 'human_interview' || conductedBy === 'HUMAN';
     const link = meetingLink.trim();
     const linkProblem = human && link ? meetingLinkProblem(link) : null;
     if (linkProblem) {
@@ -289,8 +439,10 @@ export function PipelinePanel(
     void run(() => api.post<{ notification?: SchedulingNotice; meeting?: MeetingOutcome | null; candidateNotice?: CandidateNotice }>(`/pipelines/${pipeline.id}/rounds`, {
       stageKey: current.key,
       ...scheduleRequest(roundDraft),
-      ...(current.kind === 'ai_interview' && sessionId ? { sessionId } : {}),
+      ...(current.kind === 'ai_interview' ? { conductedBy: human ? 'HUMAN' : 'AI' } : {}),
+      ...(!human && sessionId ? { sessionId } : {}),
       ...(human && names.length > 0 ? { interviewers: names } : {}),
+      ...(human && panelIds.length > 0 ? { interviewerUserIds: panelIds } : {}),
       ...(human ? { durationMinutes } : {}),
       ...(human && link ? { meetingUrl: link } : {}),
     }).then((resp) => {
@@ -298,6 +450,7 @@ export function PipelinePanel(
       reportRound(resp.meeting ?? null, resp.candidateNotice ?? null);
       setRoundDraft((draft) => ({ ...EMPTY_SCHEDULE, timeZone: draft.timeZone }));
       setInterviewers('');
+      setPanelIds([]);
       setSessionId('');
       setMeetingLink('');
     }));
@@ -327,9 +480,32 @@ export function PipelinePanel(
     e.preventDefault();
     const roundId = roundToComplete || openHumanRounds[0]?.id;
     if (!roundId) return;
-    void run(() => api.post(`/pipelines/${pipeline.id}/rounds/${roundId}/complete`, { notes: roundNotes })
-      .then(() => { setRoundNotes(''); setRoundToComplete(''); }));
+    // Stopped here rather than left to the server, because the round is about
+    // to close for good and a competency dropped on the way through would be
+    // dropped permanently. The banner alone was not enough: it is advisory, and
+    // the button beside it still worked.
+    const halfWritten = evidenceDraftWarning(evidenceDraft, competencies);
+    if (halfWritten) {
+      setError(halfWritten);
+      return;
+    }
+    const entries = readyEntries(evidenceDraft);
+    void run(() => api.post(`/pipelines/${pipeline.id}/rounds/${roundId}/complete`, {
+      notes: roundNotes,
+      ...(entries.length > 0 ? { evidence: entries } : {}),
+    }).then(() => { setRoundNotes(''); setRoundToComplete(''); setEvidenceDraft([]); }));
   };
+
+  const setEvidenceField = (competencyId: string, field: 'claim' | 'quote', value: string) => {
+    setEvidenceDraft((draft) => {
+      const existing = draft.find((entry) => entry.competencyId === competencyId);
+      if (!existing) return [...draft, { competencyId, claim: '', quote: '', [field]: value }];
+      return draft.map((entry) => (entry.competencyId === competencyId ? { ...entry, [field]: value } : entry));
+    });
+  };
+
+  const evidenceValueOf = (competencyId: string, field: 'claim' | 'quote') =>
+    evidenceDraft.find((entry) => entry.competencyId === competencyId)?.[field] ?? '';
 
   const submitDecision = () => {
     // Trimmed and checked here, not only by the browser: this reason is the
@@ -487,7 +663,18 @@ export function PipelinePanel(
               <>
                 {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
                 <TimeZoneDateTimePicker idPrefix="round-when" value={roundDraft} onChange={setRoundDraft} orgZone={orgZone} disabled={busy} />
-                {current?.kind === 'ai_interview' ? (
+                {/* Only the AI's own stage has a choice to make: everything
+                    later is conducted by a person whatever is selected. */}
+                {current?.kind === 'ai_interview' && (
+                  <>
+                    <label htmlFor="round-conductor">Conducted by</label>
+                    <select id="round-conductor" value={conductedBy} onChange={(e) => setConductedBy(e.target.value as 'AI' | 'HUMAN')}>
+                      <option value="AI">The AI interviewer</option>
+                      <option value="HUMAN">A person (SME or recruiter)</option>
+                    </select>
+                  </>
+                )}
+                {!humanRoundForm ? (
                   <>
                     <label htmlFor="round-session">AI interview</label>
                     <select id="round-session" value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
@@ -499,8 +686,26 @@ export function PipelinePanel(
                   </>
                 ) : (
                   <>
-                    <label htmlFor="round-people">Interviewers</label>
-                    <input id="round-people" value={interviewers} onChange={(e) => setInterviewers(e.target.value)} placeholder="Hiring manager, Team lead" />
+                    {team.length > 0 && (
+                      <>
+                        <label htmlFor="round-panel">Who is conducting it</label>
+                        {/* Named colleagues rather than typed names: the record
+                            of this round is attributed to them, and the first
+                            one selected is the name a certificate prints. */}
+                        <select
+                          id="round-panel" multiple size={Math.min(team.length, 5)} value={panelIds}
+                          onChange={(e) => setPanelIds(Array.from(e.target.selectedOptions, (o) => o.value))}
+                        >
+                          {team.map((member) => <option key={member.id} value={member.id}>{member.name} · {member.role}</option>)}
+                        </select>
+                        <p className="muted small">
+                          They are given this candidate so they can open the round. Another interviewer&rsquo;s
+                          record of the same stage stays closed to them until you decide.
+                        </p>
+                      </>
+                    )}
+                    <label htmlFor="round-people">Anyone else in the room</label>
+                    <input id="round-people" value={interviewers} onChange={(e) => setInterviewers(e.target.value)} placeholder="External panellist, client-side lead" />
                     <label htmlFor="round-length">Length</label>
                     <select id="round-length" value={durationMinutes} onChange={(e) => setDurationMinutes(Number(e.target.value))}>
                       {DURATIONS.map((d) => <option key={d} value={d}>{d} minutes</option>)}
@@ -560,7 +765,7 @@ export function PipelinePanel(
           <div className="table-scroll" tabIndex={0} role="region" aria-label="Interview rounds">
           <table>
             <thead>
-              <tr><th>Stage</th><th>Led by</th><th>Observers</th><th>Scheduled</th><th>Status</th><th>Meeting</th><th scope="col" aria-label="Manage round" /></tr>
+              <tr><th>Stage</th><th>Led by</th><th>Observers</th><th>Scheduled</th><th>Status</th><th>Record</th><th>Meeting</th><th scope="col" aria-label="Manage round" /></tr>
             </thead>
             <tbody>
               {pipeline.rounds.map((round) => (
@@ -571,7 +776,7 @@ export function PipelinePanel(
                   <td>
                     {round.conductedBy === 'AI'
                       ? `AI (${interviewerName(interviews.find((iv) => iv.id === round.sessionId)?.personaName)})`
-                      : round.interviewers.join(', ') || 'Human interviewer'}
+                      : ledBy(round)}
                   </td>
                   <td className="muted small">{round.hrMayObserve ? 'HR may observe' : round.aiObserver ? 'AI observer' : '—'}</td>
                   <td>{formatScheduled(round.scheduledAt, round.scheduledTimeZone, orgZone)}</td>
@@ -588,6 +793,7 @@ export function PipelinePanel(
                       )}
                     </span>
                   </td>
+                  <td><RoundRecord round={round} /></td>
                   <td>
                     <RoundMeeting
                       pipelineId={pipeline.id} round={round} busy={busy} run={run}
@@ -625,6 +831,39 @@ export function PipelinePanel(
                 ))}
               </select>
             </>
+          )}
+          {competencies.length > 0 && (
+            <div className="round-evidence">
+              <h4 className="card-title">What they showed, by competency</h4>
+              <p className="muted small">
+                Filed the same way the AI files its evidence, so the two can be read side by side. Quote what
+                they actually said, as closely as you can — a claim with nothing under it is not evidence.
+                These are your words for what you heard, not a recording of it. Leave a competency blank if
+                the round did not reach it.
+              </p>
+              {competencies.map((competency) => (
+                <fieldset key={competency.id} className="round-evidence-row">
+                  <legend>{competency.name}</legend>
+                  <label htmlFor={`claim-${competency.id}`}>What it showed</label>
+                  <textarea
+                    id={`claim-${competency.id}`} rows={2}
+                    value={evidenceValueOf(competency.id, 'claim')}
+                    onChange={(e) => setEvidenceField(competency.id, 'claim', e.target.value)}
+                    placeholder="What you concluded about this competency."
+                  />
+                  <label htmlFor={`quote-${competency.id}`}>What they said</label>
+                  <textarea
+                    id={`quote-${competency.id}`} rows={2}
+                    value={evidenceValueOf(competency.id, 'quote')}
+                    onChange={(e) => setEvidenceField(competency.id, 'quote', e.target.value)}
+                    placeholder="Their own words, as close as you can get them."
+                  />
+                </fieldset>
+              ))}
+              {evidenceDraftWarning(evidenceDraft, competencies) && (
+                <Banner kind="info"><span data-testid="evidence-draft-warning">{evidenceDraftWarning(evidenceDraft, competencies)}</span></Banner>
+              )}
+            </div>
           )}
           <label htmlFor="round-notes">Round notes</label>
           <textarea id="round-notes" value={roundNotes} onChange={(e) => setRoundNotes(e.target.value)} minLength={20} required placeholder="What the candidate demonstrated, with specific examples." />
