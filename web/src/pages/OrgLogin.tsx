@@ -15,7 +15,7 @@ interface OrgSummary {
 /** An organisation's own sign-in page, reached through its link (/o/:slug). */
 export function OrgLogin() {
   const { slug = '' } = useParams();
-  const { user } = useAuth();
+  const { user, tenant } = useAuth();
   const nav = useNavigate();
   const [org, setOrg] = useState<OrgSummary | null>(null);
   const [lookup, setLookup] = useState<'loading' | 'found' | 'missing' | 'unreachable'>('loading');
@@ -23,7 +23,8 @@ export function OrgLogin() {
   // The guided demo shows a signed-in visitor this page as "the door" (?tour=door);
   // it is only shown, never submitted, and the tour leaves it again.
   const [params] = useSearchParams();
-  const shownByTour = params.has('tour');
+  // Exactly the guided demo's door, and only for a demo visitor: anyone else is sent home as before.
+  const shownByTour = params.get('tour') === 'door' && tenant?.isDemo === true;
   useEffect(() => {
     if (user && !shownByTour) nav('/');
   }, [user, nav, shownByTour]);
@@ -36,6 +37,14 @@ export function OrgLogin() {
   const lookUpOrg = useCallback(() => {
     let active = true;
     setLookup('loading');
+    // A demo sandbox is not listed publicly, so the lookup would say "not
+    // recognised" of the visitor's own door. The tour shows it from the
+    // session the visitor already holds — their own organisation, nothing else.
+    if (shownByTour && tenant?.isDemo && tenant.slug && tenant.slug === slug) {
+      setOrg({ name: tenant.name, slug: tenant.slug });
+      setLookup('found');
+      return () => { active = false; };
+    }
     api.get<{ org: OrgSummary }>(`/orgs/${encodeURIComponent(slug)}`)
       .then((data) => {
         if (!active) return;
@@ -47,7 +56,7 @@ export function OrgLogin() {
         setLookup(error instanceof ApiError && error.status === 404 ? 'missing' : 'unreachable');
       });
     return () => { active = false; };
-  }, [slug]);
+  }, [slug, shownByTour, tenant]);
 
   useEffect(lookUpOrg, [lookUpOrg]);
 

@@ -9,13 +9,15 @@ import { DEMO_BEATS, NARRATION_MANIFEST_URL, narrationUrl, type DemoBeat } from 
 import {
   ANCHOR_WAIT_MS, DEMO_TOUR_FINISHED_EVENT, LOADING_TOUR, READY_TOUR, beatAnnouncement, capsSentence, captionDurationMs, demoKeyAction,
   demoProgress, hasNarration, interviewChoices, isRunning, nextBeat, offeredBeats, pauseDemoTour, previousBeat, rememberTourSeen,
-  resolveRoute, resumeDemoTour, skipDemoTour, startDemoTour, tourAlreadySeen,
+  resolveRoute, resumeDemoTour, skipDemoTour, startDemoTour, tourAlreadySeen, waitsForChoice,
   type DemoStatus, type DemoTourFinishedDetail, type DemoTourState, type NarrationManifest,
 } from './demoTourModel';
 import { endDemo, openSampleInterview } from './endDemo';
 
 const SPOTLIGHT_PADDING = 6;
 const ANCHOR_POLL_MS = 100;
+// A smooth scroll to the element takes this long to come to rest; the line waits for it.
+const SCROLL_SETTLE_MS = 450;
 const FOCUS_SETTLE_MS = 50;
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 const PUBLIC_PREFIXES = ['/o/', '/signup'];
@@ -98,6 +100,9 @@ export function DemoTour() {
   const beat: DemoBeat | null = running ? offered[state.index] ?? null : null;
   const motion = tourMotion(reducedMotion);
   const progress = demoProgress(state, offered.length);
+  const beatRef = useRef<DemoBeat | null>(null);
+  beatRef.current = beat;
+  const tourRef = useRef<HTMLDivElement>(null);
 
   // ---- the sandbox and the narration ------------------------------------
   useEffect(() => {
@@ -130,12 +135,20 @@ export function DemoTour() {
     setState((current) => nextBeat(current, offered.length));
   }, [stopClock, offered.length]);
 
+  // The end of a beat's narration: on to the next — except on a card that
+  // asks the visitor to choose, which stays until they have.
+  const onClockEnd = useCallback(() => {
+    const current = beatRef.current;
+    if (current && waitsForChoice(current)) { stopClock(); return; }
+    advance();
+  }, [advance, stopClock]);
+
   const runTimer = useCallback((ms: number) => {
     const clock = clockRef.current;
     clock.remainingMs = ms;
     clock.startedAt = Date.now();
-    clock.timer = window.setTimeout(advance, ms);
-  }, [advance]);
+    clock.timer = window.setTimeout(onClockEnd, ms);
+  }, [onClockEnd]);
 
   // The narration file when there is one; otherwise the caption for its
   // scripted seconds. A file that will not play (blocked, missing) falls back
@@ -149,10 +162,10 @@ export function DemoTour() {
     if (!hasNarration(manifest, current.id)) { runTimer(captionDurationMs(current)); return; }
     const audio = new Audio(narrationUrl(current.id));
     clockRef.current.audio = audio;
-    audio.onended = advance;
+    audio.onended = onClockEnd;
     audio.onerror = () => { clockRef.current.audio = null; runTimer(captionDurationMs(current)); };
     audio.play().catch(() => { clockRef.current.audio = null; runTimer(captionDurationMs(current)); });
-  }, [stopClock, runTimer, advance, manifest]);
+  }, [stopClock, runTimer, onClockEnd, manifest]);
 
   const pauseClock = useCallback(() => {
     const clock = clockRef.current;
@@ -184,7 +197,8 @@ export function DemoTour() {
       const element = anchorElement(beat.anchor);
       if (element) {
         element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: motion.scrollBehavior });
-        startClock(beat);
+        // The line begins once the page has come to rest on the element.
+        poll = window.setTimeout(() => { if (runRef.current === run) startClock(beat); }, motion.animate ? SCROLL_SETTLE_MS : 0);
         return;
       }
       // The page changed and its element is gone: the beat skips rather than
@@ -279,6 +293,17 @@ export function DemoTour() {
     };
   }, [running, advance, stopClock, startClock, beat]);
 
+  // The page behind is modal to assistive technology as well as to the
+  // pointer: everything beside the tour's own nodes is inert while it runs.
+  useEffect(() => {
+    if (!beat) return undefined;
+    const parent = tourRef.current?.parentElement;
+    if (!parent) return undefined;
+    const others = Array.from(parent.children).filter((el) => !el.hasAttribute('data-demo-tour'));
+    for (const el of others) el.setAttribute('inert', '');
+    return () => { for (const el of others) el.removeAttribute('inert'); };
+  }, [beat]);
+
   // Focus the player for every beat, once the page has settled.
   useEffect(() => {
     if (!beat) return undefined;
@@ -342,10 +367,10 @@ export function DemoTour() {
 
   return (
     <>
-      <div className="visually-hidden" aria-live="polite" aria-atomic="true">{announcement}</div>
+      <div className="visually-hidden" aria-live="polite" aria-atomic="true" data-demo-tour="live">{announcement}</div>
 
       {state.phase === 'ready' && showStart && (
-        <div className="tour" onKeyDown={onTrapKeyDown}>
+        <div className="tour" onKeyDown={onTrapKeyDown} data-demo-tour="start">
           <div className="demo-scrim" aria-hidden="true" />
           <div ref={cardRef} className="demo-card" role="dialog" aria-modal="true" aria-labelledby={titleId} data-testid="demo-start-card">
             <div className="demo-card-kicker">Questor demo</div>
@@ -361,7 +386,7 @@ export function DemoTour() {
       )}
 
       {beat && (
-        <div className={motion.animate ? 'tour is-animated' : 'tour'} onKeyDown={onTrapKeyDown} data-testid="demo-tour" data-beat={beat.id}>
+        <div ref={tourRef} className={motion.animate ? 'tour is-animated' : 'tour'} onKeyDown={onTrapKeyDown} data-testid="demo-tour" data-demo-tour="run" data-beat={beat.id}>
           <div className="demo-scrim" aria-hidden="true" />
           {beat.anchor && targetRect && (
             <div
@@ -373,17 +398,17 @@ export function DemoTour() {
           )}
 
           {beat.card === 'welcome' && (
-            <div ref={cardRef} className="demo-card" data-testid="demo-card">
+            <div ref={cardRef} className="demo-card" role="dialog" aria-modal="true" aria-labelledby={`${titleId}-card`} data-testid="demo-card">
               <div className="demo-card-kicker">{progress.current} of {progress.total}</div>
-              <h2>One hire, start to finish</h2>
+              <h2 id={`${titleId}-card`}>One hire, start to finish</h2>
               <p>A role. A candidate. An interview. The evidence. A decision.</p>
             </div>
           )}
 
           {beat.card === 'explore' && (
-            <div ref={cardRef} className="demo-card" data-testid="demo-card">
+            <div ref={cardRef} className="demo-card" role="dialog" aria-modal="true" aria-labelledby={`${titleId}-card`} data-testid="demo-card">
               <div className="demo-card-kicker">{progress.current} of {progress.total}</div>
-              <h2>Now it&rsquo;s yours</h2>
+              <h2 id={`${titleId}-card`}>Now it&rsquo;s yours</h2>
               <p>Open anything. Or paste a job description of your own under <strong>New role</strong> and watch Questor draft its scorecard.</p>
               <div className="demo-card-actions">
                 <button type="button" className="btn" onClick={() => finishWith('new-role')}><Icon name="job-description" size={15} />New role</button>
@@ -394,9 +419,9 @@ export function DemoTour() {
           )}
 
           {beat.card === 'interview' && (
-            <div ref={cardRef} className="demo-card" data-testid="demo-card">
+            <div ref={cardRef} className="demo-card" role="dialog" aria-modal="true" aria-labelledby={`${titleId}-card`} data-testid="demo-card">
               <div className="demo-card-kicker">The interview</div>
-              <h2>Sit in on one</h2>
+              <h2 id={`${titleId}-card`}>Sit in on one</h2>
               <div className="demo-card-actions is-stacked">
                 {interviewChoices(status.modes).map((choice) => (
                   choice === 'candidate'

@@ -24,7 +24,9 @@ export async function demoStatus(auth: Pick<AuthClaims, 'tenantId' | 'userId' | 
     prisma.tenant.findUnique({ where: { id: auth.tenantId }, select: { isDemo: true, slug: true } }),
     prisma.demoGrant.findUnique({ where: { id: auth.demoGrantId ?? '' }, select: { name: true } }),
     prisma.role.findFirst({ where: { tenantId: auth.tenantId }, orderBy: { createdAt: 'asc' }, select: { id: true } }),
-    prisma.candidate.findFirst({ where: { tenantId: auth.tenantId, email: DEMO_STORY_CANDIDATE_EMAIL }, select: { id: true } }),
+    // The seeded one is the sandbox's first candidate with this address; a
+    // candidate the visitor adds later under the same address comes after it.
+    prisma.candidate.findFirst({ where: { tenantId: auth.tenantId, email: DEMO_STORY_CANDIDATE_EMAIL }, orderBy: { createdAt: 'asc' }, select: { id: true } }),
   ]);
   if (!tenant?.isDemo) throw new HttpError(403, 'Only available in a demo.');
   const name = grant?.name?.trim() ?? '';

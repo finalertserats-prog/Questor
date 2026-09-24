@@ -101,6 +101,16 @@ export const DEMO_SCORECARD: readonly CuratedCompetency[] = [
 
 const DEMO_ROLE_CONTEXT = 'Own the analytical data platform on Snowflake: reliable batch and streaming pipelines, the dimensional models finance and product report from, and an AWS platform whose cost tracks its workload and whose SLA holds as volume changes.';
 
+/** The job description's own bullets; the heuristic also sweeps up its introductory sentences. */
+const DEMO_RESPONSIBILITIES = [
+  'Design robust, testable analytical data models and dimensional schemas.',
+  'Build and operate batch and streaming pipelines using Python, Airflow, dbt and Spark.',
+  'Own reliability of critical pipelines including detection, idempotent recovery and backfills.',
+  'Architect cloud data platform on AWS for changing volume, cost and SLA.',
+  'Write and optimize complex SQL; reason about performance, partitioning and correctness.',
+  'Collaborate with analysts, product and engineering; handle disagreement constructively.',
+];
+
 const DEMO_OUTCOMES = [
   'Critical pipelines detect their own failures and recover idempotently, with backfills that need no heroics.',
   'Finance and product report from models they trust, with point-in-time correctness where it matters.',
@@ -131,8 +141,11 @@ export function curateDemoScorecard(extracted: RoleSuccessProfile): RoleSuccessP
     ...extracted,
     roleContext: DEMO_ROLE_CONTEXT,
     outcomes: [...DEMO_OUTCOMES],
+    responsibilities: [...DEMO_RESPONSIBILITIES],
     competencies,
-    scoringRules: { ...extracted.scoringRules, mustPassCompetencyIds, passThreshold: 65 },
+    // A competency the interview never reached is left out of the overall
+    // score rather than counted as zero; the assessment says so where it happens.
+    scoringRules: { ...extracted.scoringRules, mustPassCompetencyIds, passThreshold: 65, notEnoughEvidencePolicy: 'exclude' },
   };
 }
 
@@ -282,7 +295,7 @@ export const DEMO_STORY_GRADES: readonly StoryGrade[] = [
 ];
 
 const DEMO_STORY_NARRATIVE = {
-  summary: 'Priya’s platform and modelling work is specific, measured and her own: the Snowflake migration, the point-in-time finance model and the idempotent pipeline redesign are each described with a decision, a trade-off and a number. Reliability sits at the required level once the follow-up separated her contribution from the team’s. Collaboration is the one essential competency below its level: the disagreement story is real but thin, and the hiring team should probe how she works with analysts day to day. Governance and security were not reached. Overall 71 against a threshold of 65, with one essential competency short of its level: for the team to consider, with one question to settle in the human round.',
+  summary: 'Priya’s platform and modelling work is specific, measured and her own: the Snowflake migration, the point-in-time finance model and the idempotent pipeline redesign are each described with a decision, a trade-off and a number. Reliability sits at the required level once the follow-up separated her contribution from the team’s. Collaboration is the one essential competency below its level: the disagreement story is real but thin, and the hiring team should probe how she works with analysts day to day. Security and compliance were not reached, so they are left out of the score and carried as an open question rather than counted as a miss. Overall 71 against a threshold of 65, with Collaboration short of its level: for the team to consider, with one question to settle in the human round.',
   strengths: [
     'Explains decisions as trade-offs with the rejected option named (star vs wide table; auto-scaling vs always-on).',
     'Every claim of impact comes with a mechanism and a number: 35% warehouse cost, 60% fewer failures, 90 seconds to 8.',

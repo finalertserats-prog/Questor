@@ -140,6 +140,11 @@ export function captionDurationMs(beat: DemoBeat): number {
   return beat.seconds * 1000;
 }
 
+/** The two closing cards ask the visitor to choose: the narration ends, the card stays until they do. */
+export function waitsForChoice(beat: DemoBeat): boolean {
+  return beat.card === 'explore' || beat.card === 'interview';
+}
+
 /** How long to wait for a page to produce the beat's element before giving the beat up. */
 export const ANCHOR_WAIT_MS = 6000;
 

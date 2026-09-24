@@ -3,7 +3,7 @@ import { DEMO_BEATS } from '../src/components/demo/demoScript';
 import {
   beatAnnouncement, beatOffered, capsSentence, captionDurationMs, demoKeyAction, demoProgress, hasNarration, interviewChoices,
   nextBeat, offeredBeats, pauseDemoTour, previousBeat, rememberTourSeen, resolveRoute, resumeDemoTour, skipDemoTour, startDemoTour,
-  tourAlreadySeen, type DemoStatus,
+  tourAlreadySeen, waitsForChoice, type DemoStatus,
 } from '../src/components/demo/demoTourModel';
 
 const story = { orgSlug: 'acme-demo', roleId: 'role1', candidateId: 'cand1', sessionId: 'sess1', assessmentId: 'ass1' };
@@ -108,6 +108,10 @@ describe('what the visitor sees and hears', () => {
     expect(hasNarration(null, 'B01')).toBe(false);
     expect(hasNarration({ B01: { durationMs: 18200 } }, 'B01')).toBe(true);
     expect(captionDurationMs(DEMO_BEATS[0])).toBe(18000);
+  });
+
+  it('holds the two choice cards after their narration, and no other beat', () => {
+    expect(DEMO_BEATS.filter(waitsForChoice).map((b) => b.id)).toEqual(['B18', 'B19']);
   });
 
   it('offers exactly the interview modes the server says are on', () => {

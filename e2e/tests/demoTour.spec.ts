@@ -66,7 +66,9 @@ test('the door is shown to the signed-in visitor and left again', async ({ page 
   await page.getByTestId('demo-next').click();
   await expect(page.getByTestId('demo-tour')).toHaveAttribute('data-beat', 'B02', { timeout: 15_000 });
   await expect(page).toHaveURL(/\/o\/.+\?tour=door$/);
-  await expect(page.locator('[data-tour="org-signin"]')).toBeVisible();
+  // The sandbox's own door, with its name on it — not "Link not recognised".
+  await expect(page.locator('[data-tour="org-signin"]').getByRole('heading', { name: 'Audit Co (demo)' })).toBeVisible();
+  await expect(page.locator('[data-tour="org-signin"]').getByLabel('Email')).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByTestId('demo-tour')).toHaveCount(0);
   await expect(page).toHaveURL(/\/$|\/\?tab=/);
