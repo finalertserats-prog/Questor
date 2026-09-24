@@ -86,7 +86,11 @@ export function JdFileImport({ fieldId, text, onTextChange, imported, onImported
 
       {error && <Banner kind="error">{error}</Banner>}
 
-      {imported && (
+      {/* Rendered for text without a file as well as with one. The editable
+          box is the only place this text exists, so hiding it when the file is
+          removed would leave a job description that still submits and that
+          nobody can see or correct. */}
+      {(imported || text.trim()) && (
         <section
           className="card"
           aria-labelledby={`${fieldId}-extracted-title`}
@@ -94,23 +98,31 @@ export function JdFileImport({ fieldId, text, onTextChange, imported, onImported
           data-testid="jd-extraction"
         >
           <h3 id={`${fieldId}-extracted-title`} style={{ marginTop: 0 }}>
-            <Icon name="job-description" size={16} /> What was extracted
+            <Icon name="job-description" size={16} /> {imported ? 'What was extracted' : 'Job description'}
           </h3>
           {notes.map((note) => <Banner key={note} kind="info">{note}</Banner>)}
           <div className="field-grid">
             <div>
               <h4 className="small" style={{ marginBottom: 4 }}>The file</h4>
-              <dl className="small muted" style={{ margin: 0 }}>
-                <dt>Filename</dt>
-                <dd style={{ margin: '0 0 6px', overflowWrap: 'anywhere' }}>{imported.filename}</dd>
-                <dt>Size</dt>
-                <dd style={{ margin: '0 0 6px' }}>{fileSizeLabel(imported.bytes)}</dd>
-                <dt>Text extracted</dt>
-                <dd style={{ margin: 0 }}>{imported.characters.toLocaleString()} characters{imported.truncated ? ' (cut short)' : ''}</dd>
-              </dl>
+              {imported ? (
+                <dl className="small muted" style={{ margin: 0 }} data-testid="jd-file-facts">
+                  <dt>Filename</dt>
+                  <dd style={{ margin: '0 0 6px', overflowWrap: 'anywhere' }}>{imported.filename}</dd>
+                  <dt>Size</dt>
+                  <dd style={{ margin: '0 0 6px' }}>{fileSizeLabel(imported.bytes)}</dd>
+                  <dt>Text extracted</dt>
+                  <dd style={{ margin: 0 }}>{imported.characters.toLocaleString()} characters{imported.truncated ? ' (cut short)' : ''}</dd>
+                </dl>
+              ) : (
+                <p className="small muted" style={{ margin: 0 }}>
+                  No file is attached. This text is yours to edit, and is what the role will be created from.
+                </p>
+              )}
             </div>
             <div style={{ gridColumn: 'span 2' }}>
-              <label htmlFor={`${fieldId}-jd`}>Job description — edit anything the file got wrong</label>
+              <label htmlFor={`${fieldId}-jd`}>
+                {imported ? 'Job description — edit anything the file got wrong' : 'Job description'}
+              </label>
               <textarea
                 id={`${fieldId}-jd`}
                 value={text}

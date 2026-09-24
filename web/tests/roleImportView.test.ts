@@ -33,13 +33,13 @@ const imported: JdImport = {
 
 describe('before a file is chosen', () => {
   it('offers a picker for every type the server reads', () => {
-    const html = render(null);
+    const html = render(null, '');
     expect(html).toContain('type="file"');
     for (const ext of ['.pdf', '.docx', '.txt', '.md']) expect(html).toContain(ext);
   });
 
   it('shows nothing to check yet', () => {
-    expect(render(null)).not.toContain('What was extracted');
+    expect(render(null, '')).not.toContain('What was extracted');
   });
 });
 
@@ -60,6 +60,15 @@ describe('after a file is read', () => {
   // A file picker offers no way to choose nothing.
   it('offers a way back out of the chosen file, naming it', () => {
     expect(render(imported)).toContain('Remove senior-data-engineer.pdf');
+  });
+
+  // Removing the file must not take the words with it: the box is the only
+  // place the job description exists, and it still submits.
+  it('keeps the text editable once the file is removed', () => {
+    const html = render(null, 'About the role: you will own the platform.');
+    expect(html).toContain('<textarea');
+    expect(html).toContain('About the role: you will own the platform.');
+    expect(html).not.toContain('senior-data-engineer.pdf');
   });
 
   it('says so when the AI-instruction screen fired, without repeating the line', () => {
