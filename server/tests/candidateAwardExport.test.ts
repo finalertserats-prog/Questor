@@ -199,6 +199,45 @@ describe('GET /api/candidates/:id/awards/:tier/certificate.pdf', () => {
   });
 });
 
+describe('the structure the owner settled on', () => {
+  /**
+   * Identical on Bronze, Silver and Gold: header, kicker, name, rule, claim
+   * line with its asterisk, exactly five evidence rows, two signature blocks
+   * flanking the seal, footnote. The owner iterated on this six times, so any
+   * drift between tiers is a defect rather than a variation — two certificates
+   * must be able to sit side by side and read as the same document.
+   */
+  it.each(['bronze', 'silver', 'gold'])('holds every part of the frame on %s', async (tier) => {
+    await prisma.candidateAward.deleteMany({ where: { candidateId: a.candidateId } });
+    await award(a, tier, `QS-XXX-FRAME-${tier}`, `v-frame-${tier}`);
+
+    const text = await textOf((await certificate(a, tier, a.adminToken)).body);
+    const rowDates = ['21 Sep 2026', '22 Sep 2026', '23 Sep 2026', '24 Sep 2026'];
+
+    expect({
+      wordmark: text.includes('QUESTOR'),
+      reference: text.includes('REFERENCE'),
+      issued: text.includes('ISSUED'),
+      verify: text.includes('VERIFY'),
+      kicker: text.includes('RECORD OF ASSESSMENT'),
+      name: text.includes('Priya Sharma'),
+      claim: /Questor’s (Bronze|Silver|Gold)/.test(text),
+      asterisk: text.includes('*'),
+      evidenceHeading: text.includes('WHAT THIS RECORDS'),
+      // Five rows, every one of them dated. Four distinct dates because two
+      // rows share one; what matters is that no row was dropped or added.
+      rows: rowDates.every((date) => text.includes(date)),
+      leftSignature: /ASSESSED BY · /.test(text),
+      rightSignature: /RECORDED BY · TALENT LEAD/.test(text),
+      footnote: text.includes('Evidence of process, not a recommendation.'),
+    }).toEqual({
+      wordmark: true, reference: true, issued: true, verify: true, kicker: true, name: true,
+      claim: true, asterisk: true, evidenceHeading: true, rows: true,
+      leftSignature: true, rightSignature: true, footnote: true,
+    });
+  });
+});
+
 describe('the Bronze certificate', () => {
   beforeEach(async () => {
     await award(
