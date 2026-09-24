@@ -127,6 +127,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(\bp&l\b|profit and loss|cash ?flow|cost centre|\bopex\b|\bcapex\b)\b/i,
       /\b(three[- ]statement model|\bdcf\b|scenario (analysis|planning)|unit economics)\b/i,
     ],
+    // "P&L responsibility" belongs to Commercial Acumen: a product director
+    // carrying a P&L is not being interviewed on variance analysis.
+    notWhen: [/\bp&l (responsibility|ownership|accountability)\b/i],
     domains: ['finance', 'bfsi', 'strategy', 'retail'],
   },
   {
@@ -272,8 +275,14 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     aliases: ['Clinical Practice', 'Patient Care', 'Nursing', 'Clinical Operations'],
     cues: [
       /\b(patient (care|safety|outcomes|pathway)|clinical (practice|governance|operations|trials?|protocol)|bedside)\b/i,
-      /\b(nursing|physician|diagnosis and treatment|care plan|\bnice\b guidelines|safeguarding|triage)\b/i,
+      // "Safeguarding" now has its own competency; "triage" is IT's word too,
+      // and both were putting patient care on adverts that had none.
+      /\b(nursing|physician|diagnosis and treatment|care plan|\bnice\b guidelines|clinical triage)\b/i,
     ],
+    // On a trials advert, "Good Clinical Practice" is a regulation and a
+    // nursing qualification is an alternative way in — neither means this
+    // person will be caring for a patient.
+    notWhen: [/\bgood clinical practice\b|\blife sciences degree\b/i],
     domains: ['healthcare', 'life_sciences'],
   },
   {
@@ -350,6 +359,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(ticket(ing)? (system|volume)|zendesk|servicenow|freshdesk|escalation (process|management)|complaint handling)\b/i,
       /\b(\bitil\b|incident tickets|first contact resolution|average handling time)\b/i,
     ],
+    // "Many of our analysts came from a service desk background" says where
+    // people arrived from, not what this job asks of them.
+    notWhen: [/\b(background|came from|started (out )?(in|on)|if that is you)\b/i],
     domains: ['customer_service', 'customer_success', 'retail', 'hospitality'],
   },
   {
@@ -362,6 +374,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(merchandising|buying (team|plan)|category management|range planning|assortment|markdown|sell[- ]through)\b/i,
       /\b(retail operations|store operations|\bepos\b|planogram|visual merchandising|e[- ]?commerce trading)\b/i,
     ],
+    // Procurement says "category management" about spend categories, which has
+    // nothing to do with a retail range.
+    notWhen: [/\b(indirect spend|procurement|supplier|sourcing|tender)\b/i],
     domains: ['retail', 'supply_chain', 'marketing'],
   },
   {
@@ -401,6 +416,50 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     domains: ['trades', 'manufacturing', 'energy', 'construction'],
   },
   {
+    name: 'Health, Safety & Environment',
+    category: 'domain',
+    definition: 'Keeps people safe on a site or a shop floor, and stops work when it is not safe.',
+    indicators: ['Describes a job they stopped and what it cost', 'Explains a control they put in place', 'Reasons about the near miss, not only the accident'],
+    aliases: ['HSE', 'Health & Safety', 'EHS', 'Safety Management', 'Occupational Health and Safety'],
+    cues: [
+      /\b(health and safety|\bhse\b|\behs\b|safety (management|culture|case|critical)|occupational health)\b/i,
+      /\b(risk assessments?|method statements?|\brams\b|permit to work|toolbox talks?|near miss|\bcoshh\b|\briddor\b)\b/i,
+      /\b(nebosh|\biosh\b|smsts|sssts|cscs)\b/i,
+      /\bstop the (job|work|line)\b/i,
+    ],
+    domains: ['construction', 'trades', 'manufacturing', 'energy', 'aerospace', 'automotive'],
+  },
+  {
+    name: 'Safeguarding & Duty of Care',
+    category: 'domain',
+    definition: 'Recognises when someone is at risk and acts on it through the proper route.',
+    indicators: ['Describes a concern they raised and what happened next', 'Explains the threshold they used', 'Reasons about the person, not the procedure'],
+    aliases: ['Safeguarding', 'Child Protection', 'Duty of Care', 'Vulnerable Adults'],
+    cues: [
+      /\b(safeguarding|child protection|vulnerable (adults?|people|children)|duty of care|prevent duty)\b/i,
+      /\b(\bdbs\b|disclosure and barring|designated safeguarding|mandatory reporting)\b/i,
+    ],
+    // Its own competency precisely so that "safeguarding" on a teacher's
+    // advert stops resolving to Clinical & Patient Care, which is a nonsense
+    // the gold set caught.
+    domains: ['education', 'healthcare', 'public_sector'],
+  },
+  {
+    name: 'Financial Crime & AML',
+    category: 'domain',
+    definition: 'Spots money moving for the wrong reasons, and can justify both acting and not acting.',
+    indicators: ['Describes an alert they escalated and one they closed', 'Explains a typology in their own words', 'Reasons about the customer as well as the rule'],
+    aliases: ['AML', 'Anti-Money Laundering', 'KYC', 'Financial Crime', 'Sanctions Compliance', 'Fraud Prevention'],
+    cues: [
+      /\b(anti[- ]money laundering|\baml\b|financial crime|\bkyc\b|know your customer|\bcdd\b|\bedd\b|customer due diligence)\b/i,
+      /\b(sanctions screening|\bpep\b|politically exposed|suspicious activity|\bsar\b|transaction monitoring|typolog)\b/i,
+      /\b(fraud (detection|prevention|investigation))\b/i,
+    ],
+    // Split out of Risk & Credit Management, which read absurdly on a
+    // financial-crime advert with no credit or market risk anywhere in it.
+    domains: ['bfsi', 'legal', 'finance'],
+  },
+  {
     name: 'Project & Delivery Management',
     category: 'domain',
     definition: 'Gets work finished across people who do not report to them.',
@@ -411,6 +470,9 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(scrum master|agile (delivery|coach|ceremonies)|sprint planning|kanban|backlog grooming|\bjira\b administration)\b/i,
       /\b(risk (register|log)|\braid\b log|dependency management|project plan|milestone tracking)\b/i,
     ],
+    // In apparel buying the critical path is the sourcing calendar, not a
+    // project plan.
+    notWhen: [/\b(supplier|sourcing|buying|range|season|fabric)\b/i],
     domains: ['strategy', 'software', 'construction', 'public_sector', 'manufacturing'],
   },
 ];

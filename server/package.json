@@ -30,7 +30,7 @@
     "artifacts:encrypt": "tsx src/services/artifactBackfillMain.ts",
     "library:seed-import": "tsx src/library/seedImportMain.ts",
     "library:seed-generate": "tsx scripts/library-seed/main.ts",
-    "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json && tsc -p scripts/library-seed/tsconfig.json"
+    "lint": "tsc --noEmit -p tsconfig.json && tsc -p sim/tsconfig.json && tsc -p scripts/library-seed/tsconfig.json && tsc -p bench/tsconfig.json"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

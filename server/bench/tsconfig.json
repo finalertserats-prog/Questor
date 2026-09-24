@@ -1,0 +1,15 @@
+{
+  // Typecheck-only config for the JD extraction benchmark. Like sim/, the
+  // harness is dev tooling run through tsx, so it lives outside src/ and the
+  // build never emits it — but it must still be checked, because the gold set
+  // is data and a mislabelled case is a silent one. The main tsconfig's
+  // include is "src/**/*.ts", so without this file nothing here is checked at
+  // all and a case naming a competency that does not exist would simply be
+  // reported as a miss for ever.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  "include": ["./**/*.ts", "../src/**/*.d.ts"]
+}

@@ -153,7 +153,7 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
   // The old keyword table matched against the whole advert at once, which is
   // how "partner with analytics and product teams" — a sentence about other
   // people's jobs — put Product Management on a data engineer's scorecard.
-  let competencies = proposeFromJd(text, { title, band, level }).map(asCompetency);
+  let competencies = proposeFromJd(text, { title, band, level, domain: domainTagFor(opts.domainName) }).map(asCompetency);
 
   // A thin advert that evidences nothing technical or domain-shaped still
   // needs something to interview against, and this is honest about being a

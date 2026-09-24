@@ -177,7 +177,9 @@ export const TECHNICAL_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
       /\b(kubernetes|k8s\b|docker|containeris|containeriz|serverless|lambda functions|ecs\b|eks\b)\b/i,
       /\b(terraform|pulumi|cloudformation|infrastructure as code|\biac\b|ansible|helm)\b/i,
     ],
-    notWhen: [/good clinical practice|\bich\b|clinical trial/i],
+    // On a trials advert GCP is Good Clinical Practice. "Run to protocol" and
+    // "protocol deviation" are the tell, and neither is about a cloud.
+    notWhen: [/good clinical practice|\bich\b|clinical trial|run to protocol|protocol deviation|\bstudies\b/i],
     domains: ['cloud', 'software', 'ml_platform', 'security'],
   },
   {
