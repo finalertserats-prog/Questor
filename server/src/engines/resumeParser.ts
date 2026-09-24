@@ -16,6 +16,29 @@ export function isResumeMimeType(value: string): value is ResumeMimeType {
   return (RESUME_MIME_TYPES as readonly string[]).includes(value);
 }
 
+export const MARKDOWN_MIME = 'text/markdown';
+/** Not a format: the browser saying it could not name one. */
+export const OCTET_STREAM_MIME = 'application/octet-stream';
+
+/**
+ * The types an uploaded JOB DESCRIPTION may arrive as — the same single source
+ * of truth as RESUME_MIME_TYPES, for the other upload lane.
+ *
+ * Deliberately a second list rather than a wider first one. Markdown is a JD
+ * format, not a CV format, and widening RESUME_MIME_TYPES would silently start
+ * accepting `.md` on every candidate resume upload and every CV in a bulk
+ * import — a change to candidate behaviour that nobody asked for, made by a
+ * change to a job-description feature. Both lists are read by their own multer
+ * fileFilter and by their own extractor below, so neither gate can drift from
+ * the dispatch it guards.
+ */
+export const JD_MIME_TYPES = [PDF_MIME, DOCX_MIME, TEXT_MIME, MARKDOWN_MIME, OCTET_STREAM_MIME] as const;
+export type JdMimeType = (typeof JD_MIME_TYPES)[number];
+
+export function isJdMimeType(value: string): value is JdMimeType {
+  return (JD_MIME_TYPES as readonly string[]).includes(value);
+}
+
 /** A resume that reaches this length is either machine-generated or hostile.
  *  Both pdf-parse and mammoth can expand a few kilobytes into gigabytes of text,
  *  so the cap is applied at extraction time — before the text reaches profile
@@ -77,6 +100,47 @@ export async function extractResumeText(buffer: Buffer, declaredType: string): P
     // internals or take the process down with it.
     throw new HttpError(400, UNREADABLE_MESSAGE);
   }
+}
+
+/**
+ * Extract raw text from an uploaded job description.
+ *
+ * The same extractor, reached by the same rule — bytes decide — with one
+ * concession the resume lane does not need. A `.md` file has no agreed
+ * Content-Type: browsers send `text/markdown`, `text/plain`, or
+ * `application/octet-stream` for the same file on the same machine, so a
+ * declared type that disagreed with the sniffed one would refuse perfectly
+ * good Markdown for a reason the uploader could neither see nor fix.
+ *
+ * So the leniency is granted only where it costs nothing:
+ * - `application/octet-stream` declares nothing, so there is no claim to check
+ *   and the bytes alone choose the parser.
+ * - `text/markdown` is read as plain text, which is the one branch that feeds
+ *   NO parser — and the agreement check still runs, so a PDF or a ZIP calling
+ *   itself Markdown is refused rather than reinterpreted.
+ * - A declared PDF or DOCX is checked against the bytes exactly as before. A
+ *   crafted file still cannot pick which parser it is handed to.
+ */
+export async function extractJdText(buffer: Buffer, declaredType: string): Promise<string> {
+  if (!isJdMimeType(declaredType)) throw new HttpError(400, JD_UNREADABLE_MESSAGE);
+  try {
+    return await extractResumeText(buffer, jdDispatchType(buffer, declaredType));
+  } catch (err) {
+    // The shared extractor speaks to the candidate lane; someone uploading a
+    // requisition is not pasting a resume, and must be told what to do next in
+    // words that fit what they are doing.
+    if (err instanceof HttpError && err.message === UNREADABLE_MESSAGE) throw new HttpError(400, JD_UNREADABLE_MESSAGE);
+    throw err;
+  }
+}
+
+const JD_UNREADABLE_MESSAGE =
+  'Could not read the uploaded file. Please upload a text-based PDF, DOCX, TXT or Markdown file, or paste the job description instead.';
+
+function jdDispatchType(buffer: Buffer, declared: JdMimeType): ResumeMimeType {
+  if (declared === OCTET_STREAM_MIME) return sniffType(buffer);
+  if (declared === MARKDOWN_MIME) return TEXT_MIME;
+  return declared;
 }
 
 function capped(text: string): string {

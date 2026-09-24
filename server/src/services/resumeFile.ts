@@ -17,13 +17,13 @@ const UNREADABLE = 'Could not read the uploaded file. Please upload a text-based
  * path the client smuggled in and keep only characters that cannot be read as
  * markup or as a traversal segment.
  */
-export function sanitizeFilename(original: string): string {
+export function sanitizeFilename(original: string, fallback = 'resume.txt'): string {
   const cleaned = path
     .basename(original)
     .replace(/[^A-Za-z0-9._-]/g, '_')
     .replace(/^\.+/, '')
     .slice(0, 120);
-  return cleaned || 'resume.txt';
+  return cleaned || fallback;
 }
 
 /**

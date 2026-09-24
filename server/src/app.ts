@@ -17,6 +17,7 @@ import { roundMeetingsRouter } from './routes/roundMeetings.js';
 import { authRouter } from './routes/auth.js';
 import { rolesRouter } from './routes/roles.js';
 import { roleStatusRouter } from './routes/roleStatus.js';
+import { roleImportRouter } from './routes/roleImport.js';
 import { catalogRouter } from './routes/catalog.js';
 import { catalogReviewRouter } from './routes/catalogReview.js';
 import { jdDraftsRouter } from './routes/jdDrafts.js';
@@ -353,6 +354,9 @@ export function createApp() {
     keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown',
   }));
   app.use('/api/drafts', fieldDraftsRouter);
+  // Reads a JD out of an uploaded file; declared before rolesRouter, whose
+  // /:id routes would otherwise claim /import-file.
+  app.use('/api/roles', roleImportRouter);
   app.use('/api/roles', roleStatusRouter);
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
