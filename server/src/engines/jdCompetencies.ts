@@ -70,11 +70,22 @@ const SOFTENER = /\b(nice to have|preferred|desirable|bonus|a plus|exposure to|f
 /** Depth words that raise the level asked for rather than merely the weight. */
 const DEPTH = /\b(deep|expert|extensive|advanced|mastery|specialis(t|ed)|specializ(ed)|architect|lead(ing)? the design)\b/i;
 
+/**
+ * The proficiency a band asks for before the advert's own emphasis is read.
+ *
+ * Note that `established` is 3, not 2. The band ladder is the product's own,
+ * and `bandForRoleSeniority` deliberately maps the job-title word "Senior" to
+ * `established` — reserving the `senior` band for lead and staff titles. An
+ * earlier version of this table read the ladder as if it were job titles and
+ * gave a Senior Data Engineer a required level of 2 out of 5, where the
+ * keyword extractor it replaced had given 3. That is a real loss of
+ * expectation on exactly the roles the product is most used for.
+ */
 const BAND_BASE_LEVEL: Readonly<Record<BandId, number>> = {
   emerging: 1,
   developing: 2,
-  established: 2,
-  senior: 3,
+  established: 3,
+  senior: 4,
   principal: 4,
   executive: 4,
 };
@@ -232,14 +243,20 @@ function rationaleFor(
   level: Proficiency,
   band: BandId,
 ): string {
-  const where = SECTION_WORDS[spans[0].section];
-  const parts = [`Proposed from ${where}: "${truncate(spans[0].text, 140)}".`];
+  // The span itself is shown above this sentence, verbatim, so quoting it
+  // again here only made the line long enough to be cut off on screen.
+  const parts = [`Proposed from ${SECTION_WORDS[spans[0].section]}.`];
   if (spans.length > 1) parts.push(`The advert asks for it on ${spans.length} lines.`);
   if (spans.some((s) => INSISTENCE.test(s.text))) parts.push('It is stated as a requirement rather than mentioned.');
   if (classification === 'preferred') parts.push('Filed as preferred because the advert does not insist on it.');
   const deeper = spans.some((s) => DEPTH.test(s.text));
-  parts.push(`Level ${level} for a ${band} role${deeper ? ' where the advert asks for depth' : ''}.`);
+  parts.push(`Level ${level} for ${article(band)} ${band} role${deeper ? ', where the advert asks for depth' : ''}.`);
   return parts.join(' ');
+}
+
+/** "an established role", not "a established role". */
+function article(word: string): string {
+  return /^[aeiou]/i.test(word) ? 'an' : 'a';
 }
 
 /**
@@ -357,8 +374,4 @@ function clampLevel(value: number): Proficiency {
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
-}
-
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
