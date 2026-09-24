@@ -307,6 +307,6 @@ describe('L14: demo creation caps under concurrency', () => {
     // The sandbox holds its sample role and the visitor may add three more.
     const results = await Promise.allSettled(Array.from({ length: 6 }, () => assertDemoCreationCap(tenant.id, 'roles')));
 
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(3);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(2);
   });
 });

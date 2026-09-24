@@ -201,16 +201,16 @@ describe('#8 personal data after the purge', () => {
 });
 
 describe('#10 small demo fixes', () => {
-  it('lets the visitor add three roles of their own beside the sample', async () => {
+  it('lets the visitor add two roles of their own beside the sample (the cap since 2026-09-24)', async () => {
     const { tenantId } = await signedIn();
     const { assertDemoCreationCap } = await import('../src/services/demoAccess.js');
     const outcomes: boolean[] = [];
-    for (let i = 0; i < 3; i += 1) {
+    for (let i = 0; i < 2; i += 1) {
       outcomes.push(await assertDemoCreationCap(tenantId, 'roles').then(() => true, () => false));
       await prisma.role.create({ data: { tenantId, title: `Role ${i}` } });
     }
     outcomes.push(await assertDemoCreationCap(tenantId, 'roles').then(() => true, () => false));
-    expect(outcomes).toEqual([true, true, true, false]);
+    expect(outcomes).toEqual([true, true, false]);
   });
 
   it('does not put the session token in the redeem response body', async () => {
