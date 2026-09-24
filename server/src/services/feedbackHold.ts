@@ -4,7 +4,6 @@ import type { AuthClaims } from './auth.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateScope } from './access.js';
-import { candidateFeedbackEnabledForTenant } from './candidateFeedbackPolicy.js';
 import { OPT_IN_YES } from './candidateFeedback.js';
 import { feedbackHold, holdReasonTexts, trustSignals, type FeedbackHold, type TrustSignals } from './feedbackHoldModel.js';
 
@@ -97,19 +96,26 @@ export interface HeldFeedbackItem {
 }
 
 /**
- * Sessions whose letter the opt-in promise still allows.
+ * Letters the opt-in promise still allows.
  *
- * Where the organisation runs the opt-in flow every candidate is asked, and we
- * told them "we only send feedback if you say yes" — so only a recorded yes
- * gets through. Where it does not, a candidate who was emailed the question was
- * promised the same thing; everyone else was promised nothing and is unaffected.
+ * Where the candidate was asked, we told them "we only send feedback if you say
+ * yes" — so only a recorded yes gets through, and a held letter for anyone else
+ * can never be sent and is not a decision worth waking the hiring team for.
+ * Whether they were asked is the row's own `optInAsked`, written when the letter
+ * was prepared, not the tenant's switch as it stands now: reading the switch
+ * here made yesterday's letters change category when an admin touched a setting.
  * The same rule as feedbackEligibility, expressed as a query
  * (services/autoFeedbackModel.ts).
  */
-export function optInAllowsSendingWhere(optInFlowOn: boolean): Prisma.InterviewSessionWhereInput {
-  const saidYes: Prisma.InterviewSessionWhereInput = { feedbackOptIn: { is: { choice: OPT_IN_YES } } };
-  if (optInFlowOn) return saidYes;
-  return { OR: [saidYes, { AND: [{ feedbackOptIn: { is: null } }, { feedbackOptInRequest: { is: null } }] }] };
+export function optInAllowsSendingWhere(): Prisma.CandidateFeedbackEmailWhereInput {
+  const saidYes: Prisma.CandidateFeedbackEmailWhereInput = { session: { feedbackOptIn: { is: { choice: OPT_IN_YES } } } };
+  // Never asked, by the row's own record of it, and never emailed the question
+  // since: nothing was promised, so the letter is still a live decision.
+  const neverAsked: Prisma.CandidateFeedbackEmailWhereInput = {
+    optInAsked: false,
+    session: { feedbackOptIn: { is: null }, feedbackOptInRequest: { is: null } },
+  };
+  return { OR: [saidYes, neverAsked] };
 }
 
 /**
@@ -118,12 +124,11 @@ export function optInAllowsSendingWhere(optInFlowOn: boolean): Prisma.InterviewS
  * the opt-in question can never be sent, so it is not a decision anyone has to
  * make and it does not belong in the HR-Box queue or the daily digest.
  */
-export async function awaitingDecisionWhere(
+export function awaitingDecisionWhere(
   tenantId: string,
   candidate: Prisma.CandidateWhereInput,
-): Promise<Prisma.CandidateFeedbackEmailWhereInput> {
-  const optInFlowOn = await candidateFeedbackEnabledForTenant(tenantId);
-  return { tenantId, candidate, status: 'HELD', holdKeptAt: null, session: optInAllowsSendingWhere(optInFlowOn) };
+): Prisma.CandidateFeedbackEmailWhereInput {
+  return { tenantId, candidate, status: 'HELD', holdKeptAt: null, ...optInAllowsSendingWhere() };
 }
 
 export const HELD_LIST_LIMIT = 50;
@@ -136,7 +141,7 @@ export async function listHeldFeedback(auth: AuthClaims, opts: { includeKept?: b
   const candidate = await candidateScope(auth) as Prisma.CandidateWhereInput;
   const where: Prisma.CandidateFeedbackEmailWhereInput = opts.includeKept
     ? { tenantId: auth.tenantId, candidate, status: 'HELD' }
-    : await awaitingDecisionWhere(auth.tenantId, candidate);
+    : awaitingDecisionWhere(auth.tenantId, candidate);
   const [total, rows] = await Promise.all([
     prisma.candidateFeedbackEmail.count({ where }),
     prisma.candidateFeedbackEmail.findMany({

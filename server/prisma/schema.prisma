@@ -866,6 +866,15 @@ model CandidateFeedbackEmail {
   tenantId          String
   trigger           String   @default("auto") // auto | manual
   requestedByUserId String?
+  // Whether this candidate was ever put the question "do you want written
+  // feedback?" — decided once, when the letter was first prepared, and never
+  // re-derived. Reading the tenant's switch at send time instead meant that
+  // turning the opt-in flow on afterwards silenced letters to candidates who
+  // were never asked, and turning it off afterwards sent letters to
+  // candidates who were (services/autoFeedbackModel.ts).
+  // False on every row written before this existed, which is the behaviour
+  // those interviews had.
+  optInAsked        Boolean  @default(false)
   // Why it left the waiting room: the review window passed, a reviewer
   // completed their review, or a person pressed send. Empty while it waits.
   releaseReason     String   @default("")

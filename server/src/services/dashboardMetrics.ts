@@ -119,7 +119,7 @@ export async function getNeedsAttention(tenantId: string, candidate: Prisma.Cand
     assessments: { orderBy: { version: 'desc' as const }, take: 1, select: { id: true, createdAt: true } },
   };
   const requestWhere: Prisma.CandidateHumanRequestWhereInput = { tenantId, candidate, status: 'REQUESTED', requestedAt: { gte: requestedSince } };
-  const heldWhere = await awaitingDecisionWhere(tenantId, candidate);
+  const heldWhere = awaitingDecisionWhere(tenantId, candidate);
   const [reviews, handoffs, requests, held, reviewCount, handoffCount, requestCount, heldCount] = await Promise.all([
     prisma.interviewSession.findMany({ where: { tenantId, candidate, state: 'REVIEW_READY' }, orderBy: [{ completedAt: 'desc' }, { id: 'desc' }], take: limit, select: sessionSelect }),
     // Wider than the list: the request time lives in consentJson, so a recent

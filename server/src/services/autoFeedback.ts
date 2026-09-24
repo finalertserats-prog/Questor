@@ -210,6 +210,9 @@ export async function enqueueAutoFeedback(opts: {
       data: {
         sessionId: opts.sessionId, assessmentId: opts.assessmentId,
         candidateId: session.candidateId, tenantId: session.tenantId, trigger: 'auto',
+        // Frozen here, at the moment the interview was assessed — which is
+        // about when the candidate was shown the question at the end of it.
+        optInAsked: await askedToOptInNow(session.tenantId, opts.sessionId),
         status: skip ? 'SKIPPED' : hold ? 'HELD' : 'QUEUED', skipReason: skip ?? '',
         nextAttemptAt: skip || hold ? null : alreadyReviewed ? now : feedbackDueAt(now, windowHours),
         releaseReason: alreadyReviewed ? 'review' : '',
@@ -419,12 +422,26 @@ async function loadClaimed(id: string) {
 /**
  * Whether this candidate was ever put the question "do you want written
  * feedback?". Where they were, silence means no (autoFeedbackModel.ts).
+ *
+ * Decided ONCE, when the letter is first prepared, and stored on the row. The
+ * tenant's switch is read here and nowhere else: reading it again at send time
+ * made the answer depend on when an admin last touched a setting, so turning
+ * the opt-in flow on afterwards silenced letters to candidates who had never
+ * been asked, and turning it off afterwards sent letters to candidates who had.
+ * A request emailed later still counts, because that email made the promise
+ * in its own words.
  */
-async function wasAskedToOptIn(s: { tenantId: string; feedbackOptInRequest: { id: string } | null }): Promise<boolean> {
-  return optInAsked({
-    optInFlowOn: await candidateFeedbackEnabledForTenant(s.tenantId),
-    optInRequested: s.feedbackOptInRequest !== null,
-  });
+async function askedToOptInNow(tenantId: string, sessionId: string): Promise<boolean> {
+  const [flowOn, request] = await Promise.all([
+    candidateFeedbackEnabledForTenant(tenantId),
+    prisma.candidateFeedbackOptInRequest.findUnique({ where: { sessionId }, select: { id: true } }),
+  ]);
+  return optInAsked({ optInFlowOn: flowOn, optInRequested: request !== null });
+}
+
+/** The stored answer, or a request that has arrived since the row was written. */
+function wasAskedToOptIn(row: { optInAsked: boolean }, session: { feedbackOptInRequest: { id: string } | null }): boolean {
+  return optInAsked({ optInFlowOn: row.optInAsked, optInRequested: session.feedbackOptInRequest !== null });
 }
 
 type ClaimedRow = Awaited<ReturnType<typeof loadClaimed>>;
@@ -434,7 +451,7 @@ async function skipReasonAtSend(row: ClaimedRow): Promise<FeedbackSkipReason | n
   const eligibility = feedbackEligibility({
     state: s.state, completedAt: s.completedAt, partial: await wasScoredPartially(s.id),
     candidateEmail: s.candidate.email, optInChoice: s.feedbackOptIn?.choice ?? null,
-    optInAsked: await wasAskedToOptIn(s), hasAssessment: true,
+    optInAsked: wasAskedToOptIn(row, s), hasAssessment: true,
   });
   if (!eligibility.eligible) return eligibility.reason;
   // A person pressing "Send feedback now" overrides the switch; the job does not.
@@ -773,7 +790,7 @@ export interface FeedbackEmailView {
   needsDuplicateConfirmation: boolean;
 }
 
-async function sessionEligibility(sessionId: string) {
+async function sessionEligibility(sessionId: string, row: { optInAsked: boolean } | null) {
   const s = await prisma.interviewSession.findUniqueOrThrow({
     where: { id: sessionId },
     select: {
@@ -785,7 +802,10 @@ async function sessionEligibility(sessionId: string) {
   const eligibility = feedbackEligibility({
     state: s.state, completedAt: s.completedAt, partial: await wasScoredPartially(s.id),
     candidateEmail: s.candidate.email, optInChoice: s.feedbackOptIn?.choice ?? null,
-    optInAsked: await wasAskedToOptIn(s), hasAssessment: true,
+    // No row yet means no letter has been prepared, so the question is decided
+    // now — the same moment enqueueAutoFeedback would have decided it.
+    optInAsked: row ? wasAskedToOptIn(row, s) : await askedToOptInNow(s.tenantId, s.id),
+    hasAssessment: true,
   });
   return { session: s, eligibility };
 }
@@ -794,10 +814,8 @@ export async function feedbackEmailState(
   sessionId: string,
   opts: { confirmDuplicate?: boolean } = {},
 ): Promise<FeedbackEmailView> {
-  const [row, { eligibility }] = await Promise.all([
-    prisma.candidateFeedbackEmail.findUnique({ where: { sessionId } }),
-    sessionEligibility(sessionId),
-  ]);
+  const row = await prisma.candidateFeedbackEmail.findUnique({ where: { sessionId } });
+  const { eligibility } = await sessionEligibility(sessionId, row);
   const manual = manualSendAllowed(row, { ...opts, now: new Date() });
   const willNotSendReason = eligibility.eligible ? null : SKIP_REASON_TEXT[eligibility.reason];
   const blockedReason = !manual.allowed ? manual.reason : willNotSendReason;
@@ -869,7 +887,8 @@ export async function previewFeedbackEmail(opts: {
         row = await prisma.candidateFeedbackEmail.create({
           data: {
             sessionId: opts.sessionId, assessmentId: assessment.id, candidateId: session.candidateId,
-            tenantId: session.tenantId, trigger: 'manual', status: 'DRAFT', nextAttemptAt: null, ...fields,
+            tenantId: session.tenantId, trigger: 'manual', status: 'DRAFT', nextAttemptAt: null,
+            optInAsked: await askedToOptInNow(session.tenantId, opts.sessionId), ...fields,
           },
         });
       } catch (err) {
@@ -916,6 +935,9 @@ export async function sendFeedbackNow(opts: {
   const releasingHold = existing?.status === 'HELD';
   const queued = {
     status: 'QUEUED', trigger: 'manual', requestedByUserId: opts.userId, nextAttemptAt: now,
+    // Only on a row being created here; an existing row keeps what it was
+    // written with, so a policy change cannot rewrite it (see wasAskedToOptIn).
+    ...(existing ? {} : { optInAsked: await askedToOptInNow(opts.tenantId, opts.sessionId) }),
     releaseReason: releasingHold ? 'hold_released' : 'manual', attempts: 0, skipReason: '', lastError: '', claimedAt: null,
   };
   let id: string;
