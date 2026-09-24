@@ -9,6 +9,7 @@ import { preflight } from './preflight.js';
 
 import { startRetentionSweep } from './services/dataRights.js';
 import { startDemoPurge } from './services/demoPurgeJob.js';
+import { startDemoInterviewSweep } from './services/demoInterviewJob.js';
 import { startImportPurge } from './services/candidateImportPurgeJob.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
@@ -35,6 +36,9 @@ import { settlePasswordResets } from './services/passwordReset.js';
 preflight();
 startRetentionSweep();
 startDemoPurge();
+// The half of the demo's fifteen-minute cap that no request can enforce: a
+// visitor who closes the tab makes no further requests.
+startDemoInterviewSweep();
 // Bulk imports nobody confirmed or discarded: names, addresses and CV text of
 // people who were never added.
 startImportPurge();

@@ -32,6 +32,8 @@ import { feedbackConsentRouter } from './routes/feedbackConsent.js';
 import { signupRouter, signupDecisionRouter } from './routes/signup.js';
 import { demoRouter, demoDecisionRouter } from './routes/demo.js';
 import { DEMO_READ_ONLY_MESSAGE } from './services/demoPolicy.js';
+import { demoInterviewRouter, demoFeedbackRouter } from './routes/demoInterview.js';
+import { demoFeedbackAdminRouter } from './routes/demoFeedbackAdmin.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
 import { calibrationRouter } from './routes/calibration.js';
@@ -301,6 +303,12 @@ export function createApp() {
   // never be throttled by it: five an hour ended demos mid-tour.
   app.use(['/api/demo/request', '/api/demo/reaccess'], rateLimit({ name: 'demo', windowMs: 60 * 60_000, max: 5, failClosed: true }));
   app.use('/api/demo', demoRouter);
+  // The demo interview and its feedback step, in their own router so this
+  // lane and the guided-tour lane are not editing one file.
+  app.use('/api/demo', demoInterviewRouter);
+  // The feedback form itself runs SIGNED OUT: End demo clears the session
+  // before it is reached, and the ticket in the link is its credential.
+  app.use('/api/demo-feedback', demoFeedbackRouter);
 
   // The candidate's consent link for an AI observer on a human round. Public
   // and token-gated like the feedback link, and keyed on IP for the same
@@ -394,6 +402,9 @@ export function createApp() {
   // 15 s, and this bounds what a script can make the database do.
   app.use('/api/admin/health', rateLimit({ name: 'admin-health', windowMs: 60_000, max: 30 }), systemHealthRouter);
   app.use('/api/admin/calibration', calibrationRouter);
+  // Platform-owner only, and mounted BEFORE the tenant admin router so its
+  // own owner guard is the one that answers.
+  app.use('/api/admin/demo-feedback', demoFeedbackAdminRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/reports', reportsRouter);

@@ -10,7 +10,7 @@ import { classifyLlmFailure, cooldownKindFor, shouldFailOver, type LlmFailureCla
 import { admitLayer, layerTooSlow, noteLayerFailureForReport, recentServing, recordLayerFailure, recordLayerReachable, recordServedLayer, recordStepDown, servingState, type LayerState, type ServingLayer } from './serving.js';
 import { noteServed as recordServed } from './servingTrace.js';
 import { alertLlmOutage, noteLlmRecovered } from './outageAlert.js';
-import { inDemoContext, isHeuristicOnlySession } from '../../services/demoPolicy.js';
+import { demoInterviewMaySpend, inDemoContext, isHeuristicOnlySession } from '../../services/demoPolicy.js';
 
 export type { LlmProvider, LlmMessage, ReasoningEffort } from './types.js';
 export type { LlmPurpose } from '../../config.js';
@@ -176,7 +176,18 @@ export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T |
   if (!llm.enabled && !local) return null;
   // A demo never spends on a paid model: null is what every caller already
   // treats as "use the built-in heuristic engine".
-  if (inDemoContext() || (await isHeuristicOnlySession(opts.sessionId))) return null;
+  //
+  // ONE exception, and it is narrow in four ways at once (see
+  // domain/demoBudget.ts): only a 'candidate' demo run, where a person is
+  // actually answering; only the interviewer reacting to what they said and
+  // the intent read that keeps "stop" from being treated as an answer; only
+  // within that sitting's allowance; and only within the day's. Everything
+  // else a demo touches — role extraction, the catalogue, grading, the report
+  // writer, the candidate's own closing question, the whole of observer mode —
+  // still returns null here, whatever the budget says.
+  if (inDemoContext() || (await isHeuristicOnlySession(opts.sessionId))) {
+    if (!(await demoInterviewMaySpend(opts.fn, opts.sessionId))) return null;
+  }
   const messages: LlmMessage[] = [
     { role: 'system', content: opts.system + '\n\nRespond ONLY with valid minified JSON. No prose, no code fences.' },
     { role: 'user', content: opts.user },

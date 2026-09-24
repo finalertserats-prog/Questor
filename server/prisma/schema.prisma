@@ -2160,3 +2160,34 @@ model DemoFeedback {
   @@index([tenantId, submittedAt])
   @@index([demoGrantId])
 }
+
+// One reactive model call a demo interview bought, and which sitting bought it.
+//
+// The audit trail, not the counter: it is tenant-scoped and goes with the
+// sandbox in the purge, so it can answer "what did this visitor's demo spend"
+// only for as long as the visitor's data exists at all.
+model DemoModelSpend {
+  id        String   @id @default(cuid())
+  tenantId  String
+  runId     String
+  dayKey    String
+  fn        String
+  createdAt DateTime @default(now())
+
+  @@index([runId])
+  @@index([tenantId])
+}
+
+// The day's spend across every demo, as a counter that can be claimed with a
+// single conditional statement.
+//
+// Deliberately separate from DemoModelSpend, which is tenant-scoped and
+// purged. Counting the audit rows would have meant a sandbox purged on the day
+// it ran handed its spend back to the budget — a demo tenant retired early
+// would silently re-open the day's ceiling. This row holds a date and a
+// number, belongs to no tenant, and is never purged.
+model DemoSpendDay {
+  dayKey    String   @id
+  calls     Int      @default(0)
+  updatedAt DateTime @updatedAt
+}

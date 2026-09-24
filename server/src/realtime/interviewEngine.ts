@@ -30,6 +30,7 @@ import { withoutLibrary } from '../library/planLadders.js';
 import { config } from '../config.js';
 import { assertIdentityConfirmed } from '../services/identityAssurance.js';
 import { storedArtifactContent } from '../services/artifactContent.js';
+import { shapeDemoTurn, withPrefix } from '../services/demoTimeBox.js';
 
 const AVG_MS_PER_TURN = 40_000; // virtual pacing when real timestamps are absent
 
@@ -393,7 +394,12 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
   // A postponed interview that was re-invited starts again from the greeting;
   // the earlier sitting stays on the record for reviewers.
   const turns = currentSitting(allTurns);
-  const signal = directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) });
+  // A demo interview is bounded to fifteen minutes, and the bound is applied
+  // HERE, between turns, so it can never cut an utterance in half: past the
+  // box the director's decision becomes the close the director already knows
+  // how to make, with one sentence added in the interviewer's own voice.
+  // Every other interview passes through untouched.
+  const { signal, prefix: demoPrefix } = await shapeDemoTurn(sessionId, directorDecide({ plan, turns, elapsedMinutes: elapsedMinutes(turns) }));
   // The AI disclosure is shown and agreed to on the consent screen before the
   // interview; the consent record is what proves it. A damaged record stops
   // the interview here rather than letting it run with nothing on file saying
@@ -416,7 +422,7 @@ async function produceAgentTurn(sessionId: string, requireTailId?: string | null
 
   const lastEnd = allTurns.reduce((m, t) => Math.max(m, t.endMs), 0);
   const agentTurn = await appendTurn(sessionId, {
-    speaker: 'agent', text: utter.text,
+    speaker: 'agent', text: withPrefix(demoPrefix, utter.text),
     startMs: lastEnd, endMs: lastEnd + 12_000, confidence: 1, competencyId: utter.competencyId,
     // Recorded so a repeated start can hand back the turn that already exists
     // instead of guessing what kind of utterance it was.

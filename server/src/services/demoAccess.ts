@@ -428,7 +428,17 @@ export async function assertDemoCreationCap(tenantId: string, kind: 'roles' | 'c
   const tenant = await prisma.tenant.findUnique({ where: { id: tenantId }, select: { isDemo: true } });
   if (!tenant?.isDemo) return;
   const cap = DEMO_SEEDED[kind] + DEMO_ADDED_CAPS[kind];
-  const count = kind === 'roles' ? await prisma.role.count({ where: { tenantId } }) : kind === 'candidates' ? await prisma.candidate.count({ where: { tenantId } }) : await prisma.interviewSession.count({ where: { tenantId } });
+  // What the DEMO ITSELF created does not count against what the VISITOR may
+  // create. Observer mode provisions a written candidate and a session of its
+  // own; without this, watching an interview would silently cost the visitor
+  // one of the interviews they are allowed to add.
+  const ours = await prisma.demoInterviewRun.findMany({ where: { tenantId }, select: { sessionId: true } });
+  const ourSessionIds = ours.map((r) => r.sessionId);
+  const count = kind === 'roles'
+    ? await prisma.role.count({ where: { tenantId } })
+    : kind === 'candidates'
+      ? await prisma.candidate.count({ where: { tenantId, interviews: { none: { id: { in: ourSessionIds } } } } })
+      : await prisma.interviewSession.count({ where: { tenantId, id: { notIn: ourSessionIds } } });
   if (count >= cap) throw new HttpError(409, demoLimitMessage(kind, false));
   for (let slot = count; slot < cap; slot += 1) {
     const verdict = await consume('demo-cap', `${tenantId}:${kind}:${slot}`, CAP_SLOT_HOLD_MS, 1, { failClosed: true });
@@ -482,6 +492,15 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
     await tx.identityCodeChallenge.deleteMany({ where: { sessionId: { in: sessionIds } } });
     await tx.artifact.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.modelExecution.deleteMany({ where: { sessionId: { in: sessionIds } } });
+    // The demo interview's own rows. Its feedback goes with the sandbox like
+    // everything else the visitor produced: the owner reads it inside the
+    // seven days the sandbox lives, and after that a prospect's opinion of us
+    // is not a thing we keep. DemoSpendDay is deliberately NOT here — it is a
+    // date and a number, belongs to no tenant, and a sandbox retired early
+    // must not hand its spend back to the day's ceiling.
+    await tx.demoFeedback.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.demoModelSpend.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.demoInterviewRun.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.observationSegment.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.roundObservation.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.interviewRound.deleteMany({ where: { tenantId: { in: tenantIds } } });

@@ -59,6 +59,38 @@ export function demoInterviewModes(): DemoInterviewModes {
 }
 
 /**
+ * THE ONE PLACE A DEMO MAY SPEND ON A REAL MODEL, AND THE WHOLE OF IT.
+ *
+ * Everything above this line still holds: a demo session is heuristic-only,
+ * and every interview in a demo tenant is heuristic-only. The owner's decision
+ * of 2026-09-24 carved out a single exception — the interviewer REACTING to
+ * what a visitor actually said, because that is the part a prospect is
+ * judging, and a built-in reply to a real answer is the one thing a demo
+ * cannot fake.
+ *
+ * The exception is narrow in four ways at once, all of them checked in
+ * `claimModelCall`: the run must be in candidate mode (observer mode is a
+ * written script and never reaches here), the function must be one of the two
+ * reactive ones, and both the sitting's and the day's allowances must have
+ * room. The scaffolding — opening, transitions, close, sign-off — and all of
+ * the scoring and the written report stay on the built-in writer regardless.
+ *
+ * Refusal is silent. The turn is written by the built-in writer and the
+ * visitor is told nothing: there is nothing they could do about it, and an
+ * interviewer that announced its own funding mid-interview would be the least
+ * convincing thing in the demo.
+ *
+ * Imported lazily so this module stays free of the cycle it was split out to
+ * avoid: the provider layer imports this file, and the run service imports the
+ * database and the middleware that the provider layer sits under.
+ */
+export async function demoInterviewMaySpend(fn: string, sessionId: string | undefined): Promise<boolean> {
+  if (!sessionId) return false;
+  const { claimModelCall } = await import('./demoInterviewRun.js');
+  return claimModelCall(fn, sessionId);
+}
+
+/**
  * True when the interview belongs to a demo sandbox. The candidate side of an
  * interview runs on a link, not a session, so it is recognised by the
  * interview it is for rather than by who is signed in.
