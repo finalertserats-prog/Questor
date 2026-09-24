@@ -121,7 +121,7 @@ export const EXCLUSION_RULES: readonly ExclusionRule[] = [
     // "you do not need to code". Adverts say this deliberately, to stop the
     // wrong people applying — and the extractor was reading the denial as the
     // requirement, which is the most embarrassing way to be wrong.
-    re: /\b(you (will|do|are|would|need)\s+not\b|you (won't|don't|aren't)\b|(this|it) is not a [\w&/-]+ (role|position|job)|no (prior |previous )?[\w&/-]+ (experience|background) (is )?(required|needed|necessary)|not responsible for|nor will you|you are not expected to|without (having to|needing to))/i,
+    re: /\b(you (will|do|are|would|need)\s+not\b|you (won|don|aren|isn|can)['\u2019\u02bc]t\b|(this|it) is not a [\w&/-]+ (role|position|job)|no (prior |previous )?[\w&/-]+ (experience|background) (is )?(required|needed|necessary)|not responsible for|nor will you|you are not expected to|without (having to|needing to))/i,
     why: 'The advert says this is NOT part of the role.',
     effect: 'drop',
   },

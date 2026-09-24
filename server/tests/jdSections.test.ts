@@ -188,6 +188,19 @@ describe('excludedBy', () => {
     { line: 'Apply now via our careers page with a cover letter.', rule: 'application_process' },
     { line: 'The platform team owns the Kubernetes cluster.', rule: 'other_team_tool' },
     { line: 'Our CI pipeline is maintained by the developer experience team.', rule: 'other_team_owns' },
+    // A contraction, in all three apostrophes a real advert arrives with.
+    //
+    // The pattern accepted only the straight one, and almost nothing is
+    // typed straight: Word, Google Docs and any careers page that has been
+    // through a rich-text editor emit the typographic one. So "you don’t
+    // need a degree" read as a requirement FOR a degree — the exact failure
+    // this rule exists to prevent, arriving through the one character
+    // nobody inspects.
+    { line: "You don't need a computer science degree.", rule: 'negated_requirement' },
+    { line: "You don’t need a computer science degree.", rule: 'negated_requirement' },
+    { line: "You won’t be writing production code.", rule: 'negated_requirement' },
+    { line: "You aren’t expected to manage a budget.", rule: 'negated_requirement' },
+    { line: "You donʼt need to travel.", rule: 'negated_requirement' },
   ];
 
   for (const { line, rule } of cases) {
