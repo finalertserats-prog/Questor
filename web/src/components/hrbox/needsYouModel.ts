@@ -70,6 +70,20 @@ export interface CrewMember {
   readonly at: string | null;
 }
 
+/**
+ * Nothing has ever happened in this organisation — no work to need anyone,
+ * nothing booked, nothing finished.
+ *
+ * This is NOT the same as an established team that is simply caught up, and
+ * telling the two apart is the whole point. Home said "Nothing needs you. The
+ * interviewers will say when something does" to both, so an organisation that
+ * had just signed up was told, on its first screen, to wait. Two real
+ * organisations registered, saw that, and never created a role.
+ */
+export function hasNothingYet(feed: NeedsYouFeed): boolean {
+  return feed.needsYou.total === 0 && feed.comingUp.length === 0 && feed.doneRecently.length === 0;
+}
+
 export interface NeedsYouFeed {
   readonly generatedAt: string;
   readonly timeZone: string;

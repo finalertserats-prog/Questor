@@ -9,7 +9,7 @@ import { DEFAULT_PAGE_SIZE, type PageSize } from '../components/listPagingModel'
 import { Crew } from '../components/hrbox/Crew';
 import { NeedsYouQueue, NeedsYouSkeleton } from '../components/hrbox/NeedsYouQueue';
 import {
-  comingUpState, crewSentence, dayAndTime, doneLine, greetingFor, hourIn, splitComingUp, timeOfDay,
+  comingUpState, crewSentence, dayAndTime, doneLine, greetingFor, hasNothingYet, hourIn, splitComingUp, timeOfDay,
   waitLabel, type ComingUpItem, type NeedsYouFeed,
 } from '../components/hrbox/needsYouModel';
 
@@ -85,8 +85,32 @@ export function Home() {
             <button type="button" className="btn sm secondary" onClick={retry}>Try again</button>
           </div>
         )}
-        {feed && feed.needsYou.total === 0 && (
+        {feed && feed.needsYou.total === 0 && !hasNothingYet(feed) && (
           <EmptyState compact icon="check-circle" title="Nothing needs you" message="Reviews, candidates asking for a person, invitations about to close and stalled interviews will appear here as they happen." />
+        )}
+        {/*
+          An organisation where nothing has happened yet is told what to do,
+          not that it has nothing to do.
+
+          Home is the first screen after signing in, and it used to say
+          "Nothing needs you — the interviewers will say when something does"
+          to a brand-new organisation as readily as to a team that was caught
+          up. To someone who had just been given an account, the product's own
+          opening line said: wait. The only first-run guidance in Questor sat
+          on the Dashboard tab, which a new admin is never shown.
+
+          Two real organisations registered, saw this screen, and never created
+          a role. This is the fix for that, and it is one prop EmptyState
+          already supported.
+        */}
+        {feed && hasNothingYet(feed) && (
+          <EmptyState
+            compact
+            icon="job-description"
+            title="Start with a role"
+            message="Paste or upload a job description and Questor drafts a scorecard from it. You approve the scorecard, add candidates, and the interviews follow from there."
+            action={<Link className="btn" to="/roles/new">Create your first role</Link>}
+          />
         )}
         {feed && feed.needsYou.items.length > 0 && <NeedsYouQueue rows={feed.needsYou.items} now={now} />}
         {feed && feed.needsYou.total > DEFAULT_PAGE_SIZE && (
