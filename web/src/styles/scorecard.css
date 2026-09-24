@@ -3,8 +3,12 @@
    State is marked with rules and brackets, never a tinted fill.
    ========================================================================== */
 
+/* The actions column, and only it. Scoped to the competency row itself: the
+   source line and the details panel beneath it are full-width cells that are
+   also :last-child, and inheriting `nowrap` from here is what used to push
+   their text off the side of the scroll region on a phone. */
 .comp-table th:last-child,
-.comp-table td:last-child {
+.comp-row td:last-child {
   text-align: right;
   white-space: nowrap;
 }
@@ -57,6 +61,56 @@
   display: grid;
   gap: 2px;
   min-width: 0;
+  /* Set here rather than inherited from the actions column, so the wide layout
+     is unchanged while the narrow one below can turn it round. */
+  text-align: right;
+}
+
+/* On a phone the columns above still scroll sideways, but the evidence must
+   not: a citation a reviewer has to go looking for is a citation they will
+   approve without reading. The body is sized to the scroll window itself
+   (100cqw — .comp-scroll is the query container) and pinned to its left edge,
+   so the quote and "Requirements, line 18" wrap inside the first screenful
+   and stay there however far the columns are scrolled. */
+@media (max-width: 640px) {
+  .comp-scroll {
+    container-type: inline-size;
+  }
+  .comp-source td {
+    border-left: 0;
+    padding: 0 0 10px;
+  }
+  .comp-source-body {
+    position: sticky;
+    left: 0;
+    box-sizing: border-box;
+    /* The viewport first, for anything too old to know container units: wider
+       than the scroll window, but still a fraction of the table's width. */
+    width: 100vw;
+    width: 100cqw;
+    padding-left: 14px;
+    border-left: var(--rail) solid var(--rule);
+    text-align: left;
+  }
+  .comp-source.is-uncertain .comp-source-body {
+    border-left-color: var(--hold);
+  }
+  /* The disclosure under the same row, for the same reason: its two fields are
+     full-width cells in a table that is wider than the phone. */
+  .comp-details td {
+    border-left: 0;
+    padding: 10px 0 14px;
+  }
+  .comp-details-grid,
+  .comp-details .field-hint {
+    position: sticky;
+    left: 0;
+    box-sizing: border-box;
+    width: 100vw;
+    width: 100cqw;
+    padding-left: 14px;
+    border-left: var(--rail) solid var(--rule);
+  }
 }
 
 .comp-quote {
@@ -80,7 +134,10 @@
 }
 
 .comp-why {
-  margin: 2px 0 0;
+  /* `auto` on the left because the global 68ch measure keeps this paragraph
+     narrower than the quote above it: without it the box stays left while its
+     text is right-aligned, and the two read as two different columns. */
+  margin: 2px 0 0 auto;
   font-size: 0.82rem;
   line-height: 1.5;
   color: var(--ink-3);

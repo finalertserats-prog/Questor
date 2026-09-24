@@ -108,7 +108,10 @@ export function CompetencyEditor({ roleId, competencies, mustPassIds, historyIds
           </div>
         </div>
       )}
-      <div className="table-scroll" tabIndex={0} role="region" aria-label="Competencies">
+      {/* comp-scroll: the query container the source line under each row is
+          measured against, so it can be as wide as the scroll window rather
+          than as wide as the table (styles/scorecard.css). */}
+      <div className="table-scroll comp-scroll" tabIndex={0} role="region" aria-label="Competencies">
         <table className="comp-table">
           <thead>
             <tr>
