@@ -383,6 +383,7 @@ export function createApp() {
   // Both before candidatesRouter, whose /:id routes would otherwise claim
   // these paths.
   app.use('/api/candidates', candidateSmeRouter);
+=======
   app.use('/api/candidates', candidateAwardsRouter);
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/candidate-imports', candidateImportsRouter);
