@@ -79,7 +79,15 @@ describe('what the visitor is told when something fails', () => {
   it('maps the server\'s own codes onto the pages that explain them', () => {
     expect(failureFor(409, 'sandbox_gone')).toBe('sandbox_gone');
     expect(failureFor(409, 'already_taken')).toBe('already_taken');
-    expect(failureFor(409, undefined)).toBe('sandbox_gone');
+    expect(failureFor(409, 'already_open')).toBe('already_open');
+    expect(failureFor(409, 'already_starting')).toBe('already_open');
+  });
+
+  // This read any 409 as "the sandbox has been cleared", so a visitor who
+  // simply had an interview open was told their data had been deleted.
+  it('never reads an unrecognised refusal as a deletion', () => {
+    expect(failureFor(409, undefined)).toBe('unknown');
+    expect(failureFor(409, 'something_new')).toBe('unknown');
   });
 });
 

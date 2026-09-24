@@ -87,14 +87,27 @@ async function rush(to: 'close' | 'played'): Promise<string> {
   return run.id;
 }
 
+/**
+ * The answer, on its own line behind a marker.
+ *
+ * The services this reaches log through pino, which also writes to stdout, so
+ * "the last line" is whoever spoke last rather than the answer. The caller
+ * looks for the marker instead.
+ */
+const ANSWER = 'QUESTOR_FIXTURE_ANSWER:';
+
 async function main(): Promise<void> {
   assertNotProduction();
   const command = process.argv[2] ?? 'link';
-  if (command === 'link') process.stdout.write(await makeLink());
-  else if (command === 'candidate') process.stdout.write(await startCandidate());
-  else if (command === 'rush-close') process.stdout.write(await rush('close'));
-  else if (command === 'rush-played') process.stdout.write(await rush('played'));
-  else throw new Error(`unknown command: ${command}`);
+  const answer = command === 'link' ? await makeLink()
+    : command === 'candidate' ? await startCandidate()
+      : command === 'rush-close' ? await rush('close')
+        : command === 'rush-played' ? await rush('played')
+          : null;
+  if (answer === null) throw new Error(`unknown command: ${command}`);
+  process.stdout.write(`
+${ANSWER}${answer}
+`);
 }
 
 main().finally(async () => { await prisma.$disconnect(); });

@@ -1,5 +1,5 @@
 import request from 'supertest';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmailMessage } from '../src/providers/email/index.js';
 
 const sent: EmailMessage[] = [];
@@ -21,14 +21,16 @@ import { createApp } from '../src/app.js';
 import { config } from '../src/config.js';
 import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
-import { _resetRateLimits } from '../src/middleware/rateLimit.js';
+import { _resetRateLimits, _enableRateLimitsInTests } from '../src/middleware/rateLimit.js';
 import { purgeExpiredDemoTenants } from '../src/services/demoAccess.js';
-import { DEMO_CAP_MS, DEMO_CLOSING_RESERVE_MS, DEMO_EXTENSION_MS, staysInCharacter } from '../src/domain/demoInterview.js';
+import { DEMO_CAP_MS, DEMO_CLOSING_RESERVE_MS, DEMO_EXTENSION_MS, staysInCharacter, systemShapedMatches } from '../src/domain/demoInterview.js';
 import { DEMO_OBSERVER_SCRIPT, DEMO_SCRIPT_CANDIDATE } from '../src/domain/demoObserverScript.js';
 import { playUpTo, revealedCount } from '../src/services/demoObserverPlayer.js';
 import { sweepDemoInterviews, finishPlayedOutObserverRuns, finishDemoRun, DEMO_IDLE_MS } from '../src/services/demoInterviewFinish.js';
 import { claimModelCall, releaseSitting, reserveSitting, runById } from '../src/services/demoInterviewRun.js';
 import { startObserverMode } from '../src/services/demoInterviewStart.js';
+import { shapeDemoTurn, withPrefix } from '../src/services/demoTimeBox.js';
+import { startOrResumeInterview, submitCandidateTurn } from '../src/realtime/interviewEngine.js';
 import { screenFeedback, listDemoFeedback } from '../src/services/demoFeedback.js';
 import { assertDemoCreationCap } from '../src/services/demoAccess.js';
 import { signToken } from '../src/services/auth.js';
@@ -834,5 +836,156 @@ describe('what round two of the review found', () => {
     const empty = await request(app).post('/api/demo-feedback').send({ token: '', body: 'Hello.' });
     const unknown = await request(app).post('/api/demo-feedback').send({ token: 'z'.repeat(43), body: 'Hello.' });
     expect(shape(empty)).toEqual(shape(unknown));
+  });
+});
+
+describe('with the rate limiters actually running', () => {
+  // Limiters are off under NODE_ENV=test, which is why this needed a browser
+  // to find: the route's own limiter and the start lock shared a name AND a
+  // key, so the middleware's hit landed in the lock's window and every first
+  // press refused itself with "already starting". Two counters that share a
+  // name share a bucket.
+  beforeEach(() => { _enableRateLimitsInTests(true); });
+  afterEach(() => { _enableRateLimitsInTests(false); });
+
+  it('lets a first press through when the route limiter has already counted it', async () => {
+    const demo = await openDemo();
+    const res = await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+    expect([res.status, res.body.code]).toEqual([201, undefined]);
+  });
+});
+
+describe('the box in the interviewer\'s own voice', () => {
+  const asking = {
+    nextCompetencyId: 'delivery',
+    action: 'probe' as const,
+    depthInstruction: 'deepen' as const,
+    timeRemainingMinutes: 9,
+    coverageState: { delivery: 1 },
+    reason: 'Block under quota.',
+  };
+
+  it('adds nothing at all to an interview still inside its box', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    const shaped = await shapeDemoTurn(run.sessionId, asking, new Date(run.startedAt.getTime() + 60_000));
+    expect([shaped.prefix, shaped.signal.action]).toEqual(['', 'probe']);
+  });
+
+  // The whole visible effect of every bound the demo has: one sentence, in the
+  // interviewer's voice, and the director's own close.
+  it('sends a director that wanted to keep asking to its close, and says why in character', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    const atTheBox = new Date(run.startedAt.getTime() + DEMO_CAP_MS - DEMO_CLOSING_RESERVE_MS + 1_000);
+    const shaped = await shapeDemoTurn(run.sessionId, asking, atTheBox);
+    expect(shaped.signal.action).toBe('close');
+    expect(shaped.prefix).toMatch(/demo interview/i);
+    expect(staysInCharacter(shaped.prefix)).toBe(true);
+  });
+
+  // An interviewer already closing of its own accord needs no explanation, and
+  // "let me bring us to a close" over its own close reads as a stumble.
+  it('adds nothing when the interviewer was closing anyway', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    const closing = { ...asking, action: 'close' as const, nextCompetencyId: '__candidate_questions__' };
+    const atTheBox = new Date(run.startedAt.getTime() + DEMO_CAP_MS - DEMO_CLOSING_RESERVE_MS + 1_000);
+    expect((await shapeDemoTurn(run.sessionId, closing, atTheBox)).prefix).toBe('');
+  });
+
+  it('leaves every interview that is not a demo completely alone', async () => {
+    const shaped = await shapeDemoTurn('not-a-demo-session', asking);
+    expect([shaped.prefix, shaped.signal]).toEqual(['', asking]);
+  });
+
+  it('joins the added sentence to the engine\'s own words as one utterance', () => {
+    expect(withPrefix('Since this is a demo interview we keep it short.', 'Is there anything you would like to ask me?'))
+      .toBe('Since this is a demo interview we keep it short. Is there anything you would like to ask me?');
+    expect(withPrefix('', 'Tell me about a pipeline.')).toBe('Tell me about a pipeline.');
+  });
+});
+
+describe('the box, driven through the real engine', () => {
+  // The unit tests prove shapeDemoTurn's answer; this proves the ENGINE asks
+  // it and uses what it says. A browser run showed the interview closing early
+  // at the box but could not show whether the added sentence had reached the
+  // turn, because which decision the director held at that moment is not
+  // visible from the page.
+  async function candidateSitting(demo: Demo) {
+    const session = await prisma.interviewSession.findFirst({
+      where: { tenantId: demo.tenantId, invitation: { isNot: null } },
+      select: { id: true, consentJson: true },
+    });
+    // Consent as the portal records it, so startOrResumeInterview will run.
+    const consent = JSON.parse(session!.consentJson) as Record<string, unknown>;
+    await prisma.interviewSession.update({
+      where: { id: session!.id },
+      data: {
+        state: 'ACCEPTED',
+        consentJson: JSON.stringify({ ...consent, consentVersion: 'v1', consentedAt: new Date().toISOString(), channel: 'portal' }),
+      },
+    });
+    const run = await prisma.demoInterviewRun.create({
+      data: {
+        tenantId: demo.tenantId, demoGrantId: demo.grantId, sessionId: session!.id, mode: 'candidate',
+        capAt: new Date(Date.now() + DEMO_CAP_MS), reservedCalls: 0,
+      },
+    });
+    return { sessionId: session!.id, runId: run.id };
+  }
+
+  it('leaves the interviewer alone while there is time', async () => {
+    const demo = await openDemo();
+    const { sessionId } = await candidateSitting(demo);
+    const opening = await startOrResumeInterview(sessionId);
+    expect(staysInCharacter(opening.turn.text)).toBe(true);
+    expect(opening.turn.text).not.toMatch(/since this is a demo interview/i);
+  });
+
+  // Wind the sitting to the box and answer once more: the next turn the engine
+  // writes must carry the sentence and must be a close.
+  it('puts the demo sentence on the turn the engine writes at the box', async () => {
+    const demo = await openDemo();
+    const { sessionId, runId } = await candidateSitting(demo);
+    await startOrResumeInterview(sessionId);
+    await submitCandidateTurn(sessionId, 'I run the ingestion layer for a logistics platform: ninety Airflow DAGs into Snowflake, with dbt on top.');
+
+    const run = await runById(runId);
+    const back = DEMO_CAP_MS - DEMO_CLOSING_RESERVE_MS + 5_000;
+    await prisma.demoInterviewRun.update({
+      where: { id: runId },
+      data: { startedAt: new Date(run!.startedAt.getTime() - back), capAt: new Date(run!.capAt.getTime() - back) },
+    });
+
+    const atTheBox = await submitCandidateTurn(sessionId, 'We lost four hours of records to an upstream type change, so I put schema contracts at the ingestion boundary.');
+    // The interviewer is carried to its close and stays in character. Whether
+    // the added sentence lands on THIS turn depends on what the director had
+    // decided when the box arrived — it is suppressed when the interviewer was
+    // closing anyway, because explaining a close that was happening regardless
+    // reads as a stumble.
+    expect(atTheBox.kind).toBe('close');
+    expect({ text: atTheBox.text, matched: systemShapedMatches(atTheBox.text) })
+      .toEqual({ text: atTheBox.text, matched: [] });
+  });
+
+  // The box stays reached for every turn after it, so without a guard the
+  // interviewer said it at the top of the close AND again at the sign-off —
+  // less like a person and more like a stuck recording.
+  it('writes the sentence once, not on every turn after the box', async () => {
+    const demo = await openDemo();
+    const { sessionId, runId } = await candidateSitting(demo);
+    await startOrResumeInterview(sessionId);
+    const run = await runById(runId);
+    const back = DEMO_CAP_MS - DEMO_CLOSING_RESERVE_MS + 5_000;
+    await prisma.demoInterviewRun.update({
+      where: { id: runId },
+      data: { startedAt: new Date(run!.startedAt.getTime() - back), capAt: new Date(run!.capAt.getTime() - back) },
+    });
+    await submitCandidateTurn(sessionId, 'I own the ingestion layer: ninety Airflow DAGs into Snowflake with dbt on top.');
+    await submitCandidateTurn(sessionId, 'No, nothing else from me, thank you.');
+    const said = await prisma.turn.findMany({ where: { sessionId, speaker: 'agent' }, select: { text: true } });
+    const carrying = said.filter((t) => /since this is a demo interview/i.test(t.text));
+    expect(carrying.length).toBe(1);
   });
 });

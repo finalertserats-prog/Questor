@@ -85,7 +85,7 @@ export function afterTheBoxText(mode: DemoMode): string {
     : 'The interview finished. The next page is the one the candidate sees afterwards; the assessment it produced is the product\'s own, written from the conversation you just watched.';
 }
 
-export type DemoFailure = 'sandbox_gone' | 'engine_unavailable' | 'already_taken' | 'network' | 'unknown';
+export type DemoFailure = 'sandbox_gone' | 'engine_unavailable' | 'already_taken' | 'already_open' | 'network' | 'unknown';
 
 export interface FailureCopy {
   readonly title: string;
@@ -115,6 +115,12 @@ export function failureCopy(kind: DemoFailure): FailureCopy {
         message: 'We could not start the interviewer just now. Nothing has been recorded, and none of this is anything you did.',
         action: 'Tell us what you were trying to do',
       };
+    case 'already_open':
+      return {
+        title: 'You already have one open',
+        message: 'A demo interview is already running for this sandbox. Go back to it rather than starting a second one.',
+        action: 'Back to the demo interview',
+      };
     case 'already_taken':
       return {
         title: 'This demo interview has already been taken',
@@ -136,12 +142,20 @@ export function failureCopy(kind: DemoFailure): FailureCopy {
   }
 }
 
-/** Map a refused request onto the failure the page knows how to explain. */
+/**
+ * Map a refused request onto the failure the page knows how to explain.
+ *
+ * KEYED ON THE CODE, NEVER ON THE STATUS ALONE. This used to read any 409 as
+ * "the sandbox has been cleared", so a visitor who simply had an interview
+ * already open was told their data had been deleted — a page that is alarming,
+ * wrong, and impossible to act on. Every 409 this feature raises carries a
+ * code; one that does not is an unknown, not a deletion.
+ */
 export function failureFor(status: number | undefined, code: string | undefined): DemoFailure {
   if (status === undefined) return 'network';
   if (code === 'sandbox_gone') return 'sandbox_gone';
   if (code === 'already_taken') return 'already_taken';
-  if (status === 409) return 'sandbox_gone';
+  if (code === 'already_open' || code === 'already_starting') return 'already_open';
   return 'unknown';
 }
 

@@ -1,5 +1,6 @@
 import { movingToCloseLine, mustStopAsking, signalClosedForTimeBox, staysInCharacter } from '../domain/demoInterview.js';
 import { logger } from '../logger.js';
+import { prisma } from '../db.js';
 import { runForSession } from './demoInterviewRun.js';
 import type { DirectorSignal } from '../domain/types.js';
 
@@ -48,6 +49,13 @@ export async function shapeDemoTurn(sessionId: string, signal: DirectorSignal, n
   // as a stumble.
   if (signal.action === 'close') return { signal, prefix: '' };
 
+  // ONCE PER SITTING. The box stays reached for every turn after it, so
+  // without this the interviewer said "since this is a demo interview we keep
+  // it short" at the top of the close AND again at the sign-off — which reads
+  // less like a person and more like a stuck recording. The transcript is the
+  // record of whether it has been said.
+  if (await alreadySaid(sessionId)) return { signal: signalClosedForTimeBox(signal), prefix: '' };
+
   const line = movingToCloseLine();
   if (!staysInCharacter(line)) {
     // Refusing to say it is better than saying it: the engine's own close is
@@ -57,6 +65,22 @@ export async function shapeDemoTurn(sessionId: string, signal: DirectorSignal, n
     return { signal: signalClosedForTimeBox(signal), prefix: '' };
   }
   return { signal: signalClosedForTimeBox(signal), prefix: line };
+}
+
+/**
+ * A distinctive fragment of the line, for finding it in a transcript.
+ *
+ * Taken FROM the line rather than written out twice, so an edit to the wording
+ * cannot leave this looking for something nobody says any more.
+ */
+const SAID_MARKER = movingToCloseLine().slice(0, 40);
+
+async function alreadySaid(sessionId: string): Promise<boolean> {
+  const said = await prisma.turn.findFirst({
+    where: { sessionId, speaker: 'agent', text: { contains: SAID_MARKER } },
+    select: { id: true },
+  });
+  return said !== null;
 }
 
 /** Join the demo's transition to the engine's own words, as one utterance. */

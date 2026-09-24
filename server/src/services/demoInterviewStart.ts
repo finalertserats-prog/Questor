@@ -85,7 +85,11 @@ async function loadSandbox(tenantId: string): Promise<Sandbox> {
  * one open" banner all assume cannot happen.
  */
 async function holdStartSlot(demoGrantId: string): Promise<boolean> {
-  const verdict = await consume('demo-interview-start', demoGrantId, 30_000, 1, { failClosed: true });
+  // NOT 'demo-interview-start'. That is the name of the route's own rate
+  // limiter, which is keyed on the same grant id — so the middleware's hit
+  // landed in this lock's window and every first press refused itself with
+  // "already starting". Two counters that share a name share a bucket.
+  const verdict = await consume('demo-interview-slot', demoGrantId, 30_000, 1, { failClosed: true });
   return verdict.allowed;
 }
 

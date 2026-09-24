@@ -35,6 +35,7 @@ export function DemoInterviewChoice() {
   const [failure, setFailure] = useState<DemoFailure | null>(null);
   const [extraTime, setExtraTime] = useState(false);
   const [starting, setStarting] = useState<DemoMode | null>(null);
+  const [lastCode, setLastCode] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +62,7 @@ export function DemoInterviewChoice() {
       // not: the visitor sees one option instead of two, which is the whole of
       // the design.
       if (err instanceof ApiError && err.code === 'offer_observer') { await load(); return; }
+      setLastCode(err instanceof ApiError ? `${err.status} ${err.code ?? ''} ${err.message}` : String(err));
       setFailure(failureFor(err instanceof ApiError ? err.status : undefined, err instanceof ApiError ? err.code : undefined));
     } finally {
       setStarting(null);
@@ -75,6 +77,10 @@ export function DemoInterviewChoice() {
         <div className="card">
           <p>{copy.message}</p>
           {failure !== 'sandbox_gone' && <button className="btn" onClick={() => void load()}>{copy.action}</button>}
+          {/* Development only: the visitor never needs this, and a prospect
+              must never be shown one of our error codes. It is what turns a
+              failing browser run from a guess into a reading. */}
+          {import.meta.env.DEV && lastCode && <p className="small muted" data-testid="demo-failure-code">{lastCode}</p>}
         </div>
       </div>
     );
