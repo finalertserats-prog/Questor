@@ -275,6 +275,25 @@ export async function reserveSitting(now = new Date()): Promise<number> {
   return 0;
 }
 
+/**
+ * Hand a reservation back, for a start that claimed one and then failed.
+ *
+ * Clamped at zero so a double release can never push the day's count negative
+ * and hand out free sittings. Best effort: a refund that fails leaves the
+ * ceiling wrong in the direction that costs money rather than the direction
+ * that loses a demo.
+ */
+export async function releaseSitting(now = new Date()): Promise<void> {
+  try {
+    await prisma.demoSpendDay.updateMany({
+      where: { dayKey: spendDayKey(now), calls: { gte: DEMO_SPEND_PER_RUN } },
+      data: { calls: { decrement: DEMO_SPEND_PER_RUN } },
+    });
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'Could not hand back a demo interview reservation');
+  }
+}
+
 export const DEMO_SPEND_CEILINGS = { perRun: DEMO_SPEND_PER_RUN, perDay: DEMO_SPEND_PER_DAY } as const;
 
 /**

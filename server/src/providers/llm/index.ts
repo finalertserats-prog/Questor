@@ -179,9 +179,9 @@ export async function generateJson<T>(opts: GenerateJsonOptions<T>): Promise<T |
   //
   // ONE exception, and it is narrow in four ways at once (see
   // domain/demoBudget.ts): only a 'candidate' demo run, where a person is
-  // actually answering; only the interviewer reacting to what they said and
-  // the intent read that keeps "stop" from being treated as an answer; only
-  // within that sitting's allowance; and only within the day's. Everything
+  // actually answering; only `live_interviewer`, the turn that reacts to what
+  // they just said; only within that sitting's allowance, which was claimed
+  // whole from the day before the interview began. Everything
   // else a demo touches — role extraction, the catalogue, grading, the report
   // writer, the candidate's own closing question, the whole of observer mode —
   // still returns null here, whatever the budget says.

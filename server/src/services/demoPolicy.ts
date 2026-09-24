@@ -68,12 +68,13 @@ export function demoInterviewModes(): DemoInterviewModes {
  * judging, and a built-in reply to a real answer is the one thing a demo
  * cannot fake.
  *
- * The exception is narrow in four ways at once, all of them checked in
- * `claimModelCall`: the run must be in candidate mode (observer mode is a
- * written script and never reaches here), the function must be one of the two
- * reactive ones, and both the sitting's and the day's allowances must have
- * room. The scaffolding — opening, transitions, close, sign-off — and all of
- * the scoring and the written report stay on the built-in writer regardless.
+ * The exception is narrow, and `claimModelCall` checks every part of it: the
+ * run must be in candidate mode (observer mode is a written script and never
+ * reaches here), the function must be `live_interviewer` and nothing else, and
+ * the sitting must have an unspent unit of the allowance it claimed from the
+ * day before it began. The scaffolding — opening, transitions, close,
+ * sign-off — the intent read, all of the scoring and the written report stay
+ * on the built-in writer regardless.
  *
  * Refusal is silent. The turn is written by the built-in writer and the
  * visitor is told nothing: there is nothing they could do about it, and an

@@ -69,15 +69,16 @@ export function DemoFeedbackAdmin() {
       <PageHeader icon="notes" title="Demo feedback" subtitle="What visitors said after trying the demo interview." />
 
       {/*
-        Beside the feedback because the two are read together: "the interviewer
-        felt wooden" means something different on a day the ceiling was reached
-        and every demo after it ran on the built-in writer.
+        Beside the feedback because the two are read together: a day the
+        ceiling was reached is a day when everyone who arrived after it was
+        offered the watched interview only, which changes what their feedback
+        is feedback ABOUT.
       */}
       <div className="card demo-admin-spend">
         <span className="small muted">Model spend today ({data.spend.dayKey})</span>
         <strong>{data.spend.used} of {data.spend.ceiling}</strong>
         {data.spend.used >= data.spend.ceiling && (
-          <Badge kind="amber">Ceiling reached — demos since then ran on the built-in writer</Badge>
+          <Badge kind="amber">Ceiling reached — the candidate-side interview is not being offered today</Badge>
         )}
       </div>
 

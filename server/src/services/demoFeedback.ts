@@ -143,7 +143,7 @@ export async function submitFeedback(input: {
   });
   // One answer for a bad token, a spent one and an expired one: the form must
   // not become a way to learn which demos exist.
-  if (!row || row.submittedAt || row.ticketExpiresAt.getTime() <= now.getTime()) {
+  if (!input.token || !row || row.submittedAt || row.ticketExpiresAt.getTime() <= now.getTime()) {
     throw new HttpError(410, 'This feedback link is no longer open.', 'ticket_spent');
   }
 
@@ -151,8 +151,12 @@ export async function submitFeedback(input: {
   if (body.length === 0) throw new HttpError(400, 'Please write something first.');
   const screening = screenFeedback(body);
 
+  // The guard names the TOKEN, not just the row. Reading by ticketHash and
+  // then updating by id alone let an older link spend the row after a second
+  // tab had reissued it — the ticket the visitor is holding would be the one
+  // that failed.
   const saved = await prisma.demoFeedback.updateMany({
-    where: { id: row.id, submittedAt: null },
+    where: { id: row.id, submittedAt: null, ticketHash: hashTicket(input.token), ticketExpiresAt: { gt: now } },
     data: {
       body,
       source: input.source,

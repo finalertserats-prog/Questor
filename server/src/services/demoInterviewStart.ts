@@ -6,7 +6,7 @@ import { withObserverNotice } from './observerPolicy.js';
 import { invitationLink } from './invitations.js';
 import { DEMO_CAP_MS, type DemoMode } from '../domain/demoInterview.js';
 import { DEMO_SCRIPT_CANDIDATE, DEMO_SCRIPT_ID } from '../domain/demoObserverScript.js';
-import { startRun, liveRunForGrant, reserveSitting, type DemoRunRow } from './demoInterviewRun.js';
+import { startRun, liveRunForGrant, releaseSitting, reserveSitting, type DemoRunRow } from './demoInterviewRun.js';
 import { consume } from '../middleware/rateLimit.js';
 import { Prisma } from '@prisma/client';
 import type { RoleSuccessProfile } from '../domain/types.js';
@@ -77,10 +77,21 @@ async function loadSandbox(tenantId: string): Promise<Sandbox> {
  * tabs, or a double press, both see nothing open and both create. The shared
  * atomic counter is the same mechanism the demo creation caps already use for
  * exactly this, which is why it is reached for rather than a second one.
+ *
+ * KEYED ON THE GRANT, NOT ON THE GRANT AND MODE. Keying it per mode left the
+ * race open across modes: one tab could start a watched interview while
+ * another started a sat one, and the visitor would have two sittings open at
+ * once — which `liveRunForGrant`, the feedback attribution and the "you have
+ * one open" banner all assume cannot happen.
  */
-async function holdStartSlot(demoGrantId: string, mode: DemoMode): Promise<boolean> {
-  const verdict = await consume('demo-interview-start', `${demoGrantId}:${mode}`, 30_000, 1, { failClosed: true });
+async function holdStartSlot(demoGrantId: string): Promise<boolean> {
+  const verdict = await consume('demo-interview-start', demoGrantId, 30_000, 1, { failClosed: true });
   return verdict.allowed;
+}
+
+/** Any sitting this visitor already has open, whichever mode it is. */
+async function alreadyOpen(demoGrantId: string): Promise<DemoRunRow | null> {
+  return liveRunForGrant(demoGrantId);
 }
 
 export interface StartedDemoInterview {
@@ -111,23 +122,18 @@ export async function startCandidateMode(opts: {
   });
   if (!session?.invitation) throw new HttpError(409, 'The sample interview is not available.', 'sandbox_gone');
 
-  const existing = await prisma.demoInterviewRun.findUnique({ where: { sessionId: session.id }, select: { id: true } });
-  if (existing) {
-    const run = await liveRunForGrant(opts.demoGrantId);
-    if (run && run.sessionId === session.id) {
-      return { run, portalUrl: invitationLink(session.invitation) };
-    }
-    throw new HttpError(409, 'This demo interview has already been taken.', 'already_taken');
+  // A sitting already open — in EITHER mode — is the sitting the visitor gets
+  // back. One at a time per grant is what the rest of the feature assumes.
+  const open = await alreadyOpen(opts.demoGrantId);
+  if (open) {
+    if (open.sessionId === session.id) return { run: open, portalUrl: invitationLink(session.invitation) };
+    throw new HttpError(409, 'You already have a demo interview open.', 'already_open');
   }
-  if (!(await holdStartSlot(opts.demoGrantId, 'candidate'))) {
+  const existing = await prisma.demoInterviewRun.findUnique({ where: { sessionId: session.id }, select: { id: true } });
+  if (existing) throw new HttpError(409, 'This demo interview has already been taken.', 'already_taken');
+  if (!(await holdStartSlot(opts.demoGrantId))) {
     throw new HttpError(409, 'This demo interview is already starting.', 'already_starting');
   }
-
-  // The whole sitting's model allowance, claimed from the day now. Refused
-  // means the day is full: the mode is withdrawn rather than started and
-  // silently degraded, which is the rule the owner set.
-  const reservedCalls = await reserveSitting();
-  if (reservedCalls <= 0) throw new HttpError(409, 'Watch an interview instead.', 'offer_observer');
 
   const plan = buildInterviewPlan({ role: sandbox.profile, durationMinutes: DEMO_PLAN_MINUTES, language: 'en', modules: [] });
   await prisma.$transaction([
@@ -138,6 +144,14 @@ export async function startCandidateMode(opts: {
       update: { planJson: JSON.stringify(plan) },
     }),
   ]);
+
+  // The whole sitting's model allowance, claimed from the day LAST — with
+  // nothing left that can fail between the claim and the row that owns it.
+  // Claiming it before the planning work meant a transient failure there
+  // withdrew candidate mode for the rest of the day on behalf of an interview
+  // that never happened.
+  const reservedCalls = await reserveSitting();
+  if (reservedCalls <= 0) throw new HttpError(409, 'Watch an interview instead.', 'offer_observer');
 
   try {
     const run = await startRun({
@@ -150,6 +164,10 @@ export async function startCandidateMode(opts: {
     });
     return { run, portalUrl: invitationLink(session.invitation) };
   } catch (err) {
+    // No sitting owns the reservation, so hand it back. Best effort and
+    // logged: a refund that fails leaves the day's ceiling wrong in the
+    // direction that costs money rather than the direction that loses a demo.
+    await releaseSitting();
     // `sessionId` is unique: a racing start got there first. Hand back what it
     // made rather than an internal error — pressing a button twice is not a
     // failure the visitor should read about.
@@ -182,11 +200,12 @@ export async function startObserverMode(opts: {
   const now = opts.now ?? new Date();
   const sandbox = await loadSandbox(opts.tenantId);
 
-  const open = await liveRunForGrant(opts.demoGrantId);
+  const open = await alreadyOpen(opts.demoGrantId);
   if (open?.mode === 'observer') return { run: open, portalUrl: null };
-  if (!(await holdStartSlot(opts.demoGrantId, 'observer'))) {
-    const racing = await liveRunForGrant(opts.demoGrantId);
-    if (racing) return { run: racing, portalUrl: null };
+  if (open) throw new HttpError(409, 'You already have a demo interview open.', 'already_open');
+  if (!(await holdStartSlot(opts.demoGrantId))) {
+    const racing = await alreadyOpen(opts.demoGrantId);
+    if (racing?.mode === 'observer') return { run: racing, portalUrl: null };
     throw new HttpError(409, 'This demo interview is already starting.', 'already_starting');
   }
 

@@ -85,20 +85,39 @@ export async function finishDemoRun(run: DemoRunRow, reason: 'cap' | 'demo_ended
   }
 
   const state = (await prisma.interviewSession.findUnique({ where: { id: run.sessionId }, select: { state: true } }))?.state ?? session.state;
-  if (!FINALIZABLE.has(state)) return 'not_finalizable';
+  if (!FINALIZABLE.has(state)) {
+    // Past finalising is not the same as never finalised. A session already in
+    // REVIEW_READY has the assessment this sitting promised, so the sitting is
+    // assessed — reporting it as "could not be finalised" would file a demo
+    // that worked as one that did not.
+    return (await hasAssessment(run.sessionId)) ? finishAsAssessed(run.id) : 'not_finalizable';
+  }
 
   try {
     await finalizeInterview(run.sessionId);
     await noteStageForRun(run.id, 'assessed');
     return 'assessed';
   } catch (err) {
-    // The interviewer's own failure, not the visitor's. The sitting is already
-    // closed; only the reason is corrected, so the owner's console does not
-    // read our outage as a prospect who gave up.
+    // NOT EVERY THROW IS A FAILURE. `finalizeInterview` holds its own mutex on
+    // the session, and it refuses a second caller — which can be an ordinary
+    // finalisation from the portal or the socket, already producing exactly
+    // the assessment we wanted. Filing that as our outage would put an
+    // engine failure on a demo that worked. The assessment is the evidence,
+    // so it is what gets looked at before anything is written down.
+    if (await hasAssessment(run.sessionId)) return finishAsAssessed(run.id);
     logger.error({ err: err instanceof Error ? err.message : String(err), runId: run.id }, 'Could not finalise a demo interview');
     await prisma.demoInterviewRun.updateMany({ where: { id: run.id }, data: { endReason: 'engine_unavailable' } });
     return 'failed';
   }
+}
+
+async function hasAssessment(sessionId: string): Promise<boolean> {
+  return (await prisma.assessmentVersion.count({ where: { sessionId } })) > 0;
+}
+
+async function finishAsAssessed(runId: string): Promise<DemoFinishOutcome> {
+  await noteStageForRun(runId, 'assessed');
+  return 'assessed';
 }
 
 /** Nobody has answered for long enough that the tab is probably closed. */

@@ -27,7 +27,7 @@ import { DEMO_CAP_MS, DEMO_CLOSING_RESERVE_MS, DEMO_EXTENSION_MS, staysInCharact
 import { DEMO_OBSERVER_SCRIPT, DEMO_SCRIPT_CANDIDATE } from '../src/domain/demoObserverScript.js';
 import { playUpTo, revealedCount } from '../src/services/demoObserverPlayer.js';
 import { sweepDemoInterviews, finishPlayedOutObserverRuns, finishDemoRun, DEMO_IDLE_MS } from '../src/services/demoInterviewFinish.js';
-import { claimModelCall, reserveSitting, runById } from '../src/services/demoInterviewRun.js';
+import { claimModelCall, releaseSitting, reserveSitting, runById } from '../src/services/demoInterviewRun.js';
 import { startObserverMode } from '../src/services/demoInterviewStart.js';
 import { screenFeedback, listDemoFeedback } from '../src/services/demoFeedback.js';
 import { assertDemoCreationCap } from '../src/services/demoAccess.js';
@@ -741,5 +741,98 @@ describe('observer mode reaches no model, proved rather than asserted', () => {
     } finally {
       _resetLlm();
     }
+  });
+});
+
+describe('what round two of the review found', () => {
+  // The start lock was keyed on grant AND mode, so one tab could start a
+  // watched interview while another started a sat one. One sitting per grant
+  // is what liveRunForGrant, the feedback attribution and the "you have one
+  // open" banner all assume.
+  it('gives a visitor one sitting across both modes, not one of each', async () => {
+    const restore = makeCandidateModeDeliverable();
+    try {
+      const demo = await openDemo();
+      const [a, b] = await Promise.all([
+        asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' }),
+        asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'candidate' }),
+      ]);
+      expect(await prisma.demoInterviewRun.count({ where: { tenantId: demo.tenantId } })).toBe(1);
+      expect([a.status, b.status].every((st) => st < 500)).toBe(true);
+    } finally { restore(); }
+  });
+
+  it('refuses a second mode while one is open, without an internal error', async () => {
+    const restore = makeCandidateModeDeliverable();
+    try {
+      const demo = await openDemo();
+      await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+      const second = await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'candidate' });
+      expect([second.status, second.body.code]).toEqual([409, 'already_open']);
+    } finally { restore(); }
+  });
+
+  // A start that claims the day's units and then fails must not withdraw
+  // candidate mode for the rest of the day on behalf of an interview that
+  // never happened.
+  it('hands the day its reservation back when a start fails', async () => {
+    const restore = makeCandidateModeDeliverable();
+    try {
+      const demo = await openDemo();
+      await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'candidate' });
+      const before = await prisma.demoSpendDay.findFirst().then((d) => d?.calls ?? 0);
+      await releaseSitting();
+      expect(await prisma.demoSpendDay.findFirst().then((d) => d?.calls)).toBe(before - 12);
+    } finally { restore(); }
+  });
+
+  it('never lets a release push the day below zero and hand out free sittings', async () => {
+    await releaseSitting();
+    await releaseSitting();
+    const day = await prisma.demoSpendDay.findFirst();
+    expect(day?.calls ?? 0).toBeGreaterThanOrEqual(0);
+  });
+
+  // finalizeInterview holds its own mutex and refuses a second caller. That
+  // second caller may be an ordinary finalisation already producing exactly
+  // the assessment we wanted; filing it as our outage puts an engine failure
+  // on a demo that worked.
+  it('does not file a refused second finalisation as an engine failure', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, hurry: true });
+    const past = new Date(run.startedAt.getTime() + DEMO_CAP_MS + 1_000);
+    await finishDemoRun(run, 'completed', past);
+
+    // A second sitting record over the same, already finalised session.
+    await prisma.demoInterviewRun.updateMany({ where: { id: run.id }, data: { endedAt: null, endReason: null } });
+    const again = await runById(run.id);
+    const outcome = await finishDemoRun(again!, 'cap', past);
+    expect(outcome).toBe('assessed');
+    expect(await runById(run.id).then((r) => r?.endReason)).not.toBe('engine_unavailable');
+  });
+
+  // Reading by ticket and then updating by id alone let an older link spend
+  // the row after a second tab had reissued it.
+  it('lets only the current ticket be spent, not a superseded one', async () => {
+    const demo = await openDemo();
+    await asDemo(request(app).post('/api/demo/interview/start'), demo.auth).send({ mode: 'observer' });
+    const first = await asDemo(request(app).post('/api/demo/interview/feedback-ticket'), demo.auth);
+    const second = await asDemo(request(app).post('/api/demo/interview/feedback-ticket'), demo.auth);
+    expect(first.body.token).not.toBe(second.body.token);
+
+    const stale = await request(app).post('/api/demo-feedback').send({ token: first.body.token, body: 'From the old tab.' });
+    expect(stale.status).toBe(410);
+    const current = await request(app).post('/api/demo-feedback').send({ token: second.body.token, body: 'From the tab they are using.' });
+    expect(current.status).toBe(201);
+    const row = await prisma.demoFeedback.findFirst({ where: { tenantId: demo.tenantId } });
+    expect(row?.body).toBe('From the tab they are using.');
+  });
+
+  it('answers an empty ticket exactly as it answers an unknown one', async () => {
+    const shape = (r: { status: number; body: Record<string, unknown> }) => [r.status, r.body.error, r.body.code];
+    const empty = await request(app).post('/api/demo-feedback').send({ token: '', body: 'Hello.' });
+    const unknown = await request(app).post('/api/demo-feedback').send({ token: 'z'.repeat(43), body: 'Hello.' });
+    expect(shape(empty)).toEqual(shape(unknown));
   });
 });

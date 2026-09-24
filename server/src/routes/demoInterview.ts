@@ -245,7 +245,7 @@ const feedbackSchema = z.object({
   // validation error and a well-formed unknown one with 410 — which is a way
   // to learn the shape of a real ticket. Every unusable ticket, of any shape,
   // is answered by submitFeedback with the same 410.
-  token: z.string().min(1).max(512),
+  token: z.string().max(512),
   body: z.string().min(1).max(4_000),
   /**
    * 'spoken' means the browser's own recogniser produced these words. What is
