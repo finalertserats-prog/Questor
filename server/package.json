@@ -25,6 +25,7 @@
     "library:worker": "tsx src/library/workerMain.ts",
     "library:smoke": "node scripts/library-smoke.mjs",
     "llm:bench": "node scripts/llm-bench.mjs",
+    "jd:bench": "tsx bench/jd/run.ts",
     "library:seed-export": "tsx src/library/seedExportMain.ts",
     "artifacts:encrypt": "tsx src/services/artifactBackfillMain.ts",
     "library:seed-import": "tsx src/library/seedImportMain.ts",
@@ -33,6 +34,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "@types/pdfkit": "^0.17.6",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -44,6 +46,7 @@
     "nanoid": "^5.0.9",
     "nodemailer": "^9.0.3",
     "pdf-parse": "^1.1.1",
+    "pdfkit": "^0.20.2",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
     "socket.io": "^4.8.1",

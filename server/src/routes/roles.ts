@@ -22,6 +22,7 @@ import { roleCompetenciesRouter } from './roleCompetencies.js';
 import { scorecardWarnings } from '../domain/scorecardEdits.js';
 import { competencyIdsWithHistory } from '../services/competencyHistory.js';
 import { latestScorecard, writeScorecardProfile } from '../services/scorecardVersions.js';
+import { exportFilename, roleScorecardPdf } from '../services/roleScorecardPdf.js';
 import { roleTechStackRouter, techStackToolsRouter } from './roleTechStack.js';
 import { roleCandidatesRouter, roleShortlistRouter } from './roleCandidates.js';
 import { techStackInputSchema, techStackNames } from '../domain/techStack.js';
@@ -369,6 +370,58 @@ rolesRouter.get('/:id/validate', requireCapability('role:read'), asyncHandler(as
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   const extraction = extractRoleHeuristic(role.sourceText, role.title);
   res.json({ jdWarnings: extraction.jdWarnings });
+}));
+
+// The approved scorecard as a PDF someone can file, print or forward.
+//
+// Rendering a document costs far more than reading one, so it is metered like
+// the other expensive role routes, per user rather than per address — an office
+// shares one IP.
+const roleExportLimit = rateLimit({ name: 'role-export-pdf', windowMs: 15 * 60_000, max: 60, keyOf: (req) => req.auth?.userId ?? req.ip ?? 'unknown' });
+
+// `role:read` and nothing narrower: this document says exactly what the role
+// page already shows to whoever may open the requisition, so inventing an
+// export-only capability would have left the same content readable through two
+// gates with different answers. A demo sandbox holds `role:read` too and is
+// deliberately not excluded — exporting its own sample role spends nothing, and
+// a demo that cannot finish the story is not a demo. Scope still decides WHICH
+// role, so a sandbox reaches only its own.
+rolesRouter.get('/:id/export.pdf', requireCapability('role:read'), roleExportLimit, asyncHandler(async (req, res) => {
+  const role = await assertCanAccessRole(req.auth!, req.params.id);
+  const latest = await prisma.roleScorecardVersion.findFirst({ where: { roleId: role.id }, orderBy: { version: 'desc' } });
+  // A draft is a work in progress that anyone may still change. Exporting one
+  // puts a version nobody signed off into a file that outlives this screen and
+  // carries no hint that it was provisional.
+  if (!latest || latest.status !== 'approved') {
+    throw new HttpError(409, 'Only an approved scorecard can be exported. Approve this role’s scorecard, then download it.', 'scorecard_not_approved');
+  }
+  const [tenant, approver] = await Promise.all([
+    prisma.tenant.findUnique({ where: { id: role.tenantId }, select: { name: true } }),
+    latest.approvedById
+      ? prisma.user.findUnique({ where: { id: latest.approvedById }, select: { name: true, email: true } })
+      : Promise.resolve(null),
+  ]);
+  const profile = parseJsonStrict<RoleSuccessProfile>(latest.profileJson, { model: 'RoleScorecardVersion', id: latest.id, field: 'profileJson' });
+  const pdf = await roleScorecardPdf({
+    organisation: tenant?.name ?? '',
+    role: { title: role.title, level: role.level, location: role.location, employmentType: role.employmentType, sourceText: role.sourceText },
+    scorecard: { version: latest.version, approvedAt: latest.approvedAt, approvedBy: approver?.name?.trim() || approver?.email || null },
+    profile,
+    generatedAt: new Date(),
+  });
+  // `role.exported`, deliberately not `role.scorecard.exported`: the
+  // self-approval check reads every `role.scorecard.*` event on a version as an
+  // EDIT of it, so an export under that prefix would name the downloader as the
+  // draft's author.
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'role.exported',
+    entityType: 'Role', entityId: role.id, after: { format: 'pdf', version: latest.version },
+  });
+  // Set only now that the bytes exist: a refusal above still leaves the error
+  // handler free to answer JSON rather than a half-written attachment.
+  res.type('application/pdf');
+  res.set('Content-Disposition', `attachment; filename="${exportFilename(role.title, latest.version)}"`);
+  res.send(pdf);
 }));
 
 // The former `getRole(tenantId, id)` helper is gone rather than fixed in place:
