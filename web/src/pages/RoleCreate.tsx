@@ -15,9 +15,16 @@ import { stackNames, type TechStackItem } from '../components/techStackModel';
 import { useTechStackTools } from '../components/useTechStackTools';
 import { useToast } from '../components/Toast';
 import { SuggestedDraft } from '../components/drafts/SuggestedDraft';
+import { JdFileImport } from '../components/JdFileImport';
+import type { JdImport } from '../components/roleImportModel';
 import { useFieldDraft } from '../components/drafts/useFieldDraft';
 
-type Source = 'paste' | 'ats';
+/**
+ * Where the job description comes from. `file` and `paste` end in the same
+ * place — text in the same box, sent to the same create — so a file only ever
+ * changes how the words arrive, never what happens to them afterwards.
+ */
+type Source = 'paste' | 'file' | 'ats';
 interface Domain { readonly id: string; readonly name: string; readonly summary: string; readonly roleCount: number }
 /** What the shared catalog is showing this organisation, and what is behind it. */
 interface CatalogScope {
@@ -47,6 +54,8 @@ export function RoleCreate() {
   const [requisitionId, setRequisitionId] = useState('');
   const fieldId = useId();
   const [sourceText, setSourceText] = useState('');
+  // The last file read, kept so the page can show what it was beside what came out of it.
+  const [jdImport, setJdImport] = useState<JdImport | null>(null);
   const [title, setTitle] = useState('');
   const [useLlm, setUseLlm] = useState(true);
   const [domains, setDomains] = useState<readonly Domain[]>([]);
@@ -154,7 +163,8 @@ export function RoleCreate() {
   };
   const selectedDomain = domains.find((d) => d.id === domainId);
   const sourceReady = source === 'ats' ? isAtsId(requisitionId.trim()) : Boolean(sourceText.trim());
-  const missing = missingRoleFields({ source, sourceReady, domainId, experienceBand, regionCode });
+  // A file and a paste are the same thing to the readiness rules: both end as text.
+  const missing = missingRoleFields({ source: source === 'ats' ? 'ats' : 'paste', sourceReady, domainId, experienceBand, regionCode });
   const canSubmit = missing.length === 0;
 
   // The sample loads only into an empty form, and fills the title as well as
@@ -185,11 +195,13 @@ export function RoleCreate() {
         techStack: [...techStack],
         addToCatalog: offerCatalogAdd ? addToCatalog : false,
         jdDraftId: usedDraftId || undefined,
-        jdOrigin: jdOriginForSubmit({ source, sourceText, draftText: usedDraftText, describedUsed }),
+        jdOrigin: jdOriginForSubmit({ source: source === 'ats' ? 'ats' : 'paste', sourceText, draftText: usedDraftText, describedUsed }),
       };
+      // Whatever the source, the create call is the one it always was: the
+      // reviewed text as sourceText. sourceType only records how it arrived.
       const resp = await api.post<CreateResp>('/roles', source === 'ats'
         ? { sourceType: 'ats', atsRequisitionId: requisitionId.trim(), title: title.trim() || undefined, useLlm, ...catalogFields }
-        : { sourceType: 'paste', sourceText, title: title.trim() || undefined, useLlm, ...catalogFields });
+        : { sourceType: source, sourceText, title: title.trim() || undefined, useLlm, ...catalogFields });
       if (resp.jdWarnings && resp.jdWarnings.length) {
         // The warnings are about fairness in the wording someone is about to
         // interview against. 1200ms was never enough to read them, and the page
@@ -297,6 +309,10 @@ export function RoleCreate() {
             A job description
           </label>
           <label className="check-row">
+            <input type="radio" name="role-source" checked={source === 'file'} onChange={() => { setSource('file'); setError(''); }} />
+            A job description file
+          </label>
+          <label className="check-row">
             <input type="radio" name="role-source" checked={source === 'ats'} onChange={() => { setSource('ats'); setError(''); }} />
             A requisition in your ATS
           </label>
@@ -374,7 +390,7 @@ export function RoleCreate() {
         <label htmlFor={`${fieldId}-tech`}>Tech stack (optional)</label>
         <TechStackEditor idPrefix={fieldId} value={techStack} onChange={setTechStack} catalog={techTools.catalog} />
         <div className="row" style={{ gap: 10, alignItems: 'center', marginTop: 6 }}>
-          {source === 'paste' && (
+          {source !== 'ats' && (
             <button type="button" className="btn secondary sm" onClick={() => void detectFromJd()} disabled={techTools.detecting || !sourceText.trim()} data-testid="tech-stack-detect">
               <Icon name={techTools.detecting ? 'hourglass' : 'sparkle'} size={14} />{techTools.detecting ? 'Reading…' : 'Suggest from the job description'}
             </button>
@@ -427,6 +443,16 @@ export function RoleCreate() {
           </section>
         )}
 
+        {source === 'file' && (
+          <JdFileImport
+            fieldId={fieldId}
+            text={sourceText}
+            onTextChange={(next) => { setSourceText(next); setUsedDraftId(''); setUsedDraftText(''); setDescribedUsed(false); }}
+            imported={jdImport}
+            onImported={setJdImport}
+          />
+        )}
+
         {source === 'ats' ? (
           <>
             <label htmlFor={`${fieldId}-req`}>ATS requisition id</label>
@@ -441,7 +467,7 @@ export function RoleCreate() {
             />
             <div className="muted small">Imported from your organisation's own ATS. Importing the same requisition again opens the role it already made.</div>
           </>
-        ) : (
+        ) : source === 'file' ? null : (
           <>
             <label htmlFor={`${fieldId}-jd`}>Job description</label>
             <textarea
