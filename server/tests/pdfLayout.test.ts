@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderTextItems, type TextItem } from '../src/engines/pdfLayout.js';
+import { pdfRead, renderTextItems, type TextItem } from '../src/engines/pdfLayout.js';
 
 /**
  * Rebuilding a PDF page's lines from where its glyphs actually sit.
@@ -163,5 +163,64 @@ describe('a right-aligned date column is not a second column', () => {
     const lines = renderTextItems(datedRoles).split('\n');
     expect(lines.findIndex((l) => l.includes('Gartner')))
       .toBeLessThan(lines.findIndex((l) => l.includes('Redington')));
+  });
+});
+
+describe('a page that cannot be read', () => {
+  /**
+   * pdf-parse wraps the page renderer in a catch of its own and carries on, so
+   * a page that fails to read contributes nothing and the parse still reports
+   * success. A three-page job advert whose second page fails comes back as a
+   * perfectly plausible advert with its requirements missing — and everything
+   * built on it is confidently wrong, properly cited from the half that
+   * survived. Nothing looks wrong, which is what makes it worse than a scan
+   * that produces nothing at all.
+   */
+  const workingPage = {
+    getTextContent: () => Promise.resolve({
+      items: [{ str: 'Senior Data Engineer', transform: [1, 0, 0, 1, 20, 700], width: 90, height: 10 }],
+    }),
+  };
+  const brokenPage = {
+    getTextContent: () => Promise.reject(new Error('stream decode failed')),
+  };
+
+  it('is counted, so the caller can refuse the document', async () => {
+    const read = pdfRead();
+    await read.render(workingPage);
+    await read.render(brokenPage);
+    expect(read.failedPages()).toBe(1);
+  });
+
+  it('counts nothing when every page reads', async () => {
+    const read = pdfRead();
+    await read.render(workingPage);
+    await read.render(workingPage);
+    expect(read.failedPages()).toBe(0);
+  });
+
+  it('still returns a string, so pdf-parse is not derailed mid-document', async () => {
+    expect(await pdfRead().render(brokenPage)).toBe('');
+  });
+
+  it('counts per document, because two uploads can be in flight at once', async () => {
+    const mine = pdfRead();
+    const theirs = pdfRead();
+    await mine.render(brokenPage);
+    await theirs.render(workingPage);
+    expect([mine.failedPages(), theirs.failedPages()]).toEqual([1, 0]);
+  });
+
+  it('keeps a page it cannot lay out, rather than losing it', async () => {
+    // Laying out is not reading. An item with no usable position is dropped by
+    // the layout pass, and the plain reading is what saves the page.
+    const oddPage = {
+      getTextContent: () => Promise.resolve({
+        items: [{ str: 'Requirements', transform: [1, 0, 0, 1, NaN, NaN], width: 50, height: 10 }],
+      }),
+    };
+    const read = pdfRead();
+    expect(await read.render(oddPage)).toBe('Requirements');
+    expect(read.failedPages()).toBe(0);
   });
 });

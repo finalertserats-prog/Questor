@@ -250,28 +250,48 @@ export function renderTextItems(items: readonly TextItem[]): string {
 }
 
 /**
- * The page renderer pdf-parse takes as an option.
+ * A page renderer for pdf-parse, and a count of the pages it could not read.
  *
- * A failure here must not cost the page. Returning '' — which this did —
- * silently deletes it: a three-page CV comes back as two pages of text, the
- * recruiter is shown a shorter history than the candidate wrote, and nothing
- * anywhere says a page went missing. So a failure falls back to joining the
- * items plainly, which is pdf-parse's own reading and the behaviour we had
- * before this module existed. A badly laid out page still beats no page.
+ * One renderer per document, because the count belongs to that document and
+ * two uploads can be in flight at once.
+ *
+ * The count exists because a lost page is invisible otherwise. pdf-parse wraps
+ * the renderer in `.catch(() => "")` of its own, so a page that fails to read
+ * contributes nothing and the parse still reports success — a three-page job
+ * advert whose second page fails comes through as a perfectly plausible job
+ * description with its requirements missing, and a scorecard is then built
+ * confidently on half an advert, every extracted competency properly cited
+ * from the half that survived. Nothing looks wrong. That is worse than the
+ * scanned-PDF case, which at least produces nothing at all.
+ *
+ * So the caller asks afterwards, and refuses a document that lost a page
+ * rather than working from what is left.
  */
-export function pdfPageRenderer(page: {
-  getTextContent: (opts: Record<string, boolean>) => Promise<{ items: TextItem[] }>;
-}): Promise<string> {
-  return page
-    .getTextContent({ normalizeWhitespace: false })
-    .then((content) => {
-      try {
-        const laid = renderTextItems(content.items);
-        if (laid.trim()) return laid;
-      } catch {
-        // Fall through to the plain reading below.
-      }
-      return content.items.map((it) => cleanItemText(String(it?.str ?? ''))).join(' ').trim();
-    })
-    .catch(() => '');
+export interface PdfRead {
+  readonly render: (page: { getTextContent: (opts: Record<string, boolean>) => Promise<{ items: TextItem[] }> }) => Promise<string>;
+  /** Pages whose text could not be read at all. */
+  failedPages: () => number;
+}
+
+export function pdfRead(): PdfRead {
+  let failed = 0;
+  return {
+    failedPages: () => failed,
+    render: (page) => page
+      .getTextContent({ normalizeWhitespace: false })
+      .then((content) => {
+        try {
+          const laid = renderTextItems(content.items);
+          if (laid.trim()) return laid;
+        } catch {
+          // A page we cannot lay out is still a page we can read: fall back to
+          // the plain reading rather than losing it.
+        }
+        return content.items.map((it) => cleanItemText(String(it?.str ?? ''))).join(' ').trim();
+      })
+      .catch(() => {
+        failed += 1;
+        return '';
+      }),
+  };
 }

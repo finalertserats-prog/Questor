@@ -2,7 +2,7 @@ import mammoth from 'mammoth';
 import { HttpError } from '../middleware/index.js';
 import type { NormalizedProfile } from '../domain/types.js';
 import { extractCvFacts } from './cvFacts.js';
-import { pdfPageRenderer } from './pdfLayout.js';
+import { pdfRead } from './pdfLayout.js';
 import { totalExperienceYears } from './experienceSpan.js';
 import { matchSkills } from './skillVocabulary.js';
 
@@ -60,6 +60,14 @@ const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const UNREADABLE_MESSAGE =
   'Could not read the uploaded file. Please upload a text-based PDF, DOCX, or paste the resume text.';
 
+export const PAGE_LOST_MESSAGE =
+  'Part of that PDF could not be read, so some of it would have been missing. '
+  + 'Try saving it again from the original document, or paste the text instead.';
+
+const JD_PAGE_LOST_MESSAGE =
+  'Part of that PDF could not be read, so some of the job description would be missing. '
+  + 'Try saving it again from the original document, or paste the text instead.';
+
 function startsWith(buffer: Buffer, magic: Buffer): boolean {
   return buffer.length >= magic.length && buffer.subarray(0, magic.length).equals(magic);
 }
@@ -94,7 +102,14 @@ export async function extractResumeText(buffer: Buffer, declaredType: string): P
       // Our own page renderer, not pdf-parse's: see engines/pdfLayout.ts for
       // the two-column CVs and side-by-side date strips its default reading
       // turned into nonsense.
-      const data = await pdfParse(buffer, { pagerender: pdfPageRenderer });
+      const read = pdfRead();
+      const data = await pdfParse(buffer, { pagerender: read.render });
+      // pdf-parse swallows a page that fails to read and carries on, so a
+      // document can come back looking complete with a page missing from it.
+      // A CV without its second page reads as a shorter career; a job advert
+      // without its second page reads as a shorter list of requirements, and
+      // everything built on it is confidently wrong. Refuse it instead.
+      if (read.failedPages() > 0) throw new HttpError(422, PAGE_LOST_MESSAGE);
       return capped(String(data.text ?? ''));
     }
     if (declaredType === DOCX_MIME) {
@@ -142,6 +157,10 @@ export async function extractJdText(buffer: Buffer, declaredType: string): Promi
     // requisition is not pasting a resume, and must be told what to do next in
     // words that fit what they are doing.
     if (err instanceof HttpError && err.message === UNREADABLE_MESSAGE) throw new HttpError(400, JD_UNREADABLE_MESSAGE);
+    // A lost page is the same fault on both paths, but "some of it" reads
+    // oddly about an advert, and somebody uploading a requisition is not
+    // pasting a CV.
+    if (err instanceof HttpError && err.message === PAGE_LOST_MESSAGE) throw new HttpError(422, JD_PAGE_LOST_MESSAGE);
     throw err;
   }
 }
