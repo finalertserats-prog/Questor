@@ -313,6 +313,11 @@ export async function eraseCandidate(o: {
     await count('shortlistings', () => tx.candidateShortlist.deleteMany({ where: { candidateId: o.candidateId } }));
     // The link says which ATS record this person is; it goes with them.
     await count('atsLinks', () => tx.candidateAtsLink.deleteMany({ where: { candidateId: o.candidateId } }));
+    // Every badge and certificate struck for this person, on any role. The
+    // frozen evidence rows name them and say what they did, so an erasure that
+    // left them would leave a public verification page still answering for
+    // someone Questor has been told to forget.
+    await count('awards', () => tx.candidateAward.deleteMany({ where: { candidateId: o.candidateId } }));
     // Belt and braces alongside the session cascade: these rows also key on the
     // candidate, so a row whose session was already gone would otherwise block
     // the delete below.

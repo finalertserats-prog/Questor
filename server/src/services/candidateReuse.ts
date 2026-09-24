@@ -10,6 +10,7 @@ import { logAudit } from './audit.js';
 import { emitEvent } from './webhooks.js';
 import { normalizeEmail } from './userEmail.js';
 import { cvFactsFor, resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
+import { awardBronze, noteAwards } from './candidateAwards.js';
 import type { AuthClaims } from './auth.js';
 
 /**
@@ -213,12 +214,24 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
     const stored = resume && scoring && facts
       ? await storeResumeProfile(tx, { tenantId: auth.tenantId, candidateId: candidate.id, ...resume, scoring, facts })
       : null;
+    // A new application is a fresh reading against a different role's
+    // scorecard, so it earns its own Bronze — awards are per (candidate, role),
+    // as the source application's badge says nothing about this one.
+    //
+    // No retry around the tier key here, unlike the resume path: the candidate
+    // row is created inside this transaction, so each attempt strikes against
+    // an id no other attempt has, and two applies for the same person on the
+    // same role are already stopped by the duplicate check above.
+    const awards = stored
+      ? await awardBronze(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, fitScoreJson: JSON.stringify(stored.fit) })
+      : [];
     const events: PipelineEvent[] = stored ? ['candidate.onboarded', 'candidate.profiled'] : ['candidate.onboarded'];
     const started = await startPipeline(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, events });
     const atsLinks = await copyAtsLinks(tx, { tenantId: auth.tenantId, fromCandidateId: source.id, toCandidateId: candidate.id, roleId, actorId: auth.userId });
-    return { kind: 'created' as const, candidate, stored, started, atsLinks };
+    return { kind: 'created' as const, candidate, stored, started, atsLinks, awards };
   });
   if (outcome.kind === 'exists') return outcome;
+  await noteAwards({ tenantId: auth.tenantId, actorId: null, candidateId: outcome.candidate.id, awards: outcome.awards });
   await recordApplied(auth, source.id, outcome);
   return { kind: 'created', candidate: outcome.candidate, profileCopied: outcome.stored !== null, fit: outcome.stored?.fit ?? null };
 }

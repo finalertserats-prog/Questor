@@ -46,6 +46,7 @@ import { reportsRouter } from './routes/reports.js';
 import { connectorsRouter } from './routes/connectors.js';
 import { atsConnectionRouter } from './routes/atsConnection.js';
 import { candidateAtsRouter } from './routes/candidateAts.js';
+import { candidateAwardsRouter } from './routes/candidateAwards.js';
 import { observerConsentRouter, observerRouter } from './routes/observer.js';
 import { libraryRouter, libraryStatusRouter } from './routes/library.js';
 import { libraryAdminRouter } from './routes/libraryAdmin.js';
@@ -379,8 +380,10 @@ export function createApp() {
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidateAtsRouter);
-  // Before candidatesRouter, whose /:id routes would otherwise claim these.
+  // Both before candidatesRouter, whose /:id routes would otherwise claim
+  // these paths.
   app.use('/api/candidates', candidateSmeRouter);
+  app.use('/api/candidates', candidateAwardsRouter);
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/candidate-imports', candidateImportsRouter);
   app.use('/api/interviews', interviewsRouter);

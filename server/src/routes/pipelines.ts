@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import { z } from 'zod';
-import type { CandidatePipeline, InterviewRound } from '@prisma/client';
+import type { CandidatePipeline, InterviewRound, Prisma } from '@prisma/client';
 import { prisma, parseJsonOptional, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireAnyCapability, requireCapability, HttpError } from '../middleware/index.js';
 import {
@@ -32,6 +32,7 @@ import {
 import { scorecardForFit } from '../services/scorecards.js';
 import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
 import { decidePipeline } from '../services/pipelineAutonomy.js';
+import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from '../services/candidateAwards.js';
 import { humanReviewCheck } from '../services/humanReviewGate.js';
 import { humanReviewRefusal, HUMAN_REVIEW_REQUIRED } from '../domain/humanReviewRule.js';
 import {
@@ -245,6 +246,32 @@ export function labelOf(stages: readonly PipelineStage[], key: string): string {
 
 const DECIDED = 'A decision has already been recorded for this pipeline.';
 
+/**
+ * What a move reports about the badges it struck. The verification token is
+ * never here: it is the key to a public page, and this response travels to
+ * every screen that moves a candidate.
+ */
+function presentAward(award: StruckAward) {
+  return { tier: award.tier, reference: award.reference };
+}
+
+const MOVED_UNDER_YOU = 'This pipeline changed while you were working on it. Reload and try again.';
+
+/**
+ * Run a move and the badges it earns as one transaction, and answer a tier
+ * that was struck by someone else in the meantime as the contention it is.
+ * Without this the person who lost the race is shown a 500 for a pipeline that
+ * is in a perfectly good state.
+ */
+async function moveAndAward(run: (tx: Prisma.TransactionClient) => Promise<StruckAward[]>): Promise<StruckAward[]> {
+  try {
+    return await prisma.$transaction(run);
+  } catch (err) {
+    if (isAwardConflict(err)) throw new HttpError(409, MOVED_UNDER_YOU);
+    throw err;
+  }
+}
+
 pipelinesRouter.post('/', requireCapability('interview:create'), asyncHandler(async (req, res) => {
   const { candidateId } = z.object({ candidateId: z.string().min(1) }).parse(req.body);
   const tenantId = req.auth!.tenantId;
@@ -325,20 +352,34 @@ pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyn
   if (!next) throw new HttpError(409, 'This candidate is already at the final stage.');
   if (toStageKey !== next) throw new HttpError(409, `Stages run in order; the next stage is ${labelOf(stages, next)}.`);
 
-  // Conditional on the stage we read, so two people advancing at once cannot both succeed.
-  const moved = await prisma.candidatePipeline.updateMany({
-    where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: pipeline.currentStageKey },
-    data: { currentStageKey: next },
+  // The move and the badges it earns commit together or not at all. A journey
+  // showing a candidate at Gold with no Silver badge, or a Silver badge for a
+  // move that rolled back, is a record that contradicts itself with nothing to
+  // say which half is right.
+  const awards = await moveAndAward(async (tx) => {
+    // Conditional on the stage we read, so two people advancing at once cannot both succeed.
+    const moved = await tx.candidatePipeline.updateMany({
+      where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: pipeline.currentStageKey },
+      data: { currentStageKey: next },
+    });
+    if (moved.count !== 1) throw new HttpError(409, MOVED_UNDER_YOU);
+    return awardOnPromotion(tx, {
+      tenantId: req.auth!.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId,
+      stages, fromStageKey: pipeline.currentStageKey, toStageKey: next, actorId: req.auth!.userId,
+    });
   });
-  if (moved.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.advanced', entityType: 'CandidatePipeline', entityId: pipeline.id,
+    // What this move struck is not repeated here: each badge writes its own
+    // award.struck event, with the reference a holder would quote. Two records
+    // of one fact is two things to keep in step.
     before: { stage: pipeline.currentStageKey }, after: { stage: next },
   });
+  await noteAwards({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, candidateId: pipeline.candidateId, awards });
   const fresh = await reload(pipeline.id);
-  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)) });
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), awards: awards.map(presentAward) });
 }));
 
 interface SchedulingNotice {
@@ -797,19 +838,29 @@ pipelinesRouter.post('/:id/finalize', requireCapability('assessment:review'), as
     throw new HttpError(409, humanReviewRefusal(review.missing), HUMAN_REVIEW_REQUIRED);
   }
 
-  const moved = await prisma.candidatePipeline.updateMany({
-    where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: transition.from },
-    data: { currentStageKey: transition.to },
+  // Finalising earns Diamond, and the tier it leaves where that tier is Gold —
+  // one move, two badges, one transaction. A finalisation from Silver skips
+  // Gold: nobody interviewed them at Gold, so no Gold certificate may claim it.
+  const awards = await moveAndAward(async (tx) => {
+    const moved = await tx.candidatePipeline.updateMany({
+      where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: transition.from },
+      data: { currentStageKey: transition.to },
+    });
+    if (moved.count !== 1) throw new HttpError(409, MOVED_UNDER_YOU);
+    return awardOnPromotion(tx, {
+      tenantId: req.auth!.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId,
+      stages, fromStageKey: transition.from, toStageKey: transition.to, actorId: req.auth!.userId,
+    });
   });
-  if (moved.count !== 1) throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
     action: 'pipeline.finalized', entityType: 'CandidatePipeline', entityId: pipeline.id,
     before: { stage: transition.from }, after: { stage: transition.to, humanReview: review.record },
   });
+  await noteAwards({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, candidateId: pipeline.candidateId, awards });
   const fresh = await reload(pipeline.id);
-  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)) });
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), awards: awards.map(presentAward) });
 }));
 
 const decisionSchema = z.object({
@@ -858,7 +909,7 @@ pipelinesRouter.post('/:id/decision', requireCapability('assessment:review'), as
     throw new HttpError(409, 'This pipeline changed while you were working on it. Reload and try again.');
   }
   const fresh = await reload(pipeline.id);
-  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), effect: result.effect });
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), effect: result.effect, awards: result.awards.map(presentAward) });
 }));
 
 interface StageSummary extends PipelineStage {

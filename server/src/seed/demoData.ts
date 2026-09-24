@@ -147,6 +147,10 @@ export async function wipe(): Promise<void> {
   await prisma.roundInterviewer.deleteMany();
   await prisma.interviewRound.deleteMany();
   await prisma.candidatePipeline.deleteMany();
+  // Badges struck for the people being wiped. Left behind, they keep the
+  // (candidate, role, tier) and reference keys occupied, so the next fixture's
+  // promotion silently strikes nothing.
+  await prisma.candidateAward.deleteMany();
   // Assignment rows hold foreign keys onto Candidate, Role and User, so they
   // must go before their targets or the deletes below fail on a constraint.
   await prisma.candidateAssignment.deleteMany();

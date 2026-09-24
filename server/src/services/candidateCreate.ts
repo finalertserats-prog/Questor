@@ -1,5 +1,6 @@
 import type { Candidate, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
+import { logger } from '../logger.js';
 import { assertCanAccessRole, assignCandidate } from './access.js';
 import { assertDemoCreationCap } from './demoAccess.js';
 import { assertRoleOpen } from './roleOpen.js';
@@ -9,6 +10,7 @@ import { emitEvent } from './webhooks.js';
 import { notePipelineEvent } from './pipelineAutonomy.js';
 import { normalizeEmail } from './userEmail.js';
 import { cvFactsFor, resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
+import { awardBronze, isAwardConflict, noteAwards } from './candidateAwards.js';
 import type { AuthClaims } from './auth.js';
 
 /**
@@ -101,12 +103,39 @@ export async function attachResume(
   // Reading the CV can call the configured model; it happens here, before the
   // transaction, so a slow provider cannot hold a write transaction open.
   const facts = await cvFactsFor(resume.rawText);
-  const stored = await prisma.$transaction(async (tx) => {
+  // Bronze is earned here, not by any move: the CV has been read against an
+  // approved scorecard and a fit computed, and no person did either. Struck in
+  // the same transaction as the profile it is evidence of — a badge whose
+  // reading rolled back would certify nothing. A reading measured against an
+  // unapproved draft strikes nothing at all.
+  const writeProfile = (strikeBronze: boolean) => prisma.$transaction(async (tx) => {
     const result = await storeResumeProfile(tx, { tenantId: auth.tenantId, candidateId: candidate.id, ...resume, scoring, facts });
     if (opts.onStored) await opts.onStored(tx);
-    return result;
+    const struck = strikeBronze && candidate.roleId
+      ? await awardBronze(tx, {
+        tenantId: auth.tenantId, candidateId: candidate.id, roleId: candidate.roleId,
+        fitScoreJson: JSON.stringify(result.fit),
+      })
+      : [];
+    return { stored: result, awards: struck };
   }, { timeout: STORE_TIMEOUT_MS });
+
+  // Two uploads for the same person landing together both find no Bronze and
+  // both try to strike one; the loser's insert fails the tier key and — on
+  // Postgres, where a failed statement aborts the transaction — would take the
+  // whole profile write with it. A resume upload must not fail because a badge
+  // the candidate already holds could not be struck twice, so the profile is
+  // written again without the attempt. Nothing was committed by the first try,
+  // so this leaves one profile version, not two.
+  const { stored, awards } = await writeProfile(true).catch((err: unknown) => {
+    if (!isAwardConflict(err)) throw err;
+    logger.info({ candidateId: candidate.id }, 'Bronze was struck by a concurrent upload; storing this profile version without it');
+    return writeProfile(false);
+  });
   await logAudit({ tenantId: auth.tenantId, actorId: auth.userId, actorType: 'user', action: 'candidate.parsed', entityType: 'Candidate', entityId: candidate.id });
+  // Bronze carries no person's name, so the trail records it as the system's
+  // act. That absence is the fact the certificate exists to make visible.
+  await noteAwards({ tenantId: auth.tenantId, actorId: null, candidateId: candidate.id, awards });
   await emitEvent(auth.tenantId, 'candidate.parsed', { candidateId: candidate.id, fit: stored.fit.overall });
   await notePipelineEvent({ tenantId: auth.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'candidate.profiled', trigger: 'candidate.parsed' });
   return stored;

@@ -1,4 +1,4 @@
-import type { CandidatePipeline } from '@prisma/client';
+import type { CandidatePipeline, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
@@ -10,6 +10,7 @@ import {
 import { decisionOfVerdict, type Verdict } from '../domain/verdict.js';
 import { outcomeNeedsHumanReview, type UnreviewedInterview } from '../domain/humanReviewRule.js';
 import { humanReviewCheck, type HumanReviewRecord } from './humanReviewGate.js';
+import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from './candidateAwards.js';
 
 /**
  * Applies the autonomous journey (domain/pipelineAutonomy.ts) to the database.
@@ -114,6 +115,26 @@ export async function notePipelineEvent(o: PipelineEventInput): Promise<void> {
 
 export type DecisionSource = 'review' | 'pipeline';
 
+interface MoveAndAwardOutcome {
+  readonly written: { readonly count: number };
+  readonly awards: StruckAward[];
+}
+
+/**
+ * The move and the badges it earns, as one transaction. Null when a tier was
+ * struck under us — another move for the same candidate landed first, which is
+ * contention and is reported as such rather than surfacing as a crash to
+ * whoever recorded the decision.
+ */
+async function runMoveAndAward(run: (tx: Prisma.TransactionClient) => Promise<MoveAndAwardOutcome>): Promise<MoveAndAwardOutcome | null> {
+  try {
+    return await prisma.$transaction(run);
+  } catch (err) {
+    if (isAwardConflict(err)) return null;
+    throw err;
+  }
+}
+
 export interface PipelineDecisionInput {
   readonly tenantId: string;
   readonly outcome: DecisionOutcome;
@@ -132,7 +153,7 @@ export interface PipelineDecisionInput {
 }
 
 export type DecisionResult =
-  | { readonly applied: true; readonly effect: DecisionEffect; readonly humanReview: HumanReviewRecord }
+  | { readonly applied: true; readonly effect: DecisionEffect; readonly humanReview: HumanReviewRecord; readonly awards: readonly StruckAward[] }
   | { readonly applied: false; readonly because: 'already_decided' | 'nothing_to_do' | 'contended' }
   // The candidate was promised a person would review their interview and none
   // has. Reported rather than thrown so every caller has to answer it: the
@@ -210,21 +231,47 @@ export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecis
     const effect = about ? resolveDecision(stages, pipeline.currentStageKey, o.outcome, about) : null;
     if (!effect || !about) return { applied: false, because: 'nothing_to_do' };
 
-    const written = effect.kind === 'advance'
-      ? await prisma.candidatePipeline.updateMany({
+    // An approval that advances a candidate is a person moving them, so it
+    // earns whatever tiers that move earns — Silver → Gold strikes Silver, and
+    // Gold → Diamond strikes Gold and Diamond together. Written in the same
+    // transaction as the move: a candidate shown at Gold with no Silver badge,
+    // or holding a badge for a move that rolled back, is a record that
+    // contradicts itself.
+    const outcome = await runMoveAndAward(async (tx) => {
+      if (effect.kind !== 'advance') {
+        return {
+          written: await tx.candidatePipeline.updateMany({
+            where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: effect.atStageKey },
+            data: {
+              status: 'DECIDED', decision: effect.outcome, decisionReason: o.reason,
+              decidedAtStageKey: effect.atStageKey, decidedById: o.actorId, decidedAt: new Date(),
+            },
+          }),
+          awards: [] as StruckAward[],
+        };
+      }
+      const moved = await tx.candidatePipeline.updateMany({
         where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: effect.from },
         data: { currentStageKey: effect.to },
-      })
-      : await prisma.candidatePipeline.updateMany({
-        where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: effect.atStageKey },
-        data: {
-          status: 'DECIDED', decision: effect.outcome, decisionReason: o.reason,
-          decidedAtStageKey: effect.atStageKey, decidedById: o.actorId, decidedAt: new Date(),
-        },
       });
+      if (moved.count !== 1) return { written: moved, awards: [] as StruckAward[] };
+      return {
+        written: moved,
+        awards: await awardOnPromotion(tx, {
+          tenantId: o.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId,
+          stages, fromStageKey: effect.from, toStageKey: effect.to, actorId: o.actorId,
+        }),
+      };
+    });
+    // A tier struck under us means another move landed first, which is the
+    // same answer the conditional update gives: reported, never a crash.
+    if (!outcome) return { applied: false, because: 'contended' };
+    const { written, awards } = outcome;
     if (written.count === 1) {
       await auditDecision(pipeline, o, effect, about, humanReview);
-      return { applied: true, effect, humanReview };
+      // After the commit, so the trail can never claim a badge that rolled back.
+      await noteAwards({ tenantId: o.tenantId, actorId: o.actorId, candidateId: pipeline.candidateId, awards });
+      return { applied: true, effect, humanReview, awards };
     }
     pipeline = await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipeline.id } });
   }
