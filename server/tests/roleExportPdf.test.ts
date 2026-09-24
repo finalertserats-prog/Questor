@@ -336,6 +336,29 @@ describe('GET /api/roles/:id/export.pdf', () => {
     expect(res.status).toBe(404);
   });
 
+  it('cuts off a runaway job description and says that it did', async () => {
+    // An ATS import copies the requisition description with no limit of its
+    // own, so this length is reachable without pasting it.
+    const runaway = `${'reliability '.repeat(5100)}TAIL-MARKER-NOT-RENDERED`;
+    await prisma.role.update({ where: { id: roleId }, data: { sourceText: runaway } });
+    await approve();
+
+    const text = await textOf((await getPdf(roleId, adminToken)).body);
+
+    expect([text.includes('is cut off here'), text.includes('TAIL-MARKER-NOT-RENDERED')]).toEqual([true, false]);
+  });
+
+  it('never prints an approver who belongs to another organisation', async () => {
+    await approve();
+    const stranger = await register('admin@elsewhere.local', 'Elsewhere Org');
+    const outsider = await prisma.user.findFirstOrThrow({ where: { id: stranger.userId } });
+    await prisma.roleScorecardVersion.updateMany({ where: { roleId }, data: { approvedById: outsider.id } });
+
+    const text = await textOf((await getPdf(roleId, adminToken)).body);
+
+    expect(text).not.toContain(outsider.email);
+  });
+
   it('keeps the approver row honest when the account has since been removed', async () => {
     await approve();
     await prisma.roleScorecardVersion.updateMany({ where: { roleId }, data: { approvedById: 'gone-user-id' } });

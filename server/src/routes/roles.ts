@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { prisma, parseJsonStrict } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { extractRole, extractRoleHeuristic } from '../engines/roleIntelligence.js';
+import { canonicaliseName } from '../engines/jdCompetencies.js';
+import { compareToCanonicalRole, domainTagFor } from '../domain/taxonomy/catalogMap.js';
+import { competencyKeyOf } from '../domain/calibration.js';
 import type { RoleSuccessProfile } from '../domain/types.js';
 import { roleSuccessProfileSchema } from '../domain/profileSchema.js';
 import { logAudit } from '../services/audit.js';
@@ -21,7 +24,7 @@ import { assertRoleOpen } from '../services/roleOpen.js';
 import { roleCompetenciesRouter } from './roleCompetencies.js';
 import { scorecardWarnings } from '../domain/scorecardEdits.js';
 import { competencyIdsWithHistory } from '../services/competencyHistory.js';
-import { latestScorecard, writeScorecardProfile } from '../services/scorecardVersions.js';
+import { latestScorecard, profileOf, writeScorecardProfile } from '../services/scorecardVersions.js';
 import { exportFilename, roleScorecardPdf } from '../services/roleScorecardPdf.js';
 import { roleTechStackRouter, techStackToolsRouter } from './roleTechStack.js';
 import { roleCandidatesRouter, roleShortlistRouter } from './roleCandidates.js';
@@ -124,9 +127,17 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   if (body.catalogRoleId && !catalogRole) throw new HttpError(400, 'Unknown or inactive catalog role.');
   if (catalogRole && !titleHint.trim()) titleHint = catalogRole.title;
   // Checked before extraction, which may spend on a paid model.
+  let domainName: string | null = null;
   if (!catalogRole && body.domainId) {
-    const domain = await prisma.catalogDomain.findFirst({ where: { id: body.domainId, status: 'active' }, select: { id: true } });
+    const domain = await prisma.catalogDomain.findFirst({ where: { id: body.domainId, status: 'active' }, select: { id: true, name: true } });
     if (!domain) throw new HttpError(400, 'Unknown or inactive catalog domain.');
+    domainName = domain.name;
+  }
+  // The domain the catalog role already sits in, so a role picked from the
+  // catalog can still be set against what that role usually asks for.
+  if (catalogRole && !domainName) {
+    const owning = await prisma.catalogRole.findUnique({ where: { id: catalogRole.id }, select: { domain: { select: { name: true } } } });
+    domainName = owning?.domain.name ?? null;
   }
   if (body.regionCode) {
     const region = await prisma.catalogRegion.findFirst({ where: { code: body.regionCode, status: 'active' }, select: { code: true } });
@@ -161,7 +172,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
   // The JD carries the stack HR confirmed, in the one section the stack owns.
   if (body.techStack.length) sourceText = syncJdTechStack(sourceText, body.techStack).text;
 
-  const extractOpts = { techStack: body.techStack, band: body.experienceBand, regionCode: body.regionCode, jurisdictionCode: body.jurisdictionCode };
+  const extractOpts = { techStack: body.techStack, band: body.experienceBand, regionCode: body.regionCode, jurisdictionCode: body.jurisdictionCode, domainName };
   const extraction = body.useLlm ? await extractRole(sourceText, titleHint, extractOpts) : extractRoleHeuristic(sourceText, titleHint, extractOpts);
   const ats = lookup?.kind === 'new' ? lookup.ats : null;
   const catalogRoleId = catalogRole?.id ?? (body.domainId ? await linkCatalogRole(body.domainId, extraction.title) : undefined);
@@ -219,7 +230,7 @@ rolesRouter.post('/', requireCapability('role:create'), roleCreateLimit, asyncHa
     after: { title: role.title, jdOrigin: body.jdOrigin, ...(ats ? { source: 'ats' } : {}) },
   });
 
-  res.status(201).json({ role: shapeRole(fullCreatedRole), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings });
+  res.status(201).json({ role: shapeRole(fullCreatedRole), scorecard: shapeScorecard(scorecard), jdWarnings: extraction.jdWarnings, catalogComparison: extraction.catalogComparison });
 }));
 
 /**
@@ -365,11 +376,30 @@ async function assertNotSelfApproval(
   }
 }
 
-// Validate: JD language warnings without mutating the role (FR-005)
+// Validate: JD language warnings without mutating the role (FR-005), plus what
+// the catalog's version of this role usually asks for.
+//
+// The comparison is made against the scorecard as it stands rather than a
+// fresh extraction, because the question a reviewer is asking is "is what I am
+// about to approve missing anything?" — and by then they may have added and
+// removed competencies by hand. Re-extracting would answer a question nobody
+// asked and would quietly forgive their own deletions.
 rolesRouter.get('/:id/validate', requireCapability('role:read'), asyncHandler(async (req, res) => {
   const role = await assertCanAccessRole(req.auth!, req.params.id);
   const extraction = extractRoleHeuristic(role.sourceText, role.title);
-  res.json({ jdWarnings: extraction.jdWarnings });
+  const [scorecard, domain] = await Promise.all([
+    latestScorecard(role.id),
+    role.catalogRoleId
+      ? prisma.catalogRole.findUnique({ where: { id: role.catalogRoleId }, select: { domain: { select: { name: true } } } })
+      : Promise.resolve(null),
+  ]);
+  const competencies = profileOf(scorecard).competencies.filter((c) => c.retired !== true);
+  const catalogComparison = compareToCanonicalRole(
+    role.title,
+    domainTagFor(domain?.domain.name),
+    competencies.map((c) => canonicaliseName(c.name)?.key ?? competencyKeyOf(c.name)),
+  );
+  res.json({ jdWarnings: extraction.jdWarnings, catalogComparison });
 }));
 
 // The approved scorecard as a PDF someone can file, print or forward.
@@ -397,8 +427,12 @@ rolesRouter.get('/:id/export.pdf', requireCapability('role:read'), roleExportLim
   }
   const [tenant, approver] = await Promise.all([
     prisma.tenant.findUnique({ where: { id: role.tenantId }, select: { name: true } }),
+    // Scoped to the role's own tenant, not looked up by id alone. `approvedById`
+    // is written from an approver in this tenant, so this changes nothing today —
+    // but a bare findUnique on a foreign key is the shape that turns one bad
+    // write into another organisation's name and address printed on a document.
     latest.approvedById
-      ? prisma.user.findUnique({ where: { id: latest.approvedById }, select: { name: true, email: true } })
+      ? prisma.user.findFirst({ where: { id: latest.approvedById, tenantId: role.tenantId }, select: { name: true, email: true } })
       : Promise.resolve(null),
   ]);
   const profile = parseJsonStrict<RoleSuccessProfile>(latest.profileJson, { model: 'RoleScorecardVersion', id: latest.id, field: 'profileJson' });

@@ -156,6 +156,15 @@ function approval(doc: PDFKit.PDFDocument, input: RoleScorecardPdfInput): void {
   body(doc, `Approved by ${who} on ${when}.`, { muted: true });
 }
 
+/**
+ * Well above the 50,000 a pasted job description may be, so no genuine JD is
+ * ever touched. The bound exists because an ATS import copies the requisition's
+ * description with no limit of its own, and every character of it is laid out,
+ * wrapped and held in memory here — an unbounded field reachable from a button
+ * anyone may press repeatedly is a denial of service with extra steps.
+ */
+export const JD_RENDER_LIMIT = 60_000;
+
 function jobDescription(doc: PDFKit.PDFDocument, sourceText: string): void {
   heading(doc, 'Job description');
   const text = sourceText.trim();
@@ -163,7 +172,14 @@ function jobDescription(doc: PDFKit.PDFDocument, sourceText: string): void {
     body(doc, 'No job description text is stored for this role.', { muted: true });
     return;
   }
-  body(doc, text, { size: 9.5 });
+  body(doc, text.slice(0, JD_RENDER_LIMIT), { size: 9.5 });
+  // Said, never silent: a document that quietly stops mid-sentence is read as
+  // the whole job description, and the missing half is what the argument is
+  // about later.
+  if (text.length > JD_RENDER_LIMIT) {
+    doc.moveDown(0.4);
+    body(doc, `[ The job description continues past ${JD_RENDER_LIMIT.toLocaleString('en-GB')} characters and is cut off here. Open the role in Questor to read all of it. ]`, { muted: true, size: 9 });
+  }
 }
 
 function competencyBlock(doc: PDFKit.PDFDocument, competency: Competency, index: number): void {
