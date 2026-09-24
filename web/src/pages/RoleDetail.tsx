@@ -107,6 +107,12 @@ export function RoleDetail() {
       })
       .finally(() => { if (isCurrentResponse(ticket, latestLoad.current)) setLoading(false); });
 
+    // Cleared before it is asked for again, because a reload usually follows a
+    // competency being added or removed — and a comparison drawn against the
+    // list as it was a second ago names omissions that are no longer omitted.
+    // A panel that is briefly absent says nothing; one that is briefly wrong
+    // says something false about what this role asks for.
+    setComparison(null);
     // A second opinion, not the page. If it cannot be had, the panel is simply
     // not drawn: an error banner here would be about something nobody asked
     // for, above a scorecard that loaded perfectly well.
