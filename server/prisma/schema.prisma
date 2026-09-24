@@ -76,7 +76,11 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
-  // recruiter | manager | admin | auditor | program_owner
+  // The fixed set in domain/capabilities.ts: recruiter | manager | reviewer |
+  // auditor | admin | sme. A value outside it resolves to NO capabilities
+  // rather than to a default, so a typo is powerless rather than quietly
+  // behaving like a recruiter. (This list said "program_owner" for a long time,
+  // which nothing had ever enforced; the enum is the schema now.)
   role         String   @default("recruiter")
   createdAt    DateTime @default(now())
   // When the guided product tour was finished or skipped. Null until then, so
@@ -199,6 +203,32 @@ model PasswordResetToken {
 
   @@index([userId, createdAt])
   @@index([expiresAt])
+}
+
+/// A colleague who has been invited but has not yet set a password.
+///
+/// There is no User row until the link is used, on purpose: an account created
+/// in advance is an account that can be discovered, counted and left standing
+/// unused, and one whose password somebody else chose. The admin names the
+/// person and the role; the person names their own password.
+///
+/// Only an HMAC of the token is stored (services/userInvite.ts), under the same
+/// server pepper the reset links and identity codes use, so a copy of this
+/// table cannot be turned back into working invitations.
+model UserInvite {
+  id              String   @id @default(cuid())
+  tenantId        String
+  email           String
+  name            String
+  role            String
+  /// Hashed, never stored in the clear, never logged, never printed.
+  tokenHash       String   @unique
+  invitedByUserId String
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId, email])
 }
 
 model CatalogDomain {
@@ -819,6 +849,38 @@ model ReviewDifference {
 
   @@index([tenantId, createdAt])
   @@index([assessmentId])
+}
+
+/// What a subject-matter expert made of a candidate they were asked to look at.
+///
+/// Deliberately NOT a HumanReview. A HumanReview carries a disposition that the
+/// pipeline acts on — services/pipelineAutonomy.ts turns PROCEED into APPROVED
+/// and moves the candidate — and it is what satisfies the Art. 22 human-review
+/// gate. An SME advises; HR decides. Keeping the two in separate tables is what
+/// makes "an SME recommendation never moves anyone" a fact about the schema
+/// rather than a rule someone has to remember, and it is why the words differ
+/// too (domain/smeRecommendation.ts).
+///
+/// Unique per expert, candidate and role: the review is edited in place, which
+/// is what `updatedAt` is for. Without the constraint a double submit writes
+/// two rows, and HR is shown one person recommending both ways at once — the
+/// same failure HumanReview.activeForAssessmentId exists to prevent, and the
+/// one that is lost at a read-then-write rather than at the database.
+model SmeReview {
+  id             String   @id @default(cuid())
+  tenantId       String
+  candidateId    String
+  roleId         String
+  sessionId      String?
+  smeUserId      String
+  /// proceed | do_not_proceed — a RECOMMENDATION. HR decides and moves.
+  recommendation String
+  feedback       String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([candidateId, roleId, smeUserId])
+  @@index([tenantId, candidateId])
 }
 
 model CandidateFeedbackDelivery {

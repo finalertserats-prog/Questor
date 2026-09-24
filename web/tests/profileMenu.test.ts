@@ -66,6 +66,42 @@ describe('profileMenuItems', () => {
     const tour = profileMenuItems('recruiter').find((item) => item.key === 'tour');
     expect(tour).toEqual({ key: 'tour', label: 'Take the tour', kind: 'action', action: 'start-tour' });
   });
+
+  // The subject-matter expert's grant is a named list of candidates and nothing
+  // organisational, so every entry that is about running the organisation is
+  // absent (docs/credentials-contract.md §3).
+  it('leaves an expert their own account page and the help, and nothing organisational', () => {
+    expect(profileMenuItems('sme').map((item) => item.label)).toEqual(['Settings', 'About', 'Contact']);
+  });
+
+  // Settings is kept deliberately. Every organisational panel on that page is
+  // gated on candidate:read or on admin, so what an expert reaches there is
+  // their own name, their own password and their own remembered devices — and
+  // an account that joined by choosing its own password must be able to change
+  // it. See the note in profileMenuModel.ts.
+  it('keeps an expert their own account page', () => {
+    expect(profileMenuItems('sme').some((item) => item.key === 'settings')).toBe(true);
+  });
+
+  it('gives an expert no page that is about the organisation', () => {
+    const keys = profileMenuItems('sme').map((item) => item.key);
+    for (const organisational of ['admin', 'people', 'signups', 'audit']) expect(keys).not.toContain(organisational);
+  });
+
+  it('does not offer an expert a tour of pages they cannot open', () => {
+    expect(profileMenuItems('sme').some((item) => item.key === 'tour')).toBe(false);
+  });
+
+  // The platform owner's standing has nothing to do with their role inside any
+  // one organisation, which is the existing rule and not something the expert
+  // role changes.
+  it('still offers Catalog review to a platform owner who happens to be an expert', () => {
+    expect(profileMenuItems('sme', { platformOperator: true }).some((item) => item.key === 'catalog-review')).toBe(true);
+  });
+
+  it('does not let an expert open the admin console', () => {
+    expect(canManageAdmin('sme')).toBe(false);
+  });
 });
 
 describe('canManageAdmin', () => {

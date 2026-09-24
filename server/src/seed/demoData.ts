@@ -157,6 +157,10 @@ export async function wipe(): Promise<void> {
   await prisma.atsConnection.deleteMany();
   await prisma.candidateImportRow.deleteMany();
   await prisma.candidateImportBatch.deleteMany();
+  // No foreign keys of its own (see the model), so nothing else takes it with
+  // it — a wipe that left these behind would carry one file's recommendations
+  // into the next file's candidate ids on the same worker database.
+  await prisma.smeReview.deleteMany();
   await prisma.candidate.deleteMany();
   await prisma.roleScorecardVersion.deleteMany();
   await prisma.role.deleteMany();
@@ -166,6 +170,9 @@ export async function wipe(): Promise<void> {
   await prisma.auditEvent.deleteMany();
   await prisma.outcomeSnapshot.deleteMany();
   await prisma.signupRequest.deleteMany();
+  // Likewise keyed on tenantId by value rather than by relation, so it outlives
+  // the tenant delete below unless it is named here.
+  await prisma.userInvite.deleteMany();
   // Holds a foreign key onto CatalogDomain, which a wipe deliberately leaves
   // standing: the shared catalog is not any tenant's data. Named explicitly
   // rather than relying on the tenant cascade, so the order stays readable.

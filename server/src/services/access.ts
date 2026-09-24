@@ -4,6 +4,15 @@ import { HttpError } from '../middleware/index.js';
 import { capabilitiesOf, type Capability } from '../domain/capabilities.js';
 import type { AuthClaims } from './auth.js';
 
+/**
+ * The `CandidateAssignment.relation` an expert's grant carries.
+ *
+ * Declared here rather than imported from services/smeAccess.ts, which imports
+ * this module: the value belongs to whoever reads it in a scope decision, and
+ * smeAccess.ts takes it from here.
+ */
+export const SME_RELATION = 'sme';
+
 export { capabilitiesOf, isRoleName, ROLES, type Capability, type RoleName } from '../domain/capabilities.js';
 
 // Object-level access control.
@@ -42,9 +51,28 @@ export async function assignedRoleIds(userId: string): Promise<string[]> {
   return rows.map((r) => r.roleId);
 }
 
-/** Candidate ids assigned directly to this user, independent of any role. */
+/**
+ * Candidate ids assigned directly to this user, independent of any role.
+ *
+ * Every relation EXCEPT `sme`, and that exclusion is load-bearing rather than
+ * tidy. A subject-matter expert's assignment is a grant over one narrow surface
+ * (/api/sme, services/smeAccess.ts) and nothing else; it is not a claim on the
+ * candidate in the ordinary sense. Counted here it would be harmless today —
+ * an expert holds no capability that any `candidateScope` route is gated on —
+ * and would become a real leak on the day an admin re-roled that account to
+ * recruiter: stale `relation: 'sme'` rows would silently hand them the full
+ * candidate scope over people they had only ever been asked to advise on, with
+ * nothing in the role change that looked like granting anything.
+ *
+ * An allow-list would be safer still, but it would also decide, now and
+ * invisibly, what a relation invented next year means. Naming the one relation
+ * that is not a claim keeps the decision where it was made.
+ */
 export async function assignedCandidateIds(userId: string): Promise<string[]> {
-  const rows = await prisma.candidateAssignment.findMany({ where: { userId }, select: { candidateId: true } });
+  const rows = await prisma.candidateAssignment.findMany({
+    where: { userId, relation: { not: SME_RELATION } },
+    select: { candidateId: true },
+  });
   return rows.map((r) => r.candidateId);
 }
 

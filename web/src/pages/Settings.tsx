@@ -1,9 +1,9 @@
+import { roleLabel } from '../components/inviteModel';
 import { useAuth } from '../auth';
 import { ThemeToggle } from '../components/theme';
 import { Icon, type IconName } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { AtsConnectionPanel } from '../components/AtsConnectionPanel';
-import { humanise } from '../components/statusModel';
 import { can } from '../components/capabilityModel';
 import { DigestSetting } from '../components/hrbox/DigestSetting';
 import { BusinessAreasPanel } from '../components/BusinessAreasPanel';
@@ -16,7 +16,7 @@ export function Settings() {
   const rows: Array<[string, string, IconName]> = [
     ['Name', user?.name ?? '—', 'candidate-profile'],
     ['Email', user?.email ?? '—', 'mail'],
-    ['Role', user ? humanise(user.role) : '—', 'admin'],
+    ['Role', user ? roleLabel(user.role) : '—', 'admin'],
     ['Organisation', tenant?.name ?? '—', 'team'],
   ];
 

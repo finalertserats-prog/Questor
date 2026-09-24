@@ -156,6 +156,14 @@ async function deleteSessionCascade(
     await count('humanReviews', () => tx.humanReview.deleteMany({ where: { assessmentId: { in: assessmentIds } } }));
     await count('assessments', () => tx.assessmentVersion.deleteMany({ where: { id: { in: assessmentIds } } }));
   }
+  // A subject-matter expert's written reading of one of these interviews. It
+  // goes with the interview for the same reason the human review above does:
+  // once the transcript and the assessment are gone, a paragraph arguing about
+  // what the candidate said in them is the only place that conversation still
+  // exists, and it names the person. Rows with no `sessionId` are a reading of
+  // the CV against the role rather than of an interview, and survive a session
+  // purge exactly as they survive the interview never having happened.
+  await count('smeReviews', () => tx.smeReview.deleteMany({ where: { sessionId: { in: sessionIds } } }));
   // The candidate's own answer about feedback, and any request to speak to a
   // person. Both name the candidate and both hold foreign keys onto the session.
   await count('feedbackOptIns', () => tx.candidateFeedbackOptIn.deleteMany({ where: { sessionId: { in: sessionIds } } }));
@@ -285,6 +293,17 @@ export async function eraseCandidate(o: {
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
+    // Every expert's written reading of this person, on any role, including the
+    // ones the session cascade above could not reach because they are about the
+    // CV rather than about an interview.
+    //
+    // SmeReview holds no foreign key onto Candidate — the model is keyed by id
+    // alone — so nothing makes this line necessary for the delete below to
+    // succeed, and nothing would report it missing. That is precisely why it is
+    // here and why it is tested: an erasure that reports success while a
+    // paragraph naming the candidate stays in the database is the worst shape
+    // this obligation can fail in.
+    await count('smeReviews', () => tx.smeReview.deleteMany({ where: { candidateId: o.candidateId } }));
     // Every reviewer's shortlist tick for this person, on any role. It keys on
     // Candidate, so leaving it would fail the constraint below and abort an
     // erasure that is a legal obligation.

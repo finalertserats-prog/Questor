@@ -23,7 +23,10 @@ export type Capability =
   | 'assessment:export'
   | 'retention:configure'
   | 'audit:read'
-  | 'admin:manage';
+  | 'admin:manage'
+  | 'sme:assigned_read'
+  | 'sme:review'
+  | 'sme:assign';
 
 export interface CapabilityHolder {
   readonly capabilities?: readonly string[];
@@ -51,6 +54,9 @@ const WHO_CAN: Partial<Record<Capability, string>> = {
   'interview:drive': 'a recruiter or an admin',
   'admin:manage': 'an admin',
   'audit:read': 'an admin or an auditor',
+  'sme:assign': 'a recruiter, a hiring manager or an admin',
+  'sme:assigned_read': 'a subject-matter expert who has been assigned this candidate',
+  'sme:review': 'a subject-matter expert who has been assigned this candidate',
 };
 
 /** "Only a hiring manager or an admin can approve the scorecard." */

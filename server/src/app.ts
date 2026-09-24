@@ -23,6 +23,8 @@ import { catalogReviewRouter } from './routes/catalogReview.js';
 import { jdDraftsRouter } from './routes/jdDrafts.js';
 import { fieldDraftsRouter } from './routes/fieldDrafts.js';
 import { candidatesRouter } from './routes/candidates.js';
+import { candidateSmeRouter } from './routes/candidateSme.js';
+import { smeRouter } from './routes/sme.js';
 import { candidateImportsRouter } from './routes/candidateImports.js';
 import { interviewsRouter } from './routes/interviews.js';
 import { interviewersRouter } from './routes/interviewers.js';
@@ -36,6 +38,7 @@ import { demoInterviewRouter, demoFeedbackRouter } from './routes/demoInterview.
 import { demoFeedbackAdminRouter } from './routes/demoFeedbackAdmin.js';
 import { assessmentsRouter } from './routes/assessments.js';
 import { adminRouter } from './routes/admin.js';
+import { adminInvitesRouter } from './routes/adminInvites.js';
 import { calibrationRouter } from './routes/calibration.js';
 import { systemHealthRouter } from './routes/systemHealth.js';
 import { dashboardRouter } from './routes/dashboard.js';
@@ -207,6 +210,13 @@ export function createApp() {
   const isResetCheck = (req: Request) => /^\/api\/auth\/password\/reset\/check(?:[/?]|$)/.test(req.originalUrl);
   app.use('/api/auth/password/reset', rateLimit({ name: 'password-reset', windowMs: 60 * 60_000, max: 30, failClosed: true, skip: isResetCheck }));
   app.use('/api/auth/password/reset/check', rateLimit({ name: 'password-reset-check', windowMs: 60 * 60_000, max: 120, failClosed: true }));
+  // Accepting a colleague's invitation, on the same shape as the reset pair
+  // above and for the same reasons. `/invite/check` is the cheaper oracle and
+  // the one the page calls on every mount, so it gets its own, looser budget
+  // rather than spending the acceptance path's on page loads.
+  const isInviteCheck = (req: Request) => /^\/api\/auth\/invite\/check(?:[/?]|$)/.test(req.originalUrl);
+  app.use('/api/auth/invite', rateLimit({ name: 'invite-accept', windowMs: 60 * 60_000, max: 30, failClosed: true, skip: isInviteCheck }));
+  app.use('/api/auth/invite/check', rateLimit({ name: 'invite-check', windowMs: 60 * 60_000, max: 120, failClosed: true }));
   // Changing your own password is limited in routes/auth.ts instead, where it
   // can sit after `authenticate` and key on the user. Mounted here it would run
   // before the session is resolved, fall back to the IP, and throttle a whole
@@ -369,10 +379,17 @@ export function createApp() {
   app.use('/api/roles', rolesRouter);
   app.use('/api/roles', rolePipelineRouter);
   app.use('/api/candidates', candidateAtsRouter);
+  // Before candidatesRouter, whose /:id routes would otherwise claim these.
+  app.use('/api/candidates', candidateSmeRouter);
   app.use('/api/candidates', candidatesRouter);
   app.use('/api/candidate-imports', candidateImportsRouter);
   app.use('/api/interviews', interviewsRouter);
   app.use('/api/interviewers', interviewersRouter);
+  // The subject-matter expert's whole surface. Its own prefix rather than a
+  // widening of the routes above: the role holds none of the capabilities those
+  // are gated on, so a route added there tomorrow cannot open to an expert by
+  // accident (routes/sme.ts).
+  app.use('/api/sme', smeRouter);
   // Before pipelinesRouter, whose GET /:id would otherwise claim /meeting-provider.
   app.use('/api/pipelines', roundMeetingsRouter);
   app.use('/api/pipelines', pipelinesRouter);
@@ -405,6 +422,8 @@ export function createApp() {
   // Platform-owner only, and mounted BEFORE the tenant admin router so its
   // own owner guard is the one that answers.
   app.use('/api/admin/demo-feedback', demoFeedbackAdminRouter);
+  // Before the tenant admin router, whose /users/:id routes are unrelated.
+  app.use('/api/admin/invites', adminInvitesRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/dashboard', dashboardRouter);
   app.use('/api/reports', reportsRouter);

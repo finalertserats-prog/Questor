@@ -6,7 +6,7 @@ import { ThemeToggle } from './theme';
 import { useTour } from './tourContext';
 import { initialsFor, profileMenuItems } from './profileMenuModel';
 import { demoHidesNavItem } from './demoModel';
-import { humanise } from './statusModel';
+import { roleLabel } from './inviteModel';
 
 // The theme switch sits inside the menu, so arrow keys reach it as well as the items.
 const MENU_STOPS = '[role="menuitem"], .profile-menu-theme button';
@@ -144,7 +144,7 @@ export function ProfileMenu() {
         <span className="profile-avatar" aria-hidden="true">{initialsFor(user.name)}</span>
         <span className="profile-details">
           <span className="profile-name">{user.name}</span>
-          <span className="profile-role">{humanise(user.role)}</span>
+          <span className="profile-role">{roleLabel(user.role)}</span>
         </span>
       </button>
     </div>

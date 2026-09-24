@@ -39,7 +39,25 @@ const APPROVER_ROLES = ['admin', 'manager'] as const;
 // audit:read
 const AUDIT_ROLES = ['admin', 'auditor'] as const;
 
+// Everyone except the subject-matter expert.
+//
+// An allow-list rather than a deny-list, so a role added next year is excluded
+// by construction rather than by somebody remembering this line exists.
+const NOT_SME = ['recruiter', 'manager', 'reviewer', 'auditor', 'admin'] as const;
+
 const MENU_ENTRIES: readonly MenuEntry[] = [
+  // Settings stays. The contract's May-not column names "settings", and it
+  // means the organisation's — retention, sign-in policy, the ATS connection,
+  // business areas — every panel of which is already gated on `candidate:read`
+  // or on admin, so an expert opening this page sees their own name, their own
+  // password and their own remembered devices and nothing else.
+  //
+  // Withholding it was the first thing this lane did and it was wrong: an
+  // expert who joined by choosing their own password and then had no way to
+  // change it is a worse outcome than the one the rule was written to prevent,
+  // and hiding the entry while leaving /settings reachable by typing the
+  // address would have been worse again. Flagged to the owner rather than
+  // decided quietly.
   { key: 'settings', label: 'Settings', kind: 'link', to: '/settings' },
   { key: 'admin', label: 'Admin console', kind: 'link', to: '/admin', roles: ADMIN_ROLES },
   { key: 'people', label: 'People', kind: 'link', to: '/admin/users', roles: ADMIN_ROLES },
@@ -49,9 +67,11 @@ const MENU_ENTRIES: readonly MenuEntry[] = [
   { key: 'library-admin', label: 'Question library', kind: 'link', to: '/library-admin', platformOperatorOnly: true },
   { key: 'about', label: 'About', kind: 'link', to: '/about' },
   { key: 'contact', label: 'Contact', kind: 'link', to: '/contact' },
-  // Last among the entries, beside the other help: the tour is for everyone,
-  // and this is the place the tour's own final step points back to.
-  { key: 'tour', label: 'Take the tour', kind: 'action', action: 'start-tour' },
+  // Last among the entries, beside the other help: the tour is for everyone
+  // whose product it describes, and this is the place the tour's own final step
+  // points back to. Not the expert, whose surface is one list and one form, and
+  // for whom every step of the tour points at a page they cannot open.
+  { key: 'tour', label: 'Take the tour', kind: 'action', action: 'start-tour', roles: NOT_SME },
 ];
 
 /** The menu entries this user may see, in display order. */

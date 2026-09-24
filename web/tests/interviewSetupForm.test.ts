@@ -52,6 +52,11 @@ const post = vi.fn(async () => ({ session: { id: 'sess1', state: 'created', prov
  */
 const get = vi.fn(async (path: string) => {
   if (path.startsWith('/candidates/cand1/profile-analysis')) return { analysis: null };
+  // The expert-readings panel, which the journey tab mounts. Answered
+  // explicitly rather than left to the prefix below: `/candidates/cand1` would
+  // hand it the candidate record, which is exactly the silent wrong-shape the
+  // note above says this fake exists to prevent.
+  if (path.startsWith('/candidates/cand1/sme')) return { assigned: [], reviews: [], awaiting: [] };
   if (path.startsWith('/candidates/cand1')) return CANDIDATE_RESP;
   if (path.startsWith('/roles/role1')) return ROLE_RESP;
   if (path.startsWith('/interviews')) return { sessions: [], meta: { total: 0 } };

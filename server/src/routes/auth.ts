@@ -17,6 +17,7 @@ import { trustDevice, deviceIsTrusted, clearTrustCookie, listTrustedDevices, rev
 import {
   startPasswordResetRequest, resetTokenUsable, completePasswordReset, changeOwnPassword, RESET_TTL_MS,
 } from '../services/passwordReset.js';
+import { acceptInvite, checkInvite } from '../services/userInvite.js';
 
 export const authRouter = Router();
 
@@ -344,6 +345,55 @@ authRouter.post('/password/reset', asyncHandler(async (req, res) => {
   // turned into a live session by anyone who merely intercepted the email.
   clearSession(res);
   res.json({ ok: true, message: 'Your password has been set. Sign in with it.' });
+}));
+
+// ---------------------------------------------------------------------------
+// Accepting a colleague's invitation.
+//
+// Unauthenticated by necessity: the person following the link has no account
+// yet, and gating the creation of one on already having one is a circle. The
+// emailed token is the credential, and it is treated exactly like the reset
+// link above — bounded before it is hashed, sent in a body rather than a path,
+// and answered with one sentence whichever way it is dead.
+// ---------------------------------------------------------------------------
+
+/**
+ * Is this invitation still open, and who is it for?
+ *
+ * A POST for the same reason the reset check is one, and separate from
+ * acceptance for a reason of its own: mail security gateways fetch every URL in
+ * an inbound message, so opening the page must not consume the invitation. Only
+ * the button does.
+ */
+authRouter.post('/invite/check', asyncHandler(async (req, res) => {
+  const { token } = z.object({ token: resetTokenSchema }).parse(req.body);
+  res.json(await checkInvite(token));
+}));
+
+const acceptInviteSchema = z.object({
+  token: resetTokenSchema,
+  // Bounded here, judged by the shared policy in the service — held to
+  // `passwordSchema` at this layer the rejection would arrive as the error
+  // handler's blanket "Invalid request", and the person retyping would never
+  // be told the rule they are failing.
+  password: z.string().min(1).max(400),
+});
+
+/** What a spent, expired or invented invitation is told. Always this. */
+const INVITE_DEAD = 'This invitation is no longer valid. Ask whoever invited you to send a new one.';
+
+authRouter.post('/invite/accept', asyncHandler(async (req, res) => {
+  const body = acceptInviteSchema.parse(req.body);
+  const outcome = await acceptInvite(body.token, body.password, { ip: req.ip ?? 'unknown', requestId: req.requestId });
+  if (outcome.kind === 'weak') throw new HttpError(400, outcome.message);
+  if (outcome.kind === 'invalid') throw new HttpError(400, INVITE_DEAD);
+  // No session, for the same reasons the reset route issues none: following a
+  // link proves control of a mailbox, and the sign-in that follows is what the
+  // audit trail, the login limiter and the sign-in code step are built around.
+  // An invitation intercepted in transit therefore still cannot be turned
+  // straight into a live session.
+  clearSession(res);
+  res.json({ ok: true, message: 'Your account is ready. Sign in with the password you just set.' });
 }));
 
 const changeSchema = z.object({

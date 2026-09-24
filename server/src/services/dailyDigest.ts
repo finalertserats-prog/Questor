@@ -3,7 +3,7 @@ import { config } from '../config.js';
 import { logger } from '../logger.js';
 import { getEmail } from '../providers/email/index.js';
 import { buildDigestEmail } from '../providers/email/digestEmail.js';
-import { capabilitiesOf } from '../domain/capabilities.js';
+import { capabilitiesOf, ROLES } from '../domain/capabilities.js';
 import { startJob, type LeaseHandle } from './jobs.js';
 import { effectiveOrgTimeZone } from './tenantTimeZone.js';
 import { zonedWallClock } from './zonedTime.js';
@@ -51,7 +51,14 @@ async function recipients(now: Date, limit: number): Promise<Recipient[]> {
     if (day) dayOf.set(t.id, day);
   }
   if (dayOf.size === 0) return [];
-  const readers = ['recruiter', 'manager', 'reviewer', 'admin'].filter((role) => capabilitiesOf(role).includes('candidate:read'));
+  // Over ROLES rather than over a hand-written list of four. The capability
+  // filter was doing nothing: it can only remove from whatever it is given, so
+  // the four were the rule and the filter was decoration — and a role added
+  // later was silently left out of the digest however many capabilities it
+  // held. Derived from the set, the rule is the rule. The answer today is the
+  // same four names; `auditor` and `sme` are excluded because neither holds
+  // `candidate:read`, which is the reason rather than the coincidence.
+  const readers = ROLES.filter((role) => capabilitiesOf(role).includes('candidate:read'));
   const users = await prisma.user.findMany({
     where: { tenantId: { in: [...dayOf.keys()] }, digestOptOut: false, role: { in: readers } },
     orderBy: { id: 'asc' },

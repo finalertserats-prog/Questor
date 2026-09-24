@@ -28,6 +28,9 @@ import { OrgLogin } from './pages/OrgLogin';
 import { Signup } from './pages/Signup';
 import { ForgotPassword } from './pages/ForgotPassword';
 import { ResetPassword } from './pages/ResetPassword';
+import { AcceptInvite } from './pages/AcceptInvite';
+import { SmeWorkbench } from './pages/SmeWorkbench';
+import { SmeCandidate } from './pages/SmeCandidate';
 import { TeamUsers } from './pages/TeamUsers';
 import { SignupDecision } from './pages/SignupDecision';
 import { DemoRequest } from './pages/DemoRequest';
@@ -69,6 +72,7 @@ import { CatalogReview } from './pages/CatalogReview';
 import { LibraryAdmin } from './pages/LibraryAdmin';
 import { can, onlyWhoCan } from './components/capabilityModel';
 import { canManageAdmin } from './components/profileMenuModel';
+import { homePathForRole, isSmeRole } from './components/smeModel';
 import { EmptyState } from './components/EmptyState';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { isPublicPath } from './components/errorBoundaryModel';
@@ -365,6 +369,10 @@ function Layout({ children }: { children: React.ReactNode }) {
             {can(user, 'candidate:read') && <NavLink to="/candidates" end data-tip={tip('Candidates')} data-tour="nav-candidates"><Icon name="candidates" /><span className="nav-label">Candidates</span></NavLink>}
             {can(user, 'role:read') && <NavLink to="/roles" end data-tip={tip('Roles')} data-tour="nav-roles"><Icon name="role" /><span className="nav-label">Roles</span></NavLink>}
             {can(user, 'candidate:read') && <NavLink to="/interviews" data-tip={tip('Interviews')} data-tour="nav-interviews"><Icon name="interviews" /><span className="nav-label">Interviews</span></NavLink>}
+            {/* The expert's whole surface, and their only one. They hold none
+                of the capabilities above, so every other entry is already
+                absent and this is all the sidebar has to offer them. */}
+            {can(user, 'sme:assigned_read') && isSmeRole(user?.role ?? '') && <NavLink to="/sme" end data-tip={tip('Your assessments')}><Icon name="evidence-review" /><span className="nav-label">Your assessments</span></NavLink>}
 
             {(can(user, 'candidate:create') || can(user, 'role:create')) && <div className="nav-group">Set up</div>}
             {can(user, 'candidate:create') && <NavLink to="/candidates/new" data-tip={tip('Add candidate')} data-tour="nav-add-candidate"><Icon name="resume-upload" /><span className="nav-label">Add candidate</span></NavLink>}
@@ -484,6 +492,50 @@ function CandidatePage({ children }: { children: React.ReactNode }) {
  * Now the route decides, before the console mounts: one sentence saying who
  * this is for, and no request at all.
  */
+/**
+ * What `/` means, which is not the same page for everyone.
+ *
+ * An expert has no dashboard, no pipeline and no candidate list. Landing them
+ * on the HR-Box means a page that fires three requests it already knows will be
+ * refused and then shows them nothing — the failure AdminOnly below was written
+ * to stop, arriving from the other direction.
+ */
+function Home() {
+  const { user } = useAuth();
+  const home = homePathForRole(user?.role ?? '');
+  if (home !== '/') return <Navigate to={home} replace />;
+  return <Landing />;
+}
+
+/**
+ * The expert's surface, refused at the door to everyone else.
+ *
+ * The mirror of AdminOnly below, and for the reason its comment gives: a
+ * recruiter who types /sme would otherwise watch the page ask for a worklist
+ * the server already knows it will refuse, and then read a sentence explaining
+ * the 403. Asking a question whose answer is "no" is not a way to find out.
+ *
+ * The role, not the capability — `can` answers true when a server sends no
+ * capability list, which is the right default for hiding a button and the
+ * wrong one for a door. An admin holds `sme:assigned_read` and is still sent
+ * away: the expert lane is deliberately not a second way into candidate data,
+ * and an admin with no assignment would see an empty list anyway.
+ */
+function SmeOnly({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
+  if (!user) return null;
+  if (isSmeRole(user.role)) return <>{children}</>;
+  return (
+    <EmptyState
+      heading="page"
+      icon="lock"
+      title="Your assessments"
+      message="This is where a subject-matter expert reads the candidates they have been asked to assess."
+      action={<Link className="btn secondary" to="/"><Icon name="arrow-left" size={16} />Back to Home</Link>}
+    />
+  );
+}
+
 function AdminOnly({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!user) return null;
@@ -529,6 +581,11 @@ export function App() {
           URL fragment, which a browser never sends to a server. */}
       <Route path="/forgot-password" element={<CandidatePage><ForgotPassword /></CandidatePage>} />
       <Route path="/reset-password" element={<CandidatePage><ResetPassword /></CandidatePage>} />
+      {/* Unauthenticated for the same reason recovery is: the person following
+          it has no account yet, so gating the creation of one on already having
+          one is a circle. The token is in the fragment, which a browser never
+          sends to a server. */}
+      <Route path="/accept-invite" element={<CandidatePage><AcceptInvite /></CandidatePage>} />
       <Route path="/signup" element={<CandidatePage><Signup /></CandidatePage>} />
       <Route path="/onboard" element={<CandidatePage><Onboard /></CandidatePage>} />
       <Route path="/signup/decision/:token" element={<CandidatePage><SignupDecision /></CandidatePage>} />
@@ -554,7 +611,12 @@ export function App() {
           must not require an account. */}
       <Route path="/feedback-consent/:token" element={<CandidatePage><FeedbackConsent /></CandidatePage>} />
       {/* Home (HR-Box) and Dashboard, as sub-tabs: ?tab=home|dashboard. */}
-      <Route path="/" element={<Protected><Landing /></Protected>} />
+      <Route path="/" element={<Protected><Home /></Protected>} />
+      {/* The subject-matter expert's surface. Declared before /sme/:id would
+          be needed; there is no such route, because an expert reaches a person
+          only through their own worklist. */}
+      <Route path="/sme" element={<Protected><SmeOnly><SmeWorkbench /></SmeOnly></Protected>} />
+      <Route path="/sme/candidates/:id" element={<Protected><SmeOnly><SmeCandidate /></SmeOnly></Protected>} />
       <Route path="/roles" element={<Protected><RolesList /></Protected>} />
       <Route path="/roles/new" element={<Protected><RoleCreate /></Protected>} />
       <Route path="/roles/:id" element={<Protected><RoleDetail /></Protected>} />

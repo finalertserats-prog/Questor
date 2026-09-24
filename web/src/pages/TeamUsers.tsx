@@ -6,8 +6,9 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
 import { formatDate } from '../components/dateFormat';
-import { humanise } from '../components/statusModel';
 import { useToast } from '../components/Toast';
+import { InviteColleague } from '../components/InviteColleague';
+import { roleLabel } from '../components/inviteModel';
 
 interface TeamMember {
   id: string;
@@ -18,13 +19,19 @@ interface TeamMember {
 }
 
 /**
- * The people in this organisation, and the one thing an admin can do for a
- * colleague who cannot sign in: cause a reset link to be mailed to them.
+ * The people in this organisation, how a new one is added, and the one thing an
+ * admin can do for a colleague who cannot sign in: cause a reset link to be
+ * mailed to them.
  *
- * Deliberately not "set their password". An admin who could choose someone
+ * Neither of those is "set their password". An admin who could choose someone
  * else's password could sign in as them, and every action that account took
  * afterwards would be unattributable. The link goes to the address on the
  * account — the admin never sees it — and who sent it is recorded.
+ *
+ * That is also why adding a colleague is an invitation rather than a form with
+ * a password field on it (components/InviteColleague.tsx). The endpoint that
+ * would have an admin choose one still exists on the server and is deliberately
+ * reachable from nowhere.
  */
 export function TeamUsers() {
   const [users, setUsers] = useState<TeamMember[]>([]);
@@ -90,6 +97,10 @@ export function TeamUsers() {
 
       {error && <Banner kind="error">{error}</Banner>}
 
+      {/* Above the list: adding someone is the errand people arrive here to do,
+          and the list is what they check afterwards. */}
+      <InviteColleague onInvited={() => { void load(); }} />
+
       <div className="card">
         {users.length === 0 && loadFailed ? (
           <div className="row" style={{ gap: 8 }}>
@@ -118,7 +129,7 @@ export function TeamUsers() {
                           <div className="signup-who">{member.name}</div>
                           <div className="muted small">{member.email}</div>
                         </td>
-                        <td>{humanise(member.role)}</td>
+                        <td>{roleLabel(member.role)}</td>
                         <td className="muted small">{formatDate(member.createdAt)}</td>
                         <td>
                           {/* Two presses. Sending a link signs the person out of

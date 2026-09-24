@@ -179,8 +179,18 @@ export function isLastStep(state: TourState, steps: readonly TourStep[], present
  * having finished or skipped it — and only once they reach the dashboard,
  * where the steps live, rather than on whatever deep link they signed in to.
  */
-export function shouldAutoStartTour(user: { readonly tourCompletedAt: string | null } | null, pathname: string): boolean {
-  return user !== null && user.tourCompletedAt === null && pathname === '/';
+export function shouldAutoStartTour(
+  user: { readonly tourCompletedAt: string | null; readonly role?: string } | null, pathname: string,
+): boolean {
+  if (user === null || user.tourCompletedAt !== null || pathname !== '/') return false;
+  // Not the subject-matter expert. Every step of the tour points at a nav
+  // anchor they do not have, so what they would get on their first sign-in is
+  // an overlay gesturing at empty space — and they are redirected off `/` to
+  // their own worklist anyway, which makes whether this fires at all depend on
+  // which effect runs first. The menu entry is already withheld from them
+  // (profileMenuModel.ts); this is the same decision, for the run nobody asked
+  // for.
+  return user.role !== 'sme';
 }
 
 export interface StepPosition {

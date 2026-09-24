@@ -6,6 +6,7 @@ import { VerdictCell } from '../components/VerdictCell';
 import { can, onlyWhoCan } from '../components/capabilityModel';
 import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
 import { PipelinePanel } from '../components/PipelinePanel';
+import { SmeReviewPanel } from '../components/sme/SmeReviewPanel';
 import { CandidateAtsLink } from '../components/CandidateAtsLink';
 import { useAuth } from '../auth';
 import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
@@ -578,6 +579,13 @@ export function CandidateDetail() {
           // candidate on its own; the panel re-reads with the rest of the page.
           refreshKey={version}
         />
+
+        {/* What the subject-matter experts made of this candidate, above the
+            interview setup and below the journey: it is evidence for the next
+            decision, and it has to be read before one is taken rather than
+            found afterwards. The panel renders nothing for a reader the server
+            refuses, so it is safe to mount for everyone who reaches this page. */}
+        <SmeReviewPanel candidateId={candidate.id} />
 
         {/* Where exports for this candidate land; the server allows admins only. */}
         {user?.role === 'admin' && <CandidateAtsLink candidateId={candidate.id} />}

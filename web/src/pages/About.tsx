@@ -31,6 +31,12 @@ const AUDIENCE: ReadonlyArray<{ key: string; icon: IconName; name: string; detai
     detail: 'Record your own verdict before Questor’s is revealed, so the assessment is a second opinion rather than a first impression.',
   },
   {
+    key: 'sme',
+    icon: 'evidence-review',
+    name: 'Subject-matter experts',
+    detail: 'Read the candidates you are asked to assess — who they are, what they said, and the scorecard — and recommend. Nothing else, and your recommendation moves nobody.',
+  },
+  {
     key: 'auditor',
     icon: 'audit',
     name: 'Auditors',

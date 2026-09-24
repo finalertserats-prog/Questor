@@ -203,6 +203,23 @@ describe('shouldAutoStartTour', () => {
   it('does not start with nobody signed in', () => {
     expect(shouldAutoStartTour(null, '/')).toBe(false);
   });
+
+  // Every step points at a nav anchor a subject-matter expert does not have,
+  // so an automatic first run would gesture at empty space. The menu entry is
+  // already withheld from them; this is the run nobody asked for.
+  it('does not start for a subject-matter expert', () => {
+    expect(shouldAutoStartTour({ tourCompletedAt: null, role: 'sme' }, '/')).toBe(false);
+  });
+
+  it('still starts for a role it has something to show', () => {
+    expect(shouldAutoStartTour({ tourCompletedAt: null, role: 'recruiter' }, '/')).toBe(true);
+  });
+
+  // An older server sends no role with the user. The tour then behaves as it
+  // always did rather than silently switching itself off for everybody.
+  it('starts when the role is not known', () => {
+    expect(shouldAutoStartTour({ tourCompletedAt: null }, '/')).toBe(true);
+  });
 });
 
 describe('stepPosition and stepAnnouncement', () => {
