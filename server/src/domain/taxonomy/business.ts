@@ -155,7 +155,10 @@ export const BUSINESS_COMPETENCIES: readonly CanonicalCompetencyDef[] = [
     cues: [
       /\b(risk (management|assessment|appetite|framework|model(l)?ing)|credit risk|market risk|operational risk|liquidity risk)\b/i,
       /\b(\bvar\b model|stress test(ing)?|basel\b|\bifrs ?9\b|credit scoring|underwriting|exposure limits?)\b/i,
-      /\b(fraud (detection|prevention)|\baml\b|anti[- ]money laundering|\bkyc\b|sanctions screening)\b/i,
+      // Financial crime moved out to its own competency. Leaving the AML cues
+      // here as well was a duplication, not a split: a compliance officer's
+      // advert produced both, and the second one measured them on credit and
+      // market risk their job never mentions.
     ],
     domains: ['bfsi', 'finance', 'legal'],
   },

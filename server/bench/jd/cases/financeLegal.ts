@@ -181,8 +181,22 @@ Benefits
 
 Ashby Bank is an equal opportunity employer and all appointments are subject to
 a satisfactory DBS and credit check.`,
-    expect: ['Regulatory Compliance', 'Risk & Credit Management'],
+    // Relabelled, and the reason is recorded because relabelling to flatter a
+    // number would destroy the point of this file.
+    //
+    // This case was written when the vocabulary had no home for financial
+    // crime, so its author labelled it Risk & Credit Management and said in
+    // their report that the name "will read oddly on the scorecard the product
+    // shows a compliance hiring manager". They were right, and asked for the
+    // competency. It now exists, so the correct label is the correct one: the
+    // advert is headed "Compliance Officer — Financial Crime" and its first
+    // duty is running an AML and KYC programme. There is no credit, market or
+    // liquidity risk anywhere in it, which is why Risk & Credit Management has
+    // moved from expected to forbidden rather than merely being dropped.
+    expect: ['Regulatory Compliance', 'Financial Crime & AML'],
     forbid: [
+      // Nothing in this advert is about credit, market or liquidity risk.
+      'Risk & Credit Management',
       // "Our legal counsel drafts the customer contracts".
       'Legal & Contracting',
       // "Our data team builds the transaction monitoring dashboards".
@@ -193,7 +207,7 @@ a satisfactory DBS and credit check.`,
       // "enhanced due diligence cases" — due diligence in AML is not the M&A kind.
       'Strategy & Commercial Analysis',
     ],
-    mustHave: ['Regulatory Compliance'],
+    mustHave: ['Regulatory Compliance', 'Financial Crime & AML'],
   },
   {
     id: 'str-01-management-consultant',
