@@ -35,11 +35,13 @@ export function artifactKeyring(): ArtifactKeyring {
 }
 
 /**
- * Whether new writes are sealed. Both the switch and a key are needed: the
- * switch on with no key is a misconfiguration preflight refuses in production
- * and warns about in development, and it must not quietly write clear text
- * while an operator believes otherwise — so nothing is written sealed, and the
- * warning is what tells them.
+ * Whether new writes are sealed. Both the switch and a key are needed.
+ *
+ * The switch on with no key is a misconfiguration. Production refuses to boot
+ * on it. Development does write clear text, deliberately — a developer with no
+ * key still needs the app to run — and the boot warning is the only thing
+ * standing between that and an operator who believes their rows are sealed, so
+ * the warning is not optional and must never be softened to a debug line.
  */
 export function artifactEncryptionOn(): boolean {
   return config.artifactEncryption.enabled && artifactKeyring().active !== null;

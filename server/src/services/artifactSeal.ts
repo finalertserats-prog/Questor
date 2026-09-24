@@ -38,6 +38,8 @@ export const ARTIFACT_SEAL_PREFIX = 'qenc.v1.';
 const ENVELOPE_VERSION = 'v1';
 const ENVELOPE_PARTS = 6;
 const IV_BYTES = 12;
+/** AES-GCM's authentication tag, at the default length. */
+const TAG_BYTES = 16;
 const KEY_BYTES = 32;
 /** Enough that two keys in use at once never collide; short enough to read in a log. */
 const KEY_ID_CHARS = 12;
@@ -106,11 +108,25 @@ export function parseArtifactKeys(variable: string, raw: string): Buffer[] {
  * Recognises an envelope of ANY version, not only the one we write. A row
  * sealed by a later version of Questor must be refused, not handed back as if
  * the ciphertext were the candidate's words.
+ *
+ * The shape is matched, not just the prefix. Artifact content is a candidate's
+ * CV or their own words, so a candidate can choose to write "qenc.v1.a.b.c.d"
+ * into a CV; against a prefix test alone that turns their clear-text row into
+ * one that refuses to open. Every field here is fixed-width or a base64url
+ * alphabet: a 12-character hex key id, a 12-byte iv and a 16-byte tag (16 and
+ * 22 unpadded base64url characters), then ciphertext. Prose does not reach
+ * this by accident, and a candidate who reproduces it exactly has written a
+ * value that only fails to decrypt — it cannot read anyone else's row.
  */
-const ENVELOPE_START = /^qenc\.v\d+\./;
+const ENVELOPE = new RegExp(
+  `^qenc\\.v\\d+\\.[0-9a-f]{${KEY_ID_CHARS}}`
+  + `\\.[A-Za-z0-9_-]{${Math.ceil((IV_BYTES * 4) / 3)}}`
+  + `\\.[A-Za-z0-9_-]{${Math.ceil((TAG_BYTES * 4) / 3)}}`
+  + '\\.[A-Za-z0-9_-]*$',
+);
 
 export function isSealedArtifact(stored: string): boolean {
-  return ENVELOPE_START.test(stored) && stored.split('.').length === ENVELOPE_PARTS;
+  return ENVELOPE.test(stored) && stored.split('.').length === ENVELOPE_PARTS;
 }
 
 /**
