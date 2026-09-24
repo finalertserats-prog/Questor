@@ -386,7 +386,7 @@ export function PipelinePanel(
   };
 
   return (
-    <section className="card pipeline">
+    <section className="card pipeline" data-tour="candidate-pipeline">
       <div className="row spread" style={{ marginBottom: 12 }}>
         <h2 className="card-title" style={{ margin: 0 }}><Icon name="flag" />Hiring pipeline</h2>
         <StatusBadge kind="pipeline" value={pipeline.status} />

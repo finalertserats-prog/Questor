@@ -20,9 +20,12 @@ const FOCUS_SETTLE_MS = 50;
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 const PUBLIC_PREFIXES = ['/o/', '/signup'];
 
+/** The element a beat points at — and only if it is actually laid out: a hidden tab panel's element is not on the page. */
 function anchorElement(anchor: string | undefined): HTMLElement | null {
   if (anchor === undefined) return null;
-  return document.querySelector<HTMLElement>(`[data-tour="${anchor}"]`);
+  const candidates = document.querySelectorAll<HTMLElement>(`[data-tour="${anchor}"]`);
+  for (const element of candidates) if (element.getClientRects().length > 0) return element;
+  return null;
 }
 
 function usePrefersReducedMotion(): boolean {
@@ -137,8 +140,12 @@ export function DemoTour() {
   // The narration file when there is one; otherwise the caption for its
   // scripted seconds. A file that will not play (blocked, missing) falls back
   // to the caption too — the visitor never waits on silence.
+  // A replay while paused starts a fresh clock; the pause effect must then
+  // not resume the old one on top of it.
+  const clockRestartedRef = useRef(false);
   const startClock = useCallback((current: DemoBeat) => {
     stopClock();
+    clockRestartedRef.current = true;
     if (!hasNarration(manifest, current.id)) { runTimer(captionDurationMs(current)); return; }
     const audio = new Audio(narrationUrl(current.id));
     clockRef.current.audio = audio;
@@ -192,12 +199,20 @@ export function DemoTour() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [beatKey, status]);
 
-  // Pausing stops the clock where it is; resuming picks it up there.
-  const wasPausedRef = useRef(false);
+  // Pausing stops the clock where it is; resuming picks it up there — but
+  // only for the beat that was paused. Stepping on from a pause starts the
+  // next beat's own clock, and a resume applied to it would run a zero-length
+  // timer and skip it outright.
+  const pausedIndexRef = useRef<number | null>(null);
   useEffect(() => {
-    if (state.phase === 'paused' && !wasPausedRef.current) { wasPausedRef.current = true; pauseClock(); }
-    if (state.phase === 'playing' && wasPausedRef.current) { wasPausedRef.current = false; resumeClock(); }
-  }, [state.phase, pauseClock, resumeClock]);
+    if (state.phase === 'paused' && pausedIndexRef.current === null) { pausedIndexRef.current = state.index; pauseClock(); }
+    if (state.phase === 'playing' && pausedIndexRef.current !== null) {
+      const resumes = pausedIndexRef.current === state.index && !clockRestartedRef.current;
+      pausedIndexRef.current = null;
+      if (resumes) resumeClock();
+    }
+    clockRestartedRef.current = false;
+  }, [state.phase, state.index, pauseClock, resumeClock]);
 
   // ---- the spotlight, measured continuously while a beat is on screen -----
   const measure = useCallback(() => {
