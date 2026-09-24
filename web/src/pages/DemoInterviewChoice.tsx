@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '../api/client';
 import { PageHeader } from '../components/PageHeader';
 import { Icon } from '../components/Icon';
@@ -31,6 +31,7 @@ interface Choices {
  */
 export function DemoInterviewChoice() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [data, setData] = useState<Choices | null>(null);
   const [failure, setFailure] = useState<DemoFailure | null>(null);
   const [extraTime, setExtraTime] = useState(false);
@@ -47,6 +48,21 @@ export function DemoInterviewChoice() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  // The guided tour's closing card asks which mode, so arriving from it must
+  // not ask again. Started ONCE, and only for a mode the server says is on
+  // offer — a stale link asking for one that is not simply shows the choices.
+  const asked = params.get('start');
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (!data || autoStarted.current) return;
+    const wanted = data.choices.find((choice) => choice.mode === asked);
+    if (!wanted) return;
+    autoStarted.current = true;
+    void start(wanted.mode);
+    // `start` is stable enough for this: it is guarded by `autoStarted`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, asked]);
 
   const start = async (mode: DemoMode) => {
     if (starting) return;

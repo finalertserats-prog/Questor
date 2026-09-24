@@ -28,19 +28,10 @@ export async function endDemo(): Promise<void> {
   window.location.assign(ticket ? `/demo/feedback/${ticket}` : '/demo/ended');
 }
 
-/**
- * The candidate side of the sample interview, in a new tab that cannot reach
- * back into this console. Opened before the request so the browser treats it
- * as the click it was, not a pop-up.
+/*
+ * `openSampleInterview` lived here: a new tab straight into the sample
+ * interview's portal link. Both callers — the demo bar and the tour's closing
+ * card — now go to /demo/interview instead, which explains the fifteen
+ * minutes before anything starts and is the only path that plans the sitting,
+ * claims its model allowance and records the run.
  */
-export async function openSampleInterview(): Promise<void> {
-  const tab = window.open('', '_blank');
-  if (tab) tab.opener = null;
-  try {
-    const { portalUrl } = await api.get<{ portalUrl: string }>('/demo/interview');
-    if (tab) tab.location.href = portalUrl; else window.location.assign(portalUrl);
-  } catch (err) {
-    tab?.close();
-    throw err;
-  }
-}

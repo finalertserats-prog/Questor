@@ -12,7 +12,7 @@ import {
   resolveRoute, resumeDemoTour, skipDemoTour, startDemoTour, tourAlreadySeen, waitsForChoice,
   type DemoStatus, type DemoTourFinishedDetail, type DemoTourState, type NarrationManifest,
 } from './demoTourModel';
-import { endDemo, openSampleInterview } from './endDemo';
+import { endDemo } from './endDemo';
 
 const SPOTLIGHT_PADDING = 6;
 const ANCHOR_POLL_MS = 100;
@@ -84,7 +84,6 @@ export function DemoTour() {
   const [showStart, setShowStart] = useState(false);
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const [confirmEnd, setConfirmEnd] = useState(false);
-  const [interviewError, setInterviewError] = useState('');
 
   const playerRef = useRef<HTMLDivElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -276,7 +275,6 @@ export function DemoTour() {
   const begin = useCallback(() => {
     rememberTourSeen(sessionStore());
     setShowStart(false);
-    setInterviewError('');
     setState(startDemoTour(offered.length));
   }, [offered.length]);
 
@@ -362,8 +360,12 @@ export function DemoTour() {
     const handled = !window.dispatchEvent(event);
     if (PUBLIC_PREFIXES.some((prefix) => location.pathname.startsWith(prefix))) navigate('/');
     if (!handled && detail.choice === 'new-role') navigate('/roles/new');
-    if (!handled && detail.choice === 'candidate') {
-      openSampleInterview().catch((err: unknown) => setInterviewError(err instanceof Error ? err.message : 'The sample interview could not be opened.'));
+    // Both interview choices go through the demo-interview lane's own start,
+    // which is the only thing that plans the sitting for fifteen minutes,
+    // claims its model allowance and records the run. The mode the visitor
+    // picked here is carried in the address so they are not asked twice.
+    if (!handled && (detail.choice === 'candidate' || detail.choice === 'observer')) {
+      navigate(`/demo/interview?start=${detail.choice}`);
     }
     setState(READY_TOUR);
   }, [state, stopClock, navigate, location.pathname]);
@@ -497,7 +499,6 @@ export function DemoTour() {
         </div>
       )}
 
-      {interviewError && <div className="visually-hidden" role="alert">{interviewError}</div>}
     </>
   );
 }

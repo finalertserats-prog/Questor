@@ -119,8 +119,12 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
   const [offersInterview, setOffersInterview] = useState(false);
   useEffect(() => {
     let live = true;
-    void api.get<{ modes?: { candidate?: boolean } }>('/demo/status')
-      .then((status) => { if (live) setOffersInterview(status?.modes?.candidate === true); })
+    // EITHER mode counts. This asked only about the candidate side, from
+    // before watching one existed; with the written interview always on
+    // offer, that hid the button on every deployment without a live model —
+    // which is exactly the deployment the written interview is for.
+    void api.get<{ modes?: { candidate?: boolean; observer?: boolean } }>('/demo/status')
+      .then((status) => { if (live) setOffersInterview(status?.modes?.candidate === true || status?.modes?.observer === true); })
       .catch(() => { if (live) setOffersInterview(false); });
     return () => { live = false; };
   }, []);

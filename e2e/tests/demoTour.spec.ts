@@ -31,9 +31,10 @@ async function openDemo(page: Page): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Hello, Audit.' })).toBeVisible();
 }
 
-// Both ways of sitting the interview are the demo-interview lane's to switch
-// on; until then the closing card is not offered, and the walk expects that.
-const EXPECTED = DEMO_BEATS.filter((beat) => !beat.needsInterviewMode);
+// Watching one is always on offer, so the closing card is part of the walk.
+// (Sitting one is not offered on a stack with no live model; the card then
+// shows the watched option and "Explore first", and says nothing about why.)
+const EXPECTED = DEMO_BEATS;
 
 test('the story is told over the real pages, beat by beat', async ({ page }) => {
   await openDemo(page);
