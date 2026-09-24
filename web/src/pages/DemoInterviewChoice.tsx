@@ -110,7 +110,7 @@ export function DemoInterviewChoice() {
       {/* Offered BEFORE the choice, to everybody, with no reason asked — so
           that taking it is not a declaration about how anyone works. */}
       <div className="card demo-choice-time">
-        <label className="demo-choice-check">
+        <label className="check-row">
           <input type="checkbox" checked={extraTime} onChange={(e) => setExtraTime(e.target.checked)} />
           <span>
             <strong>Give me longer than 15 minutes.</strong>

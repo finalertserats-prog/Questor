@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
-import { DEMO_OBSERVER_SCRIPT, type DemoScriptLine } from '../domain/demoObserverScript.js';
+import { DEMO_OBSERVER_SCRIPT, scriptLineText, type DemoScriptLine } from '../domain/demoObserverScript.js';
 
 /**
  * Playing the written interview at the pace a real one runs.
@@ -16,6 +16,17 @@ import { DEMO_OBSERVER_SCRIPT, type DemoScriptLine } from '../domain/demoObserve
  * makes the playback a pure function of the clock: idempotent, restart-proof,
  * identical whoever asks, and completely idle when nobody is watching.
  */
+
+/** The name this sandbox's interviewer goes by, for the script's placeholders. */
+async function interviewerName(sessionId: string): Promise<string> {
+  const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { personaJson: true } });
+  try {
+    const persona = JSON.parse(session?.personaJson ?? '{}') as { name?: unknown };
+    return typeof persona.name === 'string' && persona.name ? persona.name : 'your interviewer';
+  } catch {
+    return 'your interviewer';
+  }
+}
 
 /** Cumulative reveal offsets, in the script's own order. */
 export function revealOffsets(script: readonly DemoScriptLine[] = DEMO_OBSERVER_SCRIPT): number[] {
@@ -73,6 +84,9 @@ export async function playUpTo(opts: {
   const elapsed = now.getTime() - opts.startedAt.getTime();
   const revealed = opts.hurry ? script.length : revealedCount(elapsed, script);
 
+  // The interviewer is whoever this sandbox was given, so the opening greets
+  // the candidate with the same name the participants rail shows.
+  const interviewer = await interviewerName(opts.sessionId);
   const existing = await prisma.turn.count({ where: { sessionId: opts.sessionId } });
   let written = 0;
   for (let index = existing; index < revealed; index += 1) {
@@ -89,7 +103,7 @@ export async function playUpTo(opts: {
           sessionId: opts.sessionId,
           index,
           speaker: line.speaker,
-          text: line.text,
+          text: scriptLineText(line, interviewer),
           startMs,
           endMs,
           confidence: 1,

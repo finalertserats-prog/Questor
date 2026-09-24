@@ -24,7 +24,8 @@ import { wipe } from '../src/seed/demoData.js';
 import { _resetRateLimits, _enableRateLimitsInTests } from '../src/middleware/rateLimit.js';
 import { purgeExpiredDemoTenants } from '../src/services/demoAccess.js';
 import { DEMO_CAP_MS, DEMO_CLOSING_RESERVE_MS, DEMO_EXTENSION_MS, staysInCharacter, systemShapedMatches } from '../src/domain/demoInterview.js';
-import { DEMO_OBSERVER_SCRIPT, DEMO_SCRIPT_CANDIDATE } from '../src/domain/demoObserverScript.js';
+import { DEMO_OBSERVER_SCRIPT, DEMO_SCRIPT_CANDIDATE, INTERVIEWER_PLACEHOLDER } from '../src/domain/demoObserverScript.js';
+import { OBSERVER_NOTICE } from '../src/services/observerPolicy.js';
 import { playUpTo, revealedCount } from '../src/services/demoObserverPlayer.js';
 import { sweepDemoInterviews, finishPlayedOutObserverRuns, finishDemoRun, DEMO_IDLE_MS } from '../src/services/demoInterviewFinish.js';
 import { claimModelCall, releaseSitting, reserveSitting, runById } from '../src/services/demoInterviewRun.js';
@@ -987,5 +988,38 @@ describe('the box, driven through the real engine', () => {
     const said = await prisma.turn.findMany({ where: { sessionId, speaker: 'agent' }, select: { text: true } });
     const carrying = said.filter((t) => /since this is a demo interview/i.test(t.text));
     expect(carrying.length).toBe(1);
+  });
+});
+
+describe('the written interview names the interviewer this sandbox has', () => {
+  // A hard-coded name meant the participants rail said "Avery" while the
+  // opening line said "Maya" — the first thing a prospect would notice, and
+  // the kind of seam that makes a written interview look written.
+  it("greets the candidate with the sandbox's own interviewer", async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    const session = await prisma.interviewSession.findUnique({ where: { id: run.sessionId }, select: { personaJson: true } });
+    const named = (JSON.parse(session!.personaJson) as { name: string }).name;
+    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, hurry: true });
+    const opening = await prisma.turn.findFirst({ where: { sessionId: run.sessionId, index: 0 } });
+    expect(opening?.text).toContain(named);
+  });
+
+  it('leaves no placeholder unfilled anywhere in the transcript', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, hurry: true });
+    const turns = await prisma.turn.findMany({ where: { sessionId: run.sessionId }, select: { text: true } });
+    expect(turns.filter((t) => t.text.includes(INTERVIEWER_PLACEHOLDER))).toEqual([]);
+  });
+
+  // The observation notice is the server-side proof live observation depends
+  // on, and it has to survive the substitution.
+  it('still speaks the observation notice word for word', async () => {
+    const demo = await openDemo();
+    const { run } = await startObserverMode({ tenantId: demo.tenantId, demoGrantId: demo.grantId });
+    await playUpTo({ sessionId: run.sessionId, startedAt: run.startedAt, hurry: true });
+    const opening = await prisma.turn.findFirst({ where: { sessionId: run.sessionId, index: 0 } });
+    expect(opening?.text).toContain(OBSERVER_NOTICE);
   });
 });

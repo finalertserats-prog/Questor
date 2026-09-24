@@ -57,6 +57,21 @@ export const DEMO_SCRIPT_PERSONA = {
   thinCompetency: 'cost and platform ownership',
 } as const;
 
+/**
+ * Where the sandbox's own interviewer name goes.
+ *
+ * The script cannot name the interviewer: each demo sandbox is given one at
+ * random from the catalogue, so a hard-coded name meant the rail said "Avery"
+ * while the opening line said "Maya" — the first thing a prospect would
+ * notice, and the kind of seam that makes a written interview look written.
+ */
+export const INTERVIEWER_PLACEHOLDER = '{interviewer}';
+
+/** Fill the script's placeholders from the session this sitting actually has. */
+export function scriptLineText(line: DemoScriptLine, interviewer: string): string {
+  return line.text.split(INTERVIEWER_PLACEHOLDER).join(interviewer);
+}
+
 export type ScriptSpeaker = 'agent' | 'candidate';
 
 export interface DemoScriptLine {
@@ -95,7 +110,7 @@ export const DEMO_OBSERVER_SCRIPT: readonly DemoScriptLine[] = [
     speaker: 'agent',
     kind: 'opening',
     afterMs: 1_500,
-    text: "Hello Ravi — I'm Maya, and I'll be running this first-round conversation for the Senior Data Engineer role. A member of the hiring team may observe this interview live. To start us off gently: tell me what you're responsible for day to day at the moment.",
+    text: "Hello Ravi — I'm {interviewer}, and I'll be running this first-round conversation for the Senior Data Engineer role. A member of the hiring team may observe this interview live. To start us off gently: tell me what you're responsible for day to day at the moment.",
   },
   {
     speaker: 'candidate',

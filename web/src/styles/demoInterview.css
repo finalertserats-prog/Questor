@@ -54,14 +54,12 @@
 .demo-choice-card .btn { align-self: flex-start; margin-top: auto; }
 .demo-choice-time { margin-top: 12px; }
 
-.demo-choice-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  cursor: pointer;
-}
-
-.demo-choice-check input { margin-top: 3px; }
+/*
+ * The extra-time control uses the house `check-row` class rather than one of
+ * its own: a bare <label> is styled as a FIELD LABEL app-wide (uppercase,
+ * letter-spaced, monospace), which turned a sentence a visitor has to read
+ * into a caption they cannot.
+ */
 .demo-choice-footnote { margin-top: 20px; max-width: 62ch; }
 
 /* ---- Watching one happen ------------------------------------------------ */
@@ -77,7 +75,10 @@
 }
 
 .demo-watch-rail ul { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 8px; }
-.demo-watch-rail li { display: flex; align-items: baseline; gap: 8px; }
+/* The written candidate's name is long. Let it wrap under itself rather than
+   pushing its own role label to the far edge of the rail. */
+.demo-watch-rail li { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; }
+.demo-watch-rail li .small { flex-basis: 100%; margin-left: 16px; }
 
 .demo-watch-dot {
   width: 8px;
@@ -104,7 +105,8 @@
 .demo-feedback { max-width: 660px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 12px; }
 .demo-feedback h1 { margin: 0; }
 .demo-feedback p { margin: 0; max-width: 62ch; }
-.demo-feedback-label { font-weight: 600; }
+/* The feedback box's label keeps the house field-label style; naming it
+   here only to say that leaving it alone is deliberate. */
 
 .demo-feedback-box {
   width: 100%;

@@ -97,7 +97,7 @@ export function DemoFeedback() {
 
       {err && <Banner kind="error">{err}</Banner>}
 
-      <label htmlFor="demo-feedback-body" className="demo-feedback-label">Your feedback</label>
+      <label htmlFor="demo-feedback-body">Your feedback</label>
       <textarea
         id="demo-feedback-body"
         className="demo-feedback-box"
