@@ -385,17 +385,31 @@ candidateAwardsRouter.post(
       // would be told it went, the candidate would never see it, and every
       // retry would be refused. Conditional on the stamp this request wrote,
       // so it can never undo somebody else's successful send.
-      const released = await prisma.candidateAward.updateMany({
-        where: { id: award.id, tenantId: req.auth!.tenantId, sentToCandidateAt },
-        data: { sentToCandidateAt: null, sentByUserId: null },
-      });
+      const released = await prisma.candidateAward
+        .updateMany({
+          where: { id: award.id, tenantId: req.auth!.tenantId, sentToCandidateAt },
+          data: { sentToCandidateAt: null, sentByUserId: null },
+        })
+        .catch(() => ({ count: 0 }));
       logger.error(
         { err, awardId: award.id, released: released.count },
         released.count === 1
           ? 'certificate send failed; the award was released so it can be retried'
           : 'certificate send failed AND could not be released — this award will refuse further sends until the row is corrected',
       );
-      throw new HttpError(502, 'The certificate could not be sent. Nothing has been recorded — try again.', 'send_failed');
+      // The message tells the truth about the row, not a comforting version of
+      // it. When the release did not happen the claim is still standing, so
+      // "try again" would be an instruction that cannot work: the next attempt
+      // meets the already-sent guard and is refused, and an admin left
+      // retrying a dead button is how a candidate quietly never receives
+      // anything.
+      throw released.count === 1
+        ? new HttpError(502, 'The certificate could not be sent. Nothing has been recorded — try again.', 'send_failed')
+        : new HttpError(
+            502,
+            'The certificate could not be sent, and the attempt could not be cleared. This certificate will refuse further sends until support corrects the record.',
+            'send_failed_not_released',
+          );
     }
 
     await logAudit({
