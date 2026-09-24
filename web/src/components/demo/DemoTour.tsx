@@ -185,20 +185,32 @@ export function DemoTour() {
   useEffect(() => {
     if (!beat || !status) return undefined;
     const run = ++runRef.current;
+    neverStartedRef.current = false;
     setTargetRect(null);
     setConfirmEnd(false);
     const route = resolveRoute(beat, status);
     if (`${location.pathname}${location.search}` !== route) navigate(route);
     let poll: number | undefined;
     const waitedSince = Date.now();
+    // A beat that is waiting for its anchor has no clock yet, so pausing
+    // during the wait had nothing to stop — and when the anchor finally
+    // settled the clock started regardless, and the tour walked on while the
+    // player said Paused. On a slow page or a phone, which is exactly when
+    // the wait is long, that is most of the time.
+    const beginIfPlaying = (b: typeof beat) => {
+      if (runRef.current !== run) return;
+      if (stateRef.current.phase !== 'playing') { neverStartedRef.current = true; return; }
+      neverStartedRef.current = false;
+      startClock(b);
+    };
     const settle = () => {
       if (runRef.current !== run) return;
-      if (beat.anchor === undefined) { startClock(beat); return; }
+      if (beat.anchor === undefined) { beginIfPlaying(beat); return; }
       const element = anchorElement(beat.anchor);
       if (element) {
         element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: motion.scrollBehavior });
         // The line begins once the page has come to rest on the element.
-        poll = window.setTimeout(() => { if (runRef.current === run) startClock(beat); }, motion.animate ? SCROLL_SETTLE_MS : 0);
+        poll = window.setTimeout(() => beginIfPlaying(beat), motion.animate ? SCROLL_SETTLE_MS : 0);
         return;
       }
       // The page changed and its element is gone: the beat skips rather than
@@ -218,12 +230,20 @@ export function DemoTour() {
   // next beat's own clock, and a resume applied to it would run a zero-length
   // timer and skip it outright.
   const pausedIndexRef = useRef<number | null>(null);
+  /** This beat's clock has not begun: it was paused while waiting for its anchor. */
+  const neverStartedRef = useRef(false);
   useEffect(() => {
     if (state.phase === 'paused' && pausedIndexRef.current === null) { pausedIndexRef.current = state.index; pauseClock(); }
     if (state.phase === 'playing' && pausedIndexRef.current !== null) {
       const resumes = pausedIndexRef.current === state.index && !clockRestartedRef.current;
       pausedIndexRef.current = null;
-      if (resumes) resumeClock();
+      // A beat paused before its anchor settled never started a clock, so
+      // there is nothing to resume and resuming it would leave the player
+      // sitting on a line that never ends. Start it instead.
+      if (resumes) {
+        if (neverStartedRef.current && beat) { neverStartedRef.current = false; startClock(beat); }
+        else resumeClock();
+      }
     }
     clockRestartedRef.current = false;
   }, [state.phase, state.index, pauseClock, resumeClock]);
@@ -295,14 +315,20 @@ export function DemoTour() {
 
   // The page behind is modal to assistive technology as well as to the
   // pointer: everything beside the tour's own nodes is inert while it runs.
+  //
+  // The start card counts. It calls itself a modal dialog, and it is the first
+  // thing anyone meets, but it was not covered here — so a visitor tabbing
+  // before the story began reached the live application behind a screen that
+  // said it was waiting for them.
+  const modal = Boolean(beat) || (state.phase === 'ready' && showStart);
   useEffect(() => {
-    if (!beat) return undefined;
+    if (!modal) return undefined;
     const parent = tourRef.current?.parentElement;
     if (!parent) return undefined;
     const others = Array.from(parent.children).filter((el) => !el.hasAttribute('data-demo-tour'));
     for (const el of others) el.setAttribute('inert', '');
     return () => { for (const el of others) el.removeAttribute('inert'); };
-  }, [beat]);
+  }, [modal]);
 
   // Focus the player for every beat, once the page has settled.
   useEffect(() => {

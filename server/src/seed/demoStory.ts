@@ -298,7 +298,7 @@ const DEMO_STORY_NARRATIVE = {
   summary: 'Priya’s platform and modelling work is specific, measured and her own: the Snowflake migration, the point-in-time finance model and the idempotent pipeline redesign are each described with a decision, a trade-off and a number. Reliability sits at the required level once the follow-up separated her contribution from the team’s. Collaboration is the one essential competency below its level: the disagreement story is real but thin, and the hiring team should probe how she works with analysts day to day. Security and compliance were not reached, so they are left out of the score and carried as an open question rather than counted as a miss. Overall 71 against a threshold of 65, with Collaboration short of its level: for the team to consider, with one question to settle in the human round.',
   strengths: [
     'Explains decisions as trade-offs with the rejected option named (star vs wide table; auto-scaling vs always-on).',
-    'Every claim of impact comes with a mechanism and a number: 35% warehouse cost, 60% fewer failures, 90 seconds to 8.',
+    'Every claim of impact comes with a mechanism and a measure in her own words: incidents “from roughly five a month to two”, the month-end report “ninety-seconds-to-eight”, and auto-scaling chosen over an always-on warehouse.',
     'Built the detection that caught her own incident, and made recovery idempotent rather than manual.',
   ],
   concerns: [
@@ -314,6 +314,49 @@ const DEMO_STORY_NARRATIVE = {
     'Scored from a single transcript; no work sample or reference was available to the assessment.',
   ],
 };
+
+/**
+ * Every figure the narrative quotes has to be one the candidate said.
+ *
+ * Competency ratings already carry verbatim spans and are checked against the
+ * transcript. The narrative bullets beside them are prose, and prose is where
+ * an unsupported claim hides: "35% warehouse cost, 60% fewer failures" reads
+ * as assessment output to anyone looking at the page, and nothing stopped a
+ * later edit from changing 35 to 55.
+ *
+ * A number is the checkable part of such a claim, so a number is what is
+ * checked. Adjectives are the seeder's judgement and are left alone; a figure
+ * that is not in the transcript is a fabrication and stops the seed.
+ */
+function assertNarrativeFiguresAreSaid(timed: readonly TimedStoryTurn[]): void {
+  const said = timed.filter((t) => t.speaker === 'candidate').map((t) => t.text).join(' ');
+  const claims = [
+    ...DEMO_STORY_NARRATIVE.strengths,
+    ...DEMO_STORY_NARRATIVE.concerns,
+    ...DEMO_STORY_NARRATIVE.openQuestions,
+  ];
+  for (const claim of claims) {
+    for (const figure of claim.match(/\d+/g) ?? []) {
+      if (!new RegExp(`(?<![0-9])${figure}(?![0-9])`).test(said)) {
+        throw new Error(`Demo story: the narrative claims "${figure}" but no candidate turn says it: "${claim.slice(0, 60)}"`);
+      }
+    }
+    // And anything in curly quotes is offered as her words, so it has to be
+    // hers. This bullet once read "35% warehouse cost, 60% fewer failures,
+    // 90 seconds to 8" — three figures, none of them anywhere in the
+    // transcript. She says "roughly five a month to two" and
+    // "ninety-seconds-to-eight" in words, and never gives a cost percentage
+    // at all. Derived numbers presented as quoted ones are the exact thing
+    // this product exists to stop, and the demo was doing it on the page
+    // where a visitor learns to trust the assessment.
+    for (const quoted of claim.match(/“([^”]+)”/g) ?? []) {
+      const phrase = quoted.slice(1, -1);
+      if (!said.includes(phrase)) {
+        throw new Error(`Demo story: the narrative quotes "${phrase}" but no candidate turn contains it`);
+      }
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Building it
@@ -340,6 +383,7 @@ export function timedTranscript(): TimedStoryTurn[] {
  * finds the number follows from them.
  */
 export function buildStoryAssessment(profile: RoleSuccessProfile, turnIds: readonly string[], timed: readonly TimedStoryTurn[], scorecardId: string, assessmentVersion: string): AssessmentResult {
+  assertNarrativeFiguresAreSaid(timed);
   const competencies: CompetencyScore[] = profile.competencies.map((c) => {
     const grade = DEMO_STORY_GRADES.find((g) => g.name === c.name);
     if (!grade) throw new Error(`Demo story: no grade written for "${c.name}"`);

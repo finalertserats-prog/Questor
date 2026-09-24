@@ -107,6 +107,20 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
   const [now, setNow] = useState(Date.now());
   const [interviewError, setInterviewError] = useState('');
   const [confirmEnd, setConfirmEnd] = useState(false);
+  // Whether sitting the interview is on offer at all. The tour asks the same
+  // question of the same endpoint and leaves the option out of its closing
+  // card when the answer is no — but this bar did not ask, and offered it
+  // anyway, so the product contradicted itself on the same screen. An option
+  // that is not offered is absent, not greyed out: there is nothing to
+  // explain and nothing to disclaim.
+  const [offersInterview, setOffersInterview] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void api.get<{ modes?: { candidate?: boolean } }>('/demo/status')
+      .then((status) => { if (live) setOffersInterview(status?.modes?.candidate === true); })
+      .catch(() => { if (live) setOffersInterview(false); });
+    return () => { live = false; };
+  }, []);
   const { startTour } = useTour();
   useEffect(() => { const id = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(id); }, []);
   // Ending is shared with the guided tour (components/demo/endDemo.ts), and
@@ -124,7 +138,9 @@ function DemoBanner({ endsAt }: { endsAt: string }) {
     <div className="banner" style={{ borderRadius: 0, margin: 0, display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
       <span>Demo · ends in {formatDemoCountdown(remainingMs)}</span>
       <span className="visually-hidden" role="status">{isFinalDemoMinute(remainingMs) ? 'Less than a minute of the demo is left.' : ''}</span>
-      <button type="button" className="btn sm" onClick={() => void openInterview()}>Try the interview as the candidate</button>
+      {offersInterview && (
+        <button type="button" className="btn sm" onClick={() => void openInterview()}>Try the interview as the candidate</button>
+      )}
       <button type="button" className="btn sm ghost" onClick={startTour} data-testid="demo-replay-story">Replay the story</button>
       {confirmEnd ? (
         <>
