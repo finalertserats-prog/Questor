@@ -31,6 +31,19 @@ const SECTION_PATTERNS: ReadonlyArray<{ readonly section: CvSection; readonly re
   { section: 'projects', re: /^(projects?|selected projects?|personal projects?|portfolio)\b/i },
   { section: 'certifications', re: /^(certifications?|certificates?|licen[cs]es?|accreditations?)\b/i },
   { section: 'summary', re: /^(summary|profile|objective|about( me)?|professional summary)\b/i },
+  /**
+   * The back of the CV: the sections that are neither work nor a claim about
+   * skills. Named here because a heading this list does not recognise leaves
+   * every line under it filed as whatever came before — and on an academic CV
+   * what comes before is the experience section, so every publication in a
+   * forty-item bibliography was read as a job the person had done. The
+   * citations are full of the right words, so the evidence count went up with
+   * the length of the bibliography.
+   *
+   * Filed as `other`: still readable, still quotable, but no longer an account
+   * of doing the work.
+   */
+  { section: 'other', re: /^(publications?|selected publications?|papers?|grants?|funding|awards?|honou?rs|patents?|conferences?|talks?|presentations?|references?|interests?|hobbies|activities|memberships?|affiliations?|languages?|volunteering)\b/i },
 ];
 
 /** A heading is a short line that names a section and nothing else. */

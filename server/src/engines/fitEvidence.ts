@@ -36,8 +36,79 @@ const STOPWORDS = new Set([
 /**
  * Words so common in work writing that one of them alone means nothing.
  * They still count toward a two-term match, they just cannot carry one alone.
+ *
+ * The second group is the one that cost a real candidate a must-have. A
+ * competency called "Pipeline Engineering" put `engineering` in its name terms,
+ * where a single occurrence is evidence — and the line it matched was the job
+ * heading "Engineering Manager, Aldbury Software". The competency was then
+ * recorded as evidenced by a JOB TITLE, on a CV whose work described none of
+ * it. Craft nouns name a profession, not a skill: they cannot carry a
+ * competency on their own, in either direction.
  */
-const WEAK_TERMS = new Set(['data', 'design', 'system', 'systems', 'process', 'business', 'product', 'service', 'services', 'project', 'projects', 'client', 'customer', 'delivery', 'management', 'manage', 'analysis', 'report', 'reports', 'reporting']);
+const WEAK_TERMS = new Set([
+  'data', 'design', 'system', 'systems', 'process', 'business', 'product', 'service', 'services',
+  'project', 'projects', 'client', 'customer', 'delivery', 'management', 'manage', 'analysis',
+  'report', 'reports', 'reporting',
+  'engineer', 'engineers', 'engineering', 'developer', 'developers', 'development',
+  'operations', 'technology', 'technologies', 'technical', 'software', 'solutions',
+  'specialist', 'consultant', 'consulting', 'associate', 'senior', 'junior', 'principal',
+]);
+
+/**
+ * Spellings of one idea, so a CV is not marked down for writing it the way
+ * practitioners write it.
+ *
+ * A DBA of twenty years writes "RDBMS" and "relational databases"; a scorecard
+ * competency called "SQL Development" reduced to the terms `development` and
+ * `sql`, and matched neither. The same CV writes "K8s" for Kubernetes and "ML"
+ * for machine learning. None of that is obscure or evasive — it is the register
+ * of the trade, and a matcher that only speaks the recruiter's register scores
+ * the register rather than the experience.
+ *
+ * Kept deliberately short, and to pairs that are genuinely interchangeable in a
+ * CV. This is not a thesaurus: "led" and "managed" mean different things, and a
+ * scorer that flattened them would be inventing evidence rather than reading
+ * it. Every entry here is one thing with two names.
+ */
+const EQUIVALENCE_GROUPS: ReadonlyArray<readonly string[]> = [
+  ['sql', 'rdbms', 'relational database', 'relational databases', 't-sql', 'pl/sql'],
+  ['kubernetes', 'k8s'],
+  ['machine learning', 'ml'],
+  ['postgresql', 'postgres'],
+  ['javascript', 'js'],
+  ['continuous integration', 'ci/cd', 'cicd'],
+  ['infrastructure as code', 'iac'],
+  ['natural language processing', 'nlp'],
+  ['user experience', 'ux'],
+  ['business intelligence', 'power bi'],
+  ['extract transform load', 'etl'],
+  ['quality assurance', 'qa'],
+  ['test driven development', 'tdd'],
+  ['search engine optimisation', 'search engine optimization', 'seo'],
+  ['account based marketing', 'abm'],
+  ['application programming interface', 'api'],
+];
+
+/**
+ * Every spelling of a term, itself included.
+ *
+ * Matched as whole strings rather than word by word, because half of these are
+ * phrases: "machine learning" is one idea spelled with a space in it.
+ */
+export function spellingsOf(term: string): readonly string[] {
+  const lower = term.toLowerCase();
+  const group = EQUIVALENCE_GROUPS.find((g) => g.includes(lower));
+  return group ? [term, ...group.filter((t) => t !== lower)] : [term];
+}
+
+/** The other spellings of anything the given text already says. */
+function equivalentTermsIn(text: string): string[] {
+  const out: string[] = [];
+  for (const group of EQUIVALENCE_GROUPS) {
+    if (group.some((t) => termMatcher(t).test(text))) out.push(...group);
+  }
+  return out;
+}
 
 function contentWords(text: string): string[] {
   return (text.toLowerCase().match(/[a-z][a-z+#.-]{3,}/g) ?? [])
@@ -81,18 +152,23 @@ export interface CompetencyVocabulary {
 const MAX_TERMS = 40;
 
 export function vocabularyFor(competency: Competency, stack: readonly TechStackItem[]): CompetencyVocabulary {
-  const nameTerms = new Set<string>([...contentWords(competency.name), ...acronyms(competency.name)].filter((w) => !WEAK_TERMS.has(w)));
+  const nameTerms = new Set<string>(
+    [...contentWords(competency.name), ...acronyms(competency.name), ...equivalentTermsIn(competency.name)]
+      .filter((w) => !WEAK_TERMS.has(w)),
+  );
 
   const supportTerms = new Set<string>();
   const addSupport = (word: string) => {
     if (supportTerms.size < MAX_TERMS && !nameTerms.has(word)) supportTerms.add(word);
   };
+  const prose = [competency.definition ?? '', ...(competency.indicators ?? [])].join(' ');
   for (const word of contentWords(competency.definition ?? '')) addSupport(word);
   for (const word of acronyms(competency.definition ?? '')) addSupport(word);
   for (const indicator of competency.indicators ?? []) {
     for (const word of contentWords(indicator)) addSupport(word);
     for (const word of acronyms(indicator)) addSupport(word);
   }
+  for (const word of equivalentTermsIn(prose)) addSupport(word);
 
   return {
     phrase: competency.name.trim().toLowerCase(),
@@ -150,7 +226,7 @@ export function hitsFor(vocab: CompetencyVocabulary, lines: readonly CvLine[]): 
     const lower = line.text.toLowerCase();
     const evidence: CvEvidence = { line: line.index, quote: line.text, section: line.section };
 
-    const tech = vocab.technologies.find((t) => mentionsTechnology(line.text, t));
+    const tech = vocab.technologies.find((t) => spellingsOf(t).some((s) => mentionsTechnology(line.text, s)));
     if (tech) {
       strong.push({ evidence, kind: 'technology', matched: [tech] });
       continue;
@@ -193,11 +269,24 @@ export function hitsFor(vocab: CompetencyVocabulary, lines: readonly CvLine[]): 
  * everyone who writes in consultant-speak, and everyone whose second language
  * this is. The section a line sits in carries the same meaning and carries no
  * opinion about the prose.
+ *
+ * What changed after the adversarial pass: repetition inside a CLAIM section no
+ * longer counts. The rule used to be "two lines anywhere, or one line in
+ * experience", and two lines anywhere includes two lines of a "Core
+ * Competencies" block that pastes the scorecard's own words back. Writing a
+ * competency name down twice was therefore worth more than writing it down
+ * once, which is a reward for stuffing and nothing else. A list is a claim
+ * however many times it is printed; the count only means something outside the
+ * sections whose whole purpose is to list.
  */
+const CLAIM_SECTIONS = new Set(['skills', 'certifications']);
+
 export function strengthOf(hits: readonly EvidenceHit[]): FitStrength {
   if (hits.length === 0) return 'not_evidenced';
   const doing = hits.some((h) => h.evidence.section === 'experience' || h.evidence.section === 'projects');
-  if (hits.length >= 2 || doing) return 'evidenced';
+  if (doing) return 'evidenced';
+  const beyondAClaim = hits.filter((h) => !CLAIM_SECTIONS.has(h.evidence.section));
+  if (beyondAClaim.length >= 2) return 'evidenced';
   return 'partial';
 }
 
@@ -234,7 +323,10 @@ export function readTechnologies(stack: readonly TechStackItem[], facts: CvFacts
   const lines = facts.lines.filter((l) => !l.injection);
 
   return stack.map((item) => {
-    const use = known.get(item.name.toLowerCase());
+    // The catalogued reading first, under any of the technology's spellings: a
+    // CV that writes "RDBMS" throughout has still been using SQL since 2004,
+    // and the dates behind that belong to the reading.
+    const use = spellingsOf(item.name).map((s) => known.get(s.toLowerCase())).find(Boolean);
     if (use) {
       return {
         item,
@@ -244,7 +336,8 @@ export function readTechnologies(stack: readonly TechStackItem[], facts: CvFacts
         evidence: [...use.evidence],
       };
     }
-    const hits = lines.filter((l) => mentionsTechnology(l.text, item.name)).slice(0, 3);
+    const spellings = spellingsOf(item.name);
+    const hits = lines.filter((l) => spellings.some((s) => mentionsTechnology(l.text, s))).slice(0, 3);
     return {
       item,
       strength: hits.length === 0 ? 'not_evidenced' : hits.some((h) => h.section === 'experience' || h.section === 'projects') ? 'evidenced' : 'partial',

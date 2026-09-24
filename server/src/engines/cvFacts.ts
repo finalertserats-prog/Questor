@@ -1,5 +1,6 @@
 import { TECHNOLOGIES, mentionsTechnology } from '../domain/techStack.js';
 import { prepareCvForScoring, scoreableLines, type ScoreableCv } from './cvRedaction.js';
+import { spellingsOf } from './fitEvidence.js';
 import type {
   CvEvidence, CvFacts, CvGap, CvLine, CvQualification, CvRoleHeld, CvScopeFact, CvScopeKind,
   CvTechnologyUse, CvTenure,
@@ -150,7 +151,12 @@ function extractTechnologies(lines: readonly CvLine[], roles: readonly CvRoleHel
 
   const out: CvTechnologyUse[] = [];
   for (const tech of TECHNOLOGIES) {
-    const spellings = [tech.name, ...(tech.aliases ?? [])];
+    // The catalogue's own aliases, plus the spellings the trade uses that the
+    // catalogue has never carried — "RDBMS" and "relational databases" for SQL,
+    // "K8s" for Kubernetes. Without them a CV written in the register of the
+    // job gets no DATES for the technology it has been using for a decade, and
+    // a decade of use reads as a name in a list.
+    const spellings = [...new Set([tech.name, ...(tech.aliases ?? []), ...spellingsOf(tech.name)])];
     const evidence: CvEvidence[] = [];
     let firstYear: number | undefined;
     let lastYear: number | undefined;
@@ -183,6 +189,13 @@ function extractTechnologies(lines: readonly CvLine[], roles: readonly CvRoleHel
 
 const SCOPE_PATTERNS: ReadonlyArray<{ readonly kind: CvScopeKind; readonly re: RegExp }> = [
   { kind: 'team', re: /\b(?:team of|led|managed|mentored|supervised|grew(?: the team)? to)\s+(\d{1,4})\s*(?:\+)?\s*(?:direct reports?|engineers?|developers?|people|staff|analysts?|designers?|members?)?\b/i },
+  // Headcount written the way it is written outside a corporate org chart. "Led
+  // a section of 12" is an officer describing twelve direct reports, and the
+  // pattern above misses it because the number does not follow the verb — so
+  // eight years of leading people read as no evidence of leading anyone. The
+  // nouns are the ones CVs actually use for a group of people, in and out of
+  // uniform.
+  { kind: 'team', re: /\b(?:section|platoon|squad|crew|watch|shift|unit|cell|troop|detachment|department|division|practice|chapter|pod|ward|branch|group|function)\s+of\s+(\d{1,4})\b/i },
   { kind: 'budget', re: /(?:budget|p&l|spend|cost base)[^.\n]{0,24}?([$£€₹]\s?\d[\d.,]*\s?(?:k|m|bn|billion|million|crore|lakh)?)/i },
   { kind: 'revenue', re: /(?:revenue|arr|mrr|gmv|sales)[^.\n]{0,24}?([$£€₹]\s?\d[\d.,]*\s?(?:k|m|bn|billion|million|crore|lakh)?)/i },
   { kind: 'scale', re: /\b(\d[\d.,]*\s?(?:k|m|bn|million|billion|crore|lakh)?\+?\s*(?:[a-z]+\s+)?(?:users?|customers?|clients?|analysts?|employees?|requests?|transactions?|events?|records?|rows?|orders?|sites?|stores?|markets?|countries|qps|tps|rps|daily active|monthly active|dau|mau))\b/i },
