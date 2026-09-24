@@ -7,6 +7,8 @@
  * moves as the person types rather than after a refused save.
  */
 
+import type { CompetencyProvenance } from './competencySourceModel';
+
 export type Category = 'technical' | 'domain' | 'behavioral' | 'situational' | 'communication';
 export type Classification = 'essential' | 'preferred' | 'trainable' | 'non_scoring';
 
@@ -18,7 +20,13 @@ export const COMPETENCY_DEFINITION_MAX_LENGTH = 1000;
 export const INDICATOR_MAX_COUNT = 20;
 export const INDICATOR_MAX_LENGTH = 300;
 
-export interface EditableCompetency {
+/**
+ * A competency as the role page edits it, carrying the provenance the server
+ * sends with it. The provenance is never edited here — it records where the
+ * competency came from, which no amount of later editing changes — but it
+ * travels with the row so it can be shown beside it.
+ */
+export interface EditableCompetency extends CompetencyProvenance {
   readonly id: string;
   readonly name: string;
   readonly definition: string;
@@ -116,6 +124,22 @@ export function removalLabel(hasHistory: boolean): { label: string; explanation:
   return hasHistory
     ? { label: 'Retire', explanation: 'Interviews have already assessed this competency, so it is retired rather than deleted: it stops being asked and scored, and stays on record for those assessments.' }
     : { label: 'Remove', explanation: 'No interview has used this competency yet, so it is deleted from the scorecard.' };
+}
+
+/**
+ * Whether taking a competency off the scorecard needs a second click.
+ *
+ * A wrongly extracted competency is the thing this page most needs to make
+ * easy to get rid of: it is a claim about the job that nobody agreed to, and
+ * the reviewer is looking at it precisely to catch that. While no interview
+ * has used it, removing is a plain deletion of an unused draft row, so it
+ * happens on the one click.
+ *
+ * Once interviews have assessed it, the same button retires it, which changes
+ * what an existing assessment means. That one still asks.
+ */
+export function removalNeedsConfirm(hasHistory: boolean): boolean {
+  return hasHistory;
 }
 
 export interface CompetencyDraft {

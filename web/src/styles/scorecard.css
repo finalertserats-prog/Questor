@@ -38,6 +38,109 @@
   align-items: baseline;
 }
 
+/* --- where a competency came from ------------------------------------------
+   The evidence for the claim, drawn the way evidence is drawn everywhere else
+   in the product (styles/fit.css): the quote in the reading colour, the
+   citation in the data face beneath it, and a rule down the left rather than
+   a tinted block behind it. Uncertainty moves the rule's colour and adds a
+   bracketed word; it never fills anything in.
+   -------------------------------------------------------------------------- */
+.comp-source td {
+  border-left: var(--rail) solid var(--rule);
+  padding: 0 14px 10px;
+}
+.comp-source.is-uncertain td {
+  border-left-color: var(--hold);
+}
+
+.comp-source-body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.comp-quote {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.comp-where {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  color: var(--ink-3);
+}
+
+.comp-nosource {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.comp-why {
+  margin: 2px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+/* A label in brackets: the state is the word, the brackets are the frame. */
+.comp-tag {
+  margin-left: 6px;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.comp-tag::before { content: '['; }
+.comp-tag::after { content: ']'; }
+
+/* --- this advert beside the catalog's version of the role ------------------ */
+.comp-compare-block {
+  margin: 12px 0;
+  padding: 2px 0 2px 12px;
+  border-left: var(--rail) solid var(--rule);
+}
+.comp-compare-block.is-missing {
+  border-left-color: var(--stop);
+}
+
+.comp-compare-h {
+  margin: 0 0 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.comp-compare-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  font-size: 0.9rem;
+}
+.comp-compare-list li {
+  margin-bottom: 2px;
+}
+
+.comp-compare-note {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--ink-3);
+}
+
+.comp-compare-shared {
+  margin: 12px 0 0;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  color: var(--ink-3);
+}
+
 .comp-details td {
   border-left: var(--rail) solid var(--rule);
   padding: 10px 14px 14px;

@@ -5,7 +5,7 @@ import { Icon } from '../Icon';
 import { weightsProblem, weightsTotal } from '../scorecardModel';
 import { AddCompetencyPanel } from './AddCompetencyPanel';
 import { CompetencyRow } from './CompetencyRow';
-import { applyCompetencyPatch, mustPassAfterPatch, removalLabel, toggleMustPass, type EditableCompetency } from './competencyEditModel';
+import { applyCompetencyPatch, mustPassAfterPatch, removalLabel, removalNeedsConfirm, toggleMustPass, type EditableCompetency } from './competencyEditModel';
 
 interface Props {
   readonly roleId: string;
@@ -58,7 +58,10 @@ export function CompetencyEditor({ roleId, competencies, mustPassIds, historyIds
       const name = competencies.find((c) => c.id === id)?.name ?? 'The competency';
       onStored(res.retired
         ? `${name} retired: interviews have used it, so it stays on record but is no longer asked or scored.`
-        : `${name} removed from the scorecard.`);
+        // Removal takes one click, so the notice carries the way back: there
+        // is no undo, and "Add competency" is where an accidental one is put
+        // right.
+        : `${name} removed from the scorecard. Use "Add competency" if that was not what you meant.`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Could not remove the competency.');
     } finally {
@@ -122,7 +125,14 @@ export function CompetencyEditor({ roleId, competencies, mustPassIds, historyIds
                 locked={locked}
                 onPatch={(change) => patch(c.id, change)}
                 onMustPass={(on) => mustPass(c.id, on)}
-                onRemove={() => { if (!structural) setConfirmId(c.id); else setError(structuralHint ?? ''); }}
+                onRemove={() => {
+                  if (structural) { setError(structuralHint ?? ''); return; }
+                  // A competency no interview has used goes on the one click:
+                  // catching a wrongly extracted one is the whole point of
+                  // reading this table before approving it.
+                  if (removalNeedsConfirm(history.has(c.id))) setConfirmId(c.id);
+                  else void remove(c.id);
+                }}
               />
             ))}
           </tbody>

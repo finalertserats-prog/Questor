@@ -24,6 +24,8 @@ import {
 import { hasScore } from '../components/scoreFormat';
 import { weightsProblem } from '../components/scorecardModel';
 import { CompetencyEditor } from '../components/scorecard/CompetencyEditor';
+import { CatalogComparisonPanel } from '../components/scorecard/CatalogComparisonPanel';
+import type { CatalogComparison } from '../components/scorecard/catalogComparisonModel';
 import type { EditableCompetency } from '../components/scorecard/competencyEditModel';
 import { TechStackPanel } from '../components/TechStackPanel';
 import { stackNames, type TechStackItem } from '../components/techStackModel';
@@ -38,6 +40,7 @@ interface Profile {
   policyRules: { prohibitedTopics: string[] };
 }
 interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; warnings?: string[] }
+interface ValidateResp { catalogComparison: CatalogComparison | null }
 interface RoleResp {
   role: { id: string; title: string; level: string; location: string; employmentType: string; status: string; sourceType: string; catalogRole: { id: string; title: string; domain: { id: string; name: string } } | null; experienceBand: string | null; regionCode: string | null; jurisdictionCode: string | null; techStack: readonly TechStackItem[] };
   scorecards: Scorecard[];
@@ -50,6 +53,11 @@ export function RoleDetail() {
   const { user } = useAuth();
   const [data, setData] = useState<RoleResp | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  // What the catalog's version of this role usually asks for, compared with
+  // the scorecard as it stands. A second request rather than part of the role
+  // load: it re-reads the job description server-side, and the page must open
+  // at its usual speed and stay usable if this one is slow or refused.
+  const [comparison, setComparison] = useState<CatalogComparison | null>(null);
   // The profile exactly as it was loaded. "Dirty" is the difference from this,
   // not a flag someone has to remember to set on every edit path.
   const [saved, setSaved] = useState('');
@@ -98,12 +106,20 @@ export function RoleDetail() {
         else setActionError(`Done, but the page could not refresh: ${message}`);
       })
       .finally(() => { if (isCurrentResponse(ticket, latestLoad.current)) setLoading(false); });
+
+    // A second opinion, not the page. If it cannot be had, the panel is simply
+    // not drawn: an error banner here would be about something nobody asked
+    // for, above a scorecard that loaded perfectly well.
+    api.get<ValidateResp>(`/roles/${id}/validate`)
+      .then((v) => { if (isCurrentResponse(ticket, latestLoad.current)) setComparison(v.catalogComparison ?? null); })
+      .catch(() => { if (isCurrentResponse(ticket, latestLoad.current)) setComparison(null); });
   };
 
   useEffect(() => {
     // A different role: nothing of the previous one may stay on screen.
     setData(null);
     setProfile(null);
+    setComparison(null);
     setSaved('');
     setLoadError('');
     setActionError('');
@@ -379,6 +395,11 @@ export function RoleDetail() {
         onChange={updateCompetencies}
         onStored={(message) => { toast.show(message); setActionError(''); load(false); }}
       />
+
+      {/* Directly beneath the competencies, because what it says is about
+          them: an omission only means anything next to the list it is missing
+          from. */}
+      <CatalogComparisonPanel comparison={comparison} />
 
       <div className="card">
         <h2 className="card-title"><Icon name="scale" size={16} />Scoring</h2>

@@ -13,6 +13,7 @@ import {
   type Classification,
   type EditableCompetency,
 } from './competencyEditModel';
+import { provenanceOf, type ProvenanceRead } from './competencySourceModel';
 import { SuggestedDraft } from '../drafts/SuggestedDraft';
 import { useFieldDraft } from '../drafts/useFieldDraft';
 
@@ -31,9 +32,15 @@ interface Props {
 }
 
 /**
- * One competency: the row HR scans, and beneath it (on request) the words the
- * interviewer and the grader will read. A retired competency keeps its row,
- * greyed and unweighted, so the record of what was once assessed stays visible.
+ * One competency: the row HR scans, beneath it the line of the advert it was
+ * read from, and beneath that (on request) the words the interviewer and the
+ * grader will read. A retired competency keeps its row, greyed and unweighted,
+ * so the record of what was once assessed stays visible.
+ *
+ * The source line is not behind the disclosure. A reviewer approving a
+ * scorecard is deciding whether each competency belongs on it, and they cannot
+ * decide that from a name alone — so the evidence for the claim sits with the
+ * claim, the way interview evidence and CV facts do everywhere else.
  */
 export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onPatch, onMustPass, onRemove }: Props) {
   const [open, setOpen] = useState(false);
@@ -43,6 +50,7 @@ export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onP
   const retired = c.retired === true;
   const removal = removalLabel(hasHistory);
   const disabled = locked || retired;
+  const provenance = provenanceOf(c);
 
   // Competency wording is role content: it describes what the job asks for,
   // not what a candidate did, so a draft here is authoring rather than
@@ -68,6 +76,9 @@ export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onP
             onChange={(e) => onPatch({ name: e.target.value })}
           />
           {retired && <span className="small muted">[ retired ]</span>}
+          {provenance.uncertain && (
+            <span className="comp-tag" data-testid={`competency-uncertain-${c.id}`}>uncertain</span>
+          )}
         </td>
         <td>
           {retired ? <Badge kind={catKind(c.category)}>{humanise(c.category)}</Badge> : (
@@ -122,6 +133,7 @@ export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onP
           )}
         </td>
       </tr>
+      <SourceRow competencyId={c.id} name={c.name} provenance={provenance} retired={retired} />
       {open && (
         <tr className="comp-details">
           <td colSpan={7}>
@@ -158,5 +170,46 @@ export function CompetencyRow({ competency: c, mustPass, hasHistory, locked, onP
         </tr>
       )}
     </>
+  );
+}
+
+/**
+ * Why this competency is on the scorecard, said in one of three ways and never
+ * a fourth: the advert's own words, a stated reason that is not the advert, or
+ * the admission that nothing was recorded. A competency with no span is never
+ * dressed up as one that has one.
+ */
+function SourceRow({ competencyId, name, provenance, retired }: {
+  readonly competencyId: string;
+  readonly name: string;
+  readonly provenance: ProvenanceRead;
+  readonly retired: boolean;
+}) {
+  const classes = ['comp-source'];
+  if (provenance.uncertain) classes.push('is-uncertain');
+  if (retired) classes.push('comp-row-retired');
+
+  return (
+    <tr className={classes.join(' ')} data-testid={`competency-source-${competencyId}`}>
+      <td colSpan={7}>
+        <div className="comp-source-body">
+          {provenance.kind === 'span' ? (
+            <>
+              <q className="comp-quote">{provenance.quote}</q>
+              <span className="comp-where">{provenance.citation}</span>
+            </>
+          ) : (
+            <span className="comp-nosource" data-testid={`competency-no-source-${competencyId}`}>{provenance.note}</span>
+          )}
+          {provenance.uncertain && (
+            <span className="comp-where">
+              <span className="visually-hidden">{name}: </span>
+              Read with low confidence — check it against the advert before approving.
+            </span>
+          )}
+          {provenance.rationale && <p className="comp-why">{provenance.rationale}</p>}
+        </div>
+      </td>
+    </tr>
   );
 }

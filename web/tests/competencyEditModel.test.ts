@@ -9,6 +9,7 @@ import {
   mustPassAfterPatch,
   rebalanceWeights,
   removalLabel,
+  removalNeedsConfirm,
   toggleMustPass,
   type EditableCompetency,
 } from '../src/components/scorecard/competencyEditModel';
@@ -133,6 +134,16 @@ describe('removalLabel', () => {
 
   it('offers to remove one they have not', () => {
     expect(removalLabel(false).label).toBe('Remove');
+  });
+});
+
+describe('removalNeedsConfirm', () => {
+  it('takes a wrongly proposed competency off on the one click', () => {
+    expect(removalNeedsConfirm(false)).toBe(false);
+  });
+
+  it('still asks before retiring one that interviews have assessed', () => {
+    expect(removalNeedsConfirm(true)).toBe(true);
   });
 });
 
