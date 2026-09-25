@@ -5,6 +5,7 @@ import { roleTechStack } from './roleTechStack.js';
 import type { FitScore, InterviewPlan, RoleSuccessProfile } from '../domain/types.js';
 import { logAudit } from './audit.js';
 import { lockSession } from './sessionLock.js';
+import { LATEST_PROFILE } from './resumeProfile.js';
 
 /**
  * An interview that has not started yet follows the role's CURRENT approved
@@ -64,7 +65,7 @@ export async function replanFromLatestScorecard(sessionId: string): Promise<Repl
   // Duration, language, modules and the candidate's band were decided when the
   // interview was set up and are not what changed; only the competencies are.
   const previous = parseJsonOptional<Partial<InterviewPlan>>(session.plan.planJson, {}, { model: 'InterviewPlanVersion', id: session.plan.id, field: 'planJson' });
-  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: session.candidateId }, orderBy: { version: 'desc' } });
+  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: session.candidateId }, orderBy: LATEST_PROFILE });
   const fit = latestProfile ? parseJsonStrict<FitScore>(latestProfile.fitScoreJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'fitScoreJson' }) : undefined;
   const roleRow = await prisma.role.findUniqueOrThrow({ where: { id: session.roleId }, select: { id: true, techStackJson: true } });
   const plan = await attachLibrary(buildInterviewPlan({

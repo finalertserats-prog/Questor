@@ -29,6 +29,7 @@ import {
 } from '../services/candidateReuse.js';
 import { attachResume, createApplication } from '../services/candidateCreate.js';
 import { candidateOwnZone, orgZone, timeZoneField } from '../services/scheduleZone.js';
+import { LATEST_PROFILE } from '../services/resumeProfile.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -240,7 +241,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
   const candidate = await assertCanAccessCandidate(req.auth!, id);
   const profileVersion = await prisma.candidateProfileVersion.findFirst({
     where: { candidateId: candidate.id },
-    orderBy: { version: 'desc' },
+    orderBy: LATEST_PROFILE,
   });
   const currentRole = candidate.roleId
     ? await prisma.role.findFirst({ where: { id: candidate.roleId, tenantId: req.auth!.tenantId } })
@@ -286,7 +287,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
     include: {
       scorecards: {
         where: { status: 'approved' },
-        orderBy: { version: 'desc' },
+        orderBy: LATEST_PROFILE,
         take: 1,
       },
     },
@@ -357,7 +358,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
 // Get candidate detail (profile + fit + evidence)
 candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
   const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
-  const profileVersion = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' }, include: { evidenceNodes: true } });
+  const profileVersion = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: LATEST_PROFILE, include: { evidenceNodes: true } });
   const interviews = await prisma.interviewSession.findMany({ where: { candidateId: candidate.id }, orderBy: { createdAt: 'desc' } });
   // Three facts the owner of this candidate needs and would otherwise have to
   // go looking for: did they ask for feedback, is a draft waiting, and have they

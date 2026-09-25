@@ -6,6 +6,7 @@ import { logger } from '../logger.js';
 import type { PipelineStage } from '../domain/pipelineStages.js';
 import type { FitScore, AssessmentResult } from '../domain/types.js';
 import { comparableFitScore } from '../domain/fitVocabulary.js';
+import { LATEST_PROFILE } from './resumeProfile.js';
 import {
   AWARD_TIERS, awardsForPromotion, formatReference, referenceBlocks,
   serialiseEvidence, TIER_LABELS, type AwardFacts, type AwardHumanRound, type AwardTier,
@@ -182,7 +183,7 @@ async function gatherFacts(
 
   const profileRow = needs.profile
     ? await tx.candidateProfileVersion.findFirst({
-      where: { candidateId: o.candidateId }, orderBy: { version: 'desc' }, select: { createdAt: true, fitScoreJson: true },
+      where: { candidateId: o.candidateId }, orderBy: LATEST_PROFILE, select: { createdAt: true, fitScoreJson: true },
     })
     : null;
   const fit = profileRow ? approvedFit(profileRow.fitScoreJson) : null;

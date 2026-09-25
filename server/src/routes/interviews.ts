@@ -46,6 +46,7 @@ import { composeInvitation, type ComposedInvitation } from '../services/intervie
 import { calendarDeliveryFor, calendarStateNote, recordCalendarFailure, recordCalendarSent, type CalendarTarget } from '../services/calendarDelivery.js';
 import { interviewListQuerySchema, listInterviews } from '../services/interviewList.js';
 import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
+import { LATEST_PROFILE } from '../services/resumeProfile.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
@@ -85,7 +86,7 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
 
   const profile = parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' });
-  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' } });
+  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: LATEST_PROFILE });
   const fit = latestProfile ? parseJsonStrict<FitScore>(latestProfile.fitScoreJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'fitScoreJson' }) : undefined;
 
   // Pitch the interview at the candidate rather than at the requisition. Their
@@ -498,7 +499,7 @@ interviewsRouter.post('/:id/retake', requireCapability('interview:invite'), asyn
   if (!scorecard) throw new HttpError(400, 'Role scorecard must be approved before interviewing (BRD FR-003).');
 
   const profile = parseJsonStrict<RoleSuccessProfile>(scorecard.profileJson, { model: 'RoleScorecardVersion', id: scorecard.id, field: 'profileJson' });
-  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: { version: 'desc' } });
+  const latestProfile = await prisma.candidateProfileVersion.findFirst({ where: { candidateId: candidate.id }, orderBy: LATEST_PROFILE });
   const fit = latestProfile ? parseJsonStrict<FitScore>(latestProfile.fitScoreJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'fitScoreJson' }) : undefined;
   const parsed = latestProfile ? parseJsonStrict<NormalizedProfile>(latestProfile.profileJson, { model: 'CandidateProfileVersion', id: latestProfile.id, field: 'profileJson' }) : ({} as NormalizedProfile);
   const banding = resolveCandidateBand({ profile: parsed, resumeText: latestProfile?.rawText ?? '', roleSeniority: profile.seniority ?? '' });

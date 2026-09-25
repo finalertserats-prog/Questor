@@ -117,6 +117,73 @@ beforeAll(async () => {
   await prisma.candidateProfileVersion.create({ data: { candidateId: singleCand.id, version: 1, rawText: 'Python services improved by 30%', profileJson: JSON.stringify({ skills: ['Python'], employment: [], education: [], projects: [], certifications: [] }), fitScoreJson: '{}' } });
 });
 
+/**
+ * Which profile is "the current one" must not depend on the query plan.
+ *
+ * `version` was `count(*) + 1`, so a candidate whose profile list had ever
+ * been added to twice in one moment — or trimmed — ended up with several rows
+ * numbered the same. Production carries one candidate with three profiles all
+ * at version 1, spanning two parsers: an old one reading 31 years out of a
+ * digit inside an email address, and a corrected one reading 8. Every reader
+ * asks for the highest version and takes the first row, so which number that
+ * person's page showed was whatever the database returned first — the same
+ * request answering differently on different days.
+ *
+ * Driven through `POST /candidates/:id/resume`, the real writer, because the
+ * bug is in how the number is chosen and a hand-written row would choose it
+ * for us.
+ */
+describe('which profile is the current one', () => {
+  it('gives each new profile a number no earlier one holds', async () => {
+    const c = await prisma.candidate.create({
+      data: { tenantId, roleId: currentRoleId, fullName: 'Version Collision', email: 'collision@example.com' },
+    });
+    await prisma.candidateAssignment.create({ data: { candidateId: c.id, userId: userAId, relation: 'owner' } });
+
+    const cv = 'Experience
+Data Engineer at Example
+- Built Python Spark Airflow pipelines and cut latency by 40%.
+'
+      + '- Owned the on-call rota and improved reliability across three services for four years.';
+    for (let i = 0; i < 3; i++) {
+      await request(app).post(`/api/candidates/${c.id}/resume`).set(auth(recruiterAToken)).field('text', cv);
+    }
+
+    const versions = (await prisma.candidateProfileVersion.findMany({
+      where: { candidateId: c.id }, select: { version: true },
+    })).map((row) => row.version);
+
+    // Three writes, three distinct numbers — not three rows sharing one.
+    expect([versions.length, new Set(versions).size]).toEqual([3, 3]);
+  });
+
+  it('answers with the newest profile however the rows are ordered on disk', async () => {
+    const c = await prisma.candidate.create({
+      data: { tenantId, roleId: currentRoleId, fullName: 'Tied Versions', email: 'tied@example.com' },
+    });
+    await prisma.candidateAssignment.create({ data: { candidateId: c.id, userId: userAId, relation: 'owner' } });
+
+    // The shape production is already in: two profiles, same version number,
+    // written by two different parsers. Hand-built deliberately — this is the
+    // damage that already exists, which no writer will produce again.
+    const base = { candidateId: c.id, version: 1, rawText: 'Data Engineer at Example. Python, Spark.', fitScoreJson: '{}' };
+    const older = await prisma.candidateProfileVersion.create({
+      data: { ...base, profileJson: JSON.stringify({ totalYears: 31, skills: [], employment: [], education: [], projects: [], certifications: [] }) },
+    });
+    await prisma.candidateProfileVersion.create({
+      data: { ...base, profileJson: JSON.stringify({ totalYears: 8, skills: [], employment: [], education: [], projects: [], certifications: [] }) },
+    });
+    // Nudge the first one older than the second, whatever order they were inserted.
+    await prisma.candidateProfileVersion.update({
+      where: { id: older.id }, data: { createdAt: new Date(Date.now() - 86_400_000) },
+    });
+
+    const res = await request(app).get(`/api/candidates/${c.id}`).set(auth(recruiterAToken));
+
+    expect([res.status, res.body.resume?.totalYears]).toEqual([200, 8]);
+  });
+});
+
 describe('candidate profile analysis endpoint', () => {
   it('ranks scoped alternative approved roles and explains why', async () => {
     const res = await request(app).get(`/api/candidates/${candidateId}/profile-analysis`).set(auth(recruiterAToken));

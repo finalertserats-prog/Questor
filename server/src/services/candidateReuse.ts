@@ -12,6 +12,7 @@ import { normalizeEmail } from './userEmail.js';
 import { cvFactsFor, resumeScoringFor, storeResumeProfile } from './resumeProfile.js';
 import { awardBronze, noteAwards } from './candidateAwards.js';
 import type { AuthClaims } from './auth.js';
+import { LATEST_PROFILE } from './resumeProfile.js';
 
 /**
  * Candidate reuse: a person already in Questor is put forward for another
@@ -121,7 +122,7 @@ interface SourceResume {
 /** The latest resume on the source application, if it has one worth copying. */
 async function latestResume(candidateId: string): Promise<SourceResume | null> {
   const [profile, artifact] = await Promise.all([
-    prisma.candidateProfileVersion.findFirst({ where: { candidateId }, orderBy: [{ createdAt: 'desc' }, { version: 'desc' }], select: { rawText: true } }),
+    prisma.candidateProfileVersion.findFirst({ where: { candidateId }, orderBy: LATEST_PROFILE, select: { rawText: true } }),
     prisma.artifact.findFirst({ where: { candidateId, kind: 'resume' }, orderBy: { createdAt: 'desc' }, select: { filename: true, contentType: true } }),
   ]);
   if (!profile?.rawText.trim()) return null;

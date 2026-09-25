@@ -14,6 +14,21 @@ import type { TechStackItem } from '../domain/techStack.js';
 import type { CvFacts } from '../domain/cvFacts.js';
 
 /**
+ * How to ask for a candidate's current profile.
+ *
+ * Version first, because that is what it means; `createdAt` second, because
+ * version alone is not unique on rows written before the counter was fixed.
+ * Exported and shared so the eight places that read "the latest profile"
+ * cannot answer differently from one another — `candidateReuse.ts` had already
+ * discovered the tie and ordered by `createdAt` locally, and one call site
+ * knowing something the other seven did not is how this stayed invisible.
+ */
+export const LATEST_PROFILE = [
+  { version: 'desc' },
+  { createdAt: 'desc' },
+] as const satisfies Prisma.CandidateProfileVersionOrderByWithRelationInput[];
+
+/**
  * The resume pipeline behind POST /candidates/:id/resume, shared with applying
  * an existing person to another role: read the CV into evidence-backed facts,
  * score those facts against the role, store a new profile version with its
@@ -158,7 +173,17 @@ async function writeResumeProfile(db: Prisma.TransactionClient, o: StoreResumeIn
     scorecardStatus: o.scoring.scorecardStatus,
   });
 
-  const version = (await db.candidateProfileVersion.count({ where: { candidateId: o.candidateId } })) + 1;
+  // `count(*) + 1` gave every row the same number whenever one was ever removed
+  // or two were written close together, and production carries three profiles
+  // for one candidate all numbered 1. Every reader asks for the highest
+  // version, so a tie made "the current profile" whichever row the database
+  // felt like returning — the same request answering differently on different
+  // days, on a real person's record.
+  const highest = await db.candidateProfileVersion.aggregate({
+    where: { candidateId: o.candidateId },
+    _max: { version: true },
+  });
+  const version = (highest._max.version ?? 0) + 1;
   const profileVersion = await db.candidateProfileVersion.create({
     data: {
       candidateId: o.candidateId, version, rawText: o.rawText,

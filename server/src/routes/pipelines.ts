@@ -46,6 +46,7 @@ import {
   createMeeting, initialMeetingFields, isStaleCreation, tenantMeetingProvider, MEETING_STATUS, type MeetingOutcome,
 } from '../services/roundMeeting.js';
 import { meetingUrlSchema, durationSchema } from './roundMeetingSchemas.js';
+import { LATEST_PROFILE } from '../services/resumeProfile.js';
 
 /**
  * The medallion pipeline: one candidate moving through ordered stages for one
@@ -1029,7 +1030,7 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
   const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
 
   const profile = await prisma.candidateProfileVersion.findFirst({
-    where: { candidateId: pipeline.candidateId }, orderBy: { version: 'desc' }, select: { id: true, fitScoreJson: true },
+    where: { candidateId: pipeline.candidateId }, orderBy: LATEST_PROFILE, select: { id: true, fitScoreJson: true },
   });
   const fit = profile
     ? parseJsonStrict<{ overall?: unknown; provisional?: boolean }>(profile.fitScoreJson, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' })
