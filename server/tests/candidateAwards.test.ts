@@ -314,13 +314,26 @@ describe('what is written onto an award', () => {
   });
 
   /**
-   * Both tiers of one promotion are about the same person and the same role,
-   * and they were struck in the same instant. The identity is read once,
-   * before the moment is stamped, so two awards from one move cannot disagree
-   * with each other about who they are for — and neither can name a title that
-   * only became true after the instant they claim to have been struck at.
+   * Two properties, asserted apart rather than folded into one comparison.
+   *
+   * They used to be one assertion over `name|title|instant`, which held only
+   * while every tier carried all three. Diamond now carries no name and no
+   * title — it prints no certificate, so a name on it would be personal data
+   * stored for nothing to read — and the combined comparison started failing
+   * for the right reason on data that was correct: an absent field was
+   * participating in it, and `undefined|undefined|<instant>` differs from
+   * Gold's real values.
+   *
+   * A comparison an absent value can join is the wrong shape whichever way it
+   * lands. So the moment and the subject are now checked on their own terms,
+   * and Diamond holding no subject is a stated expectation rather than a
+   * side effect of one it silently fails.
    */
-  it('gives the two tiers one promotion earns the same moment and the same subject', async () => {
+  it('strikes both tiers of one promotion in the same instant', async () => {
+    // The half that guards the ordering in `readIdentity`: the identity is read
+    // before the moment is stamped, so an award cannot name a title that only
+    // became true after the instant it says it was struck at. Both tiers of one
+    // move share that instant, whatever else they carry.
     const ids = await seeded();
     const pipelineId = await pipelineAt(ids, 'gold');
 
@@ -328,13 +341,46 @@ describe('what is written onto an award', () => {
 
     const rows = await prisma.candidateAward.findMany({
       where: { candidateId: ids.candidateId, tier: { in: ['gold', 'diamond'] } },
-    });
-    const named = rows.map((row) => {
-      const { candidateName, roleTitle } = JSON.parse(row.evidenceJson) as { candidateName: string; roleTitle: string };
-      return `${candidateName}|${roleTitle}|${row.awardedAt.toISOString()}`;
+      select: { awardedAt: true },
     });
 
-    expect([rows.length, new Set(named).size]).toEqual([2, 1]);
+    expect([rows.length, new Set(rows.map((row) => row.awardedAt.toISOString())).size]).toEqual([2, 1]);
+  });
+
+  it('names the same subject on every certificate a candidate holds for one role', async () => {
+    // Silver and Gold are struck by different moves, each reading the identity
+    // fresh. Two certificates for one person on one role must not come to
+    // disagree about who they are for.
+    const ids = await seeded();
+    const pipelineId = await pipelineAt(ids, 'gold');
+
+    await advance(ids, pipelineId, 'diamond');
+
+    const rows = await prisma.candidateAward.findMany({
+      where: { candidateId: ids.candidateId, tier: { in: ['silver', 'gold'] } },
+      select: { evidenceJson: true },
+    });
+    const subjects = rows.map((row) => {
+      const { candidateName, roleTitle } = JSON.parse(row.evidenceJson) as { candidateName: string; roleTitle: string };
+      return `${candidateName}|${roleTitle}`;
+    });
+
+    // Non-empty as well as identical: a pair of records that had both lost
+    // their subject would otherwise agree perfectly about nothing.
+    expect([rows.length, new Set(subjects).size, subjects.every((subject) => /^.+\|.+$/.test(subject))])
+      .toEqual([2, 1, true]);
+  });
+
+  it('writes no subject onto the Diamond struck beside them, which prints none', async () => {
+    const ids = await seeded();
+    const pipelineId = await pipelineAt(ids, 'gold');
+
+    await advance(ids, pipelineId, 'diamond');
+
+    const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId: ids.candidateId, tier: 'diamond' } });
+    const stored = JSON.parse(award.evidenceJson) as Record<string, unknown>;
+
+    expect([stored.version, 'candidateName' in stored, 'roleTitle' in stored]).toEqual([1, false, false]);
   });
 
   it('freezes the name and title the candidate and role held when it was struck', async () => {
