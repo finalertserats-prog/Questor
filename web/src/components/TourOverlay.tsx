@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
 import {
   finishTour,
+  giveUpStep,
   isFirstStep,
   isLastStep,
   keyAction,
@@ -10,16 +11,19 @@ import {
   nextStep,
   placeTourCard,
   previousStep,
+  shouldGiveUp,
   skipTour,
   stepAnnouncement,
   stepPosition,
   tourMotion,
   type AnchorPresence,
+  type AnchorSighting,
   type CardPlacement,
   type Rect,
   type TourChoice,
   type TourState,
   type TourStep,
+  type TourTravel,
 } from './tourModel';
 
 const SPOTLIGHT_PADDING = 6;
@@ -28,9 +32,9 @@ const REDUCED_MOTION = '(prefers-reduced-motion: reduce)';
 // to have stopped being inert, short enough not to be noticed.
 const FOCUS_SETTLE_MS = 50;
 const DRAWER_SETTLE_MS = 250;
-// A screen the tour has just navigated to has this long to produce the step's
-// element before the step is given up rather than shown pointing at nothing.
-const ANCHOR_WAIT_MS = 6000;
+// Whether a step's element is worth waiting for any longer, and which way the
+// reader is then carried, are tourModel's (shouldGiveUp, giveUpStep). This is
+// only how often we look.
 const ANCHOR_POLL_MS = 100;
 
 /** The element a step points at — and only if it is laid out: a hidden tab panel's element is not on the page. */
@@ -107,10 +111,16 @@ export function TourOverlay({ steps, state, setState, present, isNarrow = false,
 
   const [targetRect, setTargetRect] = useState<Rect | null>(null);
   const [card, setCard] = useState<CardPlacement>({ top: 0, left: 0, placement: 'center' });
-  // The step's element is on the page (a centred step needs none). Until
-  // then there is no card: it would show centred, then jump.
+  // The step's element is on the page (a centred step needs none). This governs
+  // the SPOTLIGHT only. The card renders either way — see the invariant on the
+  // render below: a scrim is never drawn without a way out on top of it.
   const [found, setFound] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  // Which way the reader is travelling, so a step that cannot be shown is given
+  // up in the direction they were going. Skipping always forwards meant Back
+  // onto an unshowable step bounced them straight forwards again, with no way
+  // past it: the end of a tour became a one-way door.
+  const travelRef = useRef<TourTravel>(1);
   // Read as a step begins, so the change of address it causes does not
   // restart it (navigate itself takes a new identity on every move).
   const hereRef = useRef('');
@@ -142,10 +152,17 @@ export function TourOverlay({ steps, state, setState, present, isNarrow = false,
         setFound(true);
         return;
       }
-      // The screen never produced it (the anchor test fails the build; this
-      // is the guard in front of a reader): on to the next step.
-      if (Date.now() - since > ANCHOR_WAIT_MS) {
-        setState((current) => nextStep(current, steps, present));
+      // Not there. Whether that is "not yet" or "not at all" is the model's
+      // call, on what can be seen right now — `anchor` is false because the
+      // case above already returned. When it is "not at all", the step is
+      // given up carrying on the way the reader was already going.
+      const seen: AnchorSighting = {
+        anchor: false,
+        settledBy: step.anchorSettledBy !== undefined && anchorElement(step.anchorSettledBy) !== null,
+        waitedMs: Date.now() - since,
+      };
+      if (shouldGiveUp(step, seen)) {
+        setState((current) => giveUpStep(current, steps, travelRef.current, present));
         return;
       }
       poll = window.setTimeout(look, ANCHOR_POLL_MS);
@@ -159,7 +176,9 @@ export function TourOverlay({ steps, state, setState, present, isNarrow = false,
   // later, since the drawer focuses its own close button as it opens and the
   // focus trap below only guards against focus leaving afterwards.
   useEffect(() => {
-    if (!step || !found) return undefined;
+    // Not gated on `found`: the card is there from the first frame of a step,
+    // so focus is too, and the reader can always Tab to a way out.
+    if (!step) return undefined;
     // The card is fixed to the viewport; focusing it must not cut short the
     // page's own scroll towards the element.
     const focusCard = () => cardRef.current?.focus({ preventScroll: true });
@@ -228,8 +247,13 @@ export function TourOverlay({ steps, state, setState, present, isNarrow = false,
       event.preventDefault();
       event.stopPropagation();
       if (action === 'skip') setState((current) => skipTour(current));
-      else if (action === 'next') setState((current) => nextStep(current, steps, present));
-      else setState((current) => previousStep(current, steps, present));
+      else if (action === 'next') {
+        travelRef.current = 1;
+        setState((current) => nextStep(current, steps, present));
+      } else {
+        travelRef.current = -1;
+        setState((current) => previousStep(current, steps, present));
+      }
     };
     const onFocusIn = (event: FocusEvent) => {
       const dialog = cardRef.current;
@@ -265,8 +289,17 @@ export function TourOverlay({ steps, state, setState, present, isNarrow = false,
     setState((current) => finishTour(current));
   };
 
+  const goNext = () => {
+    travelRef.current = 1;
+    setState((current) => nextStep(current, steps, present));
+  };
+  const goBack = () => {
+    travelRef.current = -1;
+    setState((current) => previousStep(current, steps, present));
+  };
+
   const position = step ? stepPosition(state, steps, present) : null;
-  const announcement = step && position && found ? stepAnnouncement(step, position) : '';
+  const announcement = step && position ? stepAnnouncement(step, position) : '';
 
   return (
     <>
@@ -289,65 +322,80 @@ export function TourOverlay({ steps, state, setState, present, isNarrow = false,
               }}
             />
           )}
-          {found && (
-            <div
-              ref={cardRef}
-              className={`tour-card is-${card.placement}`}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={titleId}
-              aria-describedby={bodyId}
-              tabIndex={-1}
-              style={card.placement === 'sheet' ? undefined : { top: card.top, left: card.left }}
-              onKeyDown={onCardKeyDown}
-              data-testid="tour-card"
-            >
-              <div className="tour-progress">
-                <Icon name="tour" size={14} />
-                Step {position.current} of {position.total}
-              </div>
-              <h2 id={titleId} className="tour-title">{step.title}</h2>
-              <p id={bodyId} className="tour-body">{step.body}</p>
-              {step.choices && step.choices.length > 0 && (
-                <div className="tour-choices">
-                  {step.choices.map((choice) => (
-                    <button
-                      key={choice.id}
-                      type="button"
-                      className={choice.emphasis === 'secondary' ? 'btn sm secondary' : 'btn sm'}
-                      onClick={() => choose(choice)}
-                      data-testid={`tour-choice-${choice.id}`}
-                    >
-                      {choice.icon && <Icon name={choice.icon} size={14} />}{choice.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {step.note && <p className="tour-note">{step.note}</p>}
-              <div className="tour-actions">
-                <button type="button" className="btn sm secondary tour-skip" onClick={() => setState((current) => skipTour(current))} data-testid="tour-skip">
-                  <Icon name="close" size={14} />Skip tour
-                </button>
-                <span className="row tour-steps">
-                  {!isFirstStep(state, steps, present) && (
-                    <button type="button" className="btn sm secondary" onClick={() => setState((current) => previousStep(current, steps, present))} data-testid="tour-back">
-                      <Icon name="arrow-left" size={14} />Back
-                    </button>
-                  )}
-                  {isLastStep(state, steps, present) ? (
-                    <button type="button" className="btn sm" onClick={() => setState((current) => nextStep(current, steps, present))} data-testid="tour-next">
-                      <Icon name="check" size={14} />Finish
-                    </button>
-                  ) : (
-                    <button type="button" className="btn sm" onClick={() => setState((current) => nextStep(current, steps, present))} data-testid="tour-next">
-                      Next<Icon name="arrow-right" size={14} />
-                    </button>
-                  )}
-                </span>
-              </div>
-              {footer && <div className="tour-footer">{footer}</div>}
+          {/* THE INVARIANT: while a step is running the card is always drawn.
+              The scrim above blocks the page to a pointer and the trap below
+              holds the keyboard, so a scrim without a card is a reader shut
+              inside an invisible box with nothing to press — which is what a
+              missing anchor used to produce, for six seconds, on a page that
+              looked ordinary. The spotlight is what waits for the element; the
+              way out never does.
+
+              WHAT IT COSTS, on every anchored step and not just the broken
+              ones: a step that navigates has no element until its screen
+              renders, so for that moment the card is centred (and `is-center`
+              carries the darkening) over the page being left, describing the
+              page arriving, before it moves to the element. Paid knowingly.
+              The alternative on offer was hiding the card until the anchor
+              lands, and that is exactly the trap above — there is no length of
+              time for which it is acceptable to show a reader a blocked page
+              and no way off it. */}
+          <div
+            ref={cardRef}
+            className={`tour-card is-${card.placement}`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            aria-describedby={bodyId}
+            tabIndex={-1}
+            style={card.placement === 'sheet' ? undefined : { top: card.top, left: card.left }}
+            onKeyDown={onCardKeyDown}
+            data-testid="tour-card"
+          >
+            <div className="tour-progress">
+              <Icon name="tour" size={14} />
+              Step {position.current} of {position.total}
             </div>
-          )}
+            <h2 id={titleId} className="tour-title">{step.title}</h2>
+            <p id={bodyId} className="tour-body">{step.body}</p>
+            {step.choices && step.choices.length > 0 && (
+              <div className="tour-choices">
+                {step.choices.map((choice) => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    className={choice.emphasis === 'secondary' ? 'btn sm secondary' : 'btn sm'}
+                    onClick={() => choose(choice)}
+                    data-testid={`tour-choice-${choice.id}`}
+                  >
+                    {choice.icon && <Icon name={choice.icon} size={14} />}{choice.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {step.note && <p className="tour-note">{step.note}</p>}
+            <div className="tour-actions">
+              <button type="button" className="btn sm secondary tour-skip" onClick={() => setState((current) => skipTour(current))} data-testid="tour-skip">
+                <Icon name="close" size={14} />Skip tour
+              </button>
+              <span className="row tour-steps">
+                {!isFirstStep(state, steps, present) && (
+                  <button type="button" className="btn sm secondary" onClick={goBack} data-testid="tour-back">
+                    <Icon name="arrow-left" size={14} />Back
+                  </button>
+                )}
+                {isLastStep(state, steps, present) ? (
+                  <button type="button" className="btn sm" onClick={goNext} data-testid="tour-next">
+                    <Icon name="check" size={14} />Finish
+                  </button>
+                ) : (
+                  <button type="button" className="btn sm" onClick={goNext} data-testid="tour-next">
+                    Next<Icon name="arrow-right" size={14} />
+                  </button>
+                )}
+              </span>
+            </div>
+            {footer && <div className="tour-footer">{footer}</div>}
+          </div>
         </div>
       )}
     </>

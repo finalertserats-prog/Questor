@@ -98,6 +98,7 @@ export function demoSteps(beats: readonly DemoBeat[], status: DemoStatus): reado
     title: index === 0 && status.visitor.firstName ? `Hello, ${status.visitor.firstName}.` : beat.title,
     body: index === 0 && status.visitor.firstName ? `Welcome to Questor. ${beat.body}` : beat.body,
     anchor: beat.anchor,
+    anchorSettledBy: beat.anchorSettledBy,
     route: resolveRoute(beat, status),
     choices: closingChoices(beat, status),
     note: beat.closing === 'explore' ? `${capsSentence(status.caps)} Sample data only; the sandbox is deleted afterwards.` : undefined,

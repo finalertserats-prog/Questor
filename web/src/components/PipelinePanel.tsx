@@ -645,7 +645,13 @@ export function PipelinePanel(
         </Banner>
       )}
 
-      <ol className="stage-track">
+      {/* data-tour marks this as the companion anchor for the guided demo's
+          B21 (TourStep.anchorSettledBy): the track and the Finalise button are
+          drawn by this component in the same commit, so once the track is on
+          the page a missing button is missing for good rather than still on
+          its way. That is what lets the demo tell a finalised candidate from a
+          slow one without guessing at a timeout. */}
+      <ol className="stage-track" data-tour="pipeline-stage-track">
         {pipeline.stages.map((stage, index) => (
           <li key={stage.key} className={`pipeline-stage stage-${states[index]}`} aria-current={states[index] === 'current' ? 'step' : undefined}>
             <StageBadge stageKey={stage.key} />
@@ -692,7 +698,15 @@ export function PipelinePanel(
             )}
             {final && mayDecide && (
               <div style={{ marginTop: 10 }}>
-                <button type="button" className="btn secondary" disabled={busy} onClick={finalize} data-testid="pipeline-finalize">
+                {/* data-tour is the guided demo's last anchored beat, B21
+                    (components/demo/demoScript.ts). Finalising moves the
+                    candidate to the last stage, which makes `finalStage` null
+                    and takes this button away — the pipeline stays ACTIVE, so
+                    what replaces it is "This is the final stage. Record a
+                    decision when ready.", not the DECIDED branch. B21 names
+                    the stage track above as the companion that settles the
+                    difference on a replay. */}
+                <button type="button" className="btn secondary" disabled={busy} onClick={finalize} data-testid="pipeline-finalize" data-tour="pipeline-finalize">
                   <Icon name="check-circle" size={16} />
                   {pendingFinalize ? `Confirm finalise as ${final.label}` : `Finalise (${final.label})`}
                 </button>

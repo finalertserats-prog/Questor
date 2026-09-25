@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ANCHOR_WAIT_MS,
   IDLE_TOUR,
   TOUR_STEPS,
   finishTour,
+  giveUpStep,
+  shouldGiveUp,
   isFirstStep,
   isLastStep,
   keyAction,
@@ -300,5 +303,83 @@ describe('placeTourCard', () => {
     const phone = { width: 380, height: 700 };
     const target = { top: 80, left: 0, width: 300, height: 40 };
     expect(placeTourCard(target, card, phone).placement).toBe('sheet');
+  });
+});
+
+/**
+ * Giving up a step whose element never arrived.
+ *
+ * Two decisions, kept apart: WHETHER a step is beyond waiting for
+ * (shouldGiveUp) and WHERE the reader goes when it is (giveUpStep). The
+ * property both serve is that the reader always has somewhere to go — the
+ * overlay's scrim blocks the page to a pointer and its card traps the
+ * keyboard, so a step it cannot resolve must still move.
+ */
+describe('whether a step is beyond waiting for', () => {
+  const plain: TourStep = { id: 'p', anchor: 'p', title: 'P', body: 'p' };
+  const settled: TourStep = { id: 's', anchor: 's', anchorSettledBy: 'panel', title: 'S', body: 's' };
+
+  it('never gives up a step whose element is on the page', () => {
+    expect(shouldGiveUp(plain, { anchor: true, settledBy: false, waitedMs: ANCHOR_WAIT_MS * 10 })).toBe(false);
+    expect(shouldGiveUp(settled, { anchor: true, settledBy: true, waitedMs: 0 })).toBe(false);
+  });
+
+  it('waits out the clock for a step with no companion to go on', () => {
+    expect(shouldGiveUp(plain, { anchor: false, settledBy: false, waitedMs: 10 })).toBe(false);
+    expect(shouldGiveUp(plain, { anchor: false, settledBy: true, waitedMs: 10 })).toBe(false);
+    expect(shouldGiveUp(plain, { anchor: false, settledBy: false, waitedMs: ANCHOR_WAIT_MS + 1 })).toBe(true);
+  });
+
+  // The defect this replaced: a short fixed wait. The element can be four
+  // sequential requests away on a real connection, so a timer drops the step
+  // on a slow network rather than a changed page. Presence is the evidence.
+  it('gives a step up the moment its companion says the component has rendered', () => {
+    expect(shouldGiveUp(settled, { anchor: false, settledBy: true, waitedMs: 0 })).toBe(true);
+  });
+
+  it('keeps waiting the full time while the companion is missing too, however slow the page', () => {
+    expect(shouldGiveUp(settled, { anchor: false, settledBy: false, waitedMs: 5000 })).toBe(false);
+    expect(shouldGiveUp(settled, { anchor: false, settledBy: false, waitedMs: ANCHOR_WAIT_MS + 1 })).toBe(true);
+  });
+});
+
+describe('where the reader goes when a step is given up', () => {
+  const steps: readonly TourStep[] = [
+    { id: 'a', anchor: 'a', title: 'A', body: 'a' },
+    { id: 'gone', anchor: 'gone', anchorSettledBy: 'panel', title: 'Gone', body: 'g' },
+    { id: 'c', anchor: 'c', title: 'C', body: 'c' },
+  ];
+  // The demo's own presence function: every beat counts, because a beat's
+  // element cannot be asked for before its screen is reached. It is the case
+  // that made the bounce reachable, so it is the case the tests use.
+  const everyBeat = () => true;
+  const at = (index: number) => ({ status: 'running' as const, index });
+
+  it('carries the reader on forwards when they were going forwards', () => {
+    expect(giveUpStep(at(1), steps, 1, everyBeat)).toEqual({ status: 'running', index: 2 });
+  });
+
+  // The defect: Back onto an unshowable step threw the reader forwards again,
+  // so the step behind it could not be reached at all. A travel-blind
+  // implementation returns index 2 here and passes every other case in this
+  // file, which is why this one is written as the pair it is.
+  it('carries them back when they pressed Back, so the step behind it is reachable', () => {
+    expect(giveUpStep(at(1), steps, -1, everyBeat)).toEqual({ status: 'running', index: 0 });
+  });
+
+  it('parks nobody: with nothing showable behind, going back still goes forwards', () => {
+    const noWayBack: readonly TourStep[] = [steps[1], steps[2]];
+    expect(giveUpStep(at(0), noWayBack, -1, everyBeat)).toEqual({ status: 'running', index: 1 });
+  });
+
+  it('completes the tour when the given-up step is the last one', () => {
+    const last: readonly TourStep[] = [steps[0], steps[1]];
+    expect(giveUpStep(at(1), last, 1, everyBeat).status).toBe('completed');
+  });
+
+  it('skips over further unshowable steps in the same direction', () => {
+    const twoGone: readonly TourStep[] = [steps[0], steps[1], { ...steps[1], id: 'gone2' }, steps[2]];
+    const absentExceptEnds = (anchor: string | undefined) => anchor !== 'gone' && anchor !== 'gone2';
+    expect(giveUpStep(at(2), twoGone, -1, absentExceptEnds)).toEqual({ status: 'running', index: 0 });
   });
 });

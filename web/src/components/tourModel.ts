@@ -15,6 +15,22 @@ export interface TourStep {
   readonly id: string;
   /** The `data-tour` value of the element pointed at. Absent: a centred card. */
   readonly anchor?: string;
+  /**
+   * A companion anchor, drawn by the same component in the same commit as this
+   * step's own, used to tell "not there yet" from "not there at all".
+   *
+   * A step whose element the reader's own action removes — a button that is
+   * gone once pressed — would otherwise be waited out in full every time the
+   * step is read again. Waiting a SHORTER fixed time instead is the trap it
+   * looks like the fix for: the wait starts at `navigate()`, and the element
+   * may be four sequential requests away on a real connection, so a short
+   * timer drops the step on a slow network rather than a changed page.
+   *
+   * Presence is evidence, and evidence does not need a clock. Once the
+   * companion is on the page its sibling has been rendered or not rendered,
+   * and a missing anchor is missing for good.
+   */
+  readonly anchorSettledBy?: string;
   readonly title: string;
   readonly body: string;
   /** Lives in the sidebar, which on a phone is a drawer that must be opened first. */
@@ -201,6 +217,61 @@ export function previousStep(state: TourState, steps: readonly TourStep[], prese
   if (state.status !== 'running') return state;
   const index = findPresent(steps, state.index - 1, -1, present);
   return index < 0 ? state : { status: 'running', index };
+}
+
+/** Which way the reader is travelling through the steps. */
+export type TourTravel = 1 | -1;
+
+/**
+ * A screen the tour has navigated to gets this long to produce the step's
+ * element before the step is given up rather than shown pointing at nothing.
+ * It is the outer bound for every step: a step with a companion anchor is
+ * normally settled long before it, and never waits longer.
+ */
+export const ANCHOR_WAIT_MS = 6000;
+
+/** What the overlay can see about a step's element at one moment. */
+export interface AnchorSighting {
+  /** The step's own element is on the page. */
+  readonly anchor: boolean;
+  /** Its companion is, so the component that draws both has rendered. */
+  readonly settledBy: boolean;
+  /** Since `navigate()`. */
+  readonly waitedMs: number;
+}
+
+/**
+ * Give this step up, or keep looking?
+ *
+ * Absence alone means nothing while a screen is still arriving — the element
+ * may be several requests away. It means everything once the companion anchor
+ * says the component has rendered: the two are written in the same commit, so
+ * a sibling that is not there then is not coming. Failing that, the clock.
+ */
+export function shouldGiveUp(step: TourStep, seen: AnchorSighting): boolean {
+  if (seen.anchor) return false;
+  if (step.anchorSettledBy !== undefined && seen.settledBy) return true;
+  return seen.waitedMs > ANCHOR_WAIT_MS;
+}
+
+/**
+ * Give up a step whose element never arrived, carrying on the way the reader
+ * was already going.
+ *
+ * Giving up always forwards meant Back onto an unshowable step bounced the
+ * reader straight forwards again: the end of a tour became a one-way door, and
+ * the step behind it was unreachable. Travelling back past it is the fix — and
+ * when there is nothing showable behind either, the reader is carried forwards
+ * rather than parked on a step that cannot be drawn.
+ */
+export function giveUpStep(
+  state: TourState, steps: readonly TourStep[], travel: TourTravel, present: AnchorPresence,
+): TourState {
+  if (travel === -1) {
+    const back = previousStep(state, steps, present);
+    if (back !== state) return back;
+  }
+  return nextStep(state, steps, present);
 }
 
 export function skipTour(state: TourState): TourState {

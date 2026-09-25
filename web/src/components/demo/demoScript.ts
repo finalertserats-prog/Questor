@@ -17,6 +17,13 @@ export interface DemoBeat {
   readonly route: string;
   /** The `data-tour` anchor spotlit. Absent: a centred card carries the beat. */
   readonly anchor?: string;
+  /**
+   * A second anchor on the same screen that proves the first one's absence is
+   * final rather than early (components/tourModel.ts). B21's Finalise button
+   * is removed by the very press it invites, and a beat cannot tell that from
+   * a page still loading without one.
+   */
+  readonly anchorSettledBy?: string;
   readonly body: string;
   /** Needs the seeded story's records (Priya's role, candidate, interview, assessment). */
   readonly needsStory?: boolean;
@@ -37,6 +44,29 @@ export interface DemoBeat {
  * visitor who is already inside back out to a public page — the second of them
  * straight after watching a hire decided. A demo arrives by link and never
  * needs either door explained.
+ *
+ * For the same reason B21 — finalising, the step that completes the owner's
+ * workflow — sits before the closing cards B18 and B19 rather than taking the
+ * retired B17's name, which the tests and the script document still use for
+ * the page that was cut.
+ *
+ * B20 was written for the human rounds and cut before it shipped. For the
+ * sandbox as provisioned its block reads "Gold · Upcoming · No round scheduled
+ * for this stage yet", so the beat spent two of its three sentences explaining
+ * an empty screen — and its one claim about that screen ("she is still at
+ * Silver") is false in two reachable states: after a visitor records Proceed
+ * and replays, and in any sandbox provisioned before the hr-decides lane,
+ * which `ensureSandbox` keeps alive rather than re-provisioning.
+ *
+ * Those same two states are why B21 now names no stage either. Its first draft
+ * said finalising "skips Gold ... so she is credited with Silver and Diamond",
+ * which is the arithmetic from Silver and the opposite of the truth from Gold,
+ * where the same press strikes Gold and Diamond. A beat is read at whatever
+ * stage the sandbox is at, so it states the rule — domain/candidateAwards.ts:
+ * the tier being left, when it is Silver or Gold, plus Diamond on arrival —
+ * rather than one stage's answer to it. The first draft also claimed Questor
+ * "will not certify rounds nobody ran", which is a principle the code does not
+ * hold: neither `awardsForPromotion` nor /finalize reads a round.
  */
 export const DEMO_BEATS: readonly DemoBeat[] = [
   {
@@ -98,6 +128,10 @@ export const DEMO_BEATS: readonly DemoBeat[] = [
   {
     id: 'B16', title: 'The decision', route: '/assessments/{assessmentId}', anchor: 'assessment-verdict', needsStory: true,
     body: 'A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence. Moving her on is also what earns her Silver — a badge and a certificate for the round she has just finished, in her name, that anyone she shows it to can verify.',
+  },
+  {
+    id: 'B21', title: 'Finalising the candidate', route: '/candidates/{candidateId}?tab=journey', anchor: 'pipeline-finalize', anchorSettledBy: 'pipeline-stage-track', needsStory: true,
+    body: 'Finalising is the move Questor never makes on its own: it carries Priya to Diamond, against your name, from wherever she is standing. Silver and Gold are credited to whoever is promoted out of them, so she keeps the tier she leaves and gains Diamond on arrival. It is refused until a person has reviewed her interview, so the verdict you record is what opens it.',
   },
   {
     id: 'B18', title: 'Yours to explore', route: '/?tab=home', closing: 'explore',

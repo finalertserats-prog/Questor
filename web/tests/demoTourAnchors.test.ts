@@ -43,6 +43,16 @@ describe('the demo\'s anchors', () => {
     expect(missing).toEqual([]);
   });
 
+  // A companion anchor is load-bearing too: it is what lets a beat tell a
+  // control that has been used up from a page that is still arriving. Lose it
+  // from the markup and the beat silently goes back to waiting out the clock.
+  it('include the companion anchors, which are as easy to drop and as quiet about it', () => {
+    const companions = DEMO_BEATS.filter((beat) => beat.anchorSettledBy !== undefined);
+    expect(companions.map((beat) => beat.id)).toEqual(['B21']);
+    const missing = companions.filter((beat) => !anchorsInMarkup.has(beat.anchorSettledBy!)).map((beat) => `${beat.id} -> ${beat.anchorSettledBy}`);
+    expect(missing).toEqual([]);
+  });
+
   it('cover every beat but the welcome and the two closing cards', () => {
     expect(DEMO_BEATS.filter((beat) => beat.anchor === undefined).map((beat) => beat.id)).toEqual(['B01', 'B18', 'B19']);
   });
