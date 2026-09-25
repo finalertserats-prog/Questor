@@ -25,6 +25,7 @@ import { hasScore } from '../components/scoreFormat';
 import { weightsProblem } from '../components/scorecardModel';
 import { CompetencyEditor } from '../components/scorecard/CompetencyEditor';
 import { CatalogComparisonPanel } from '../components/scorecard/CatalogComparisonPanel';
+import { EligibilityPanel, type EligibilityRequirement } from '../components/scorecard/EligibilityPanel';
 import type { CatalogComparison } from '../components/scorecard/catalogComparisonModel';
 import type { EditableCompetency } from '../components/scorecard/competencyEditModel';
 import { TechStackPanel } from '../components/TechStackPanel';
@@ -38,6 +39,8 @@ interface Profile {
   redFlags: string[]; competencies: Competency[];
   scoringRules: { mustPassCompetencyIds: string[]; passThreshold: number };
   policyRules: { prohibitedTopics: string[] };
+  /** Credential-shaped requirements, read off the advert. Absent on older scorecards. */
+  eligibility?: EligibilityRequirement[];
 }
 interface Scorecard { id: string; version: number; status: string; profile: Profile; approvedAt: string | null; warnings?: string[] }
 interface ValidateResp { catalogComparison: CatalogComparison | null }
@@ -406,6 +409,11 @@ export function RoleDetail() {
           them: an omission only means anything next to the list it is missing
           from. */}
       <CatalogComparisonPanel comparison={comparison} />
+
+      {/* After the competencies rather than among them: these are the
+          requirements the scorecard cannot express, and putting them in the
+          same list would invite somebody to weight a licence. */}
+      <EligibilityPanel requirements={profile.eligibility ?? []} />
 
       <div className="card">
         <h2 className="card-title"><Icon name="scale" size={16} />Scoring</h2>

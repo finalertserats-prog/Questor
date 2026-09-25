@@ -234,6 +234,7 @@ const SECTION_WORDS: Readonly<Record<JdSectionKind, string>> = {
   company: 'the company description',
   benefits: 'the benefits',
   boilerplate: 'the boilerplate',
+  eligibility: 'the eligibility requirements',
 };
 
 function rationaleFor(

@@ -1,4 +1,5 @@
-import { COLLABORATION_VERB, isDropped, otherPartyClause, otherPartyObject, reclassifiedSection } from './jdExclusions.js';
+import { COLLABORATION_VERB, excludedBy, isDropped, otherPartyClause, otherPartyObject, reclassifiedSection } from './jdExclusions.js';
+import { listedCredentialKindOf } from '../domain/eligibility.js';
 
 /**
  * A job description, read as the structured document it actually is.
@@ -18,6 +19,17 @@ export type JdSectionKind =
   | 'nice_to_have'
   | 'benefits'
   | 'boilerplate'
+  /**
+   * A requirement of the PERSON rather than a capability of theirs: a licence,
+   * a registration, a clearance, a named degree, the right to work somewhere.
+   *
+   * It weighs nothing, like company, benefits and boilerplate, and for the
+   * same reason — none of it is a competency. Unlike them, it is picked up again
+   * afterwards (engines/eligibility.ts) and put in front of a person to check,
+   * because an advert that legally requires a registration and a scorecard
+   * that never mentions one is how this lane began.
+   */
+  | 'eligibility'
   | 'unknown';
 
 export interface JdLine {
@@ -39,9 +51,11 @@ export interface JdSection {
  *
  * Requirements outrank responsibilities because "you must have deep SQL" is a
  * statement about the candidate and "write complex SQL" is a statement about
- * the work — both are evidence, the first is stronger. The three zeros are the
- * point of the whole file: nothing a company says about itself, its perks or
- * its legal position can put a competency on a scorecard.
+ * the work — both are evidence, the first is stronger. The zeros are the point
+ * of the whole file: nothing a company says about itself, its perks, its legal
+ * position or the credentials it asks for can put a competency on a scorecard.
+ * The last of them is not a discard — an eligibility line is read again
+ * elsewhere, by something that never scores it.
  */
 const SECTION_WEIGHTS: Readonly<Record<JdSectionKind, number>> = {
   requirements: 1,
@@ -52,6 +66,7 @@ const SECTION_WEIGHTS: Readonly<Record<JdSectionKind, number>> = {
   company: 0,
   benefits: 0,
   boilerplate: 0,
+  eligibility: 0,
 };
 
 /** Below this a section contributes nothing at all. */
@@ -106,6 +121,22 @@ const BULLET = /^([-*•▪●o]|\d+[.)])\s+/;
  */
 function listedUnderCompany(positional: JdSectionKind, text: string): JdSectionKind {
   return positional === 'company' && BULLET.test(text) ? 'unknown' : positional;
+}
+
+/**
+ * A credential listed under Requirements, with no requirement word on it.
+ *
+ * "A degree in nursing, or an equivalent pre-registration award." says "must"
+ * nowhere, because the heading above it already did. Anywhere else in the
+ * document the same sentence is about the work or about the company, so this
+ * only ever reads a line the advert itself filed under requirements — and only
+ * one the exclusion rules have found nothing else wrong with, which is what
+ * keeps "you don't need a computer science degree" a denial rather than a
+ * demand.
+ */
+function listedCredential(positional: JdSectionKind, body: string): JdSectionKind | null {
+  if (positional !== 'requirements' || excludedBy(body) !== null) return null;
+  return listedCredentialKindOf(body) ? 'eligibility' : null;
 }
 
 /** How long a wrapped requirement may grow before it stops being one sentence. */
@@ -195,7 +226,9 @@ export function segmentJd(sourceText: string): JdSection[] {
     }
     const body = stripBullet(text);
     if (!body) continue;
-    const section = reclassifiedSection(body) ?? listedUnderCompany(positional, text);
+    const section = reclassifiedSection(body)
+      ?? listedCredential(positional, body)
+      ?? listedUnderCompany(positional, text);
     placed.push({ line: { line, text: body, section }, heading });
   }
 

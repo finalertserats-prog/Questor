@@ -54,6 +54,26 @@ describe('saving a scorecard', () => {
     expect((await stored()).scoringRules.passThreshold).toBe(72);
   });
 
+  /**
+   * The same scar the competency `source` field carries, on the field added
+   * next to it: this schema strips what it does not name and re-runs on every
+   * Save, so a role's licence requirement would survive extraction and die at
+   * the first click of the button.
+   */
+  it('keeps the role\'s eligibility requirements across a save', async () => {
+    const eligibility = [{ id: 'elig-7', kind: 'licence', text: 'An active RN licence is required.', line: 7 }];
+    const res = await put({ ...drafted, eligibility });
+
+    expect(res.status).toBe(200);
+    expect((await stored()).eligibility).toEqual(eligibility);
+  });
+
+  it('refuses an eligibility requirement that cannot quote the advert', async () => {
+    const res = await put({ ...drafted, eligibility: [{ id: 'elig-0', kind: 'licence', text: '', line: 0 }] });
+
+    expect(res.status).toBe(400);
+  });
+
   it('accepts a red flag a person added', async () => {
     const res = await put({ ...drafted, redFlags: ['Cannot describe their own contribution to a team result'] });
 

@@ -176,6 +176,17 @@
   color: var(--ink-3);
 }
 
+/* --- the advert's own words, quoted back -----------------------------------
+   Set off by a rule rather than a tinted fill, like every other piece of state
+   in this product: a quotation has to survive being read without colour. */
+
+.fit-quote-jd {
+  margin: var(--space-1) 0 var(--space-2);
+  padding-left: var(--space-3);
+  border-left: var(--hair) solid var(--rule-strong);
+}
+.fit-quote-jd q { font-size: 0.88rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+
 /* --- probes ---------------------------------------------------------------- */
 
 .fit-probes { display: grid; gap: var(--space-2); margin: 0; padding-left: var(--space-5); }

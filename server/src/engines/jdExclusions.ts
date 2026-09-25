@@ -1,4 +1,5 @@
 import type { JdSectionKind } from './jdSections.js';
+import { ELIGIBILITY_REQUIREMENT } from '../domain/eligibility.js';
 
 /**
  * What a job description says that is NOT a competency for this role.
@@ -13,10 +14,15 @@ import type { JdSectionKind } from './jdSections.js';
  * Three different things can be wrong with a line, so there are three effects:
  *
  *   reclassify — the line belongs to a section that contributes nothing
- *                (benefits, company blurb, legal boilerplate), wherever it
- *                happens to sit in the document. Adverts routinely trail an
- *                equal-opportunity paragraph off the end of "Benefits:" with
- *                no heading of its own.
+ *                (benefits, company blurb, legal boilerplate, eligibility),
+ *                wherever it happens to sit in the document. Adverts routinely
+ *                trail an equal-opportunity paragraph off the end of
+ *                "Benefits:" with no heading of its own.
+ *
+ *                Contributing nothing is not the same as being thrown away.
+ *                Eligibility contributes nothing to a COMPETENCY and is read
+ *                again afterwards by engines/eligibility.ts, which puts it in
+ *                front of a person and never scores it.
  *   drop       — the line is about work someone else owns. "The platform team
  *                owns the Kubernetes cluster" must not make Kubernetes a
  *                competency of this role.
@@ -64,9 +70,27 @@ export const EXCLUSION_RULES: readonly ExclusionRule[] = [
     section: 'boilerplate',
   },
   {
+    /**
+     * Genuine boilerplate: nobody checks any of it against a candidate.
+     *
+     * This rule used to carry the eligibility patterns as well, under the name
+     * "legal or eligibility notice", and that conflation is what lost them.
+     * "This is an at-will employment relationship" and "you must hold an active
+     * RN licence" are not the same kind of sentence: the first is a fact about
+     * the contract that no CV can speak to, and the second is a requirement of
+     * the person that somebody has to check. The second half now has a rule and
+     * a destination of its own, below.
+     *
+     * The conditions an employer attaches to an offer stay HERE deliberately. A
+     * background check, a reference, an E-Verify run and a right-to-work check
+     * are all things the employer will do later; none of them is a credential
+     * the candidate is carrying around today, and putting them in front of a
+     * reviewer as something to read a CV for would find nothing, every time,
+     * for every candidate.
+     */
     id: 'legal_notice',
-    re: /\b(e-?verify|right to work|work authorisation|work authorization|background check|drug (screen|test)|at-will|visa sponsorship|sponsorship is not|privacy (policy|notice)|\bgdpr\b|terms and conditions|subject to (a |an )?(background|reference))\b/i,
-    why: 'A legal or eligibility notice, not a competency.',
+    re: /\b(e-?verify|background check|drug (screen|test)|at-will|visa sponsorship|sponsorship is not|privacy (policy|notice)|\bgdpr\b|terms and conditions|all (offers|appointments) are subject to|(offer|employment) is (subject to|conditional (up)?on|contingent (up)?on)|pre-?employment (check|screening)|subject to (a |an )?(background|references?|satisfactory))\b/i,
+    why: 'A legal notice or a condition of the offer, not a competency and not something to read a CV for.',
     effect: 'reclassify',
     section: 'boilerplate',
   },
@@ -146,6 +170,25 @@ export const EXCLUSION_RULES: readonly ExclusionRule[] = [
     re: /\b((owned|maintained|managed|run|handled|drafted|produced) by (the |our )?[\w&/-]+( [\w&/-]+)? (team|group|function|lead|manager|counsel)|is handled by|sits with the)\b/i,
     why: 'Names a system another team owns, so it is not a capability this role is hired for.',
     effect: 'drop',
+  },
+  {
+    /**
+     * The other half of what `legal_notice` used to be.
+     *
+     * It sits this late on purpose. Every drop rule above it gets first refusal,
+     * so a denial ("you don't need a computer science degree") stays a denial
+     * and somebody else's credential ("our site manager holds the SMSTS") stays
+     * theirs. What is left is a credential this advert asks THIS person for.
+     *
+     * Reclassifying, not dropping: the line still leaves competency extraction,
+     * exactly as it did before, and is picked up afterwards by
+     * engines/eligibility.ts. Nothing about it is ever scored.
+     */
+    id: 'eligibility_requirement',
+    re: ELIGIBILITY_REQUIREMENT(),
+    why: 'Names a credential the person must already hold. It is put in front of a reviewer to check, and never graded or scored.',
+    effect: 'reclassify',
+    section: 'eligibility',
   },
   {
     id: 'collaboration_mention',

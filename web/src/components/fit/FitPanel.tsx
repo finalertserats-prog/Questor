@@ -7,8 +7,9 @@ import {
   FIT_PROVISIONAL_LABEL, FIT_PROVISIONAL_NOTE,
 } from './fitVocabulary';
 import {
-  bandLabel, bandMeaning, bandOf, bandTone, isDetailedFit, isProvisionalFit, strengthLabel,
-  type Fit, type FitCompetencyRead, type FitEvidence, type FitTechnologyRead,
+  bandLabel, bandMeaning, bandOf, bandTone, eligibilityKindLabel, isDetailedFit, isProvisionalFit,
+  strengthLabel,
+  type Fit, type FitCompetencyRead, type FitEligibilityRead, type FitEvidence, type FitTechnologyRead,
 } from './fitModel';
 
 /**
@@ -106,6 +107,8 @@ export function FitPanel({ fit, rescoredNote }: { fit: Fit | null; rescoredNote?
         </section>
       )}
 
+      {(fit.eligibility ?? []).length > 0 && <Eligibility reads={fit.eligibility!} />}
+
       {(fit.technologies ?? []).length > 0 && <Technologies technologies={fit.technologies!} />}
 
       <section className="fit-block is-hold" data-testid="fit-probes">
@@ -192,6 +195,48 @@ function Quotes({ evidence }: { evidence: readonly FitEvidence[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * The one block on this panel that is a list of jobs rather than a reading.
+ *
+ * Everything else here describes a candidate. This describes work the reader
+ * has to do: an advert asked for a licence, a registration, a clearance or a
+ * named degree, and only a person can say whether this candidate meets it.
+ * Questor quotes the advert, quotes the CV where there is anything to quote,
+ * and stops — no strength word, no tick, no cross, nothing that could be read
+ * as an answer.
+ *
+ * The rule down the left is `is-hold`, the colour this product uses for things
+ * waiting on a human, because that is exactly what each of these is.
+ */
+function Eligibility({ reads }: { reads: readonly FitEligibilityRead[] }) {
+  return (
+    <section className="fit-block is-hold" data-testid="fit-eligibility">
+      <h3 className="fit-h">Eligibility this role asks for, for you to check</h3>
+      <p className="fit-note">
+        These are requirements a person either meets or does not, so no interview and no score can settle them.
+        Questor quotes the advert and whatever the CV says beside it. The decision is yours, and only yours.
+      </p>
+      <ul className="fit-reads">
+        {reads.map((r) => (
+          <li key={r.id} className="fit-read-row" data-testid={`fit-eligibility-${r.id}`}>
+            <div className="fit-read-head">
+              <b>{eligibilityKindLabel(r.kind)}</b>
+              <span className="fit-where">Job description line {r.line}</span>
+            </div>
+            <blockquote className="fit-quote-jd"><q>{r.requirement}</q></blockquote>
+            <p className="fit-note">{r.note}</p>
+            <Quotes evidence={r.evidence} />
+          </li>
+        ))}
+      </ul>
+      <p className="fit-note">
+        None of this moved the score, changed the band or filtered anybody. It is here because a requirement
+        nobody is shown is a requirement nobody checks.
+      </p>
+    </section>
   );
 }
 

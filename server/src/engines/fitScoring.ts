@@ -12,6 +12,7 @@ import { bandForRoleSeniority } from './bandCalibration.js';
 import { extractCvFacts } from './cvFacts.js';
 import { RECENT_YEARS, STALE_YEARS, STRENGTH_SCORE, hitsFor, readTechnologies, strengthOf, vocabularyFor } from './fitEvidence.js';
 import { buildProbes, competencySentence, experienceSentence, technologySentence, tenureNote } from './fitExplain.js';
+import { readEligibility } from './eligibility.js';
 
 /**
  * Pre-interview fit: what a CV evidences about THIS role, with the line behind
@@ -203,6 +204,17 @@ export function scoreFit(facts: CvFacts, role: RoleSuccessProfile, techStack: re
 
   const overall = clamp(Math.round(components.reduce((a, c) => a + c.score * c.weight, 0)), 0, 100);
 
+  /**
+   * Read AFTER the number is final, which is not an accident of ordering.
+   *
+   * Eligibility is not a competency, not a technology and not a component. It
+   * takes no weight, it cannot move the band, and there is no arrangement of
+   * licences that changes `overall` by a point. It rides along in the fit
+   * record because the fit panel is where HR reads a candidate, and a
+   * requirement nobody is shown is a requirement nobody checks.
+   */
+  const eligibility = readEligibility(role.eligibility ?? [], facts);
+
   const band = fitBandOf(overall, coverage, mustHaveGapCount);
   const notEvidenced = reads.filter((r) => r.strength === 'not_evidenced').map((r) => r.name);
   const probeDetail = buildProbes({ reads, readings, roleBand: roleBand.id });
@@ -233,6 +245,9 @@ export function scoreFit(facts: CvFacts, role: RoleSuccessProfile, techStack: re
     // and the reasons for them are usually not on it — so they are put in front
     // of a person as a neutral observation rather than turned into a number.
     ...(tenureNote(facts) ? { tenureNote: tenureNote(facts)! } : {}),
+    // Absent, not empty, on a role that names none — so a stored fit for such a
+    // role is byte-for-byte the shape it has always been.
+    ...(eligibility.length ? { eligibility } : {}),
     redaction: facts.redaction,
     engineVersion: FIT_ENGINE_VERSION,
     scorecardVersion: opts.scorecardVersion ?? null,

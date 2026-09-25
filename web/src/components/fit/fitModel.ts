@@ -29,6 +29,38 @@ export interface FitTechnologyRead {
 
 export interface FitProbe { text: string; reason: string; competencyId?: string; technology?: string; }
 
+/**
+ * One of the role's eligibility requirements with whatever the CV says about it.
+ *
+ * There is no strength and no score on this shape, and that is the point: a
+ * licence is not graded on a ladder. `evidence` empty means the CV said
+ * nothing, which the server's own `note` is careful to describe as silence
+ * rather than as absence — the panel renders that sentence rather than writing
+ * its own, so the two can never say different things.
+ */
+export interface FitEligibilityRead {
+  id: string;
+  kind: string;
+  requirement: string;
+  line: number;
+  evidence: FitEvidence[];
+  note: string;
+}
+
+/** What each kind is called on screen. An unknown kind falls back to the neutral word. */
+export const ELIGIBILITY_KIND_LABELS: Readonly<Record<string, string>> = {
+  right_to_work: 'Right to work',
+  clearance: 'Security clearance',
+  registration: 'Professional registration',
+  licence: 'Licence',
+  certification: 'Certification',
+  education: 'Education',
+};
+
+export function eligibilityKindLabel(kind: string): string {
+  return ELIGIBILITY_KIND_LABELS[kind] ?? 'Eligibility';
+}
+
 export interface FitRedaction { linesRemoved: number; kinds: string[]; injectionLines: number[]; }
 
 export interface Fit {
@@ -49,6 +81,8 @@ export interface Fit {
   probeDetail?: FitProbe[];
   experience?: { roleBand: string; explanation: string };
   tenureNote?: string;
+  /** Requirements a person has to check. Never scored, never used to order or filter. */
+  eligibility?: FitEligibilityRead[];
   redaction?: FitRedaction;
   engineVersion?: string;
   scorecardVersion?: number | null;

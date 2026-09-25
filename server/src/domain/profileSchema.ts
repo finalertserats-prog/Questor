@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ELIGIBILITY_KINDS } from './eligibility.js';
 import type { Proficiency } from './types.js';
 
 /**
@@ -57,6 +58,22 @@ export function isScored(c: { readonly classification: string; readonly retired?
   return c.classification !== 'non_scoring' && c.retired !== true;
 }
 
+export const ELIGIBILITY_MAX_COUNT = 12;
+
+/**
+ * An eligibility requirement as it may be stored.
+ *
+ * `line` is not optional and `text` may not be empty, because a requirement
+ * that cannot quote the advert is an assertion about what a job demands, and
+ * this product does not make those. The bounds are a JD line, not prose.
+ */
+const eligibilitySchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  kind: z.enum(ELIGIBILITY_KINDS),
+  text: z.string().trim().min(1).max(500),
+  line: z.number().int().min(1).max(100_000),
+});
+
 export const roleSuccessProfileSchema = z.object({
   roleContext: shortText(4000).default(''),
   outcomes: shortList(50, 500).default([]),
@@ -78,6 +95,12 @@ export const roleSuccessProfileSchema = z.object({
   }),
   redFlags: z.array(z.string().trim().min(1).max(RED_FLAG_MAX_LENGTH)).max(RED_FLAG_MAX_COUNT).default([]),
   seniority: shortText(60).default(''),
+  // Named here for the same reason `source` is named on a competency: a zod
+  // object strips what it does not list, and this schema re-runs on every
+  // scorecard save. Leaving eligibility out would delete a role's licence
+  // requirement at the first click of Save, which is precisely the failure
+  // this lane exists to end.
+  eligibility: z.array(eligibilitySchema).max(ELIGIBILITY_MAX_COUNT).default([]),
 })
   .superRefine((profile, ctx) => {
     const ids = new Set<string>();

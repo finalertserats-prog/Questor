@@ -3,6 +3,7 @@
 
 import type { BandId } from '../engines/experienceBands.js';
 import type { CvEvidence, RedactionReport } from './cvFacts.js';
+import type { EligibilityRead, EligibilityRequirement } from './eligibility.js';
 import type { FitBand, FitStrength } from './fitVocabulary.js';
 import type { TechLevel } from './techStack.js';
 
@@ -70,6 +71,17 @@ export interface RoleSuccessProfile {
   };
   redFlags: string[];
   seniority: string;
+  /**
+   * Requirements of the PERSON rather than capabilities of theirs: a licence, a
+   * registration, a clearance, a named degree, the right to work somewhere.
+   *
+   * Deliberately outside `competencies` and outside `scoringRules`. None of it
+   * is graded, weighted, interviewed or scored — it is read off the advert with
+   * the line that stated it, put in front of a person with whatever the CV says
+   * beside it, and decided by them. Optional because a profile stored before
+   * this existed has none, and most roles legitimately have none at all.
+   */
+  eligibility?: EligibilityRequirement[];
 }
 
 // ---- Resume / fit ----
@@ -160,6 +172,16 @@ export interface FitScore {
   tenureNote?: string;
   /** What was taken out of the CV before scoring, and any injection attempt. */
   redaction?: RedactionReport;
+  /**
+   * The role's eligibility requirements with what this CV says about each.
+   *
+   * Sits in the fit record because this is where HR reads a candidate, and
+   * nowhere in the arithmetic above it: no component, no weight, no band. A
+   * requirement with nothing found against it is Questor reporting silence, not
+   * Questor reporting a shortfall, and the wording of each note is what keeps
+   * those two apart (engines/eligibility.ts).
+   */
+  eligibility?: EligibilityRead[];
 
   // ---- Staleness stamp. A stored fit is a record of what HR was shown; these
   // say what it was measured against so a later reader can tell.

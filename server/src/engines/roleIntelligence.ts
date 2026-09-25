@@ -4,6 +4,7 @@ import { canonicaliseName, locateSpan, proposeFromJd, verifySpan, type ProposedC
 import { compareToCanonicalRole, domainTagFor, type CatalogComparison } from '../domain/taxonomy/catalogMap.js';
 import type { CanonicalCompetency } from '../domain/taxonomy/types.js';
 import { maskCollaborationObjects } from './jdSections.js';
+import { eligibilityRequirements } from './eligibility.js';
 import { competencyKeyOf } from '../domain/calibration.js';
 import { CANONICAL_COMPETENCIES } from '../domain/taxonomy/index.js';
 import { generateJson } from '../providers/llm/index.js';
@@ -233,6 +234,10 @@ export function extractRoleHeuristic(sourceText: string, titleHint = '', opts: E
     },
     redFlags: ['Unable to give any specific example', 'Contradicts resume claims without explanation'],
     seniority: level,
+    // Deterministic, and deliberately not part of the model path below: a
+    // licence requirement is a legal statement about the job, and it is read
+    // off the advert's own lines or not made at all.
+    eligibility: eligibilityRequirements(text),
   };
 
   return {
