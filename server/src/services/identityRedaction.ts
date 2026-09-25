@@ -16,10 +16,16 @@
  * that word everywhere it appears in their transcript, including where it was
  * an ordinary English word. That is deliberate. The requirement here is
  * irreversibility, and over-redaction fails safe while under-redaction leaves
- * the person in the data and the word "anonymised" untrue. The damage is
- * bounded — one word becomes "[name]" in one candidate's transcript, and the
- * scores, structure and competency reads the interview is kept for are
- * untouched.
+ * the person in the data and the word "anonymised" untrue.
+ *
+ * WHY THAT IS ACCEPTABLE HERE AND NOT EVERYWHERE. The damage is bounded to the
+ * record of the person being anonymised: their transcript, their reviews, and
+ * the scores and competency reads the interview is kept for are untouched. On
+ * text SHARED with other candidates the same over-redaction would land on
+ * people who asked for nothing, which is why `redactHandlesOnly` exists and
+ * why services/auditPayloads.ts refuses to match names there. Same technique,
+ * different victim; see the argument written out in full beside
+ * `auditableEntityIds`.
  */
 
 /**

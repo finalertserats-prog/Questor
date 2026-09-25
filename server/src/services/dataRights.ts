@@ -376,13 +376,6 @@ export async function eraseCandidate(o: {
         removedBy: 'erasure',
       }),
     }));
-    // Rows shared with other candidates are not cleared — that would destroy
-    // their record too — but this person's unique handles come out of them,
-    // which costs nobody anything. See auditPayloads.ts for why the name does
-    // not follow.
-    await count('sharedAuditHandles', async () => ({
-      count: await redactHandlesFromSharedAuditPayloads(tx, { tenantId: o.tenantId, contact: candidate }),
-    }));
     await deleteSessionCascade(tx, sessionIds, count);
     await deleteProfileCascade(tx, o.candidateId, count);
     // Artifacts attached to the candidate rather than to a session (résumé
@@ -431,6 +424,24 @@ export async function eraseCandidate(o: {
     // Staged bulk-import rows (name, address, CV text) for the same person.
     await count('importRows', () => eraseStagedImportRows(tx, { tenantId: o.tenantId, candidateId: o.candidateId, emailNormalized: candidate.emailNormalized }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
+
+    // Rows shared with other candidates are not cleared — that would destroy
+    // their record too — but this person's unique handles come out of them,
+    // which costs nobody anything. See auditPayloads.ts for why the name does
+    // not follow.
+    //
+    // LAST, and that is about locks rather than correctness. These are the only
+    // rows this transaction writes that belong to anybody else, so they are the
+    // only place two erasures running at once can block each other — and with
+    // ERASURE_TX allowing two minutes, blocking here is how one of them would
+    // reach that ceiling. Nothing below depended on it, so it sits at the end
+    // and the lock on a shared row is held for as little of the cascade as
+    // possible. If contention ever does show up, narrow this pass rather than
+    // shortening the timeout: a slow erasure is survivable, a refused one is
+    // the thing ERASURE_TX exists to prevent.
+    await count('sharedAuditHandles', async () => ({
+      count: await redactHandlesFromSharedAuditPayloads(tx, { tenantId: o.tenantId, contact: candidate }),
+    }));
   }, ERASURE_TX);
 
   // After the commit, and best effort: a vendor outage must not block erasure.

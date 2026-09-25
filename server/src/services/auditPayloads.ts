@@ -187,14 +187,28 @@ const SHARED_ENTITY_TYPES = ['CandidateImportBatch', 'CalibrationAdjustment', 'C
  *
  * The NAME is not removed, and that is a judgement rather than an omission.
  * The form a name takes in these fields is usually a fragment — "the Sharma
- * interview", "Priya's answers" — so catching it means matching name parts,
- * and matching name parts in text shared by many candidates mangles everyone
- * else's record to satisfy one person's timer: "grace under pressure" is not a
- * candidate called Grace. Matching only the exact full name would avoid that
- * damage but would catch the least common form, buying a partial result while
- * making the corpus look name-clean. Better a residual that says "handles are
- * removed, names are not" than a mechanism that removes some names and invites
- * the claim that it removes names.
+ * interview", "Priya's answers" — so catching it means matching name PARTS.
+ *
+ * WHO ABSORBS THE OVER-REDACTION. This is the whole argument, and it is the
+ * reason this file and identityRedaction.ts reach opposite conclusions about
+ * the same technique without contradicting each other.
+ *
+ * Matching name parts always over-redacts: a candidate called Will or Grace
+ * loses that word wherever it appears. In a TRANSCRIPT that cost is contained
+ * inside that one person's own record — their interview, nobody else's — so
+ * identityRedaction.ts accepts it deliberately, because the alternative is
+ * leaving the person in data we are keeping for ever. In a row SHARED by many
+ * candidates the identical cost lands on people who asked for nothing:
+ * "grace under pressure" stops making sense in a calibration theme that
+ * dozens of reviewers read, to satisfy one candidate's timer. Same technique,
+ * same over-redaction, different victim — and that is what decides it.
+ *
+ * Matching only the exact full name would avoid that damage, and it was
+ * tempting. It is refused because it catches the LEAST common form: it buys a
+ * partial result while making the corpus look name-clean, which is worse than
+ * a stated gap. Better a residual that says "handles are removed, names are
+ * not" than a mechanism that removes some names and invites the claim that it
+ * removes names.
  *
  * The real fix is upstream, where the name is allowed in: these rows are
  * aggregates over many people, so a name reaching one is a defect in the
