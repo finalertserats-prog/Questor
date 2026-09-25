@@ -87,6 +87,9 @@ export type Shape =
       readonly alpha: number;
     };
 
+/** The guilloché line's width. The clip is inset by half of it, so the two must agree. */
+const FIELD_STROKE = 0.38;
+
 /** The planchet's silhouette: a regular octagon with a vertex at the top-right. */
 export function octagon(centre: number, radius: number): readonly Point[] {
   return Array.from({ length: 8 }, (_unused, i) => {
@@ -113,12 +116,27 @@ export function octagon(centre: number, radius: number): readonly Point[] {
  * file did not, so the badge in the app and the badge in the candidate's hand
  * were two different drawings. Closing it here closes it for every renderer.
  *
+ * `stroke` is the width the curve will be painted at, and it is not optional
+ * bookkeeping. A clip path in a browser clips the PAINTED stroke; pulling a
+ * sample to the boundary only puts its CENTRELINE there, leaving half the
+ * stroke outside. Containing the centreline and calling that parity would be
+ * the same defect one layer down — the comment would say the two renderers
+ * agree while they still differed by 0.19 units. So the limit is drawn in far
+ * enough that the stroke's outer edge, not its middle, meets the flat.
+ *
  * The boundary distance at an angle is the inradius over the cosine of the
- * angle to the nearest edge normal, and this octagon's normals sit on
- * multiples of a right angle's quarter.
+ * angle to the nearest edge normal. This octagon has a vertex at the
+ * top-right, so its vertices sit on odd multiples of 22.5 degrees and its
+ * edge normals on multiples of 45 — which is why the facet below is a
+ * quarter-turn of pi and the offset is taken about its midpoint.
  */
-function insideOctagon(points: readonly Point[], centre: number, radius: number): readonly Point[] {
-  const inradius = radius * Math.cos(Math.PI / 8);
+function insideOctagon(
+  points: readonly Point[],
+  centre: number,
+  radius: number,
+  stroke: number,
+): readonly Point[] {
+  const inradius = radius * Math.cos(Math.PI / 8) - stroke / 2;
   const facet = Math.PI / 4;
   return points.map((p) => {
     const dx = p.x - centre;
@@ -335,10 +353,12 @@ export function badgeShapes(tier: Tier, size: number): readonly Shape[] {
   if (big) {
     shapes.push(stroke(octagon(50, 41), metal.dark, 0.45, 0.7, true));
     // Held inside the same octagon of radius 40 the mockup clips to, and the
-    // same one `TierBadge.tsx` clips to in the browser.
-    const field = (points: readonly Point[]): readonly Point[] => insideOctagon(points, 50, 40);
-    shapes.push(stroke(field(rosette(26, 5, 16, 5, 50, 50, 1)), metal.dark, 0.24, 0.38, false));
-    shapes.push(stroke(field(rosette(19, 4, 12, 4, 50, 50, 1)), metal.dark, 0.18, 0.38, false));
+    // same one `TierBadge.tsx` clips to in the browser — at the width the
+    // line is actually painted, so the ink stops where the browser's clip
+    // stops it rather than only the centreline.
+    const field = (points: readonly Point[]): readonly Point[] => insideOctagon(points, 50, 40, FIELD_STROKE);
+    shapes.push(stroke(field(rosette(26, 5, 16, 5, 50, 50, 1)), metal.dark, 0.24, FIELD_STROKE, false));
+    shapes.push(stroke(field(rosette(19, 4, 12, 4, 50, 50, 1)), metal.dark, 0.18, FIELD_STROKE, false));
   }
   shapes.push(stroke(rim, metal.dark, 0.55, big ? 1.1 : 2.2, true));
   shapes.push(...signalBars(tier, big));

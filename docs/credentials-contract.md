@@ -207,6 +207,14 @@ earned shows a dashed placeholder, no buttons, and the reason
 
 The badge SVG is one component taking `tier` and `size`. The mockup's
 generator is the reference implementation — copy its geometry exactly: the
-octagon, the milled edge, the guilloché field, four bars with the earned ones
-struck bright and the unearned ones engraved but **clearly visible**, and the
-crystalline Diamond.
+octagon, the guilloché field, four bars with the earned ones struck bright and
+the unearned ones engraved but **clearly visible**, and the crystalline
+Diamond.
+
+**One deliberate departure: the milled edge is cut.** The mockup rings every
+tier with fine radial ticks — 88 on the metals, 72 on Diamond — the way a
+struck coin is milled. On an exported badge they read as a second border
+competing with the octagon's own, and the owner removed them on 2026-09-25.
+The mockup still draws them, and it remains the reference for everything else,
+so the next faithful transcription would put them back. This paragraph is the
+only thing standing between that and a badge nobody asked for.

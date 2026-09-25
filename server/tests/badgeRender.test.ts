@@ -68,6 +68,59 @@ describe('badge geometry', () => {
    * `?size=` to six values so one badge is one fixed asset, and two requests
    * for it must answer with the same bytes.
    */
+  /**
+   * The guilloché is held inside the octagon, ink and all.
+   *
+   * Nothing pinned this: removing the clip left every test green, and the
+   * only record that it worked was a number in a commit message. Asserted on
+   * the PAINTED extent rather than the centreline, because containing the
+   * centreline and calling it parity is the same defect one layer down — the
+   * browser clips the stroke, so half a stroke still outside is still a
+   * different drawing.
+   */
+  it('keeps the guilloché inside the octagon, including the width it is painted at', () => {
+    const inradius = 40 * Math.cos(Math.PI / 8);
+    const facet = Math.PI / 4;
+    const worstOverhang = (shapes: readonly ReturnType<typeof badgeShapes>[number][]): number => {
+      let worst = -Infinity;
+      for (const shape of shapes) {
+        if (shape.op !== 'stroke' || shape.closed) continue;
+        for (const points of shape.subpaths) {
+          if (points.length < 100) continue; // the rosettes; not the two-point ticks or bars
+          for (const p of points) {
+            const dx = p.x - 50;
+            const dy = p.y - 50;
+            const angle = Math.atan2(dy, dx);
+            const offset = ((angle % facet) + facet * 1.5) % facet - facet / 2;
+            const limit = inradius / Math.cos(offset);
+            worst = Math.max(worst, Math.hypot(dx, dy) + shape.width / 2 - limit);
+          }
+        }
+      }
+      return worst;
+    };
+
+    const overhang = worstOverhang(badgeShapes('gold', 132));
+
+    expect([overhang > -Infinity, overhang <= 0]).toEqual([true, true]);
+  });
+
+  /**
+   * Size is half the id, and nothing tested it.
+   *
+   * Diamond's crystal gradient is resolved against a radius of 33 at 56px and
+   * above and 35 below it, so the same shape index at two sizes is genuinely
+   * two different gradients. Drop the size from the prefix and every other
+   * test here still passes while those two collide under one id.
+   */
+  it('gives one tier different gradient ids at different sizes', () => {
+    const idsOf = (svg: string): string[] => [...svg.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
+    const small = idsOf(badgeSvg('diamond', 32));
+    const large = idsOf(badgeSvg('diamond', 512));
+
+    expect([small.length > 0, small.some((id) => large.includes(id))]).toEqual([true, false]);
+  });
+
   it('answers the same bytes for the same tier and size', () => {
     expect(badgeSvg('gold', 360)).toBe(badgeSvg('gold', 360));
   });

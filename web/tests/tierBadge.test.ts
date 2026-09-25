@@ -70,9 +70,30 @@ describe('what is engraved only on a large badge', () => {
     expect(render({ tier: 'silver', size: 118 })).toContain(field);
   });
 
-  it('mills the rim only on a large badge', () => {
-    expect(render({ tier: 'gold', size: 36 }).match(/<line /g) ?? []).toHaveLength(0);
-    expect((render({ tier: 'gold', size: 118 }).match(/<line /g) ?? []).length).toBeGreaterThan(80);
+  /**
+   * The knurled rim is gone, at every size and on every tier.
+   *
+   * This test asserted the opposite until the owner cut the milling: 88 fine
+   * radial ticks ringed the octagon, and against its own edge they read as a
+   * second border competing with the first. Inverted rather than deleted,
+   * because the silhouette carrying the mark alone is now a property worth
+   * holding — and because a deleted test is indistinguishable from one that
+   * never existed.
+   *
+   * Diamond is the control: it still draws `<line>` inside its crystal, so a
+   * change that stopped emitting lines altogether would fail here rather than
+   * pass quietly. That is the half a bare `not.toContain` cannot give.
+   */
+  it('rings no tier with a milled edge, at any size', () => {
+    const milled = (tier: 'bronze' | 'silver' | 'gold', size: number) =>
+      (render({ tier, size }).match(/<line /g) ?? []).length;
+
+    expect([milled('gold', 118), milled('gold', 36), milled('bronze', 118), milled('silver', 118)])
+      .toEqual([0, 0, 0, 0]);
+  });
+
+  it('still draws the crystal facets on Diamond, which are the only lines left', () => {
+    expect((render({ tier: 'diamond', size: 118 }).match(/<line /g) ?? []).length).toBeGreaterThan(0);
   });
 });
 
@@ -134,7 +155,7 @@ describe('parity with the approved mockup, at the sizes the app uses', () => {
 
   it.each(APP_SIZES)('draws nothing at %ipx that the mockup reserves for large badges', (size) => {
     const html = render({ tier: 'silver', size });
-    expect(html).not.toContain('<line ');   // no milled edge
+    expect(html).not.toContain('<line ');   // no crystal facets at app sizes
     expect(html).not.toContain('<text');    // no hallmark
     expect(html).not.toContain('clip-path'); // no guilloché field
   });

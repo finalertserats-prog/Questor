@@ -19,7 +19,14 @@ import { hallmarkGlyphs } from './strokeGlyphs.js';
  * says we are inside.
  */
 
-/** Sub-scanlines per pixel row. Five is where the guilloché stops shimmering. */
+/**
+ * Sub-scanlines per pixel row.
+ *
+ * Five was chosen when the badge still had a milled rim of radial ticks,
+ * which is the classic scanline-aliasing case. The rim is gone and nobody has
+ * re-measured against the guilloché, so the number is kept rather than
+ * re-justified: it is known to be enough, not known to be the minimum.
+ */
 const SUBSAMPLES = 5;
 
 /**
