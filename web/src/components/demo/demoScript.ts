@@ -73,7 +73,7 @@ export const DEMO_BEATS: readonly DemoBeat[] = [
   },
   {
     id: 'B10', title: 'The path', route: '/candidates/{candidateId}?tab=journey', anchor: 'candidate-pipeline', needsStory: true,
-    body: 'Every candidate walks the same path: Participation; Bronze, the profile review; Silver, the AI interview; Gold, the human rounds, where the AI only listens and transcribes; Diamond, decided. Questor moves her forward on its own. The call that matters, it leaves to a person.',
+    body: 'Every candidate walks the same path: Participation; Bronze, the profile review; Silver, the AI interview; Gold, the human rounds, where the AI only listens and transcribes; Diamond, decided. Questor takes her as far as Bronze on its own — she exists, and her CV has been read. Every step after that is yours to take, and Questor tells you when one is waiting.',
   },
   {
     id: 'B11', title: 'Setting up the interview', route: '/candidates/{candidateId}?tab=journey', anchor: 'candidate-setup-interview', needsStory: true,

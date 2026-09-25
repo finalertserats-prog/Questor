@@ -2,7 +2,7 @@ import type { CandidatePipeline, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
-import { DEFAULT_STAGES, parseStages, parseStagesStrict, type StageKind } from '../domain/pipelineStages.js';
+import { DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, type StageKind } from '../domain/pipelineStages.js';
 import {
   resolveDecision, resolveTransition,
   type DecisionEffect, type DecisionOutcome, type PipelineEvent, type StageTransition,
@@ -139,6 +139,91 @@ async function runMoveAndAward(run: (tx: Prisma.TransactionClient) => Promise<Mo
     if (isAwardConflict(err)) return null;
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The Advance button
+// ---------------------------------------------------------------------------
+
+export interface PipelineAdvanceInput {
+  readonly tenantId: string;
+  /** Where the caller means to move them. It must be the stage after the one they are at. */
+  readonly toStageKey: string;
+  /** The person moving them. The system never advances anybody. */
+  readonly actorId: string;
+  readonly trigger: string;
+}
+
+/** The stage a refused advance would have gone to, so a caller can name it. */
+export interface NextStage {
+  readonly key: string;
+  readonly label: string;
+}
+
+export type AdvanceResult =
+  | { readonly applied: true; readonly transition: StageTransition; readonly awards: readonly StruckAward[] }
+  | { readonly applied: false; readonly because: 'already_decided' | 'at_last_stage' | 'contended' }
+  | { readonly applied: false; readonly because: 'not_next'; readonly next: NextStage };
+
+/**
+ * Move a candidate on one stage, because a person said so.
+ *
+ * Here rather than in the route because it is not only the route's any more.
+ * Since the assessment stopped moving anybody (domain/pipelineAutonomy.ts),
+ * this is the move that gets a candidate to the AI round — the one the "Needs
+ * you" queue asks for — and the demo sandbox stages its candidates with it
+ * too, so that what a prospect is shown is the product's own arithmetic rather
+ * than a tableau assembled behind its back.
+ *
+ * The move and the badges it earns commit together or not at all. A journey
+ * showing a candidate at Gold with no Silver badge, or a Silver badge for a
+ * move that rolled back, is a record that contradicts itself with nothing to
+ * say which half is right.
+ *
+ * Refusals are returned rather than thrown, so each caller answers them in its
+ * own terms: the route turns them into a message the person can act on, and
+ * the sandbox logs one loudly.
+ */
+export async function advancePipeline(loaded: CandidatePipeline, o: PipelineAdvanceInput): Promise<AdvanceResult> {
+  if (loaded.status !== 'ACTIVE') return { applied: false, because: 'already_decided' };
+  const stages = parseStagesStrict(loaded.stagesJson, { model: 'CandidatePipeline', id: loaded.id, field: 'stagesJson' });
+  const next = nextStageKey(stages, loaded.currentStageKey);
+  if (!next) return { applied: false, because: 'at_last_stage' };
+  if (o.toStageKey !== next) {
+    return { applied: false, because: 'not_next', next: { key: next, label: stages.find((s) => s.key === next)?.label ?? next } };
+  }
+
+  const outcome = await runMoveAndAward(async (tx) => {
+    // Conditional on the stage that was read, so two people advancing at once
+    // cannot both succeed.
+    const written = await tx.candidatePipeline.updateMany({
+      where: { id: loaded.id, status: 'ACTIVE', currentStageKey: loaded.currentStageKey },
+      data: { currentStageKey: next },
+    });
+    if (written.count !== 1) return { written, awards: [] as StruckAward[] };
+    return {
+      written,
+      awards: await awardOnPromotion(tx, {
+        tenantId: o.tenantId, candidateId: loaded.candidateId, roleId: loaded.roleId,
+        stages, fromStageKey: loaded.currentStageKey, toStageKey: next, actorId: o.actorId,
+      }),
+    };
+  });
+  // A tier struck under us means another move landed first, which is the same
+  // answer the conditional update gives.
+  if (!outcome || outcome.written.count !== 1) return { applied: false, because: 'contended' };
+
+  await logAudit({
+    tenantId: o.tenantId, actorType: 'user', actorId: o.actorId,
+    action: 'pipeline.advanced', entityType: 'CandidatePipeline', entityId: loaded.id,
+    // What this move struck is not repeated here: each badge writes its own
+    // award.struck event, with the reference a holder would quote. Two records
+    // of one fact is two things to keep in step.
+    before: { stage: loaded.currentStageKey }, after: { stage: next },
+  });
+  // After the commit, so the trail can never claim a badge that rolled back.
+  await noteAwards({ tenantId: o.tenantId, actorId: o.actorId, candidateId: loaded.candidateId, awards: outcome.awards });
+  return { applied: true, transition: { from: loaded.currentStageKey, to: next }, awards: outcome.awards };
 }
 
 export interface PipelineDecisionInput {

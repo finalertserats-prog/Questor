@@ -18,10 +18,11 @@ import { DEMO_JD, visitorResume } from '../seed/demoData.js';
 import { DEMO_STORY_INTERVIEWER, curateDemoScorecard, seedDemoStory } from '../seed/demoStory.js';
 import { slugifyCatalogName } from '../domain/catalogText.js';
 import { DEMO_ROLE } from '../domain/capabilities.js';
+import { nextStageKey, parseStages } from '../domain/pipelineStages.js';
 import { assignInterviewer } from './interviewers.js';
 import { DEFAULT_DISCLOSURE_BODY, composeDisclosure } from '../domain/interviewerModel.js';
 import { DEMO_READ_ONLY_MESSAGE } from './demoPolicy.js';
-import { applyPipelineEvent } from './pipelineAutonomy.js';
+import { advancePipeline, applyPipelineEvent } from './pipelineAutonomy.js';
 import type { PipelineEvent } from '../domain/pipelineAutonomy.js';
 import { renderDemoAccessEmail, renderDemoOperatorEmail, renderDemoDecisionEmail, renderDemoDeclinedEmail } from '../providers/email/demoEmail.js';
 
@@ -88,9 +89,55 @@ async function demoStoryInterviewer(fallback: { interviewerId: string; name: str
   return maya ? { interviewerId: maya.id, name: maya.name } : fallback;
 }
 
-/** The candidate's pipeline, moved by the same events the product itself raises. */
-async function walkPipeline(tenantId: string, candidateId: string, roleId: string, events: readonly PipelineEvent[]): Promise<void> {
-  for (const event of events) await applyPipelineEvent({ tenantId, candidateId, roleId, event, trigger: 'demo.provisioned' });
+/** The two moves that still happen on their own: the candidate exists, their CV has been read. */
+const SELF_MOVING: readonly PipelineEvent[] = ['candidate.onboarded', 'candidate.profiled'];
+
+/**
+ * A sandbox candidate walked to the round the AI conducts, the way the product
+ * walks anybody there.
+ *
+ * Onboarding and the CV reading are raised as events, because those two moves
+ * are still the product's own. Everything after Bronze is a decision a person
+ * records, so this records it — through `advancePipeline`, the same function
+ * behind the Advance button on the candidate's page.
+ *
+ * It used to replay `interview.scheduled` and `interview.assessed` instead.
+ * Those events no longer carry a transition (domain/pipelineAutonomy.ts), so
+ * replaying them would leave both sandbox candidates at Bronze while the code
+ * above claimed otherwise. Going through the real move also means this breaks
+ * loudly — in tests/demoStory.test.ts — the next time that path changes, rather
+ * than quietly staging a prospect's demo at a tier nobody awarded.
+ *
+ * A refusal is logged rather than thrown. A visitor who asked for a demo should
+ * get their sandbox even if one stage move was contended; what they must not
+ * get is a silent one.
+ */
+async function walkToAiRound(o: { tenantId: string; userId: string; candidateId: string; roleId: string }): Promise<void> {
+  for (const event of SELF_MOVING) {
+    await applyPipelineEvent({ ...o, event, trigger: 'demo.provisioned' });
+  }
+  const pipeline = await prisma.candidatePipeline.findFirst({
+    where: { tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId },
+  });
+  if (!pipeline) return;
+  const stages = parseStages(pipeline.stagesJson);
+  // One decision at a time, bounded by the plan itself, until they are standing
+  // at the AI round. The demo's role uses the default five stages, so in
+  // practice this is the single Bronze → Silver move a recruiter now makes.
+  let at = pipeline.currentStageKey;
+  for (let i = 0; i < stages.length; i += 1) {
+    if (stages.find((stage) => stage.key === at)?.kind === 'ai_interview') return;
+    const next = nextStageKey(stages, at);
+    if (!next) return;
+    const moved = await advancePipeline({ ...pipeline, currentStageKey: at }, {
+      tenantId: o.tenantId, toStageKey: next, actorId: o.userId, trigger: 'demo.provisioned',
+    });
+    if (!moved.applied) {
+      logger.error({ candidateId: o.candidateId, stage: at, because: moved.because }, 'Demo sandbox could not move its candidate to the AI round');
+      return;
+    }
+    at = moved.transition.to;
+  }
 }
 
 export async function provisionDemoTenant(input: { name: string; email: string; company: string; now?: Date }): Promise<ProvisionedDemoTenant> {
@@ -136,11 +183,23 @@ export async function provisionDemoTenant(input: { name: string; email: string; 
   // on a busy box that outran Prisma's five-second default and left the visitor
   // with no sandbox and no error. Atomic still: all of it lands, or none.
   }, { timeout: PROVISION_TIMEOUT_MS, maxWait: PROVISION_TIMEOUT_MS });
-  // After the commit, through the product's own autonomy: Priya's assessed
-  // interview puts her at Gold, waiting for a person; the visitor's invitation
-  // puts them at Silver.
-  await walkPipeline(provisioned.tenantId, provisioned.story.candidateId, provisioned.roleId, ['candidate.onboarded', 'candidate.profiled', 'interview.scheduled', 'interview.assessed']);
-  await walkPipeline(provisioned.tenantId, provisioned.candidateId, provisioned.roleId, ['candidate.onboarded', 'candidate.profiled', 'interview.scheduled']);
+  // After the commit, through the product's own moves. Both candidates end at
+  // Silver, the round the AI conducts, because that is where a recruiter who
+  // read their CV would have put them.
+  //
+  // What the visitor then finds waiting is Priya's assessment: her interview is
+  // done and nobody has read it, so it is the one row in "Needs you" — and
+  // recording that verdict is what carries her to Gold and strikes her Silver
+  // certificate. Their own sample candidate stands at the same round with an
+  // unopened invitation, which is the interview they can go and sit themselves.
+  //
+  // Priya used to be staged at Gold, and it was a dead end: she had been
+  // carried there by an event, so no badge was ever struck, and there was
+  // nothing left for the visitor to promote her to but Diamond. The demo now
+  // shows the decision instead of its aftermath.
+  const { tenantId, userId, roleId } = provisioned;
+  await walkToAiRound({ tenantId, userId, roleId, candidateId: provisioned.story.candidateId });
+  await walkToAiRound({ tenantId, userId, roleId, candidateId: provisioned.candidateId });
   return provisioned;
 }
 
