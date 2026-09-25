@@ -171,47 +171,14 @@ async function scrub(
 const asTextRows = (delegate: unknown): TextRows => delegate as TextRows;
 
 /**
- * WHY THE AUDIT WORK LIVES IN services/auditPayloads.ts, AND WHAT IT DOES NOT
- * REACH.
+ * The audit work lives in services/auditPayloads.ts.
  *
  * Erasure got there first and shipped to production, so that module is the one
  * implementation and this file calls it. The reasoning is written there: the
  * payloads go and the rows stay, because an audit trail's job is to say that
  * somebody did a thing to something at a time and every one of those is a
- * column.
- *
- * THREE ENTITY TYPES ARE OUT OF SCOPE, and none of them is a per-candidate
- * row. Each covers many people at once, so clearing one to remove a single
- * person would destroy a record belonging to everybody else in it — which is
- * neither what erasure asks for nor what a timer expiring justifies. Each was
- * traced rather than assumed:
- *
- * `CandidateImportBatch` — safe, and provably so. `candidate_import.started`
- * audits `{ roleId }`; `candidate_import.confirmed` audits three integers. The
- * per-row failure messages and the names live in the HTTP response, never in a
- * payload. `CandidateImportRow.readError` reaches no audit call anywhere.
- * Pinned by a test, because it is safe by construction rather than by schema.
- *
- * `CalibrationAdjustment` — safe on the automatic path. `decision.reason` is a
- * nine-value enum and `decision.statement` is a template over integers and
- * dates, produced by domain/calibration.ts, which touches no database.
- *
- * `CalibrationAnchorProposal`, and the `themes` on an activated adjustment —
- * NOT provably safe, and this lane's one named residual. An anchor is a
- * model-written phrase of at most eighty characters that has to generalise
- * over at least three candidates' reviews by at least three reviewers, built
- * from `CalibrationObservation.reasonText` — reviewer prose that is checked
- * for protected-characteristic language and NOT for names. A contact detail
- * can no longer survive into one (services/calibrationAggregate.ts rejects it
- * on the way in). A name still could, because no code can find a name in a
- * free-text phrase. The other half is `opts.reason` on a calibration or anchor
- * decision: two thousand characters an approver types, unvalidated.
- *
- * Neither is fixable from here. These rows are aggregates over many people, so
- * a name reaching one is a defect in the calibration pipeline, not something a
- * sweep can tidy up afterwards without harming everybody else in the row. It
- * belongs upstream, and is raised as its own lane rather than papered over
- * with a wider net.
+ * column. So is the list of entity types it deliberately does not reach, and
+ * the residual that leaves.
  */
 
 

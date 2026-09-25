@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { anonymiseAfterDays, runAnonymisationSweep } from '../src/services/anonymise.js';
-import { AUDIT_PAYLOAD_REMOVED } from '../src/services/anonymiseCascade.js';
+import { payloadRemoved } from '../src/services/auditPayloads.js';
 
 /**
  * Taking the person out of their own audit history.
@@ -121,13 +121,16 @@ describe('what the audit log keeps', () => {
     });
   });
 
-  it('says where a payload was taken out, rather than pretending there never was one', async () => {
+  it('says where a payload was taken out, and which process took it', async () => {
     const ids = await candidateWhoAskedForAnAccommodation();
 
     await runAnonymisationSweep(new Date());
 
     const event = (await auditFor(ids.sessionId)).find((e) => e.action === 'accommodation.requested');
-    expect(event?.afterJson).toBe(AUDIT_PAYLOAD_REMOVED);
+    // Anonymisation severs a person from a record that is KEPT; erasure removes
+    // them entirely. A reader of the log should be able to tell which one
+    // emptied a payload, so the marker names the process.
+    expect(event?.afterJson).toBe(payloadRemoved('anonymisation'));
   });
 
   it('does not invent a "before" for an action that never recorded one', async () => {

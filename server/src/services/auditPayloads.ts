@@ -117,8 +117,38 @@ function contentNeedles(handles: IdentityHandles): readonly string[] {
  * `CalibrationAnchorProposal`. One batch holds many candidates and one
  * calibration spans many people's assessments, so clearing those rows because
  * a single person was erased would destroy the audit detail for everyone else
- * in them — harm done to people who asked for nothing. They need per-candidate
- * rows before this can reach them, which is a larger change than erasure.
+ * in them — harm done to people who asked for nothing. That reasoning holds
+ * for anonymisation too: the exclusion is about third-party harm, not about a
+ * timer being weaker than a request.
+ *
+ * Each was then traced, because leaving them out is only defensible while they
+ * carry nothing about an individual:
+ *
+ *   - `CandidateImportBatch` is safe and provably so. `candidate_import
+ *     .started` audits `{ roleId }`; `candidate_import.confirmed` audits three
+ *     integers. The names and the per-row failure messages go to the HTTP
+ *     response, never to a payload, and `CandidateImportRow.readError` reaches
+ *     no audit call anywhere. Pinned by a test in auditPayloadsStayClean, because
+ *     it is safe by construction rather than by schema.
+ *   - `CalibrationAdjustment` is safe on the automatic path. `decision.reason`
+ *     is a nine-value enum and `decision.statement` a template over integers
+ *     and dates, from domain/calibration.ts, which touches no database.
+ *   - `CalibrationAnchorProposal`, and the `themes` on an activated adjustment,
+ *     are NOT provably safe, and are this area's one named residual. An anchor
+ *     is a model-written phrase of at most eighty characters that must
+ *     generalise over at least three candidates' reviews by at least three
+ *     reviewers, built from `CalibrationObservation.reasonText` — reviewer
+ *     prose checked for protected-characteristic language and NOT for names. A
+ *     contact detail can no longer survive into one (calibrationAggregate.ts
+ *     rejects it on the way in). A name still could, because no code can find
+ *     a name in a free-text phrase. The other half is `opts.reason` on a
+ *     calibration or anchor decision: two thousand characters an approver
+ *     types, unvalidated.
+ *
+ * Neither half is fixable from here. These rows are aggregates over many
+ * people, so a name reaching one is a defect in the calibration pipeline, not
+ * something a sweep can tidy up afterwards without harming everybody else in
+ * the row. The fix belongs upstream.
  */
 export async function auditableEntityIds(
   tx: Prisma.TransactionClient,
