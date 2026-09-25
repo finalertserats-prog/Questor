@@ -55,6 +55,19 @@ export const awardVerifyRouter = Router();
  * The wording points at the likeliest innocent cause instead, because it
  * almost always is one: a link read off paper, or one that a mail client broke
  * across two lines.
+ *
+ * ---- The cost of that choice, named rather than glossed
+ *
+ * An employer holding a genuine certificate for a candidate who has since been
+ * erased is told Questor has no record of it, which reads as the paper being a
+ * forgery. That is a real harm to a real person and it is not hypothetical.
+ *
+ * The alternative is worse. "This record was withdrawn" re-asserts to a
+ * stranger holding a piece of paper that the person WAS assessed here, which
+ * is the precise fact the erasure existed to remove — and the stranger is
+ * often the one party the candidate least wants told. Erasure wins because it
+ * is the promise Questor made to the candidate, and because the employer's
+ * question still has an answer: they can ask the person in front of them.
  */
 const NOT_FOUND =
   'Questor has no record matching this link. Check it against the certificate, character for character — links copied by hand or split across two lines are the usual reason.';

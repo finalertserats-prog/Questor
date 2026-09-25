@@ -203,6 +203,34 @@ describe('what it refuses, and how it refuses', () => {
   });
 
   /**
+   * And the same however the row went.
+   *
+   * `eraseCandidate` is one way; the anonymisation lane deletes awards when a
+   * candidate is severed, and a retention sweep is a third. This case owns the
+   * property rather than the path: an award that is no longer there answers
+   * exactly as one that never was, whoever removed it and for whatever reason.
+   *
+   * It is a real cost, and worth naming rather than glossing. An employer
+   * holding a genuine certificate for someone who has since exercised their
+   * right to erasure is told Questor has no record of it, which reads as the
+   * paper being a forgery. The alternative is a page that says "this record
+   * was withdrawn", which re-asserts to a stranger that the person was
+   * assessed here — the exact fact the erasure existed to remove. Erasure
+   * wins: it is the promise Questor made to the candidate, and the employer's
+   * question has an answer they can get from the candidate.
+   */
+  it('answers a token whose award has been deleted by any means exactly as it answers an unknown one', async () => {
+    const { ids, token } = await struckSilver();
+    const unknown = await request(app).get(`/api/v/${'a'.repeat(43)}`);
+
+    await prisma.candidateAward.deleteMany({ where: { candidateId: ids.candidateId } });
+    const gone = await request(app).get(`/api/v/${token}`);
+
+    expect(gone.status).toBe(404);
+    expect(refusal(gone)).toEqual(refusal(unknown));
+  });
+
+  /**
    * Diamond carries no certificate, so no Diamond token is ever printed and
    * there is no document for this page to verify. `hasCertificate` is the one
    * gate for both the page and the download, so the two cannot disagree about
