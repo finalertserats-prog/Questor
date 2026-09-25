@@ -6,10 +6,15 @@ import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { finalizeInterview } from '../src/realtime/interviewEngine.js';
 
 /**
- * The events that move a candidate through the medallion pipeline on their
- * own: onboarding starts it, an analysed resume reaches Bronze, a scheduled
- * interview reaches Silver, an assessed interview reaches Gold. Diamond is a
- * person's explicit finalisation. Every move is forward, once, and audited.
+ * What the events in the hiring process do to a candidate's pipeline.
+ *
+ * Onboarding starts it and an analysed resume reaches Bronze. Nothing else
+ * moves anybody: a scheduled interview and an assessed one are still raised,
+ * still audited by the routes that raise them, and still start a pipeline for
+ * a candidate who has none — and they carry nobody, because every move from
+ * Silver on is a person's (domain/pipelineAutonomy.ts). Diamond is a person's
+ * explicit finalisation, as it always was. Every move that does happen is
+ * forward, once, and audited.
  */
 
 const app = createApp();
@@ -118,41 +123,57 @@ describe('onboarding a candidate', () => {
 describe('scheduling an interview', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('moves the candidate to Silver', async () => {
+  // Booking an interview is not a decision that the candidate belongs at the
+  // AI round; a person makes that one, and it is what mints their Silver
+  // credential when they leave it again.
+  it('leaves the candidate where they were', async () => {
     const ids = await seeded();
     const candidateId = await onboardCandidate(ids);
     await analyseResume(ids, candidateId);
 
     await createInterview(ids, candidateId);
 
-    expect((await currentStage(ids, candidateId))?.currentStageKey).toBe('silver');
+    expect((await currentStage(ids, candidateId))?.currentStageKey).toBe('bronze');
   });
 
-  it('reaches Silver straight from Participation when no resume was analysed', async () => {
+  it('moves nobody off Participation either, when no resume was analysed', async () => {
     const ids = await seeded();
     const candidateId = await onboardCandidate(ids);
 
     await createInterview(ids, candidateId);
 
-    expect((await currentStage(ids, candidateId))?.currentStageKey).toBe('silver');
+    expect((await currentStage(ids, candidateId))?.currentStageKey).toBe('participation');
   });
 
-  it('lets Silver hold a second interview without moving anyone', async () => {
+  it('writes no auto-advance at all for the interview it booked', async () => {
+    const ids = await seeded();
+    const candidateId = await onboardCandidate(ids);
+    await analyseResume(ids, candidateId);
+
+    await createInterview(ids, candidateId);
+
+    const events = (await autoAdvances((await currentStage(ids, candidateId))!.id)).map((a) => JSON.parse(a.afterJson).event as string);
+    expect(events).toEqual(['candidate.profiled']);
+  });
+
+  it('lets a second interview be booked without moving anyone', async () => {
     const ids = await seeded();
     const candidateId = await onboardCandidate(ids);
     await createInterview(ids, candidateId);
 
     const second = await createInterview(ids, candidateId);
 
-    expect([second.status, (await currentStage(ids, candidateId))?.currentStageKey]).toEqual([201, 'silver']);
+    expect([second.status, (await currentStage(ids, candidateId))?.currentStageKey]).toEqual([201, 'participation']);
   });
 
+  // Still raised, and this is why: an interview booked for a candidate nobody
+  // has started a pipeline for must still have one to belong to.
   it('starts a pipeline for a candidate who had none', async () => {
     const ids = await seeded();
 
     await createInterview(ids, ids.candidateId);
 
-    expect((await currentStage(ids, ids.candidateId))?.currentStageKey).toBe('silver');
+    expect((await currentStage(ids, ids.candidateId))?.currentStageKey).toBe('participation');
   });
 
   it('does not touch the primary write when the pipeline plan is corrupt', async () => {
@@ -170,21 +191,33 @@ describe('scheduling an interview', () => {
 describe('an assessed interview', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('moves the candidate to Gold', async () => {
+  // The change at the centre of all this. The assessment used to carry the
+  // candidate to Gold and strike nothing on the way, so by the time a person
+  // chose Proceed there was no move left to make and no badge to mint — five
+  // candidates reached Gold in production and none of them holds one.
+  it('moves the candidate nowhere: a score is not a decision', async () => {
     const ids = await seeded();
 
     await assessedInterview(ids);
 
-    expect((await currentStage(ids, ids.candidateId))?.currentStageKey).toBe('gold');
+    expect((await currentStage(ids, ids.candidateId))?.currentStageKey).toBe('participation');
   });
 
-  it('lets Gold hold another interview without moving back to Silver', async () => {
+  it('writes no auto-advance for the assessment', async () => {
     const ids = await seeded();
+
     await assessedInterview(ids);
 
-    await createInterview(ids, ids.candidateId);
+    const pipeline = await currentStage(ids, ids.candidateId);
+    expect(await autoAdvances(pipeline!.id)).toEqual([]);
+  });
 
-    expect((await currentStage(ids, ids.candidateId))?.currentStageKey).toBe('gold');
+  it('still starts a pipeline for a candidate assessed without one', async () => {
+    const ids = await seeded();
+
+    await assessedInterview(ids);
+
+    expect(await currentStage(ids, ids.candidateId)).toBeDefined();
   });
 });
 

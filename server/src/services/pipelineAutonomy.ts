@@ -13,12 +13,18 @@ import { humanReviewCheck, type HumanReviewRecord } from './humanReviewGate.js';
 import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from './candidateAwards.js';
 
 /**
- * Applies the autonomous journey (domain/pipelineAutonomy.ts) to the database.
+ * Applies the candidate journey (domain/pipelineAutonomy.ts) to the database:
+ * the part that still happens by itself, and the decisions a person records.
  *
  * Called from the places where the events actually happen — candidate
  * creation, resume analysis, interview creation and scheduling, assessment —
  * never from a timer. The primary write has already committed by then, so a
  * failure here is logged and never turns a created interview into a 500.
+ *
+ * Most of those events no longer move anybody, and are still called: they
+ * start a pipeline for a candidate who has none, which is what keeps an
+ * interview booked before anyone touched the pipeline from having nowhere to
+ * belong.
  */
 
 export interface PipelineEventInput {
@@ -67,8 +73,8 @@ async function ensurePipeline(o: { readonly tenantId: string; readonly candidate
  *
  * The update is conditional on the stage that was read, so two events landing
  * together cannot both apply: the loser re-reads and resolves again from the
- * stage the winner left, which is how a Silver and a Gold event arriving at
- * once still end at Gold whichever commits first.
+ * stage the winner left, so two events arriving at once end at the further of
+ * the two whichever commits first.
  */
 export async function applyPipelineEvent(o: PipelineEventInput): Promise<StageTransition | null> {
   if (!o.roleId) return null;

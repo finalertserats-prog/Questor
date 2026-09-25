@@ -6,9 +6,12 @@
  */
 
 export type NeedsYouKind =
-  | 'round_starting' | 'human_request' | 'accommodation' | 'review' | 'feedback_held'
+  | 'round_starting' | 'human_request' | 'accommodation' | 'review' | 'stage_decision' | 'feedback_held'
   | 'invitation_expiring' | 'stalled' | 'identity_code_stuck' | 'round_not_recordable'
   | 'catalog_proposals' | 'demo_request';
+
+/** Why a candidate is ready to move, which is also which move it is. */
+export type ReadyBecause = 'profile_read' | 'interview_reviewed';
 
 export interface Looker { readonly userId: string; readonly name: string; readonly initials: string }
 
@@ -26,6 +29,8 @@ export interface NeedsYouRow {
     readonly interviewerName?: string | null; readonly expiresAt?: string; readonly opened?: boolean; readonly count?: number;
     /** For a round that cannot go ahead: the server's own sentence, and what may be done instead. */
     readonly blockedReason?: string; readonly nextSteps?: readonly string[]; readonly scheduledAt?: string;
+    /** For a stage decision: where they stand, where the move lands, and what made them ready. */
+    readonly stageLabel?: string; readonly nextStageLabel?: string; readonly readyBecause?: ReadyBecause;
   };
   readonly openedBy: readonly Looker[];
   /**
@@ -113,11 +118,12 @@ export interface NeedsYouFeed {
 /** The rule colour a row is drawn with (styles/hrbox.css), never a fill. */
 export type RowTone = 'urgent' | 'review' | 'expire' | 'stall' | 'held' | 'operator';
 
-const KIND_COPY: Readonly<Record<NeedsYouKind, { readonly label: string; readonly tone: RowTone; readonly icon: 'handoff' | 'evidence-review' | 'hourglass' | 'pause' | 'mail' | 'list' | 'inbox' | 'mic' }>> = {
+const KIND_COPY: Readonly<Record<NeedsYouKind, { readonly label: string; readonly tone: RowTone; readonly icon: 'handoff' | 'evidence-review' | 'hourglass' | 'pause' | 'mail' | 'list' | 'inbox' | 'mic' | 'decision' }>> = {
   round_starting: { label: 'Your interview starts now', tone: 'urgent', icon: 'handoff' },
   human_request: { label: 'Asked for a person', tone: 'urgent', icon: 'handoff' },
   accommodation: { label: 'Asked for an adjustment', tone: 'urgent', icon: 'handoff' },
   review: { label: 'Review ready', tone: 'review', icon: 'evidence-review' },
+  stage_decision: { label: 'Ready to move on', tone: 'review', icon: 'decision' },
   feedback_held: { label: 'Feedback email held', tone: 'held', icon: 'mail' },
   invitation_expiring: { label: 'Invitation closes soon', tone: 'expire', icon: 'hourglass' },
   stalled: { label: 'Stalled interview', tone: 'stall', icon: 'pause' },
@@ -147,6 +153,9 @@ export function waitLabel(since: string, now: number): string {
 /** The small caption over the wait: what the clock is counting from. */
 export function waitCaption(kind: NeedsYouKind): string {
   if (kind === 'round_starting') return 'Starts';
+  // Not "Waiting": the clock on this row counts from the moment the candidate
+  // became ready, which is how long they have been standing still.
+  if (kind === 'stage_decision') return 'Ready for';
   if (kind === 'invitation_expiring') return 'Sent';
   if (kind === 'stalled') return 'Quiet for';
   if (kind === 'feedback_held') return 'Held';
@@ -205,6 +214,16 @@ export function whyLine(row: NeedsYouRow): string {
       return 'Asked to talk to someone on the hiring team.';
     case 'accommodation':
       return 'Paused the interview to ask for an adjustment. It waits for you.';
+    // Says which move it is and what made them ready, because "decide their
+    // next stage" on its own tells a person nothing they can act on. The
+    // labels come from the role's own stage plan, so a team that renamed its
+    // stages reads its own words here.
+    case 'stage_decision': {
+      const to = row.facts.nextStageLabel ?? 'the next stage';
+      return row.facts.readyBecause === 'interview_reviewed'
+        ? `Their AI interview has been read and reviewed. Decide whether they go to ${to}.`
+        : `Their CV has been read against the approved scorecard. Decide whether they go to ${to}.`;
+    }
     case 'review':
       if (row.canAct === false) {
         return by

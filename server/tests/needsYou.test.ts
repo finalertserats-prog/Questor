@@ -5,6 +5,7 @@ import { wipe } from '../src/seed/demoData.js';
 import { prisma } from '../src/db.js';
 import { signToken } from '../src/services/auth.js';
 import { recordAssessmentOpened } from '../src/services/assessmentViews.js';
+import { DEFAULT_STAGES } from '../src/domain/pipelineStages.js';
 
 // HR-Box: GET /api/dashboard/needs-you and its count. What waits on the caller
 // (only what their account may act on, only their candidates), what is coming
@@ -59,7 +60,88 @@ async function invited(s: Setup, name: string, expiresInMs: number) {
   return sess;
 }
 
+/**
+ * A candidate standing at a stage, with the evidence that makes them ready to
+ * be moved off it.
+ *
+ * Fixtures, like the rest of this file: what is being checked here is who the
+ * queue shows a row to and which rows it counts, not how a candidate came to
+ * be ready. The journey that produces one for real, through the endpoints a
+ * team actually uses, is proved end to end in hrDecidesJourney.test.ts.
+ */
+async function waitingAt(s: Setup, name: string, stageKey: string, roleId?: string) {
+  const c = await s.candidate(name);
+  const role = roleId ?? s.role.id;
+  if (roleId) await prisma.candidate.update({ where: { id: c.id }, data: { roleId } });
+  const pipeline = await prisma.candidatePipeline.create({
+    data: {
+      tenantId: s.tenant.id, candidateId: c.id, roleId: role,
+      stagesJson: JSON.stringify(DEFAULT_STAGES), currentStageKey: stageKey,
+    },
+  });
+  await prisma.candidateAward.create({
+    data: {
+      tenantId: s.tenant.id, candidateId: c.id, roleId: role, tier: 'bronze',
+      reference: `QS-BRZ-TEST-${c.id.slice(-4)}`, verifyToken: `v-${c.id}`,
+      evidenceJson: JSON.stringify({ version: 1, rows: [] }), awardedAt: ago(2 * DAY),
+    },
+  });
+  return { candidate: c, pipeline };
+}
+
 beforeEach(async () => { await wipe(); });
+
+describe('a candidate waiting on a decision', () => {
+  it('asks the recruiter who owns them to decide their next stage', async () => {
+    const s = await setup();
+    const { candidate } = await waitingAt(s, 'Pat Lee', 'bronze');
+
+    const res = await feed(s.recruiter.token);
+
+    expect(res.body.needsYou.items.map((i: { kind: string; facts: Record<string, unknown> }) => [i.kind, i.facts]))
+      .toEqual([['stage_decision', { stageLabel: 'Bronze', nextStageLabel: 'Silver', readyBecause: 'profile_read' }]]);
+    expect(res.body.needsYou.items[0].action.to).toBe(`/candidates/${candidate.id}`);
+  });
+
+  it('keeps them off the queue of somebody who is not on their role', async () => {
+    const s = await setup();
+    await waitingAt(s, 'Pat Lee', 'bronze');
+
+    expect(kindsOf((await feed(s.outsider.token)).body)).toEqual([]);
+  });
+
+  // Nobody is hiring for it, so there is no decision to make and a row would
+  // sit there un-actionable — which is how a queue teaches people to ignore it.
+  it('stops asking once the role is archived', async () => {
+    const s = await setup();
+    const closed = await prisma.role.create({ data: { tenantId: s.tenant.id, title: 'Closed Role', status: 'archived' } });
+    await prisma.roleAssignment.create({ data: { roleId: closed.id, userId: s.recruiter.id } });
+    await waitingAt(s, 'Pat Lee', 'bronze', closed.id);
+
+    expect(kindsOf((await feed(s.recruiter.token)).body)).toEqual([]);
+  });
+
+  // The assessment landed and nobody has read it: the queue asks for the read.
+  // Asking for the promotion as well would list one person as two jobs, and
+  // the decision would be refused anyway until a person has reviewed it.
+  it('does not ask anyone to promote a candidate whose interview is still unread', async () => {
+    const s = await setup();
+    const { candidate } = await waitingAt(s, 'Pat Lee', 'silver');
+    const sess = await s.session(candidate.id, 'REVIEW_READY', { completedAt: ago(2 * HOUR) });
+    await s.assessment(sess.id);
+
+    expect(kindsOf((await feed(s.manager.token)).body)).toEqual(['review']);
+  });
+
+  it('counts a decision that is waiting', async () => {
+    const s = await setup();
+    await waitingAt(s, 'Pat Lee', 'bronze');
+
+    const res = await feed(s.recruiter.token);
+
+    expect([res.body.needsYou.total, res.body.needsYou.counts.stage_decision]).toEqual([1, 1]);
+  });
+});
 
 describe('needs-you queue', () => {
   it('shows a hiring manager a review that is ready', async () => {

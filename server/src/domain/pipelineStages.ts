@@ -12,10 +12,9 @@ import { CorruptRecordError, type CorruptRecordRef } from '../db.js';
  * Silver is a human round at an AI stage, not a second AI stage, so it carries
  * the human round's promises (see roundRolesForConductor). Silver and Gold hold
  * as many interviews as the team wants, each with its own date, its own
- * interviewer and its own record. Events in the
- * process move a candidate forward on their own (domain/pipelineAutonomy.ts);
- * Diamond — the finalised candidate — and every final outcome are a person's
- * decision.
+ * interviewer and its own record. Participation and Bronze are reached by
+ * events on their own; Silver, Gold, Diamond and every final outcome are a
+ * person's decision (domain/pipelineAutonomy.ts).
  */
 
 export const STAGE_KINDS = ['intake', 'profile_review', 'ai_interview', 'human_interview'] as const;

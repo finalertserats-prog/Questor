@@ -3,12 +3,17 @@ import { createRoleAndCandidate, instrumentCandidateBrowser, runId } from './hel
 import { assessmentIdFromUrl, readTranscriptForReview } from './transcriptRead';
 
 /**
- * Decisions move the hiring pipeline and the candidate journey on their own.
+ * Decisions are what move the hiring pipeline and the candidate journey.
  * A person approves on the pipeline and the candidate is at the next stage;
  * they record "do not progress" and the journey shows that outcome as its
  * final word; a reviewer's verdict on the AI interview does the same from the
  * assessment page, and the candidate's page shows it without anyone pressing
- * "Move to …".
+ * "Move to …" afterwards.
+ *
+ * Everything past Bronze is one of those decisions. Nothing in the process
+ * moves a candidate to Silver or to Gold by itself, which is why the helper
+ * below walks them to Silver before their interview the way a recruiter now
+ * has to.
  */
 
 const ANSWER = 'I owned our billing data pipeline end to end: I moved the nightly batch jobs to streaming, '
@@ -60,6 +65,12 @@ test('recording "do not progress" ends the journey and both views show the outco
 async function assessedInterview(page: Page, browser: Browser, id: string) {
   const { candidateUrl } = await createRoleAndCandidate(page, id);
   await page.getByRole('tab', { name: 'Candidate journey' }).click();
+  // Bronze → Silver is a person's decision now, and nothing else will make
+  // it. Without this the candidate sits at Bronze through their own
+  // interview, and the verdict below would be judging a round the pipeline
+  // says they never reached.
+  await recordDecision(page, 'APPROVED', 'The profile review shows the experience the role needs.');
+  await expect(page.locator('.pipeline-stage.stage-current')).toContainText('Silver');
   await page.getByRole('button', { name: 'Approve & create interview' }).click();
   await expect(page.getByRole('heading', { name: 'Interview plan', exact: true })).toBeVisible({ timeout: 20_000 });
   const interviewUrl = page.url();
@@ -195,12 +206,15 @@ test('a review that says do not progress ends the journey, and the candidate pag
   test.setTimeout(180_000);
   const { candidateUrl } = await assessedInterview(page, browser, runId());
 
-  await submitReview(page, 'DO_NOT_PROGRESS', 'The answers did not show the depth the role needs.', /end .*journey at Gold/);
+  // Ends at Silver, which is where the candidate actually stands: nobody
+  // moved them to Gold, and a journey must not close at a stage they never
+  // reached.
+  await submitReview(page, 'DO_NOT_PROGRESS', 'The answers did not show the depth the role needs.', /end .*journey at Silver/);
 
   await page.goto(candidateUrl);
   const track = await openJourney(page);
-  await expect(page.getByTestId('journey-outcome')).toContainText('Not progressing. The journey ended at Gold.');
-  await expect(page.getByTestId('pipeline-outcome')).toContainText('Not progressing. The journey ended at Gold.');
-  await expect(track.locator('.pipeline-stage.stage-decided')).toContainText('Gold');
+  await expect(page.getByTestId('journey-outcome')).toContainText('Not progressing. The journey ended at Silver.');
+  await expect(page.getByTestId('pipeline-outcome')).toContainText('Not progressing. The journey ended at Silver.');
+  await expect(track.locator('.pipeline-stage.stage-decided')).toContainText('Silver');
   await expect(page.locator('#decision')).toHaveCount(0);
 });

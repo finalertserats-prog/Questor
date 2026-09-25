@@ -1,5 +1,5 @@
 import type { PipelineStage } from './pipelineStages.js';
-import { resolveDecision, resolveTransition, type DecisionOutcome } from './pipelineAutonomy.js';
+import { resolveDecision, type DecisionOutcome } from './pipelineAutonomy.js';
 import { decisionOfVerdict, VERDICTS, type Verdict } from './verdict.js';
 
 /**
@@ -8,17 +8,16 @@ import { decisionOfVerdict, VERDICTS, type Verdict } from './verdict.js';
  *
  * The owner's rule for the redesigned page is that each choice says what it
  * will do BEFORE it does it. A sentence like that is worth nothing unless it
- * is the same arithmetic the submit then performs, so this predicts both
- * steps the submit takes, in the order it takes them:
+ * is the same arithmetic the submit then performs, and that arithmetic is now
+ * one step: the verdict, as the decision on the AI round. Proceed approves it
+ * and moves the candidate on, Do not progress ends the journey where the
+ * candidate stands, and Consider decides nothing and moves nobody.
  *
- *   1. a reviewed interview is an assessed one, which carries the candidate
- *      to the human round (Silver → Gold) whatever the verdict says;
- *   2. the verdict is then the decision on the AI round — Proceed approves it,
- *      Do not progress ends the journey where the candidate now stands, and
- *      Consider decides nothing.
- *
- * Predicting only step 2 is how a preview comes to promise that a candidate
- * will stay at Silver, when reviewing them is precisely what moves them.
+ * It used to be two steps, because reviewing an interview also assessed it and
+ * the assessment carried the candidate to the human round whatever the verdict
+ * said. It does not any more — "the assessment should not move the candidate,
+ * HR decides" (domain/pipelineAutonomy.ts) — and the second step being gone is
+ * what makes Proceed the move that mints the candidate's Silver credential.
  *
  * Pure, and the route both previews and acts through it, so the promise and
  * the act cannot drift (tests/verdictConsequence.test.ts, and
@@ -61,16 +60,13 @@ export function verdictConsequence(
   };
   if (status !== ACTIVE) return stay;
 
-  // Step 1: reviewing the interview assesses it.
-  const assessed = resolveTransition(stages, currentStageKey, 'interview.assessed');
-  const afterEvent = assessed ? assessed.to : currentStageKey;
-
-  // Step 2: the verdict, as the decision on the AI round.
+  // The verdict, as the decision on the AI round, and nothing else: reviewing
+  // an interview no longer moves anybody.
   const outcome = decisionOfVerdict(verdict);
   const about = aiStageKey(stages);
-  const effect = outcome && about ? resolveDecision(stages, afterEvent, outcome, about) : null;
+  const effect = outcome && about ? resolveDecision(stages, currentStageKey, outcome, about) : null;
 
-  const landed = effect?.kind === 'advance' ? effect.to : effect?.kind === 'close' ? effect.atStageKey : afterEvent;
+  const landed = effect?.kind === 'advance' ? effect.to : effect?.kind === 'close' ? effect.atStageKey : currentStageKey;
   return {
     ...stay,
     toStageKey: landed,

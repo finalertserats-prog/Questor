@@ -1308,7 +1308,10 @@ export async function finalizeInterview(
     await prisma.invitation.updateMany({ where: { sessionId }, data: { status: INVITATION_CONSUMED } });
     await setState(sessionId, 'PROCESSING', 'REVIEW_READY');
     await logAudit({ tenantId: session.tenantId, action: 'assessment.ready', entityType: 'AssessmentVersion', entityId: assessment.id, after: { recommendation: result.recommendation } });
-    // The assessed AI interview is the Silver evidence; the candidate is at Gold.
+    // The assessed AI interview is the Silver evidence. It moves nobody: a
+    // score is not a decision, and the move to the human rounds is a person's
+    // (domain/pipelineAutonomy.ts). The event is still raised so a candidate
+    // assessed without a pipeline gets one.
     await notePipelineEvent({ tenantId: session.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.assessed', trigger: 'assessment.ready' });
     await emitEvent(session.tenantId, 'assessment.ready', { sessionId, assessmentId: assessment.id, recommendation: result.recommendation });
     await notifyHiringTeam({ tenantId: session.tenantId, candidateId: session.candidateId, sessionId, assessmentId: assessment.id, event: 'assessment_ready' });

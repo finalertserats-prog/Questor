@@ -277,15 +277,21 @@ And there are two parsers, not one. `parseStages` falls back to the defaults on 
 
 This is the part most often got wrong, so `domain/pipelineAutonomy.ts` states it twice.
 
-**Events move a candidate forward on their own.** Nobody presses "Move to …".
+**Participation and Bronze happen on their own. Silver, Gold and Diamond are decisions a person records.**
 
 | Event | Meaning | Reaches a stage of kind |
 |---|---|---|
 | `candidate.onboarded` | the candidate exists | `intake` → Participation |
 | `candidate.profiled` | their resume has been analysed | `profile_review` → Bronze |
-| `interview.scheduled` | an AI interview exists for them | `ai_interview` → Silver |
-| `interview.assessed` | an AI interview was assessed | `human_interview` → Gold |
+| `interview.scheduled` | an AI interview exists for them | **nothing — HR decides** |
+| `interview.assessed` | an AI interview was assessed | **nothing — HR decides** |
 | `candidate.finalized` | **a person** finalised them | the last stage → Diamond |
+
+`interview.scheduled` and `interview.assessed` are still raised, still audited by the routes that raise them, and still start a pipeline for a candidate who has none. They simply move nobody.
+
+**Why they stopped moving anyone.** A tier is struck when a person promotes a candidate *out* of it (`awardOnPromotion`), and only the decision paths strike one. The assessment's own move struck nothing and always arrived first, so by the time a reviewer chose Proceed there was no move left to make and no badge to mint. Five candidates reached Gold in production and none of them held a credential.
+
+**What tells anybody there is a decision waiting.** The "Needs you" queue's `stage_decision` row (`services/needsYouRows.ts`). A candidate appears there when their CV has been read against an approved scorecard and Bronze is struck (ready for Silver), or when a person has read and recorded a verdict on their AI interview (ready for Gold). Without that prompt, removing the two transitions would have stalled every candidate at Bronze in silence.
 
 **Two rules hold for every event**, and they are enforced in `resolveTransition`:
 
@@ -295,6 +301,7 @@ This is the part most often got wrong, so `domain/pipelineAutonomy.ts` states it
 **Decisions also move the pipeline**, through `resolveDecision`:
 
 - `APPROVED` at a stage → the stage after it (Silver → Gold, Gold → Diamond); at the last stage, the pipeline closes approved.
+- `APPROVED` about a stage **ahead** of the candidate → that stage, and no further. A candidate can now be interviewed while their pipeline still says Bronze, and carrying them from Bronze straight to Gold would skip Silver — which means no Silver badge and no Silver certificate, because a tier is struck by the move that leaves it.
 - `REJECTED` / `WITHDRAWN` → the pipeline closes with that outcome **at the stage the candidate is actually at**. The decision may be about an earlier round; nobody is moved backwards to it.
 
 Approval obeys the same two rules: forward only, and approving a stage the candidate has already left changes nothing.

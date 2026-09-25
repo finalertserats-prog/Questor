@@ -30,6 +30,15 @@ function startingRow(at: number): NeedsYouRow {
   });
 }
 
+/** A candidate waiting on a person to decide their next stage. */
+function decisionRow(readyBecause: 'profile_read' | 'interview_reviewed', nextStageLabel = 'Silver'): NeedsYouRow {
+  return row({
+    id: 'stage_decision:p1', kind: 'stage_decision', sessionId: null, assessmentId: null,
+    facts: { stageLabel: readyBecause === 'profile_read' ? 'Bronze' : 'Silver', nextStageLabel, readyBecause },
+    action: { label: 'Decide their next stage', to: '/candidates/c1' },
+  });
+}
+
 function member(overrides: Partial<CrewMember>): CrewMember {
   return { id: 'maya', name: 'Maya', status: 'idle', candidateFirstName: null, at: null, ...overrides };
 }
@@ -116,6 +125,28 @@ describe('row copy', () => {
 
   it('says whether an expiring invitation was opened', () => {
     expect(whyLine(row({ kind: 'invitation_expiring', facts: { opened: true } }))).toBe('Opened the link, not started yet.');
+  });
+
+  // The row asks somebody to commit a person to the next stage, so it has to
+  // say which stage and on what basis. "Decide their next stage" on its own is
+  // a button with no argument behind it.
+  it('says what a candidate ready for the AI round is ready on', () => {
+    expect(whyLine(decisionRow('profile_read')))
+      .toBe('Their CV has been read against the approved scorecard. Decide whether they go to Silver.');
+  });
+
+  it('says a person has read the interview before asking for the move to the human rounds', () => {
+    expect(whyLine(decisionRow('interview_reviewed', 'Gold')))
+      .toBe('Their AI interview has been read and reviewed. Decide whether they go to Gold.');
+  });
+
+  // Stage plans are per role, so the sentence uses the team's own words.
+  it('uses the stage names this role actually uses', () => {
+    expect(whyLine(decisionRow('profile_read', 'First round'))).toContain('go to First round.');
+  });
+
+  it('counts from when they became ready, not from some general wait', () => {
+    expect(waitCaption('stage_decision')).toBe('Ready for');
   });
 });
 

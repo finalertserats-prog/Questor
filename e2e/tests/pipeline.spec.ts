@@ -2,9 +2,13 @@ import { expect, test, type Page } from '@playwright/test';
 import { createRoleAndCandidate, runId } from './helpers';
 
 /**
- * The candidate journey moves on its own: adding a candidate (with their
- * resume analysed) puts them at Bronze, creating their interview puts them at
- * Silver, and the Platinum stage no longer exists anywhere on the page.
+ * How far the candidate journey moves on its own, and where it stops.
+ *
+ * Adding a candidate with their resume analysed puts them at Bronze. Nothing
+ * carries them past it: booking their interview does not, and neither does
+ * assessing it, because a tier is struck by the person who promotes a
+ * candidate out of it (domain/pipelineAutonomy.ts). The Platinum stage no
+ * longer exists anywhere on the page.
  */
 
 async function openJourney(page: Page) {
@@ -25,7 +29,7 @@ test('a newly added candidate is at Bronze on the five-stage pipeline', async ({
   await expect(track.locator('.pipeline-stage.stage-current')).toContainText('Bronze');
 });
 
-test('creating an interview moves the candidate to Silver', async ({ page }) => {
+test('creating an interview leaves the candidate at Bronze: the move is a person\u2019s', async ({ page }) => {
   const id = runId();
   const { candidateUrl } = await createRoleAndCandidate(page, id);
   await openJourney(page);
@@ -35,5 +39,5 @@ test('creating an interview moves the candidate to Silver', async ({ page }) => 
   await page.goto(candidateUrl);
   const track = await openJourney(page);
 
-  await expect(track.locator('.pipeline-stage.stage-current')).toContainText('Silver');
+  await expect(track.locator('.pipeline-stage.stage-current')).toContainText('Bronze');
 });

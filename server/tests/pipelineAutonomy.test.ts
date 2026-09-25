@@ -9,14 +9,27 @@ import {
 } from '../src/domain/pipelineAutonomy.js';
 
 /**
- * The autonomous candidate journey: Participation → Bronze → Silver → Gold →
- * Diamond. Events move a candidate forward and never back; the same event
- * twice does nothing; Diamond is only ever reached by a person finalising.
+ * The candidate journey: Participation → Bronze → Silver → Gold → Diamond.
+ *
+ * Two events still move a candidate on their own — onboarding starts the
+ * pipeline, an analysed resume reaches Bronze — and they move forward, never
+ * back, and do nothing the second time. Everything from Silver onwards is a
+ * person's decision: `interview.scheduled` and `interview.assessed` are still
+ * raised and still audited, and carry nobody.
  */
 
 const NO_AI_INTERVIEW: readonly PipelineStage[] = [
   { key: 'intake', label: 'Intake', kind: 'intake' },
   { key: 'panel', label: 'Panel', kind: 'human_interview' },
+];
+
+/** A plan that never reads a CV: the profiled event has no stage of its kind to reach. */
+const NO_PROFILE_REVIEW = NO_AI_INTERVIEW;
+
+/** A plan whose only profile-review stage is its last, which no event may reach. */
+const LAST_STAGE_IS_PROFILE_REVIEW: readonly PipelineStage[] = [
+  { key: 'intake', label: 'Intake', kind: 'intake' },
+  { key: 'screened', label: 'Screened', kind: 'profile_review' },
 ];
 
 describe('the default medallion stages', () => {
@@ -38,12 +51,12 @@ describe('targetStageKey', () => {
     expect(targetStageKey(DEFAULT_STAGES, 'candidate.profiled')).toBe('bronze');
   });
 
-  it('sends a candidate with an interview scheduled to Silver', () => {
-    expect(targetStageKey(DEFAULT_STAGES, 'interview.scheduled')).toBe('silver');
+  it('sends nobody to Silver when an interview is scheduled: HR decides that move', () => {
+    expect(targetStageKey(DEFAULT_STAGES, 'interview.scheduled')).toBeNull();
   });
 
-  it('sends a candidate with an assessed interview to Gold', () => {
-    expect(targetStageKey(DEFAULT_STAGES, 'interview.assessed')).toBe('gold');
+  it('sends nobody to Gold when an interview is assessed: HR decides that move too', () => {
+    expect(targetStageKey(DEFAULT_STAGES, 'interview.assessed')).toBeNull();
   });
 
   it('sends a finalised candidate to Diamond', () => {
@@ -51,29 +64,39 @@ describe('targetStageKey', () => {
   });
 
   it('has no target when the role plan lacks a stage of that kind', () => {
-    expect(targetStageKey(NO_AI_INTERVIEW, 'interview.scheduled')).toBeNull();
+    expect(targetStageKey(NO_PROFILE_REVIEW, 'candidate.profiled')).toBeNull();
   });
 
   it('finalises to the last stage of a custom plan', () => {
     expect(targetStageKey(NO_AI_INTERVIEW, 'candidate.finalized')).toBe('panel');
   });
 
-  it('never lets an assessment reach a plan\'s last stage, even when it is the only human stage', () => {
-    expect(targetStageKey(NO_AI_INTERVIEW, 'interview.assessed')).toBeNull();
+  it('never lets a profile reading reach a plan\'s last stage, even when it is the only stage of its kind', () => {
+    expect(targetStageKey(LAST_STAGE_IS_PROFILE_REVIEW, 'candidate.profiled')).toBeNull();
   });
 });
 
 describe('resolveTransition', () => {
-  it('moves forward from Participation to Silver when an interview is scheduled', () => {
-    expect(resolveTransition(DEFAULT_STAGES, 'participation', 'interview.scheduled')).toEqual({ from: 'participation', to: 'silver' });
+  it('moves forward from Participation to Bronze when the resume has been analysed', () => {
+    expect(resolveTransition(DEFAULT_STAGES, 'participation', 'candidate.profiled')).toEqual({ from: 'participation', to: 'bronze' });
   });
 
   it('does nothing when the candidate is already at the target stage', () => {
-    expect(resolveTransition(DEFAULT_STAGES, 'silver', 'interview.scheduled')).toBeNull();
+    expect(resolveTransition(DEFAULT_STAGES, 'bronze', 'candidate.profiled')).toBeNull();
   });
 
   it('never moves a candidate backwards', () => {
-    expect(resolveTransition(DEFAULT_STAGES, 'gold', 'interview.scheduled')).toBeNull();
+    expect(resolveTransition(DEFAULT_STAGES, 'gold', 'candidate.profiled')).toBeNull();
+  });
+
+  // The whole of part one of "HR decides": the two events that used to carry a
+  // candidate to Silver and to Gold are still raised, and now carry nobody.
+  it('leaves a scheduled interview where it found the candidate', () => {
+    expect(resolveTransition(DEFAULT_STAGES, 'bronze', 'interview.scheduled')).toBeNull();
+  });
+
+  it('leaves an assessed interview where it found the candidate', () => {
+    expect(resolveTransition(DEFAULT_STAGES, 'silver', 'interview.assessed')).toBeNull();
   });
 
   it('keeps a Diamond candidate at Diamond whatever happens next', () => {
@@ -132,9 +155,19 @@ describe('resolveDecision', () => {
     expect(resolveDecision(DEFAULT_STAGES, first?.kind === 'advance' ? first.to : 'silver', 'APPROVED', 'silver')).toBeNull();
   });
 
-  it('catches up a candidate the events left behind when a later stage is approved', () => {
+  // Approving a round a candidate has not formally reached brings them TO it,
+  // never past it. A candidate can now be interviewed while their pipeline
+  // still says Bronze, and carrying them from Bronze to Gold would skip Silver
+  // — which is not cosmetic, because a tier is struck by the move that leaves
+  // it, so a candidate vaulted over Silver would earn no Silver credential.
+  it('brings a candidate up to the round that was approved, never past it', () => {
     expect(resolveDecision(DEFAULT_STAGES, 'bronze', 'APPROVED', 'silver'))
-      .toEqual({ kind: 'advance', from: 'bronze', to: 'gold', final: false });
+      .toEqual({ kind: 'advance', from: 'bronze', to: 'silver', final: false });
+  });
+
+  it('still moves them off a round they are standing at when it is approved', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'silver', 'APPROVED', 'silver'))
+      .toEqual({ kind: 'advance', from: 'silver', to: 'gold', final: false });
   });
 
   it('does nothing for an approval of a stage the plan does not contain', () => {

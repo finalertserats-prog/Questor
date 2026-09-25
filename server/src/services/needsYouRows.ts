@@ -10,6 +10,7 @@ import { isPlatformOperator } from '../middleware/platformOperator.js';
 import type { AuthClaims } from './auth.js';
 import { identityCodeTroubleDrafts } from './identityCodeTrouble.js';
 import { blockOfRound } from '../domain/observedRound.js';
+import { parseStages, type StageKind } from '../domain/pipelineStages.js';
 import {
   actionFor, compareNeedsYou, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, NOT_STARTED_STATES,
   type GateContext, type NeedsYouAction, type NeedsYouKind,
@@ -81,6 +82,11 @@ export interface NeedsYouRow {
     readonly blockedReason?: string;
     readonly nextSteps?: readonly string[];
     readonly scheduledAt?: string;
+    /** For a stage decision: where the candidate stands and where the next move lands. */
+    readonly stageLabel?: string;
+    readonly nextStageLabel?: string;
+    /** What made them ready, so the row can say why it is asking. */
+    readonly readyBecause?: ReadyBecause;
   };
   /** Colleagues who have already opened it, most recent first. */
   readonly openedBy: readonly Looker[];
@@ -243,6 +249,178 @@ async function blockedRoundDrafts(tenantId: string, candidate: Prisma.CandidateW
   return { count, drafts };
 }
 
+/**
+ * Why a candidate is being put in front of a person, which is also the two
+ * moves this kind covers.
+ *
+ *  - `profile_read`      their CV has been read against an approved scorecard
+ *                        and Bronze is struck: the decision is whether they go
+ *                        to the AI interview round.
+ *  - `interview_reviewed` a person has read and recorded a verdict on their AI
+ *                        interview: the decision is whether they go to the
+ *                        human rounds.
+ *
+ * Diamond is not here. Finalisation was always a person's, has its own button
+ * and its own refusals, and nothing about it changed.
+ */
+export type ReadyBecause = 'profile_read' | 'interview_reviewed';
+
+/** The stage kinds each reason is a decision at, so the two can never drift apart. */
+const READY_AT: Readonly<Record<ReadyBecause, StageKind>> = {
+  profile_read: 'profile_review',
+  interview_reviewed: 'ai_interview',
+};
+
+interface StageWait {
+  readonly pipelineId: string;
+  readonly candidateId: string;
+  readonly roleId: string;
+  readonly because: ReadyBecause;
+  readonly stageLabel: string;
+  readonly nextStageLabel: string;
+}
+
+/**
+ * Candidates who are ready to move and whom only a person may move.
+ *
+ * WHY THE ROW EXISTS. An interview being scheduled used to carry a candidate
+ * to Silver and an assessment used to carry them to Gold. Both stopped, because
+ * a tier is struck by whoever promotes a candidate out of it and an autonomous
+ * move struck nothing (domain/pipelineAutonomy.ts). Without a prompt, that
+ * change would simply have stalled every candidate at Bronze quietly — the
+ * endpoint to move them has always existed and nothing ever asked.
+ *
+ * WHEN SOMEBODY IS "READY", and why not sooner. A row nobody can clear teaches
+ * people to stop reading the list it sits in, so each reason below is a fact
+ * that makes the decision possible TODAY:
+ *
+ *  - Bronze → Silver waits for the Bronze award. That is not a badge check
+ *    dressed up as a gate: Bronze is struck exactly when a CV has been read
+ *    against an APPROVED scorecard (services/candidateCreate.ts), and a fit
+ *    measured against a draft nobody signed off is not a basis on which to ask
+ *    someone to commit a candidate to an interview. A freshly created
+ *    candidate with no CV yet would otherwise appear here immediately with
+ *    nothing to decide on.
+ *
+ *  - Silver → Gold waits for the interview to have been REVIEWED, not merely
+ *    assessed. Two reasons, both load-bearing. The candidate was promised a
+ *    person would read their interview, and asking HR to promote somebody on
+ *    evidence nobody has opened is the thing that promise exists to prevent —
+ *    `decidePipeline` would refuse the decision outright (humanReviewCheck),
+ *    so the row would offer a button the server turns down. And the `review`
+ *    row already covers the window between "assessment landed" and "somebody
+ *    read it"; a second row over the same hours would list one person as two
+ *    jobs, which this file avoids elsewhere for the same reason. Recording the
+ *    verdict moves the session REVIEW_READY → HUMAN_REVIEWED, so the review row
+ *    clears exactly as this one appears.
+ *
+ * A Proceed verdict moves the candidate by itself, so a reviewed interview
+ * usually leaves no row at all. What is left is the real gap: Consider, or a
+ * review recorded without applying it to the journey — a candidate a person
+ * has read and not yet decided about.
+ *
+ * Archived roles are left out. There is no decision to make about a
+ * requisition nobody is hiring for.
+ *
+ * HOW IT IS COUNTED. The stage a candidate stands at is a key inside
+ * `stagesJson`, which no `where` clause can reach, so the kind is decided here
+ * and not by the database. That is why this reads the open pipelines' five
+ * small scalar columns with no joins before it reads anything else: a count
+ * that quietly stops being true past a cap is worse than a slower one, the
+ * same reasoning `startingDrafts` is written to.
+ */
+async function stageDecisionDrafts(tenantId: string, candidate: Prisma.CandidateWhereInput, limit: number) {
+  const open = await prisma.candidatePipeline.findMany({
+    where: { tenantId, status: 'ACTIVE', candidate, role: { status: { not: 'archived' } } },
+    select: { id: true, candidateId: true, roleId: true, currentStageKey: true, stagesJson: true },
+  });
+  // A plan too corrupt to read falls back to the defaults, whose keys this
+  // candidate's stage will not be among, so the pipeline is simply not listed.
+  // The queue is not the place to raise a corrupt record.
+  const standing = open.flatMap((p) => {
+    const stages = parseStages(p.stagesJson);
+    const at = stages.findIndex((stage) => stage.key === p.currentStageKey);
+    const next = at >= 0 ? stages[at + 1] : undefined;
+    if (!next) return [];
+    const because = (Object.keys(READY_AT) as ReadyBecause[]).find((r) => READY_AT[r] === stages[at].kind);
+    if (!because) return [];
+    return [{
+      pipelineId: p.id, candidateId: p.candidateId, roleId: p.roleId, because,
+      stageLabel: stages[at].label, nextStageLabel: next.label,
+    } satisfies StageWait];
+  });
+  if (standing.length === 0) return { count: 0, drafts: [] as Draft[] };
+
+  const waitingFor = (because: ReadyBecause) => standing.filter((s) => s.because === because);
+  const [bronze, reviewed] = await Promise.all([
+    evidenceOf(waitingFor('profile_read'), (ids) => prisma.candidateAward.findMany({
+      where: { tenantId, tier: 'bronze', candidateId: { in: ids } },
+      select: { candidateId: true, roleId: true, awardedAt: true },
+    }).then((rows) => rows.map((r) => ({ ...r, at: r.awardedAt })))),
+    evidenceOf(waitingFor('interview_reviewed'), (ids) => prisma.humanReview.findMany({
+      where: {
+        status: 'COMPLETED', activeForAssessmentId: { not: null },
+        assessment: { session: { tenantId, candidateId: { in: ids } } },
+      },
+      select: { createdAt: true, completedAt: true, assessment: { select: { session: { select: { candidateId: true, roleId: true } } } } },
+    }).then((rows) => rows.map((r) => ({
+      candidateId: r.assessment.session.candidateId, roleId: r.assessment.session.roleId ?? '',
+      at: r.completedAt ?? r.createdAt,
+    })))),
+  ]);
+
+  const ready = standing
+    .flatMap((s) => {
+      const since = (s.because === 'profile_read' ? bronze : reviewed).get(`${s.candidateId}:${s.roleId}`);
+      return since ? [{ ...s, since }] : [];
+    })
+    // Longest wait first, then by id so two from the same instant never swap
+    // places between two reads of the same queue.
+    .sort((a, b) => a.since.getTime() - b.since.getTime() || a.pipelineId.localeCompare(b.pipelineId));
+
+  const page = ready.slice(0, limit);
+  const named = page.length === 0 ? [] : await prisma.candidatePipeline.findMany({
+    where: { id: { in: page.map((r) => r.pipelineId) } },
+    select: { id: true, candidate: { select: { id: true, fullName: true } }, role: { select: { id: true, title: true } } },
+  });
+  const nameOf = new Map(named.map((row) => [row.id, row]));
+  const drafts: Draft[] = page.flatMap((r) => {
+    const row = nameOf.get(r.pipelineId);
+    if (!row) return [];
+    return [{
+      id: `stage_decision:${r.pipelineId}`,
+      kind: 'stage_decision' as const,
+      since: r.since.toISOString(),
+      candidate: { id: row.candidate.id, name: row.candidate.fullName },
+      role: { id: row.role.id, title: row.role.title },
+      subject: null,
+      // No session and no assessment: the row is about the person, and naming
+      // one interview of theirs would send `enrichRows` off to fetch an AI
+      // interviewer's name that says nothing about the decision being asked for.
+      sessionId: null,
+      assessmentId: null,
+      facts: { stageLabel: r.stageLabel, nextStageLabel: r.nextStageLabel, readyBecause: r.because },
+    }];
+  });
+  return { count: ready.length, drafts };
+}
+
+/** The evidence for one reason, indexed by candidate and role; earliest wins. */
+async function evidenceOf(
+  waiting: readonly StageWait[],
+  read: (candidateIds: string[]) => Promise<readonly { candidateId: string; roleId: string; at: Date }[]>,
+): Promise<ReadonlyMap<string, Date>> {
+  if (waiting.length === 0) return new Map();
+  const rows = await read([...new Set(waiting.map((w) => w.candidateId))]);
+  const earliest = new Map<string, Date>();
+  for (const row of rows) {
+    const key = `${row.candidateId}:${row.roleId}`;
+    const held = earliest.get(key);
+    if (!held || row.at < held) earliest.set(key, row.at);
+  }
+  return earliest;
+}
+
 async function stalledDrafts(tenantId: string, candidate: Prisma.CandidateWhereInput, now: Date, limit: number) {
   const where: Prisma.InterviewSessionWhereInput = {
     tenantId, candidate, state: { in: STALLED_STATES },
@@ -403,7 +581,7 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   const { tenantId } = auth;
   const none = Promise.resolve({ count: 0, drafts: [] as Draft[] });
 
-  const [attention, expiring, stalled, identity, blockedRounds, catalog, demo, starting] = await Promise.all([
+  const [attention, expiring, stalled, identity, blockedRounds, catalog, demo, starting, stageDecisions] = await Promise.all([
     ATTENTION_KINDS.some(may) ? attentionDrafts(tenantId, candidate, now, scan) : null,
     may('invitation_expiring') ? expiringDrafts(tenantId, candidate, now, scan) : none,
     may('stalled') ? stalledDrafts(tenantId, candidate, now, scan) : none,
@@ -412,6 +590,7 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
     may('catalog_proposals') ? catalogDrafts() : none,
     may('demo_request') ? demoDrafts(now, scan) : none,
     may('round_starting') ? startingDrafts(tenantId, auth.userId, auth.role, now, scan) : none,
+    may('stage_decision') ? stageDecisionDrafts(tenantId, candidate, scan) : none,
   ]);
 
   const counts = emptyCounts();
@@ -429,7 +608,8 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   counts.catalog_proposals = catalog.count;
   counts.demo_request = demo.count;
   counts.round_starting = starting.count;
-  drafts.push(...expiring.drafts, ...stalled.drafts, ...identity.drafts, ...blockedRounds.drafts, ...catalog.drafts, ...demo.drafts, ...starting.drafts);
+  counts.stage_decision = stageDecisions.count;
+  drafts.push(...expiring.drafts, ...stalled.drafts, ...identity.drafts, ...blockedRounds.drafts, ...catalog.drafts, ...demo.drafts, ...starting.drafts, ...stageDecisions.drafts);
 
   const rows = drafts
     .map(({ meetingUrl, candidatePath, ...d }): NeedsYouRow => ({

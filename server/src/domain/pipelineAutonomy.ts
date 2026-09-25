@@ -1,21 +1,45 @@
 import type { PipelineStage, StageKind } from './pipelineStages.js';
 
 /**
- * The autonomous candidate journey.
+ * The candidate journey: which part of it happens by itself, and which part
+ * waits for a person.
  *
- * Events in the hiring process move a candidate forward through their
- * pipeline without anyone pressing "Move to …":
+ * Two events still move a candidate without anyone pressing "Move to …":
  *
  *   candidate.onboarded   the candidate exists            → Participation
  *   candidate.profiled    their resume has been analysed  → Bronze
- *   interview.scheduled   an AI interview exists for them → Silver
- *   interview.assessed    an AI interview was assessed    → Gold
  *   candidate.finalized   a person finalised them         → Diamond
  *
- * Two rules hold for every event. A candidate only ever moves FORWARD: a
- * second interview scheduled at Gold leaves them at Gold, and nothing here
- * demotes anyone. And the last stage is never reached by an event the system
- * raises on its own — only a person's explicit finalisation gets there.
+ * Participation and Bronze are bookkeeping — the candidate exists, their CV
+ * has been read — and neither is a judgement anybody makes. Silver, Gold and
+ * Diamond are. So `interview.scheduled` and `interview.assessed` remain
+ * events, and move nobody.
+ *
+ * WHY THEY STOPPED MOVING ANYONE. A tier is struck when a person promotes a
+ * candidate OUT of it (services/candidateAwards.ts, awardOnPromotion), and
+ * only the decision paths strike it. The assessment's own move struck nothing
+ * and always arrived first: by the time a reviewer chose Proceed the candidate
+ * was already at Gold, there was no move left, and no badge was minted. Five
+ * candidates reached Gold in production and not one of them holds a
+ * credential. Removing these two transitions is what makes the reviewer's
+ * Proceed the move that mints Silver.
+ *
+ * The events are still RAISED, and deliberately: they start a pipeline for a
+ * candidate who has none (services/pipelineAutonomy.ts, ensurePipeline), and
+ * the routes that raise them write their own audit entries, so the trail still
+ * records that an interview was booked and that an assessment landed. What
+ * they no longer do is decide anything.
+ *
+ * WHAT TELLS ANYBODY. On its own this would strand every candidate at Bronze
+ * in silence — there is an endpoint to move them and nothing that asks. The
+ * "Needs you" queue's `stage_decision` row is the other half
+ * (services/needsYouRows.ts): a candidate who is ready to move appears in
+ * front of the people who may move them.
+ *
+ * Two rules hold for every event that still moves anyone. A candidate only
+ * ever moves FORWARD, and nothing here demotes anyone. And the last stage is
+ * never reached by an event the system raises on its own — only a person's
+ * explicit finalisation gets there.
  *
  * Stage plans are per role, so events name the KIND of stage they reach
  * rather than a key; a plan without a stage of that kind simply ignores the
@@ -32,21 +56,30 @@ export interface StageTransition {
   readonly to: string;
 }
 
-const KIND_OF_EVENT: Readonly<Record<Exclude<PipelineEvent, 'candidate.finalized'>, StageKind>> = {
+/**
+ * The events that still carry a candidate somewhere, and where.
+ *
+ * Partial on purpose: `interview.scheduled` and `interview.assessed` are
+ * absent, which is the whole of "the assessment should not move the candidate,
+ * HR decides". An event with no entry here reaches no stage, so it resolves to
+ * no transition and applies nothing — while remaining a perfectly good event
+ * for the pipeline it starts and the trail it is recorded in.
+ */
+const KIND_OF_EVENT: Readonly<Partial<Record<PipelineEvent, StageKind>>> = {
   'candidate.onboarded': 'intake',
   'candidate.profiled': 'profile_review',
-  'interview.scheduled': 'ai_interview',
-  'interview.assessed': 'human_interview',
 };
 
 /**
- * The stage an event reaches in this plan, or null when the plan has none of
- * that kind. The last stage belongs to finalisation alone: a plan whose only
- * human stage is also its last one gives an assessment nowhere to go.
+ * The stage an event reaches in this plan, or null when it reaches none: the
+ * event moves nobody, or the plan has no stage of its kind. The last stage
+ * belongs to finalisation alone, so a plan whose only stage of a kind is also
+ * its last one gives that event nowhere to go.
  */
 export function targetStageKey(stages: readonly PipelineStage[], event: PipelineEvent): string | null {
   if (event === 'candidate.finalized') return stages.length > 0 ? stages[stages.length - 1].key : null;
   const kind = KIND_OF_EVENT[event];
+  if (!kind) return null;
   return stages.slice(0, -1).find((stage) => stage.kind === kind)?.key ?? null;
 }
 
@@ -72,12 +105,14 @@ export function resolveTransition(stages: readonly PipelineStage[], currentStage
  *
  *   APPROVED at a stage    → the stage after it (Silver → Gold, Gold → Diamond);
  *                            at the last stage, the pipeline closes approved
+ *   APPROVED ahead of them → that stage, and no further
  *   REJECTED / WITHDRAWN   → the pipeline closes with that outcome, where it is
  *
- * Approval is the one decision that moves anyone, and it obeys the same two
- * rules as the events above: forward only, and approving a stage the candidate
- * has already left changes nothing. It is also how the last stage is reached
- * without the Finalise button — still a person's decision, only recorded once.
+ * Approval is now the ONLY thing that moves anyone past Bronze, and it obeys
+ * the same two rules as the events above: forward only, and approving a stage
+ * the candidate has already left changes nothing. It is also how the last
+ * stage is reached without the Finalise button — still a person's decision,
+ * only recorded once.
  */
 
 export const DECISION_OUTCOMES = ['APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
@@ -104,7 +139,21 @@ export function resolveDecision(
   if (aboutIndex === lastIndex) {
     return currentIndex === lastIndex ? { kind: 'close', outcome, atStageKey: currentStageKey } : null;
   }
-  const toIndex = aboutIndex + 1;
+  // An approval of a round the candidate has not formally reached carries them
+  // TO that stage, never past it.
+  //
+  // This matters now in a way it did not before. While the assessment moved
+  // people, a candidate was always already standing at the round being judged,
+  // so `aboutIndex + 1` was the stage after the one they were at. With the
+  // assessment moving nobody, a candidate can be interviewed while their
+  // pipeline still says Bronze — and `aboutIndex + 1` would then carry them
+  // from Bronze straight to Gold, skipping Silver. Skipping a tier is not a
+  // cosmetic difference: a tier is struck by the move that LEAVES it
+  // (domain/candidateAwards.ts, awardsForPromotion), so a candidate vaulted
+  // over Silver earns no Silver badge and no Silver certificate — the exact
+  // outcome this whole change exists to end. Landing them on Silver instead
+  // leaves the badge to be earned by the next decision, which is a person's.
+  const toIndex = aboutIndex > currentIndex ? aboutIndex : aboutIndex + 1;
   if (toIndex <= currentIndex) return null;
   return { kind: 'advance', from: currentStageKey, to: stages[toIndex].key, final: toIndex === lastIndex };
 }

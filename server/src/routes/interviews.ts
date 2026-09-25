@@ -144,7 +144,9 @@ interviewsRouter.post('/', requireCapability('interview:create'), asyncHandler(a
   });
   await prisma.interviewPlanVersion.create({ data: { sessionId: session.id, version: 1, planJson: JSON.stringify(plan) } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: 'interview.approved', entityType: 'InterviewSession', entityId: session.id });
-  // An interview exists for the candidate: their pipeline reaches Silver on its own.
+  // Recorded, and it moves nobody: the move to the AI round is HR's
+  // (domain/pipelineAutonomy.ts). Still raised, because it starts a pipeline
+  // for a candidate who has none.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: candidate.id, roleId: candidate.roleId, event: 'interview.scheduled', trigger: 'interview.approved' });
 
   res.status(201).json({ session: { id: session.id, state: session.state, provider: session.provider }, plan: withoutLadders(plan), meetingCapability: meetingCapability(body.provider) });
@@ -998,7 +1000,8 @@ async function inviteSession(req: Request, session: InvitableSession) {
 
   await prisma.interviewSession.update({ where: { id: session.id }, data: { state: 'INVITED' } });
   await logAudit({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, actorType: 'user', action: delivered ? 'invitation.sent' : 'invitation.created_not_delivered', entityType: 'InterviewSession', entityId: session.id });
-  // Covers the bulk path too: a candidate invited to an interview is at Silver.
+  // Covers the bulk path too. Recorded, not a move: an invitation is not a
+  // decision that the candidate belongs at the AI round.
   await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: session.candidateId, roleId: session.roleId, event: 'interview.scheduled', trigger: 'invitation.sent' });
   await emitEvent(req.auth!.tenantId, 'invitation.sent', { sessionId: session.id, candidateId: session.candidateId, delivered });
   return { token, status: delivered ? 'sent' : 'created', portalUrl, delivered, deliveryNote };
