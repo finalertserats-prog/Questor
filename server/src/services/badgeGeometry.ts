@@ -5,9 +5,9 @@
  * badge once, in SVG, in the browser. Questor has to draw the same badge three
  * more times: as an `.svg` file, as a `.png` file, and struck into the
  * certificate PDF beside the signatures. Three hand-written copies of an
- * octagon, a milled edge, a guilloché field and four bars would drift apart on
- * the first tweak — and the way that drift surfaces is a candidate holding a
- * PNG that does not match the PDF of the same award.
+ * octagon, a guilloché field and four bars would drift apart on the first
+ * tweak — and the way that drift surfaces is a candidate holding a PNG that
+ * does not match the PDF of the same award.
  *
  * So the geometry lives here once, as a flat list of filled and stroked
  * polygons in the mockup's own 0–100 space, and each renderer only has to know
@@ -197,22 +197,6 @@ function stroke(points: readonly Point[], colour: string, alpha: number, width: 
   return { op: 'stroke', subpaths: [points], closed, colour, alpha, width };
 }
 
-/** The knurled rim. Radial ticks, not a texture: it survives being printed. */
-function milledEdge(count: number, outer: number, inner: number, colour: string, width: number): readonly Shape[] {
-  return Array.from({ length: count }, (_unused, i) => {
-    const angle = (i / count) * Math.PI * 2;
-    return stroke(
-      [
-        { x: 50 + Math.cos(angle) * outer, y: 50 + Math.sin(angle) * outer },
-        { x: 50 + Math.cos(angle) * inner, y: 50 + Math.sin(angle) * inner },
-      ],
-      colour,
-      0.3,
-      width,
-      false,
-    );
-  });
-}
 
 /**
  * Four bars, of which the earned ones are struck bright.
@@ -282,10 +266,16 @@ function crystal(tier: Tier, big: boolean, radius: number): readonly Shape[] {
  * The badge for one tier, at the level of detail its size can carry.
  *
  * `size` decides detail and nothing else — the shapes are always in 0–100
- * space and the renderer scales them. Below 56px the milled edge, the
- * guilloché field and the hallmark are dropped: at row sizes they collapse
- * into a grey smear that makes Silver and Gold hard to tell apart, which is
- * the one thing the badge exists to do.
+ * space and the renderer scales them. Below 56px the guilloché field and the
+ * hallmark are dropped: at row sizes they collapse into a grey smear that
+ * makes Silver and Gold hard to tell apart, which is the one thing the badge
+ * exists to do.
+ *
+ * There is no knurled rim. The mockup ringed every tier with fine radial
+ * ticks, the way a struck coin is milled, and it was transcribed here with
+ * the rest. Against the octagon's own edge it read as a second border
+ * competing with the first, and the owner cut it: the silhouette is the mark,
+ * and nothing should be drawn over its outline.
  */
 export function badgeShapes(tier: Tier, size: number): readonly Shape[] {
   const metal = METAL[tier];
@@ -297,14 +287,12 @@ export function badgeShapes(tier: Tier, size: number): readonly Shape[] {
       fill(rim, metalGradient(rim, tier, 0.34)),
       stroke(rim, metal.dark, 0.5, big ? 1.2 : 2.2, true),
     ];
-    if (big) shapes.push(...milledEdge(72, 46, 42, metal.dark, 0.5));
     shapes.push(...crystal(tier, big, big ? 33 : 35));
     return shapes;
   }
 
   const shapes: Shape[] = [fill(rim, metalGradient(rim, tier, 1))];
   if (big) {
-    shapes.push(...milledEdge(88, 46.5, 42.5, metal.dark, 0.55));
     shapes.push(stroke(octagon(50, 41), metal.dark, 0.45, 0.7, true));
     // The mockup clips these to an octagon of radius 40. They reach 37 from
     // centre against an inradius of 36.95, so the clip removes five hundredths

@@ -1,7 +1,7 @@
 import { useId } from 'react';
 import {
   DETAIL_FROM_PX, GRADIENT_STOPS, ROSETTES, TIER_METAL,
-  crystalFacets, millingLines, octagonPath, rosettePath, signalBars, type TierKey,
+  crystalFacets, octagonPath, rosettePath, signalBars, type TierKey,
 } from './tierBadgeGeometry';
 
 /**
@@ -30,8 +30,8 @@ export function TierBadge({ tier, size, label, className }: TierBadgeProps) {
   // all take whichever metal was defined last.
   const uid = useId().replace(/:/g, '');
   const metal = TIER_METAL[tier];
-  // The milled edge, the guilloché and the hallmark are engraved only from
-  // 56px: below that they muddy the metal instead of reading as detail.
+  // The guilloché and the hallmark are engraved only from 56px: below that
+  // they muddy the metal instead of reading as detail.
   const detailed = size >= DETAIL_FROM_PX;
   const gradientId = `tier-metal-${uid}`;
   const clipId = `tier-field-${uid}`;
@@ -61,7 +61,6 @@ export function TierBadge({ tier, size, label, className }: TierBadgeProps) {
         <>
           <path d={rim} fill={`url(#${gradientId})`} opacity={0.34} />
           <path d={rim} fill="none" stroke={metal.dark} strokeWidth={detailed ? 1.2 : 2.2} opacity={0.5} />
-          {detailed && <Milling count={72} outer={46} inner={42} colour={metal.dark} width={0.5} />}
           <Crystal tier={tier} gradientId={gradientId} detailed={detailed} radius={detailed ? 33 : 35} />
         </>
       ) : (
@@ -69,7 +68,6 @@ export function TierBadge({ tier, size, label, className }: TierBadgeProps) {
           <path d={rim} fill={`url(#${gradientId})`} />
           {detailed && (
             <>
-              <Milling count={88} outer={46.5} inner={42.5} colour={metal.dark} width={0.55} />
               <path d={octagonPath(50, 41)} fill="none" stroke={metal.dark} strokeWidth={0.7} opacity={0.45} />
               <g clipPath={`url(#${clipId})`}>
                 {ROSETTES.map(([outer, wheel, pen, turns], i) => (
@@ -97,15 +95,6 @@ export function TierBadge({ tier, size, label, className }: TierBadgeProps) {
   );
 }
 
-function Milling({ count, outer, inner, colour, width }: { count: number; outer: number; inner: number; colour: string; width: number }) {
-  return (
-    <g>
-      {millingLines(count, outer, inner).map((line, i) => (
-        <line key={i} x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke={colour} strokeWidth={width} opacity={0.3} />
-      ))}
-    </g>
-  );
-}
 
 /**
  * Four bars, always. The unearned ones are engraved — a dark recess with a

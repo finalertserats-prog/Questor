@@ -34,9 +34,8 @@ export const TIER_METAL: Readonly<Record<TierKey, TierMetal>> = {
 };
 
 /**
- * Below this the milled edge, the guilloché and the hallmark are left off:
- * at 36px and under they muddy the metal into a grey smudge rather than
- * reading as detail.
+ * Below this the guilloché and the hallmark are left off: at 36px and under
+ * they muddy the metal into a grey smudge rather than reading as detail.
  */
 export const DETAIL_FROM_PX = 56;
 
@@ -157,19 +156,3 @@ export function crystalFacets(radius: number): CrystalFacet[] {
   return facets;
 }
 
-export interface MillingLine {
-  readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number;
-}
-
-/** The milled edge: fine radial knurling round the rim, as on a struck coin. */
-export function millingLines(count: number, outer: number, inner: number): MillingLine[] {
-  const lines: MillingLine[] = [];
-  for (let i = 0; i < count; i++) {
-    const angle = (i / count) * Math.PI * 2;
-    lines.push({
-      x1: 50 + Math.cos(angle) * outer, y1: 50 + Math.sin(angle) * outer,
-      x2: 50 + Math.cos(angle) * inner, y2: 50 + Math.sin(angle) * inner,
-    });
-  }
-  return lines;
-}

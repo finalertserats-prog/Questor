@@ -19,17 +19,17 @@ import { hallmarkGlyphs } from './strokeGlyphs.js';
  * says we are inside.
  */
 
-/** Sub-scanlines per pixel row. Five is where the milled edge stops shimmering. */
+/** Sub-scanlines per pixel row. Five is where the guilloché stops shimmering. */
 const SUBSAMPLES = 5;
 
 /**
  * Below this, a stroke is drawn at this width with its opacity scaled down
  * instead.
  *
- * A quarter-pixel-wide milled tick that happens to lie between two
- * sub-scanlines disappears entirely, so the rim comes out with gaps in it at
- * some sizes and not others. Browsers solve it the same way, which is also why
- * this matches what the approved mockup looks like on screen.
+ * A quarter-pixel-wide guilloché line that happens to lie between two
+ * sub-scanlines disappears entirely, so the field comes out with gaps in it
+ * at some sizes and not others. Browsers solve it the same way, which is also
+ * why this matches what the approved mockup looks like on screen.
  */
 const HAIRLINE = 0.8;
 

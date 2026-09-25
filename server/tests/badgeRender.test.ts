@@ -41,7 +41,7 @@ describe('badge geometry', () => {
     expect([large, small]).toEqual([true, false]);
   });
 
-  it('drops the milled edge and the guilloché field at row sizes', () => {
+  it('drops the guilloché field and the hallmark at row sizes', () => {
     // Below 56px they collapse into a grey smear that makes Silver and Gold
     // hard to tell apart, which is the one thing the badge exists to do.
     expect(badgeShapes('silver', 24).length).toBeLessThan(badgeShapes('silver', 132).length);
