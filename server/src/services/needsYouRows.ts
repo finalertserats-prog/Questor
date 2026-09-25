@@ -250,32 +250,65 @@ async function blockedRoundDrafts(tenantId: string, candidate: Prisma.CandidateW
 }
 
 /**
- * Why a candidate is being put in front of a person, which is also the two
- * moves this kind covers.
+ * Why a candidate is being put in front of a person, which is also what has
+ * happened to them that a person can act on.
  *
- *  - `profile_read`      their CV has been read against an approved scorecard
- *                        and Bronze is struck: the decision is whether they go
- *                        to the AI interview round.
- *  - `interview_reviewed` a person has read and recorded a verdict on their AI
- *                        interview: the decision is whether they go to the
- *                        human rounds.
+ *  - `profile_read`       their CV has been read and a fit computed.
+ *  - `interview_reviewed` a person has read and recorded a verdict on their
+ *                         AI interview.
  *
- * Diamond is not here. Finalisation was always a person's, has its own button
- * and its own refusals, and nothing about it changed.
+ * Note what `profile_read` is NOT gated on: the Bronze award. Bronze is struck
+ * only when the fit was measured against an APPROVED scorecard, and a role
+ * whose scorecard is still a draft produces candidates with a CV, a fit, a
+ * pipeline at Bronze — and no award, for ever, because nothing re-strikes one
+ * when the scorecard is approved later. Gating on the award would have meant
+ * that on the day the autonomous moves were removed, the row replacing them
+ * appeared for nobody who already existed: production holds no awards at all.
+ * The decision this row asks for is possible as soon as the CV has been read.
+ * Whether that reading was against an approved scorecard is a fact about the
+ * candidate, shown on their page, not a reason to say nothing.
  */
 export type ReadyBecause = 'profile_read' | 'interview_reviewed';
 
-/** The stage kinds each reason is a decision at, so the two can never drift apart. */
-const READY_AT: Readonly<Record<ReadyBecause, StageKind>> = {
-  profile_read: 'profile_review',
-  interview_reviewed: 'ai_interview',
+/**
+ * What makes a candidate standing at each kind of stage ready to be moved.
+ *
+ * `intake` takes either, and that is not tidiness. A candidate can be
+ * interviewed and assessed while their pipeline still says Participation —
+ * booking an interview needs an approved ROLE scorecard, not a candidate
+ * profile — and before the autonomous moves were removed, `interview.scheduled`
+ * carried them off it. Now nothing does, so without this they would never be
+ * mentioned anywhere again. It also catches a candidate whose CV was read but
+ * whose `candidate.profiled` event was lost: that event is raised through
+ * `notePipelineEvent`, which swallows its own failures by design.
+ *
+ * `human_interview` takes nothing. Finalisation is a person's own act with its
+ * own button and its own refusals, and nothing about it changed.
+ */
+const READY_AT: Readonly<Partial<Record<StageKind, readonly ReadyBecause[]>>> = {
+  intake: ['interview_reviewed', 'profile_read'],
+  profile_review: ['profile_read'],
+  ai_interview: ['interview_reviewed'],
 };
+
+/**
+ * How deep the scan goes before the count stops being exact.
+ *
+ * Every other kind in this file pushes its limit into the query, because its
+ * `where` clause IS its rule. This one's cannot be: the stage a candidate
+ * stands at is a key inside `stagesJson`, and no `where` reaches inside it. So
+ * the rule is applied in Node, over a window that is bounded rather than the
+ * whole tenant. Two thousand is far above any real backlog — and far enough
+ * above the page size that it is nothing like capping at `limit`, which on the
+ * count endpoint is 1.
+ */
+const STAGE_DECISION_SCAN = 2_000;
 
 interface StageWait {
   readonly pipelineId: string;
   readonly candidateId: string;
   readonly roleId: string;
-  readonly because: ReadyBecause;
+  readonly wants: readonly ReadyBecause[];
   readonly stageLabel: string;
   readonly nextStageLabel: string;
 }
@@ -287,52 +320,38 @@ interface StageWait {
  * to Silver and an assessment used to carry them to Gold. Both stopped, because
  * a tier is struck by whoever promotes a candidate out of it and an autonomous
  * move struck nothing (domain/pipelineAutonomy.ts). Without a prompt, that
- * change would simply have stalled every candidate at Bronze quietly — the
- * endpoint to move them has always existed and nothing ever asked.
+ * change would simply have stalled every candidate quietly — the endpoint to
+ * move them has always existed and nothing ever asked.
  *
- * WHEN SOMEBODY IS "READY", and why not sooner. A row nobody can clear teaches
- * people to stop reading the list it sits in, so each reason below is a fact
- * that makes the decision possible TODAY:
+ * WHEN SOMEBODY IS READY. `READY_AT`, above, with the reasoning for each kind.
+ * The shared principle is that a row nobody can clear teaches people to stop
+ * reading the list it sits in, so each reason is something that has already
+ * happened to that candidate rather than a stage they merely occupy.
  *
- *  - Bronze → Silver waits for the Bronze award. That is not a badge check
- *    dressed up as a gate: Bronze is struck exactly when a CV has been read
- *    against an APPROVED scorecard (services/candidateCreate.ts), and a fit
- *    measured against a draft nobody signed off is not a basis on which to ask
- *    someone to commit a candidate to an interview. A freshly created
- *    candidate with no CV yet would otherwise appear here immediately with
- *    nothing to decide on.
- *
- *  - Silver → Gold waits for the interview to have been REVIEWED, not merely
- *    assessed. Two reasons, both load-bearing. The candidate was promised a
- *    person would read their interview, and asking HR to promote somebody on
- *    evidence nobody has opened is the thing that promise exists to prevent —
- *    `decidePipeline` would refuse the decision outright (humanReviewCheck),
- *    so the row would offer a button the server turns down. And the `review`
- *    row already covers the window between "assessment landed" and "somebody
- *    read it"; a second row over the same hours would list one person as two
- *    jobs, which this file avoids elsewhere for the same reason. Recording the
- *    verdict moves the session REVIEW_READY → HUMAN_REVIEWED, so the review row
- *    clears exactly as this one appears.
+ * Moving a candidate OFF the AI round is refused until a person has read their
+ * interview — `advancePipeline` enforces the promise on exactly the moves it is
+ * about (domain/humanReviewRule.ts, moveNeedsHumanReview). Waiting for the
+ * review before listing them is therefore not a preference: the button this row
+ * points at is the one the server would turn down. It also keeps one person off
+ * the queue as two jobs, because the `review` row already owns the hours
+ * between "the assessment landed" and "somebody read it", and recording the
+ * verdict moves the session REVIEW_READY → HUMAN_REVIEWED as this row appears.
  *
  * A Proceed verdict moves the candidate by itself, so a reviewed interview
  * usually leaves no row at all. What is left is the real gap: Consider, or a
- * review recorded without applying it to the journey — a candidate a person
- * has read and not yet decided about.
+ * review recorded without applying it to the journey.
  *
  * Archived roles are left out. There is no decision to make about a
  * requisition nobody is hiring for.
- *
- * HOW IT IS COUNTED. The stage a candidate stands at is a key inside
- * `stagesJson`, which no `where` clause can reach, so the kind is decided here
- * and not by the database. That is why this reads the open pipelines' five
- * small scalar columns with no joins before it reads anything else: a count
- * that quietly stops being true past a cap is worse than a slower one, the
- * same reasoning `startingDrafts` is written to.
  */
 async function stageDecisionDrafts(tenantId: string, candidate: Prisma.CandidateWhereInput, limit: number) {
   const open = await prisma.candidatePipeline.findMany({
     where: { tenantId, status: 'ACTIVE', candidate, role: { status: { not: 'archived' } } },
+    // The stage plan and the two ids, no joins: this is the pass the rule is
+    // applied over, and the names are read afterwards for the page alone.
     select: { id: true, candidateId: true, roleId: true, currentStageKey: true, stagesJson: true },
+    orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+    take: STAGE_DECISION_SCAN,
   });
   // A plan too corrupt to read falls back to the defaults, whose keys this
   // candidate's stage will not be among, so the pipeline is simply not listed.
@@ -342,37 +361,32 @@ async function stageDecisionDrafts(tenantId: string, candidate: Prisma.Candidate
     const at = stages.findIndex((stage) => stage.key === p.currentStageKey);
     const next = at >= 0 ? stages[at + 1] : undefined;
     if (!next) return [];
-    const because = (Object.keys(READY_AT) as ReadyBecause[]).find((r) => READY_AT[r] === stages[at].kind);
-    if (!because) return [];
+    const wants = READY_AT[stages[at].kind];
+    if (!wants) return [];
     return [{
-      pipelineId: p.id, candidateId: p.candidateId, roleId: p.roleId, because,
+      pipelineId: p.id, candidateId: p.candidateId, roleId: p.roleId, wants,
       stageLabel: stages[at].label, nextStageLabel: next.label,
     } satisfies StageWait];
   });
   if (standing.length === 0) return { count: 0, drafts: [] as Draft[] };
 
-  const waitingFor = (because: ReadyBecause) => standing.filter((s) => s.because === because);
-  const [bronze, reviewed] = await Promise.all([
-    evidenceOf(waitingFor('profile_read'), (ids) => prisma.candidateAward.findMany({
-      where: { tenantId, tier: 'bronze', candidateId: { in: ids } },
-      select: { candidateId: true, roleId: true, awardedAt: true },
-    }).then((rows) => rows.map((r) => ({ ...r, at: r.awardedAt })))),
-    evidenceOf(waitingFor('interview_reviewed'), (ids) => prisma.humanReview.findMany({
-      where: {
-        status: 'COMPLETED', activeForAssessmentId: { not: null },
-        assessment: { session: { tenantId, candidateId: { in: ids } } },
-      },
-      select: { createdAt: true, completedAt: true, assessment: { select: { session: { select: { candidateId: true, roleId: true } } } } },
-    }).then((rows) => rows.map((r) => ({
-      candidateId: r.assessment.session.candidateId, roleId: r.assessment.session.roleId ?? '',
-      at: r.completedAt ?? r.createdAt,
-    })))),
+  const wantedBy = (because: ReadyBecause) => standing.filter((s) => s.wants.includes(because));
+  const [profiles, reviews] = await Promise.all([
+    profileReadAt(wantedBy('profile_read')),
+    interviewReviewedAt(tenantId, wantedBy('interview_reviewed')),
   ]);
 
   const ready = standing
     .flatMap((s) => {
-      const since = (s.because === 'profile_read' ? bronze : reviewed).get(`${s.candidateId}:${s.roleId}`);
-      return since ? [{ ...s, since }] : [];
+      // In `READY_AT` order, so a candidate whose interview has been read is
+      // described by that rather than by the CV reading that came first.
+      for (const because of s.wants) {
+        const since = because === 'profile_read'
+          ? profiles.get(s.candidateId)
+          : reviews.get(`${s.candidateId}:${s.roleId}`);
+        if (since) return [{ ...s, because, since }];
+      }
+      return [];
     })
     // Longest wait first, then by id so two from the same instant never swap
     // places between two reads of the same queue.
@@ -409,18 +423,53 @@ async function stageDecisionDrafts(tenantId: string, candidate: Prisma.Candidate
   return { count: ready.length, drafts };
 }
 
-/** The evidence for one reason, indexed by candidate and role; earliest wins. */
-async function evidenceOf(
-  waiting: readonly StageWait[],
-  read: (candidateIds: string[]) => Promise<readonly { candidateId: string; roleId: string; at: Date }[]>,
-): Promise<ReadonlyMap<string, Date>> {
+/**
+ * When each candidate's CV was first read, by candidate.
+ *
+ * Keyed on the candidate alone, because a profile version has no role of its
+ * own — a Candidate row belongs to one role, and a second application is a
+ * second row (services/candidateReuse.ts). Earliest wins: the wait began when
+ * the CV was first read, not when it was last re-read.
+ */
+async function profileReadAt(waiting: readonly StageWait[]): Promise<ReadonlyMap<string, Date>> {
   if (waiting.length === 0) return new Map();
-  const rows = await read([...new Set(waiting.map((w) => w.candidateId))]);
+  const rows = await prisma.candidateProfileVersion.findMany({
+    where: { candidateId: { in: [...new Set(waiting.map((w) => w.candidateId))] } },
+    select: { candidateId: true, createdAt: true },
+  });
+  return earliestBy(rows.map((r) => ({ key: r.candidateId, at: r.createdAt })));
+}
+
+/**
+ * When a person's verdict on each candidate's AI interview was recorded, by
+ * candidate and role.
+ *
+ * Both parts of the key, because a session carries the role it was run for and
+ * a candidate could in principle hold a pipeline for another one. A session
+ * with no role cannot belong to any pipeline, so it is dropped rather than
+ * given an empty key that would silently match nothing.
+ */
+async function interviewReviewedAt(tenantId: string, waiting: readonly StageWait[]): Promise<ReadonlyMap<string, Date>> {
+  if (waiting.length === 0) return new Map();
+  const rows = await prisma.humanReview.findMany({
+    where: {
+      status: 'COMPLETED', activeForAssessmentId: { not: null },
+      assessment: { session: { tenantId, candidateId: { in: [...new Set(waiting.map((w) => w.candidateId))] } } },
+    },
+    select: { createdAt: true, completedAt: true, assessment: { select: { session: { select: { candidateId: true, roleId: true } } } } },
+  });
+  return earliestBy(rows.flatMap((r) => {
+    const { candidateId, roleId } = r.assessment.session;
+    return roleId ? [{ key: `${candidateId}:${roleId}`, at: r.completedAt ?? r.createdAt }] : [];
+  }));
+}
+
+/** The earliest time recorded against each key. */
+function earliestBy(rows: readonly { key: string; at: Date }[]): ReadonlyMap<string, Date> {
   const earliest = new Map<string, Date>();
   for (const row of rows) {
-    const key = `${row.candidateId}:${row.roleId}`;
-    const held = earliest.get(key);
-    if (!held || row.at < held) earliest.set(key, row.at);
+    const held = earliest.get(row.key);
+    if (!held || row.at < held) earliest.set(row.key, row.at);
   }
   return earliest;
 }

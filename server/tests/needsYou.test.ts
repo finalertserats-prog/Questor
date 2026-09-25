@@ -66,7 +66,7 @@ async function invited(s: Setup, name: string, expiresInMs: number) {
  *
  * Fixtures, like the rest of this file: what is being checked here is who the
  * queue shows a row to and which rows it counts, not how a candidate came to
- * be ready. The journey that produces one for real, through the endpoints a
+ * be ready. The evidence is a profile version, because that is the rule. The journey that produces one for real, through the endpoints a
  * team actually uses, is proved end to end in hrDecidesJourney.test.ts.
  */
 async function waitingAt(s: Setup, name: string, stageKey: string, roleId?: string) {
@@ -79,12 +79,11 @@ async function waitingAt(s: Setup, name: string, stageKey: string, roleId?: stri
       stagesJson: JSON.stringify(DEFAULT_STAGES), currentStageKey: stageKey,
     },
   });
-  await prisma.candidateAward.create({
-    data: {
-      tenantId: s.tenant.id, candidateId: c.id, roleId: role, tier: 'bronze',
-      reference: `QS-BRZ-TEST-${c.id.slice(-4)}`, verifyToken: `v-${c.id}`,
-      evidenceJson: JSON.stringify({ version: 1, rows: [] }), awardedAt: ago(2 * DAY),
-    },
+  // Their CV, read. That is what makes the decision possible and what the row
+  // waits for — deliberately not the Bronze award, which is struck only when
+  // the scorecard was approved and which production holds none of.
+  await prisma.candidateProfileVersion.create({
+    data: { candidateId: c.id, version: 1, rawText: `${name} CV`, profileJson: '{}', fitScoreJson: '{}', createdAt: ago(2 * DAY) },
   });
   return { candidate: c, pipeline };
 }
@@ -131,6 +130,32 @@ describe('a candidate waiting on a decision', () => {
     await s.assessment(sess.id);
 
     expect(kindsOf((await feed(s.manager.token)).body)).toEqual(['review']);
+  });
+
+
+  // The gate the review found: Bronze is struck only when the CV was read
+  // against an APPROVED scorecard, there is no backfill, and production holds
+  // no awards at all — so a row that waited for one would have appeared for
+  // nobody on the day the autonomous moves were removed.
+  it('asks about a candidate who holds no Bronze at all', async () => {
+    const s = await setup();
+    await waitingAt(s, 'Pat Lee', 'bronze');
+
+    const res = await feed(s.recruiter.token);
+
+    expect([await prisma.candidateAward.count(), kindsOf(res.body)]).toEqual([0, ['stage_decision']]);
+  });
+
+  // Nothing carries a candidate off Participation any more, and an interview
+  // can be booked for one: without this they would never be mentioned again.
+  it('asks about a candidate still at Participation whose CV has been read', async () => {
+    const s = await setup();
+    await waitingAt(s, 'Pat Lee', 'participation');
+
+    const res = await feed(s.recruiter.token);
+
+    expect(res.body.needsYou.items.map((i: { kind: string; facts: Record<string, unknown> }) => [i.kind, i.facts]))
+      .toEqual([['stage_decision', { stageLabel: 'Participation', nextStageLabel: 'Bronze', readyBecause: 'profile_read' }]]);
   });
 
   it('counts a decision that is waiting', async () => {

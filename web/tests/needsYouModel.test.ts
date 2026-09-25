@@ -132,7 +132,7 @@ describe('row copy', () => {
   // a button with no argument behind it.
   it('says what a candidate ready for the AI round is ready on', () => {
     expect(whyLine(decisionRow('profile_read')))
-      .toBe('Their CV has been read against the approved scorecard. Decide whether they go to Silver.');
+      .toBe('Their CV has been read. Decide whether they go to Silver.');
   });
 
   it('says a person has read the interview before asking for the move to the human rounds', () => {

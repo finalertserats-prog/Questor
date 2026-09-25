@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
-import { finalStage, nextStage, pipelineOutcome, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
+import { advanceConfirmLine, finalStage, nextStage, pipelineOutcome, stageCaption, stageStates, type MoveEarns, type PipelineStageView, type StageState } from './pipelineView';
 import { decisionStatus, interviewStatus } from './statusModel';
 import { sessionOptionLabels } from './roleLabelModel';
 import { interviewerName } from './candidateJourney';
@@ -126,6 +126,8 @@ interface Pipeline {
   id: string;
   candidateId: string;
   stages: PipelineStageView[];
+  /** What the move to the next stage would strike, worked out by the server. */
+  nextMoveEarns?: MoveEarns[];
   currentStageKey: string;
   status: 'ACTIVE' | 'DECIDED';
   decision: string | null;
@@ -679,7 +681,7 @@ export function PipelinePanel(
                 </button>
                 {pendingAdvance === next.key && (
                   <p className="muted small" style={{ marginTop: 6 }}>
-                    {candidateName} moves to {next.label}.{' '}
+                    {advanceConfirmLine(candidateName, next.label, pipeline.nextMoveEarns ?? [])}{' '}
                     <button type="button" className="btn ghost sm" onClick={() => setPendingAdvance(null)}>Not yet</button>
                   </p>
                 )}

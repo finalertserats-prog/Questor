@@ -155,14 +155,28 @@ describe('resolveDecision', () => {
     expect(resolveDecision(DEFAULT_STAGES, first?.kind === 'advance' ? first.to : 'silver', 'APPROVED', 'silver')).toBeNull();
   });
 
-  // Approving a round a candidate has not formally reached brings them TO it,
-  // never past it. A candidate can now be interviewed while their pipeline
-  // still says Bronze, and carrying them from Bronze to Gold would skip Silver
-  // — which is not cosmetic, because a tier is struck by the move that leaves
-  // it, so a candidate vaulted over Silver would earn no Silver credential.
+  // Approving a round a candidate has not formally reached moves them one
+  // stage, never two. A candidate can now be interviewed while their pipeline
+  // still says Participation, and carrying them from there to Silver would
+  // vault them over Bronze, which nobody had said anything about — and a tier
+  // is struck by the move that LEAVES its stage, so a candidate carried over a
+  // stage can never earn what it was worth.
   it('brings a candidate up to the round that was approved, never past it', () => {
     expect(resolveDecision(DEFAULT_STAGES, 'bronze', 'APPROVED', 'silver'))
       .toEqual({ kind: 'advance', from: 'bronze', to: 'silver', final: false });
+  });
+
+  it('moves one stage, never two, however far ahead the approved round is', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'participation', 'APPROVED', 'silver'))
+      .toEqual({ kind: 'advance', from: 'participation', to: 'bronze', final: false });
+  });
+
+  // Stages run in order, and the Advance button says so in as many words when
+  // it refuses a key that is not the next one. A decision that could leapfrog
+  // what the button cannot would make the two person-paths disagree.
+  it('never skips a stage the Advance button would have insisted on', () => {
+    const jumped = resolveDecision(DEFAULT_STAGES, 'participation', 'APPROVED', 'diamond');
+    expect(jumped).toBeNull();
   });
 
   it('still moves them off a round they are standing at when it is approved', () => {

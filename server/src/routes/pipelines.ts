@@ -39,6 +39,7 @@ import { scorecardForFit } from '../services/scorecards.js';
 import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
 import { advancePipeline, decidePipeline } from '../services/pipelineAutonomy.js';
 import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from '../services/candidateAwards.js';
+import { awardsForPromotion, tierHasCertificate, TIER_LABELS } from '../domain/candidateAwards.js';
 import { humanReviewCheck } from '../services/humanReviewGate.js';
 import { candidateOwnZone } from '../services/scheduleZone.js';
 import { humanReviewRefusal, HUMAN_REVIEW_REQUIRED } from '../domain/humanReviewRule.js';
@@ -232,12 +233,40 @@ export function presentRound(round: RoundRow, viewer: RoundViewer) {
   };
 }
 
+/**
+ * What the next move would strike, so the page can say it before anybody
+ * presses anything.
+ *
+ * Worked out here, from `awardsForPromotion`, and never in the browser. The
+ * web's own awards model says so in as many words: a view that inferred
+ * "earned" from a stage or a date would be the second place that rule lives
+ * and the first place it drifts. The page is handed the answer instead.
+ *
+ * Empty at the last stage, and empty for a move that earns nothing — walking a
+ * candidate from Bronze to Silver mints no credential, and a button that
+ * claimed otherwise would be promising a certificate that never arrives.
+ */
+function nextMoveEarns(stages: readonly PipelineStage[], pipeline: CandidatePipeline) {
+  if (pipeline.status !== 'ACTIVE') return [];
+  const next = nextStageKey(stages, pipeline.currentStageKey);
+  if (!next) return [];
+  return awardsForPromotion(stages, pipeline.currentStageKey, next).map((tier) => ({
+    tier,
+    label: TIER_LABELS[tier],
+    // Diamond records what an employer decided, which is theirs to announce;
+    // the other three record what a candidate did (domain/candidateAwards.ts).
+    certificate: tierHasCertificate(tier),
+  }));
+}
+
 function presentPipeline(pipeline: PipelineWithRounds, viewer: RoundViewer) {
+  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
   return {
     id: pipeline.id,
     candidateId: pipeline.candidateId,
     roleId: pipeline.roleId,
-    stages: parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }),
+    stages,
+    nextMoveEarns: nextMoveEarns(stages, pipeline),
     currentStageKey: pipeline.currentStageKey,
     status: pipeline.status,
     decision: pipeline.decision,
@@ -417,6 +446,17 @@ pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyn
     if (moved.because === 'already_decided') throw new HttpError(409, DECIDED);
     if (moved.because === 'at_last_stage') throw new HttpError(409, 'This candidate is already at the final stage.');
     if (moved.because === 'not_next') throw new HttpError(409, `Stages run in order; the next stage is ${moved.next.label}.`);
+    if (moved.because === 'human_review_required') {
+      // Recorded before the refusal, the way /finalize records its own: a
+      // promotion turned down for this reason is a fact about how the promise
+      // held, and it is worth as much to an auditor as one that went through.
+      await logAudit({
+        tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
+        action: 'pipeline.advance_refused', entityType: 'CandidatePipeline', entityId: pipeline.id,
+        after: { stage: pipeline.currentStageKey, because: HUMAN_REVIEW_REQUIRED, assessmentId: moved.missing.assessmentId },
+      });
+      throw new HttpError(409, humanReviewRefusal(moved.missing), HUMAN_REVIEW_REQUIRED);
+    }
     throw new HttpError(409, MOVED_UNDER_YOU);
   }
 

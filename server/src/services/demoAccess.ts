@@ -108,35 +108,50 @@ const SELF_MOVING: readonly PipelineEvent[] = ['candidate.onboarded', 'candidate
  * loudly — in tests/demoStory.test.ts — the next time that path changes, rather
  * than quietly staging a prospect's demo at a tier nobody awarded.
  *
- * A refusal is logged rather than thrown. A visitor who asked for a demo should
- * get their sandbox even if one stage move was contended; what they must not
- * get is a silent one.
+ * Nothing here is allowed to escape. Both a refusal and a throw leave the
+ * visitor with a sandbox that is one stage short, which is a poorer demo; what
+ * neither may do is fail the request, because by this point their tenant, their
+ * story and their invitation have all committed and there is no way to hand
+ * them back. `parseStagesStrict` and the award engine inside `advancePipeline`
+ * can both throw, so the whole walk is caught — loudly, never silently.
  */
 async function walkToAiRound(o: { tenantId: string; userId: string; candidateId: string; roleId: string }): Promise<void> {
-  for (const event of SELF_MOVING) {
-    await applyPipelineEvent({ ...o, event, trigger: 'demo.provisioned' });
-  }
-  const pipeline = await prisma.candidatePipeline.findFirst({
-    where: { tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId },
-  });
-  if (!pipeline) return;
-  const stages = parseStages(pipeline.stagesJson);
-  // One decision at a time, bounded by the plan itself, until they are standing
-  // at the AI round. The demo's role uses the default five stages, so in
-  // practice this is the single Bronze → Silver move a recruiter now makes.
-  let at = pipeline.currentStageKey;
-  for (let i = 0; i < stages.length; i += 1) {
-    if (stages.find((stage) => stage.key === at)?.kind === 'ai_interview') return;
-    const next = nextStageKey(stages, at);
-    if (!next) return;
-    const moved = await advancePipeline({ ...pipeline, currentStageKey: at }, {
-      tenantId: o.tenantId, toStageKey: next, actorId: o.userId, trigger: 'demo.provisioned',
-    });
-    if (!moved.applied) {
-      logger.error({ candidateId: o.candidateId, stage: at, because: moved.because }, 'Demo sandbox could not move its candidate to the AI round');
-      return;
+  try {
+    for (const event of SELF_MOVING) {
+      await applyPipelineEvent({ ...o, event, trigger: 'demo.provisioned' });
     }
-    at = moved.transition.to;
+    const pipeline = await prisma.candidatePipeline.findFirst({
+      where: { tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId },
+    });
+    if (!pipeline) return;
+    const stages = parseStages(pipeline.stagesJson);
+    // The round the AI conducts, which is where this walk ends. A plan with no
+    // such stage has nowhere to walk to, and walking to the end of it instead
+    // would put a demo candidate at the final stage having done nothing.
+    const target = stages.findIndex((stage) => stage.kind === 'ai_interview');
+    if (target < 0) return;
+
+    // One decision at a time, exactly as the Advance button makes them. The
+    // demo's role uses the default five stages, so in practice this is the
+    // single Bronze → Silver move a recruiter now makes.
+    let at = pipeline.currentStageKey;
+    while (stages.findIndex((stage) => stage.key === at) < target) {
+      const next = nextStageKey(stages, at);
+      if (!next) return;
+      const moved = await advancePipeline({ ...pipeline, currentStageKey: at }, {
+        tenantId: o.tenantId, toStageKey: next, actorId: o.userId, trigger: 'demo.provisioned',
+      });
+      if (!moved.applied) {
+        logger.error({ candidateId: o.candidateId, stage: at, because: moved.because }, 'Demo sandbox could not move its candidate to the AI round');
+        return;
+      }
+      at = moved.transition.to;
+    }
+  } catch (err) {
+    logger.error(
+      { err: err instanceof Error ? err.message : String(err), candidateId: o.candidateId },
+      'Demo sandbox could not walk its candidate to the AI round',
+    );
   }
 }
 

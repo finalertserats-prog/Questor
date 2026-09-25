@@ -105,14 +105,15 @@ export function resolveTransition(stages: readonly PipelineStage[], currentStage
  *
  *   APPROVED at a stage    → the stage after it (Silver → Gold, Gold → Diamond);
  *                            at the last stage, the pipeline closes approved
- *   APPROVED ahead of them → that stage, and no further
+ *   APPROVED ahead of them → one stage on, and no further; the rest of the way
+ *                            takes as many decisions as there are stages
  *   REJECTED / WITHDRAWN   → the pipeline closes with that outcome, where it is
  *
  * Approval is now the ONLY thing that moves anyone past Bronze, and it obeys
- * the same two rules as the events above: forward only, and approving a stage
- * the candidate has already left changes nothing. It is also how the last
- * stage is reached without the Finalise button — still a person's decision,
- * only recorded once.
+ * the same rules as the events above: forward only, one stage at a time, and
+ * approving a stage the candidate has already left changes nothing. It is also
+ * how the last stage is reached without the Finalise button — still a person's
+ * decision, only recorded once.
  */
 
 export const DECISION_OUTCOMES = ['APPROVED', 'REJECTED', 'WITHDRAWN'] as const;
@@ -139,21 +140,24 @@ export function resolveDecision(
   if (aboutIndex === lastIndex) {
     return currentIndex === lastIndex ? { kind: 'close', outcome, atStageKey: currentStageKey } : null;
   }
-  // An approval of a round the candidate has not formally reached carries them
-  // TO that stage, never past it.
+  // One stage. Never two, whatever the decision was about.
   //
   // This matters now in a way it did not before. While the assessment moved
   // people, a candidate was always already standing at the round being judged,
-  // so `aboutIndex + 1` was the stage after the one they were at. With the
-  // assessment moving nobody, a candidate can be interviewed while their
-  // pipeline still says Bronze — and `aboutIndex + 1` would then carry them
-  // from Bronze straight to Gold, skipping Silver. Skipping a tier is not a
-  // cosmetic difference: a tier is struck by the move that LEAVES it
-  // (domain/candidateAwards.ts, awardsForPromotion), so a candidate vaulted
-  // over Silver earns no Silver badge and no Silver certificate — the exact
-  // outcome this whole change exists to end. Landing them on Silver instead
-  // leaves the badge to be earned by the next decision, which is a person's.
-  const toIndex = aboutIndex > currentIndex ? aboutIndex : aboutIndex + 1;
+  // so "the stage after the one the decision is about" and "the stage after the
+  // one they are at" were the same stage. With the assessment moving nobody, a
+  // candidate can be interviewed while their pipeline still says Participation,
+  // and `aboutIndex + 1` would then carry them from Participation to Silver in
+  // one go — over Bronze, which nobody had said anything about.
+  //
+  // Stages run in order. The Advance button says so in as many words when it
+  // refuses a key that is not the next one, and a decision that could leapfrog
+  // what the button cannot would make the two person-paths disagree about the
+  // same pipeline. It also keeps every tier on the journey reachable: a tier is
+  // struck by the move that LEAVES it (domain/candidateAwards.ts,
+  // awardsForPromotion), so a candidate vaulted over a stage can never earn
+  // what that stage was worth.
+  const toIndex = Math.min(aboutIndex, currentIndex) + 1;
   if (toIndex <= currentIndex) return null;
   return { kind: 'advance', from: currentStageKey, to: stages[toIndex].key, final: toIndex === lastIndex };
 }

@@ -229,10 +229,13 @@ describe('a candidate who goes the whole way through', () => {
   it('leaves the decision row behind once it has been acted on', async () => {
     const ids = await seeded();
     const journey = await onboarded(ids);
+    // Both halves asserted: an empty list on its own would still pass if the
+    // kind had been deleted from the queue altogether.
+    const before = decisionsFor(await queue(ids), journey.candidateId).length;
 
     await advance(ids, journey, 'silver');
 
-    expect(decisionsFor(await queue(ids), journey.candidateId)).toEqual([]);
+    expect([before, decisionsFor(await queue(ids), journey.candidateId).length]).toEqual([1, 0]);
   });
 });
 
@@ -271,5 +274,121 @@ describe('a reviewer who says Proceed', () => {
 
     expect([await stageOf(journey), (await tiersOf(journey.candidateId)).map((a) => a.tier)])
       .toEqual(['silver', ['bronze']]);
+  });
+});
+
+/**
+ * The promise, on the button the queue now points at.
+ *
+ * `POST /pipelines/:id/advance` had no human-review check at all. That was
+ * survivable while it was a manual override and the assessment moved everybody
+ * by itself; it stopped being survivable the moment a queue row started asking
+ * people to press it, because the Silver → Gold press is what strikes the
+ * Silver credential, in the presser's name.
+ */
+describe('promoting a candidate off the round the AI conducted', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('is refused while nobody has read their interview, and says where to read it', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    const { assessmentId } = await interviewed(ids, journey);
+
+    const refused = await advance(ids, journey, 'gold');
+
+    expect([refused.status, refused.body.code]).toEqual([409, 'human_review_required']);
+    expect(refused.body.error).toContain(`/assessments/${assessmentId}`);
+  });
+
+  it('strikes no credential on the attempt it refused', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    await interviewed(ids, journey);
+
+    await advance(ids, journey, 'gold');
+
+    expect([await stageOf(journey), (await tiersOf(journey.candidateId)).map((a) => a.tier)])
+      .toEqual(['silver', ['bronze']]);
+  });
+
+  it('records the refusal, because how the promise held is worth as much as that it did', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    await interviewed(ids, journey);
+
+    await advance(ids, journey, 'gold');
+
+    const refusals = await prisma.auditEvent.findMany({ where: { action: 'pipeline.advance_refused', entityId: journey.pipelineId } });
+    expect(refusals.length).toBe(1);
+  });
+
+  it('goes through once a person has read it, and mints Silver then', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    const { assessmentId } = await interviewed(ids, journey);
+    await review(ids, assessmentId, 'CONSIDER');
+
+    const moved = await advance(ids, journey, 'gold');
+
+    expect([moved.status, await stageOf(journey), (await tiersOf(journey.candidateId)).map((a) => a.tier)])
+      .toEqual([200, 'gold', ['bronze', 'silver']]);
+  });
+
+  // The walk TO the AI round is not a judgement about a conversation that has
+  // not happened. Gating it would strand every candidate interviewed before
+  // anyone touched their pipeline, which is now the ordinary case.
+  it('never blocks the walk towards that round', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await interviewed(ids, journey);
+
+    const moved = await advance(ids, journey, 'silver');
+
+    expect([moved.status, await stageOf(journey)]).toEqual([200, 'silver']);
+  });
+});
+
+/**
+ * Two candidates the award-shaped gate would have said nothing about.
+ *
+ * The row used to wait for the Bronze award, which is struck only when the CV
+ * was read against an APPROVED scorecard. Neither of these earns one, and both
+ * are reachable through the ordinary endpoints — so under that gate they would
+ * have sat for ever with no prompt anywhere.
+ */
+describe('candidates who hold no Bronze', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('still asks about a candidate whose scorecard was never approved', async () => {
+    const ids = await seeded();
+    await prisma.roleScorecardVersion.updateMany({ where: { roleId: ids.roleId }, data: { status: 'draft', approvedAt: null } });
+    const journey = await onboarded(ids);
+
+    const [row] = decisionsFor(await queue(ids), journey.candidateId);
+
+    expect([(await tiersOf(journey.candidateId)).length, row?.facts.readyBecause]).toEqual([0, 'profile_read']);
+  });
+
+  // Booking an interview needs an approved ROLE scorecard, not a candidate
+  // profile, so a candidate with no CV can be interviewed and assessed while
+  // their pipeline still says Participation. Before this, `interview.scheduled`
+  // carried them off it; now nothing does, so the queue has to.
+  it('asks about a candidate still at Participation once their interview has been read', async () => {
+    const ids = await seeded();
+    const created = await request(app).post('/api/candidates').set('Authorization', ids.auth)
+      .send({ fullName: 'Sam Rao', email: 'sam.rao@example.test', roleId: ids.roleId });
+    const candidateId = created.body.candidate.id as string;
+    const { assessmentId } = await interviewed(ids, { candidateId, pipelineId: '' });
+    const pipeline = await prisma.candidatePipeline.findFirstOrThrow({ where: { candidateId } });
+    await review(ids, assessmentId, 'CONSIDER');
+
+    const [row] = decisionsFor(await queue(ids), candidateId);
+
+    expect([pipeline.currentStageKey, row?.facts])
+      .toEqual(['participation', { stageLabel: 'Participation', nextStageLabel: 'Bronze', readyBecause: 'interview_reviewed' }]);
   });
 });

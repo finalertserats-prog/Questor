@@ -222,7 +222,7 @@ export function whyLine(row: NeedsYouRow): string {
       const to = row.facts.nextStageLabel ?? 'the next stage';
       return row.facts.readyBecause === 'interview_reviewed'
         ? `Their AI interview has been read and reviewed. Decide whether they go to ${to}.`
-        : `Their CV has been read against the approved scorecard. Decide whether they go to ${to}.`;
+        : `Their CV has been read. Decide whether they go to ${to}.`;
     }
     case 'review':
       if (row.canAct === false) {

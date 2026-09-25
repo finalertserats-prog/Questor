@@ -1,4 +1,5 @@
 import type { DecisionOutcome } from './pipelineAutonomy.js';
+import type { PipelineStage } from './pipelineStages.js';
 
 /**
  * The promise on the candidate's consent screen — "A person on the hiring team
@@ -131,6 +132,35 @@ export function firstUnreviewed(interviews: readonly ConductedInterview[]): Unre
  */
 export function outcomeNeedsHumanReview(outcome: DecisionOutcome): boolean {
   return outcome !== 'WITHDRAWN';
+}
+
+/**
+ * Which stage moves the promise gates.
+ *
+ * Not every move is a judgement about the interview. Moving a candidate TO the
+ * round the AI conducts says nothing about how it went — it has not happened
+ * yet, and in the ordinary order of things it has not even been booked. Moving
+ * them OUT of it does: it is the act that says the round went well enough to go
+ * on, and it is the act that strikes the credential for it
+ * (domain/candidateAwards.ts, awardsForPromotion). Everything past that round
+ * is the same, which is why the last stage's own button checks too.
+ *
+ * So the gate sits on leaving the AI round or anything after it. A plan with no
+ * AI-conducted stage has no interview to promise a reading of, and gates
+ * nothing.
+ *
+ * This exists because `POST /pipelines/:id/advance` had no check at all, and
+ * the "Needs you" queue then made that endpoint the ordinary way a candidate is
+ * promoted. A recruiter holds `interview:create` and deliberately holds neither
+ * `assessment:review` nor the right to decide or finalise — and one press of
+ * Move to Gold was striking a Silver credential, in their name, on an interview
+ * nobody had opened.
+ */
+export function moveNeedsHumanReview(stages: readonly PipelineStage[], fromStageKey: string): boolean {
+  const aiRound = stages.findIndex((stage) => stage.kind === 'ai_interview');
+  if (aiRound < 0) return false;
+  const leaving = stages.findIndex((stage) => stage.key === fromStageKey);
+  return leaving >= 0 && leaving >= aiRound;
 }
 
 /**

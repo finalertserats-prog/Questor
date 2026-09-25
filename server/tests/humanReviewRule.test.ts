@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  CLOSE_OUT_STATES, firstUnreviewed, humanReviewRefusal, outcomeNeedsHumanReview, reviewRequirementFor,
-  type ConductedInterview,
+  CLOSE_OUT_STATES, firstUnreviewed, humanReviewRefusal, moveNeedsHumanReview, outcomeNeedsHumanReview,
+  reviewRequirementFor, type ConductedInterview,
 } from '../src/domain/humanReviewRule.js';
+import { DEFAULT_STAGES, type PipelineStage } from '../src/domain/pipelineStages.js';
 import { EXCEPTION_STATES, SESSION_STATES } from '../src/domain/stateMachine.js';
 
 /**
@@ -124,6 +125,53 @@ describe('which outcomes the promise gates', () => {
   // Requiring a review first would keep someone in a pipeline they asked out of.
   it('does not gate a withdrawal', () => {
     expect(outcomeNeedsHumanReview('WITHDRAWN')).toBe(false);
+  });
+});
+
+
+/**
+ * Which stage moves the promise gates.
+ *
+ * The distinction is between a move that says something about the interview
+ * and a move that does not. Walking a candidate TO the AI round says nothing
+ * about a conversation that has not happened; moving them OUT of it says the
+ * round went well enough to go on, and strikes the credential for it.
+ */
+describe('the moves the promise covers', () => {
+  const NO_AI_ROUND: readonly PipelineStage[] = [
+    { key: 'intake', label: 'Intake', kind: 'intake' },
+    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+  ];
+
+  it('gates leaving the round the AI conducted', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'silver')).toBe(true);
+  });
+
+  // The press that used to strike a Silver credential, in the presser's name,
+  // on an interview nobody had opened.
+  it('gates every stage after it too', () => {
+    expect([
+      moveNeedsHumanReview(DEFAULT_STAGES, 'gold'),
+      moveNeedsHumanReview(DEFAULT_STAGES, 'diamond'),
+    ]).toEqual([true, true]);
+  });
+
+  // Gating this would strand every candidate whose interview was conducted
+  // before anybody touched their pipeline — which is now the ordinary case,
+  // because nothing moves them there on its own.
+  it('leaves the walk TO that round alone', () => {
+    expect([
+      moveNeedsHumanReview(DEFAULT_STAGES, 'participation'),
+      moveNeedsHumanReview(DEFAULT_STAGES, 'bronze'),
+    ]).toEqual([false, false]);
+  });
+
+  it('gates nothing in a plan with no AI-conducted round, which promised no reading', () => {
+    expect(NO_AI_ROUND.map((stage) => moveNeedsHumanReview(NO_AI_ROUND, stage.key))).toEqual([false, false]);
+  });
+
+  it('gates nothing for a stage the plan does not contain', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'platinum')).toBe(false);
   });
 });
 

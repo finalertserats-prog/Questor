@@ -8,7 +8,7 @@ import {
   type DecisionEffect, type DecisionOutcome, type PipelineEvent, type StageTransition,
 } from '../domain/pipelineAutonomy.js';
 import { decisionOfVerdict, type Verdict } from '../domain/verdict.js';
-import { outcomeNeedsHumanReview, type UnreviewedInterview } from '../domain/humanReviewRule.js';
+import { moveNeedsHumanReview, outcomeNeedsHumanReview, type UnreviewedInterview } from '../domain/humanReviewRule.js';
 import { humanReviewCheck, type HumanReviewRecord } from './humanReviewGate.js';
 import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from './candidateAwards.js';
 
@@ -163,7 +163,11 @@ export interface NextStage {
 export type AdvanceResult =
   | { readonly applied: true; readonly transition: StageTransition; readonly awards: readonly StruckAward[] }
   | { readonly applied: false; readonly because: 'already_decided' | 'at_last_stage' | 'contended' }
-  | { readonly applied: false; readonly because: 'not_next'; readonly next: NextStage };
+  | { readonly applied: false; readonly because: 'not_next'; readonly next: NextStage }
+  // The candidate was promised a person would read their interview, and this
+  // move is the judgement that promise is about. Reported, not thrown, so the
+  // route can offer the reviewer the assessment instead of an error.
+  | { readonly applied: false; readonly because: 'human_review_required'; readonly missing: UnreviewedInterview };
 
 /**
  * Move a candidate on one stage, because a person said so.
@@ -191,6 +195,25 @@ export async function advancePipeline(loaded: CandidatePipeline, o: PipelineAdva
   if (!next) return { applied: false, because: 'at_last_stage' };
   if (o.toStageKey !== next) {
     return { applied: false, because: 'not_next', next: { key: next, label: stages.find((s) => s.key === next)?.label ?? next } };
+  }
+
+  // The promise, on the move that is a judgement about the interview.
+  //
+  // This endpoint had no check at all, which was survivable while it was a
+  // manual override and the assessment moved everybody by itself. It is not
+  // survivable now: the "Needs you" queue points at this button, so it is the
+  // ordinary way a candidate is promoted — and the Silver → Gold press is what
+  // strikes the Silver credential, in the presser's name. Without this, a
+  // recruiter who deliberately holds neither `assessment:review` nor the right
+  // to decide or finalise could mint one on an interview nobody had opened.
+  //
+  // Only on the moves the promise is about (domain/humanReviewRule.ts): walking
+  // a candidate TO the AI round says nothing about a conversation that has not
+  // happened, and gating it would strand every candidate whose interview was
+  // conducted before anyone touched their pipeline.
+  if (moveNeedsHumanReview(stages, loaded.currentStageKey)) {
+    const review = await humanReviewCheck({ tenantId: o.tenantId, candidateId: loaded.candidateId, roleId: loaded.roleId });
+    if (review.missing) return { applied: false, because: 'human_review_required', missing: review.missing };
   }
 
   const outcome = await runMoveAndAward(async (tx) => {
