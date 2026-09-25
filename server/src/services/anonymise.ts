@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
-import { anonymiseCandidateData, claimCandidateForAnonymisation, type AnonymiseCounter } from './anonymiseCascade.js';
+import { anonymiseCandidateData, claimCandidateForAnonymisation, lockCandidateRecord, type AnonymiseCounter } from './anonymiseCascade.js';
 
 /**
  * Anonymisation: keep the interview, sever the person.
@@ -288,15 +288,24 @@ type Outcome = 'anonymised' | 'skipped';
  * the rest of the sweep, and so no candidate can ever be left half-severed:
  * within a transaction it is all or none.
  *
- * SERIALIZABLE, and this is not belt-and-braces. Every check in here reads
- * rows an administrator can write at the same moment — `InterviewSession
- * .legalHold`, `Artifact.legalHold`, `RoundObservation.legalHold`. Under a
- * weaker level the sweep can read "no hold", the administrator can commit the
- * hold, and the sweep can then destroy the evidence the hold exists to
- * preserve; re-reading inside the transaction does not fix that, because the
- * re-read is still a read and the destructive statements still come after it.
- * At Serializable the database refuses to let both commit, and the loser is
- * retried — by which time the claim below sees the hold.
+ * HOW THE LEGAL HOLD IS ACTUALLY PROTECTED, corrected. This comment used to
+ * say Serializable closed the race, and that was wrong: Postgres's SSI only
+ * detects conflicts among transactions that are THEMSELVES serializable, and
+ * the administrator placing a hold (routes/admin.ts) runs an ordinary
+ * read-committed update. It would never have been a party to the conflict, so
+ * nothing would have aborted — and the sweep writes the session row only when
+ * `consentJson` actually changes, so there is often no write-write conflict to
+ * detect either. The window was the whole transaction, not the instant the
+ * comment described.
+ *
+ * What closes it is a ROW LOCK, taken on the rows the hold decision reads
+ * before that decision is made. An administrator's update to
+ * `InterviewSession.legalHold` then waits behind this transaction instead of
+ * slipping between the check and the deletes. The guarantee that holds is
+ * precise: a hold committed before the lock is taken always wins, and one
+ * committed after it waits and applies to a candidate that is already
+ * anonymised. Serializable stays, because it is still what makes the sweep's
+ * own reads consistent, but it is not what makes the hold safe.
  */
 export async function runAnonymisationSweep(now = new Date()): Promise<AnonymiseResult> {
   const due = await findCandidatesDueForAnonymisation({ now });
@@ -325,6 +334,10 @@ export async function runAnonymisationSweep(now = new Date()): Promise<Anonymise
         // one cannot ride on the write below: no portable Prisma filter can
         // express "anchor + n days", which is why Serializable is doing the
         // real work for it.
+        // Before anything is read that a hold could change. lockCandidateRecord
+        // is a no-op on SQLite, which serialises writers anyway.
+        await lockCandidateRecord(tx, candidate.candidateId);
+
         const row = await tx.candidate.findUnique({
           where: { id: candidate.candidateId },
           select: { id: true, createdAt: true, interviews: { select: { id: true, completedAt: true, createdAt: true } } },
@@ -475,7 +488,8 @@ export function retentionPostureMessage(o: { readonly sweepEnabled: boolean; rea
       message:
         `Retention sweep OFF, anonymisation ON. Interviews are kept indefinitely; ${anonymiseAfterDays()} days after an interview the ` +
         'identifying details Questor holds about the candidate — name, address, phone, LinkedIn — are irreversibly removed from it, ' +
-        'including from the transcript. Third parties a candidate mentions in passing cannot be found this way and may remain.',
+        'including from the transcript. Third parties a candidate mentions in passing cannot be found this way and may remain, ' +
+        'and so can a spelling of their own address that Questor does not hold.',
     };
   }
   if (o.sweepEnabled) {

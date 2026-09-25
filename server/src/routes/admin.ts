@@ -590,7 +590,9 @@ adminRouter.get('/anonymisation/preview', requireCapability('retention:configure
     keeps: 'the transcript, scores, competency reads, evidence spans and timings. '
       + 'The audit trail keeps every row — who did what, to which record, when — but the candidate’s own rows lose their before/after detail, '
       + 'which is the only way to be sure nothing they wrote about themselves survives there.',
-    caveat: 'Third parties a candidate names in passing — a former employer, a manager — cannot be found this way and may remain.',
+    caveat: 'Third parties a candidate names in passing — a former employer, a manager — cannot be found this way and may remain. '
+      + 'So can a spelling of the candidate’s own address that Questor does not hold: a plus-tagged address is matched without its tag, '
+      + 'but dot-variants of the same mailbox (priyasharma@ for priya.sharma@) are not, because at most providers those are different people.',
     candidates: due.map((d) => ({
       candidateId: d.candidateId,
       candidateName: d.candidateName,

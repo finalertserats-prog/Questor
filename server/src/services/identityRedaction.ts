@@ -38,6 +38,8 @@ export const NAME_PLACEHOLDER = '[name]';
 export const EMAIL_PLACEHOLDER = '[email]';
 export const PHONE_PLACEHOLDER = '[phone]';
 export const LINK_PLACEHOLDER = '[link]';
+/** A removed reference to one of this candidate's own rows. */
+export const REF_PLACEHOLDER = '[ref]';
 
 /**
  * The identifiers that belong to EXACTLY ONE PERSON. No name, and no phone.
@@ -203,6 +205,12 @@ function spellings(value: string): readonly string[] {
   return [...new Set([nfc, nfd, stripped].filter((v) => v.trim().length > 0))];
 }
 
+/** One part of a name, matching whichever way it was encoded. */
+function anySpelling(part: string): string {
+  const alts = [...new Set(spellings(part))].map(escape);
+  return alts.length === 1 ? alts[0] : `(?:${alts.join('|')})`;
+}
+
 /** The parts of a name worth matching on their own: no titles, nothing shorter than two letters. */
 function nameParts(fullName: string): readonly string[] {
   return fullName
@@ -218,9 +226,16 @@ function nameNeedles(fullName: string): readonly Needle[] {
   // The whole name first, so "Kajal Vishwakarma" becomes one placeholder rather
   // than two — a sentence full of "[name] [name]" reads as though the system is
   // broken, and a reader cannot tell one redaction from two.
+  // Each part matches any of its spellings independently, so a name written
+  // with one accent composed and the other decomposed still matches as a
+  // whole. Built as one alternation per part rather than by joining the parts
+  // with a sentinel character: an earlier version used a NUL for that, which
+  // worked and quietly turned this file into something `grep` calls binary.
   const whole: readonly Needle[] = parts.length > 1
-    ? [...new Set(spellings(parts.join(' ')).map((joined) => joined.split(' ').map(escape).join(String.raw`[\s.\-]+`)))]
-      .map((pattern) => ({ pattern: new RegExp(`${BEFORE}${pattern}${AFTER}`, 'giu'), replacement: NAME_PLACEHOLDER }))
+    ? [{
+      pattern: new RegExp(`${BEFORE}${parts.map(anySpelling).join(String.raw`[\s.\-]+`)}${AFTER}`, 'giu'),
+      replacement: NAME_PLACEHOLDER,
+    }]
     : [];
 
   // Then each part alone, longest first, so a surname is not half-eaten by a
@@ -281,7 +296,7 @@ function linkedinNeedles(linkedinUrl: string): readonly Needle[] {
     // sentence people say. Hyphens count as part of the token, so a slug is
     // never matched inside a longer hyphenated string.
     {
-      pattern: new RegExp(`(?<![\\p{L}\\p{N}_-])${body}(?![\\p{L}\\p{N}_-])`, 'giu'),
+      pattern: new RegExp(`(?<![\\p{L}\\p{N}_@-])${body}(?![\\p{L}\\p{N}_@-])`, 'giu'),
       replacement: LINK_PLACEHOLDER,
     },
   ];
@@ -303,6 +318,47 @@ export function identityNeedles(identity: KnownIdentity): readonly Needle[] {
 }
 
 /**
+ * Characters that can continue an address. An address is unique as a VALUE and
+ * not as a SUBSTRING, which is the whole reason these guards exist.
+ */
+const ADDRESS_CHAR = String.raw`A-Za-z0-9._%+@-`;
+
+/**
+ * Every address needle, bounded so it cannot eat somebody else's.
+ *
+ * WITHOUT THE LEADING GUARD THIS IS THE PHONE ARGUMENT AGAIN, one field over.
+ * `a.sharma@corp.com` is a substring of `priya.sharma@corp.com` — same
+ * employer, same ordinary format, a different person. Erasing the first
+ * rewrote the second's own audit row to `priy[email]`, damaging a record
+ * belonging to somebody who asked for nothing. An address is unique as a value
+ * and not as a substring.
+ *
+ * The trailing guard has to be subtler than the leading one. It cannot simply
+ * forbid a following `.`, because "write to a@b.com." ends sentences; it
+ * forbids a dot that CONTINUES the domain (`.au` in `a@b.com.au`) while
+ * allowing one that ends the sentence.
+ *
+ * The plus-tag is stripped as an extra needle: `priya.sharma+jobs@x.com` and
+ * `priya.sharma@x.com` are one mailbox everywhere plus-addressing exists, and
+ * the untagged form is the one a person says out loud. Dot-variants
+ * (`priyasharma@gmail.com`) are deliberately NOT generated — that equivalence
+ * is Gmail-specific, and at most providers it is a different mailbox
+ * belonging to a different person. See the residual.
+ */
+function emailNeedles(addresses: readonly string[]): readonly Needle[] {
+  const bases = addresses.map((a) => a.trim()).filter(Boolean);
+  const untagged = bases.map((a) => a.replace(/\+[^@]*(?=@)/, ''));
+  const all = [...new Set([...bases, ...untagged].flatMap(spellings))]
+    .filter((a) => a.includes('@'))
+    .sort((a, b) => b.length - a.length);
+
+  return all.map((email) => ({
+    pattern: new RegExp(`(?<![${ADDRESS_CHAR}])${escape(email)}(?![${ADDRESS_CHAR.replace('.', '')}])(?!\\.[A-Za-z0-9])`, 'giu'),
+    replacement: EMAIL_PLACEHOLDER,
+  }));
+}
+
+/**
  * The identifiers that belong to exactly one person: the LinkedIn profile, the
  * address, the phone number. Everything except the name.
  *
@@ -313,11 +369,9 @@ export function identityNeedles(identity: KnownIdentity): readonly Needle[] {
  * problem: it is unique, so removing it takes nothing from anyone else.
  */
 export function uniqueHandleNeedles(handles: UniqueHandles): readonly Needle[] {
-  const emails = [...new Set([handles.email, handles.emailNormalized].map((e) => e.trim()).filter(Boolean))]
-    .sort((a, b) => b.length - a.length);
   return [
     ...linkedinNeedles(handles.linkedinUrl),
-    ...emails.map((email) => ({ pattern: new RegExp(escape(email), 'giu'), replacement: EMAIL_PLACEHOLDER })),
+    ...emailNeedles([handles.email, handles.emailNormalized]),
   ];
 }
 
@@ -328,6 +382,49 @@ export function uniqueHandleNeedles(handles: UniqueHandles): readonly Needle[] {
  * candidates, or one matched only because its payload mentions them. See
  * `UniqueHandles` for why the phone is not in that set.
  */
+/**
+ * Take this candidate's own row ids out of text belonging to somebody else.
+ *
+ * AN ID IS A MAPPING, and one survived. When HR reuses a candidate for a second
+ * role, `candidate.created` is written under the NEW application carrying
+ * `{ copiedFromCandidateId: <old id> }`. Anonymise the old application while
+ * the new one is still inside its window and that row is not the old
+ * application's to clear — it is filed under the new one — so the handle pass
+ * ran over it, removed the address and the slug, and left the id. One query on
+ * `copiedFromCandidateId` then returns a row that still has a name.
+ *
+ * "The two rows stop being linkable at that point" was written in anonymise.ts
+ * and was not true. An id satisfies the `UniqueHandles` premise better than
+ * anything else does — a primary key belongs to exactly one row — so removing
+ * it from a record that is not this candidate's costs that record only the
+ * link, which is exactly what has to go.
+ */
+export function redactReferences(text: string, ids: readonly string[]): string {
+  if (!text) return text;
+  return ids
+    .filter((id) => id.length >= 8)
+    .reduce(
+      (redacted, id) => redacted.replace(new RegExp(`(?<![A-Za-z0-9])${escape(id)}(?![A-Za-z0-9])`, 'gu'), REF_PLACEHOLDER),
+      text,
+    );
+}
+
+/**
+ * The slug as stored and as a reader sees it, for a `LIKE` pre-filter.
+ *
+ * The regex path matches any per-character encoding; SQL cannot. So the two
+ * halves disagreed: `resumeContact.ts` stores `url.pathname`, which
+ * percent-encodes non-ASCII, and the pre-filter looked only for the stored
+ * spelling — so a decoded mention of a profile in an approver's reason was
+ * never selected for redaction at all. Both spellings go to the pre-filter, so
+ * the net finds what the redaction can clean.
+ */
+export function slugSpellingsForSearch(url: string): readonly string[] {
+  const stored = linkedinSlug(url);
+  if (!stored) return [];
+  return [...new Set([stored, readableSlug(url)].filter((v) => v.length >= MIN_SLUG))];
+}
+
 export function redactUniqueHandles(text: string, handles: UniqueHandles): string {
   if (!text) return text;
   return uniqueHandleNeedles(handles).reduce((redacted, n) => redacted.replace(n.pattern, n.replacement), text);
@@ -336,12 +433,9 @@ export function redactUniqueHandles(text: string, handles: UniqueHandles): strin
 export function handleNeedles(identity: ContactIdentity): readonly Needle[] {
   // Both spellings of the address: the stored one and the normalised one may
   // differ in case, and either may be the form that ended up in the text.
-  const emails = [...new Set([identity.email, identity.emailNormalized].flatMap((e) => spellings(e.trim())))]
-    .sort((a, b) => b.length - a.length);
-
   return [
     ...linkedinNeedles(identity.linkedinUrl),
-    ...emails.map((email) => ({ pattern: new RegExp(escape(email), 'giu'), replacement: EMAIL_PLACEHOLDER })),
+    ...emailNeedles([identity.email, identity.emailNormalized]),
     ...phoneNeedles(identity.phone),
   ];
 }

@@ -143,3 +143,44 @@ describe('a candidate who has been anonymised', () => {
     expect(res.body.people).toHaveLength(1);
   });
 });
+
+/**
+ * The mapping a reused application leaves behind.
+ *
+ * Questor writes one candidate row per application, and reusing a person for a
+ * second role writes `candidate.created` under the NEW row carrying the old
+ * row's id. Anonymise the old application while the new one is still inside
+ * its window and that audit row is not the old one's to clear - it is filed
+ * under the new one. The handle pass removes an address and a slug from it.
+ * It did not remove ids, so one query on `copiedFromCandidateId` returned a
+ * row that still has a name.
+ */
+describe('a reused candidate', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('leaves nothing pointing from the anonymised application at the named one', async () => {
+    const { ids } = await seedAndLogIn(longAgo());
+    const newer = await prisma.candidate.create({
+      data: {
+        tenantId: ids.tenantId, roleId: ids.roleId, fullName: 'Priya Sharma',
+        email: 'priya.sharma@example.com', emailNormalized: 'priya.sharma@example.com',
+      },
+    });
+    const mapping = await prisma.auditEvent.create({
+      data: {
+        tenantId: ids.tenantId, actorId: ids.userId, actorType: 'user',
+        action: 'candidate.created', entityType: 'Candidate', entityId: newer.id,
+        afterJson: JSON.stringify({ copiedFromCandidateId: ids.candidateId, roleId: ids.roleId }),
+      },
+    });
+
+    await runAnonymisationSweep(new Date());
+
+    const after = (await prisma.auditEvent.findUniqueOrThrow({ where: { id: mapping.id } })).afterJson;
+    expect(after).not.toContain(ids.candidateId);
+    // The newer application is untouched: it is somebody the organisation is
+    // still recruiting, and its own record keeps its shape.
+    expect(after).toContain(ids.roleId);
+    expect((await prisma.candidate.findUniqueOrThrow({ where: { id: newer.id } })).fullName).toBe('Priya Sharma');
+  });
+});

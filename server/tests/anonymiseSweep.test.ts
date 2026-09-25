@@ -37,6 +37,8 @@ const LINKEDIN = 'https://www.linkedin.com/in/priya-sharma-4417';
 const ATS_ID = 'gh-88213';
 /** Free text the candidate typed about themselves. No pattern we hold can find it. */
 const REQUEST = 'I have a hearing impairment and will need captions throughout the interview, please.';
+/** The candidate's own words for why they stopped an observed round. Same shape as REQUEST. */
+const WITHDRAWAL = 'Stopping here, my medication makes the afternoons difficult and I cannot concentrate.';
 
 const app = createApp();
 
@@ -70,6 +72,42 @@ async function interviewedCandidate(completedAt: Date) {
   });
   await prisma.candidateAtsLink.create({
     data: { tenantId: ids.tenantId, candidateId: ids.candidateId, connectionId: connection.id, externalCandidateId: ATS_ID },
+  });
+
+  // The calendar copy of this interview. It carries recipientName and
+  // recipientEmail, is keyed by targetId with NO foreign key, and the session
+  // it points at survives anonymisation by design. The scan could not see this
+  // table because nothing seeded it.
+  await prisma.calendarDelivery.create({
+    data: {
+      tenantId: ids.tenantId, targetType: 'interview', targetId: ids.sessionId,
+      recipientEmail: EMAIL, recipientName: NAME, kind: 'booked', status: 'SENT',
+    },
+  });
+
+  // A human round that was observed and that the candidate stopped, in their
+  // own words. The pipeline is decided and the round completed long ago, or the
+  // candidate would still have a live recruitment purpose and never be due.
+  const pipeline = await prisma.candidatePipeline.create({
+    data: {
+      tenantId: ids.tenantId, candidateId: ids.candidateId, roleId: ids.roleId,
+      stagesJson: '[]', currentStageKey: 'gold', status: 'DECIDED',
+      decision: 'REJECTED', decidedAt: completedAt,
+    },
+  });
+  const round = await prisma.interviewRound.create({
+    data: {
+      tenantId: ids.tenantId, pipelineId: pipeline.id, stageKey: 'gold',
+      conductedBy: 'HUMAN', scheduledAt: completedAt, status: 'COMPLETED',
+      completedAt,
+    },
+  });
+  await prisma.roundObservation.create({
+    data: {
+      tenantId: ids.tenantId, roundId: round.id, candidateId: ids.candidateId,
+      status: 'ENDED', noticeVersion: 'v1', interviewerId: ids.userId,
+      stoppedBy: 'candidate', withdrawnReason: WITHDRAWAL,
+    },
   });
 
   await prisma.interviewSession.update({
@@ -233,9 +271,12 @@ describe('what anonymisation must never touch', () => {
   });
 
   it('leaves a candidate still moving through a pipeline alone, because they still have a recruitment purpose', async () => {
+    // The fixture's pipeline, reopened: one application has one pipeline, so
+    // this reuses it rather than adding a second.
     const ids = await interviewedCandidate(longAgo());
-    await prisma.candidatePipeline.create({
-      data: { tenantId: ids.tenantId, candidateId: ids.candidateId, roleId: ids.roleId, stagesJson: '[]', currentStageKey: 'silver', status: 'ACTIVE' },
+    await prisma.candidatePipeline.updateMany({
+      where: { candidateId: ids.candidateId },
+      data: { status: 'ACTIVE', decision: null, decidedAt: null, currentStageKey: 'silver' },
     });
 
     await runAnonymisationSweep(new Date());
@@ -323,6 +364,7 @@ describe('irreversibility', () => {
     /linkedin\.com\/in\/priya/i,
     new RegExp(ATS_ID, 'i'),
     /hearing impairment|captions throughout/i,
+    /medication makes the afternoons|cannot concentrate/i,
   ];
 
   /** Every string in every row of every model, and where it was found. */
@@ -353,6 +395,21 @@ describe('irreversibility', () => {
     await runAnonymisationSweep(new Date());
 
     expect(await tracesOfTheCandidate()).toEqual([]);
+  });
+
+  it.each([
+    ['AuditEvent.afterJson', 'the table nothing else deletes'],
+    ['CalendarDelivery.recipientEmail', 'a row with no foreign key, keyed to a session that survives'],
+    ['RoundObservation.withdrawnReason', 'the candidate\u2019s own words for why they stopped'],
+  ])('finds the candidate in %s before the sweep - %s', async (where) => {
+    // A scan only catches what the fixture put in reach. It walked every model
+    // and still could not see these three, because nothing seeded them - so it
+    // stayed green while identity survived. Naming them individually means a
+    // fixture that stops seeding one fails here rather than quietly narrowing
+    // the scan back down.
+    await interviewedCandidate(longAgo());
+
+    expect(await tracesOfTheCandidate()).toContain(where);
   });
 
   it('finds the candidate in the audit log before the sweep, which is the leak this scan exists to catch', async () => {

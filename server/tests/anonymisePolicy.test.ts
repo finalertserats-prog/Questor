@@ -9,6 +9,13 @@ import {
   type AnonymiseResult,
 } from '../src/services/anonymise.js';
 import { logger } from '../src/logger.js';
+import { prisma } from '../src/db.js';
+import { wipe } from '../src/seed/demoData.js';
+
+/** Long enough for the job's first tick to take its lease and record a run. */
+const settle = () => new Promise((resolve) => { setTimeout(resolve, 500); });
+
+const runsRecorded = () => prisma.jobRun.count({ where: { name: 'anonymisation-sweep' } });
 
 /**
  * The settings that decide whether anything is anonymised at all, and what the
@@ -74,15 +81,24 @@ describe('opting in', () => {
     expect(anonymisationEnabled()).toBe(false);
   });
 
-  it('starts no job while it is off', () => {
+  it('starts no job while it is off, and does start one when it is on', async () => {
+    // The previous version of this asserted that `logger.info` had not been
+    // called synchronously after `startAnonymisationSweep`. Nothing on either
+    // path logs at info synchronously, so it passed whether the guard existed
+    // or not - deleting the guard left it green. What actually distinguishes
+    // the two paths is whether a run is recorded, so that is what is asserted,
+    // with the enabled case as the control that gives it teeth.
+    await wipe();
+
     delete process.env.ANONYMISE_SWEEP_ENABLED;
-    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined as never);
+    startAnonymisationSweep(60_000)();
+    await settle();
+    expect(await runsRecorded()).toBe(0);
 
-    const stop = startAnonymisationSweep(60_000);
-    stop();
-
-    // A sweep that ran once "just to see" would already have severed people.
-    expect(info).not.toHaveBeenCalled();
+    process.env.ANONYMISE_SWEEP_ENABLED = 'true';
+    startAnonymisationSweep(60_000)();
+    await settle();
+    expect(await runsRecorded()).toBeGreaterThan(0);
   });
 });
 

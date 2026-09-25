@@ -90,6 +90,29 @@ export interface ClaimedCandidate {
  * rolls the claim back with everything else — there is no state where a
  * candidate is marked anonymised but still named.
  */
+/**
+ * Hold the rows whose `legalHold` this sweep is about to trust.
+ *
+ * The check-then-delete race is not closed by re-reading and it is not closed
+ * by Serializable — an administrator placing a hold runs an ordinary
+ * read-committed update and would never be party to a serialization conflict.
+ * Locking the rows makes that update WAIT behind this transaction, so a hold
+ * cannot land between the decision and the destructive work.
+ *
+ * Only the sessions and the candidate: those are what the eligibility
+ * predicate reads that an administrator can change through a supported
+ * endpoint. Artifact and observation holds are covered because the sweep
+ * writes those rows itself.
+ *
+ * A no-op on SQLite, which serialises writers anyway — the same shape as
+ * services/sessionLock.ts, whose comment explains why that is enough there.
+ */
+export async function lockCandidateRecord(tx: Prisma.TransactionClient, candidateId: string): Promise<void> {
+  if (!/^postgres(ql)?:/.test(process.env.DATABASE_URL ?? '')) return;
+  await tx.$queryRaw`SELECT "id" FROM "Candidate" WHERE "id" = ${candidateId} FOR UPDATE`;
+  await tx.$queryRaw`SELECT "id" FROM "InterviewSession" WHERE "candidateId" = ${candidateId} FOR UPDATE`;
+}
+
 export async function claimCandidateForAnonymisation(
   tx: Prisma.TransactionClient,
   o: { readonly candidateId: string; readonly now: Date; readonly eligible: Prisma.CandidateWhereInput },
@@ -228,6 +251,29 @@ async function deleteUnanonymisable(
   // row keyed by either is a map from that paper back to this interview. There
   // is no version of a certificate for a person who no longer exists here.
   count('awards', (await tx.candidateAward.deleteMany({ where: { candidateId: o.candidateId } })).count);
+
+  // Whose calendar holds this interview, and the round's too. The row carries
+  // `recipientName` and `recipientEmail` and is keyed by `targetId` alone — it
+  // has NO foreign key, because it points at one of two tables, so nothing
+  // cascades and nothing fails loudly when a deletion path forgets it.
+  //
+  // Anonymisation forgot it, and the session it is keyed to survives by design,
+  // so the join back to the person was one query. The table's own schema
+  // comment says erasure "has to reach these rows by hand"; this path has to as
+  // well, and the header of this file predicted exactly this — a table added to
+  // erasure and not to here. It was added to erasure today.
+  const roundIds = (await tx.interviewRound.findMany({
+    where: { pipeline: { candidateId: o.candidateId } },
+    select: { id: true },
+  })).map((r) => r.id);
+  count('calendarDeliveries', (await tx.calendarDelivery.deleteMany({
+    where: {
+      OR: [
+        { targetType: 'interview', targetId: sessions },
+        ...(roundIds.length ? [{ targetType: 'round', targetId: { in: roundIds } }] : []),
+      ],
+    },
+  })).count);
 
   // Credentials that still open this interview from the candidate's own inbox.
   // A link, a reminder or a one-time code that still works is the person and
@@ -373,6 +419,16 @@ async function scrubEverythingKept(
   if (observationIds.length) {
     const byObservation = { id: { in: observationIds } };
     count('observations', await scrub(asTextRows(tx.roundObservation), { where: byObservation, fields: ['quotesJson', 'quotesNote'], identity }));
+    // `withdrawnReason` is the candidate's OWN words for why they stopped, and
+    // the schema says so. Like the accommodation request it is unbounded prose
+    // about themselves, so there is no pattern to scrub and it is removed
+    // rather than redacted. `stoppedBy` and `stoppedAt` stay: that a person
+    // withdrew, and when, is a fact about the round that HR may need. What they
+    // said about why is about a person who no longer exists here.
+    count('withdrawalReasons', (await tx.roundObservation.updateMany({
+      where: { AND: [byObservation, { NOT: { withdrawnReason: '' } }] },
+      data: { withdrawnReason: '' },
+    })).count);
     // The observer's transcript of a human round — the candidate speaking.
     count('observationSegments', await scrub(asTextRows(tx.observationSegment), { where: { observationId: { in: observationIds } }, fields: ['text'], identity }));
     // The sealed join link the candidate was sent. Like an invitation, it is a

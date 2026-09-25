@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { linkedinSlug, redactUniqueHandles, type UniqueHandles } from './identityRedaction.js';
+import { redactReferences, redactUniqueHandles, slugSpellingsForSearch, type UniqueHandles } from './identityRedaction.js';
 
 /**
  * Clearing what an audit row SAID about a person, while keeping the fact that
@@ -79,12 +79,15 @@ export const PAYLOAD_REMOVED = payloadRemoved('erasure');
  * services/userEmail.ts already uses for the same problem. See
  * `auditIdsMatchingHandles`.
  */
-function contentNeedles(handles: UniqueHandles): readonly string[] {
-  return [...new Set(
-    [handles.email, handles.emailNormalized, linkedinSlug(handles.linkedinUrl)]
-      .map((h) => h.trim())
-      .filter((h) => h.length > 0),
-  )];
+function contentNeedles(handles: UniqueHandles, references: readonly string[]): readonly string[] {
+  return [...new Set([
+    ...[handles.email, handles.emailNormalized].map((h) => h.trim()),
+    ...slugSpellingsForSearch(handles.linkedinUrl),
+    // The ids too, or a row whose only trace of this candidate is a reference
+    // to one of their rows is never selected. That is how the reuse mapping
+    // survived: the row carried no address, only an id.
+    ...references,
+  ].filter((h) => h.length > 0))];
 }
 
 /**
@@ -307,6 +310,11 @@ export async function clearAuditPayloads(
  *   - rows matched only because their payload mentions this person, which may
  *     as easily be somebody else's record referring to them.
  *
+ * Their ids go as well as their handles. A primary key belongs to exactly one
+ * row, so removing it costs the record only the link — and a surviving link is
+ * how one anonymised application still pointed at a named one. See
+ * `redactReferences`.
+ *
  * Clearing either would destroy a record belonging to someone who asked for
  * nothing. Taking out an address or a profile slug does not: nobody else has
  * one. That is the whole justification, and it is why `UniqueHandles` excludes
@@ -324,7 +332,7 @@ export async function redactHandlesFromUnownedAuditPayloads(
     readonly ownedEntityIds: readonly string[];
   },
 ): Promise<number> {
-  const matched = await auditIdsMatchingHandles(tx, o.tenantId, contentNeedles(o.handles));
+  const matched = await auditIdsMatchingHandles(tx, o.tenantId, contentNeedles(o.handles, o.ownedEntityIds));
   if (matched.length === 0) return 0;
 
   // Only rows the content net found. With the phone out of `UniqueHandles`
@@ -342,8 +350,8 @@ export async function redactHandlesFromUnownedAuditPayloads(
 
   let changed = 0;
   for (const row of rows) {
-    const beforeJson = redactUniqueHandles(row.beforeJson, o.handles);
-    const afterJson = redactUniqueHandles(row.afterJson, o.handles);
+    const beforeJson = redactReferences(redactUniqueHandles(row.beforeJson, o.handles), o.ownedEntityIds);
+    const afterJson = redactReferences(redactUniqueHandles(row.afterJson, o.handles), o.ownedEntityIds);
     if (beforeJson === row.beforeJson && afterJson === row.afterJson) continue;
     await tx.auditEvent.update({ where: { id: row.id }, data: { beforeJson, afterJson } });
     changed += 1;
