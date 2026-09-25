@@ -161,7 +161,7 @@ describe('resolveDecision', () => {
   // vault them over Bronze, which nobody had said anything about — and a tier
   // is struck by the move that LEAVES its stage, so a candidate carried over a
   // stage can never earn what it was worth.
-  it('brings a candidate up to the round that was approved, never past it', () => {
+  it('moves a candidate one stage on when the approved round is ahead of them', () => {
     expect(resolveDecision(DEFAULT_STAGES, 'bronze', 'APPROVED', 'silver'))
       .toEqual({ kind: 'advance', from: 'bronze', to: 'silver', final: false });
   });

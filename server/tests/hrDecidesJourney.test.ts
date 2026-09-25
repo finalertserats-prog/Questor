@@ -560,3 +560,97 @@ describe('moving a candidate with an unread interview towards the AI round', () 
     expect([refused.status, refused.body.code]).toEqual([409, 'human_review_required']);
   });
 });
+
+/**
+ * A stage plan that renamed everything.
+ *
+ * The keys are free text and `role:edit_scorecard` — which a recruiter holds —
+ * is all it takes to set them. A plan whose AI round is not called `silver`
+ * mints nothing on the way out of it, so a gate that asked only "would this
+ * mint?" never ran: the candidate was carried off a round nobody had read, and
+ * the decision path recorded an approval with `missingFor` on it. That was
+ * weaker than the code before this lane touched it.
+ */
+describe('a stage plan whose stages are renamed', () => {
+  beforeEach(async () => { await wipe(); });
+
+  const RENAMED = [
+    { key: 'apply', label: 'Apply', kind: 'intake' },
+    { key: 'screen', label: 'Screen', kind: 'profile_review' },
+    { key: 'ai_round', label: 'AI round', kind: 'ai_interview' },
+    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+    { key: 'offer', label: 'Offer', kind: 'human_interview' },
+  ];
+
+  async function onRenamedPlan(ids: Seeded) {
+    const plan = await request(app).put(`/api/roles/${ids.roleId}/pipeline-stages`).set('Authorization', ids.auth)
+      .send({ stages: RENAMED });
+    if (plan.status !== 200) throw new Error(`stage plan refused (${plan.status}): ${JSON.stringify(plan.body)}`);
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'ai_round');
+    await interviewed(ids, journey);
+    return journey;
+  }
+
+  it('refuses the move off the AI round even though it mints nothing', async () => {
+    const ids = await seeded();
+    const journey = await onRenamedPlan(ids);
+
+    const refused = await advance(ids, journey, 'panel');
+
+    expect([refused.status, refused.body.code, await stageOf(journey)])
+      .toEqual([409, 'human_review_required', 'ai_round']);
+  });
+
+  it('refuses the same move from the decision form, so neither path is weaker', async () => {
+    const ids = await seeded();
+    const journey = await onRenamedPlan(ids);
+
+    const refused = await request(app).post(`/api/pipelines/${journey.pipelineId}/decision`).set('Authorization', ids.auth)
+      .send({ decision: 'APPROVED', reason: REASON, stageKey: 'ai_round' });
+
+    expect([refused.status, refused.body.code]).toEqual([409, 'human_review_required']);
+  });
+
+  // The decision path used to let this through and then record
+  // `humanReview: { required: true, missingFor: ... }` on the approval it had
+  // just applied — an audit trail contradicting itself about the promise.
+  it('records no approval claiming a review that is still missing', async () => {
+    const ids = await seeded();
+    const journey = await onRenamedPlan(ids);
+
+    await request(app).post(`/api/pipelines/${journey.pipelineId}/decision`).set('Authorization', ids.auth)
+      .send({ decision: 'APPROVED', reason: REASON, stageKey: 'ai_round' });
+
+    const advanced = await prisma.auditEvent.findMany({ where: { action: 'pipeline.advanced', entityId: journey.pipelineId } });
+    expect(advanced.some((a) => a.afterJson.includes('missingFor'))).toBe(false);
+  });
+});
+
+/**
+ * Finalisation is allowed to vault, and this pins why.
+ *
+ * The one-stage clamp is about DECISIONS: a verdict is about a round, so it
+ * must not carry anybody past rounds nobody judged. Finalisation names no
+ * round — it is the single act that ends the journey — and the award engine
+ * mints Diamond alone for it, deliberately not the tiers it passed, so no
+ * certificate claims a round that never happened.
+ *
+ * Asserted rather than assumed, because the clamp's comment and the reference
+ * both now state the carve-out, and a claim nothing checks is the kind that
+ * quietly stops being true.
+ */
+describe('finalising a candidate from partway up', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('reaches the last stage in one move and mints Diamond alone', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+
+    const finalized = await request(app).post(`/api/pipelines/${journey.pipelineId}/finalize`)
+      .set('Authorization', ids.auth).send({});
+
+    expect([finalized.status, await stageOf(journey), (await tiersOf(journey.candidateId)).map((a) => a.tier)])
+      .toEqual([200, 'diamond', ['bronze', 'diamond']]);
+  });
+});

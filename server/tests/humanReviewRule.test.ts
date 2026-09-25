@@ -4,6 +4,7 @@ import {
   reviewRequirementFor, type ConductedInterview,
 } from '../src/domain/humanReviewRule.js';
 import { DEFAULT_STAGES, type PipelineStage } from '../src/domain/pipelineStages.js';
+import { awardsForPromotion } from '../src/domain/candidateAwards.js';
 import { EXCEPTION_STATES, SESSION_STATES } from '../src/domain/stateMachine.js';
 
 /**
@@ -186,6 +187,35 @@ describe('the moves the promise covers', () => {
 
   it('gates nothing for a move that goes nowhere', () => {
     expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'silver')).toBe(false);
+  });
+
+  /**
+   * A plan that simply renamed its stages, which the other clause misses.
+   *
+   * `awardsForPromotion` fires on the literal keys `silver` and `gold`, so a
+   * plan calling them anything else earns nothing on the way out of the AI
+   * round. Asking only "would this mint?" therefore let a renamed plan carry a
+   * candidate off a round nobody had read — weaker than the code that existed
+   * before any of this, which refused every non-withdrawal outcome while a
+   * review was owed.
+   */
+  const RENAMED: readonly PipelineStage[] = [
+    { key: 'apply', label: 'Apply', kind: 'intake' },
+    { key: 'screen', label: 'Screen', kind: 'profile_review' },
+    { key: 'ai_round', label: 'AI round', kind: 'ai_interview' },
+    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+    { key: 'offer', label: 'Offer', kind: 'human_interview' },
+  ];
+
+  it('gates the move off a renamed AI round, which mints nothing', () => {
+    expect([
+      awardsForPromotion(RENAMED, 'ai_round', 'panel').length,
+      moveNeedsHumanReview(RENAMED, 'ai_round', 'panel'),
+    ]).toEqual([0, true]);
+  });
+
+  it('still leaves the walk towards a renamed AI round alone', () => {
+    expect(moveNeedsHumanReview(RENAMED, 'screen', 'ai_round')).toBe(false);
   });
 });
 

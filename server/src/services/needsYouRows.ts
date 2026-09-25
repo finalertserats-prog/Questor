@@ -338,9 +338,10 @@ interface StageWait {
  * reading the list it sits in, so each reason is something that has already
  * happened to that candidate rather than a stage they merely occupy.
  *
- * Moving a candidate OFF the AI round is refused until a person has read their
- * interview — `advancePipeline` enforces the promise on exactly the moves it is
- * about (domain/humanReviewRule.ts, moveNeedsHumanReview). Waiting for the
+ * Moving a candidate off the AI round, or making any move that would mint a
+ * credential, is refused until a person has read their interview —
+ * `advancePipeline` enforces the promise on those moves
+ * (domain/humanReviewRule.ts, moveNeedsHumanReview). Waiting for the
  * review before listing them is therefore not a preference: the button this row
  * points at is the one the server would turn down. It also keeps one person off
  * the queue as two jobs, because the `review` row already owns the hours

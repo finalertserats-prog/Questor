@@ -137,6 +137,14 @@ export function resolveDecision(
   const aboutIndex = stages.findIndex((stage) => stage.key === aboutStageKey);
   if (currentIndex < 0 || aboutIndex < 0) return null;
   const lastIndex = stages.length - 1;
+  // A decision ABOUT the last stage, from behind it, moves nobody. Unchanged,
+  // and worth naming because it is reached before the clamp below and so
+  // produces an asymmetry a reader will otherwise call a bug: in a plan whose
+  // AI round IS the last stage, a Proceed verdict resolves to nothing while the
+  // Advance button would still move the candidate one stage. That is the
+  // narrower behaviour of the two and the safer one — approving somebody into
+  // the final stage of their journey from behind it is a bigger claim than a
+  // verdict on one round should make on its own.
   if (aboutIndex === lastIndex) {
     return currentIndex === lastIndex ? { kind: 'close', outcome, atStageKey: currentStageKey } : null;
   }
@@ -153,10 +161,20 @@ export function resolveDecision(
   // Stages run in order. The Advance button says so in as many words when it
   // refuses a key that is not the next one, and a decision that could leapfrog
   // what the button cannot would make the two person-paths disagree about the
-  // same pipeline. It also keeps every tier on the journey reachable: a tier is
-  // struck by the move that LEAVES it (domain/candidateAwards.ts,
-  // awardsForPromotion), so a candidate vaulted over a stage can never earn
-  // what that stage was worth.
+  // same pipeline. It also keeps every tier on the journey reachable FROM A
+  // DECISION: a tier is struck by the move that LEAVES it
+  // (domain/candidateAwards.ts, awardsForPromotion), so a decision that vaulted
+  // a candidate over a stage would put what that stage was worth out of reach.
+  //
+  // Not a universal rule about the pipeline, and it must not be written as one.
+  // `POST /pipelines/:id/finalize` resolves from wherever the candidate stands
+  // to the last stage in a single move, so finalising from Bronze does reach
+  // Diamond and mints Diamond alone. That is deliberate and it is a different
+  // act: a decision is ABOUT a round, so carrying it past rounds nobody judged
+  // would claim judgements nobody made, whereas finalisation names no round at
+  // all — it is the one explicit act that ends the journey, and the award
+  // engine mints only Diamond for it precisely so that no certificate claims a
+  // round that never happened.
   const toIndex = Math.min(aboutIndex, currentIndex) + 1;
   if (toIndex <= currentIndex) return null;
   return { kind: 'advance', from: currentStageKey, to: stages[toIndex].key, final: toIndex === lastIndex };

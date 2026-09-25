@@ -135,8 +135,8 @@ describe('the consequence shown beside the button', () => {
 
   // A candidate can be interviewed while their pipeline still says Bronze,
   // because nothing moves them off it by itself. The preview has to be honest
-  // about that too: Proceed brings them up to the round that was judged, and
-  // says Silver rather than Gold.
+  // about that too: Proceed moves them one stage on, so from Bronze it says
+  // Silver rather than Gold.
   it('is still what happens for a candidate the pipeline left at Bronze', async () => {
     const ids = await seeded();
     const { assessmentId, pipelineId } = await assessed(ids);
