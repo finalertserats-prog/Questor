@@ -26,6 +26,7 @@ import { allMeetingCapabilities } from '../providers/meeting/index.js';
 import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
 import { ROUND_MEETING_PROVIDERS } from '../providers/meeting/types.js';
 import { findSessionsDueForPurge, retentionDays, DEFAULT_RETENTION_DAYS } from '../services/dataRights.js';
+import { anonymisationEnabled, anonymiseAfterDays, findCandidatesDueForAnonymisation, DEFAULT_ANONYMISE_AFTER_DAYS } from '../services/anonymise.js';
 import { logAudit } from '../services/audit.js';
 import { getAgreementReport, DISPOSITIONS } from '../services/shadowMode.js';
 import { getPipelineSummary } from '../services/pipeline.js';
@@ -111,6 +112,7 @@ adminRouter.get('/ops', requireCapability('admin:manage'), requireOpsOperator, a
     instance: INSTANCE_ID,
     uptimeSeconds: Math.round(process.uptime()),
     retentionSweepEnabled: process.env.RETENTION_SWEEP_ENABLED === 'true',
+    anonymisationEnabled: anonymisationEnabled(),
     jobs,
     webhooks: { ...webhooks, legacySignature },
     model: { last24h: { calls: modelCalls, failures: modelFailures } },
@@ -538,6 +540,58 @@ adminRouter.get('/retention/preview', requireCapability('retention:configure'), 
       completedAt: d.completedAt,
       retainUntil: d.retainUntil,
       usingDefaultWindow: d.usingDefaultWindow,
+      counts: d.counts,
+    })),
+  });
+}));
+
+// Anonymisation dry-run.
+//
+// The mirror of the retention preview above, for the deployment that keeps its
+// interviews instead of deleting them. It matters more here than it does there,
+// not less: a purge is obviously destructive and an anonymisation is quiet —
+// the interview is still in the list afterwards, and only the person is gone —
+// so an operator has to be able to see exactly who would be severed while it is
+// still possible to stop. Read-only, built on the same query the sweep uses so
+// the preview cannot disagree with what happens, and scoped to the caller's
+// tenant.
+adminRouter.get('/anonymisation/preview', requireCapability('retention:configure'), asyncHandler(async (req, res) => {
+  const query = z.object({ asOf: z.string().datetime().optional() }).parse(req.query);
+  const now = query.asOf ? new Date(query.asOf) : new Date();
+  const due = await findCandidatesDueForAnonymisation({ now, tenantId: req.auth!.tenantId });
+
+  // Listing candidates by name is itself an access to personal data, and this
+  // list is specifically "the people about to stop being people here". Counts
+  // only in the audit record, for the same reason as the retention preview.
+  await logAudit({
+    tenantId: req.auth!.tenantId,
+    actorType: 'user',
+    actorId: req.auth!.userId,
+    action: 'anonymisation.previewed',
+    entityType: 'Candidate',
+    after: { asOf: now.toISOString(), dueCount: due.length },
+  });
+
+  res.json({
+    asOf: now.toISOString(),
+    enabled: anonymisationEnabled(),
+    anonymiseAfterDays: anonymiseAfterDays(),
+    anonymiseAfterDaysBuiltIn: DEFAULT_ANONYMISE_AFTER_DAYS,
+    dueCount: due.length,
+    totals: due.reduce((acc, d) => ({
+      sessions: acc.sessions + d.counts.sessions,
+      turns: acc.turns + d.counts.turns,
+    }), { sessions: 0, turns: 0 }),
+    // Stated in the response, not only in the docs: whoever turns this on
+    // should read what it does and does not promise at the moment they do it.
+    removes: 'name, email, phone and LinkedIn URL, wherever Questor holds them — including in the transcript',
+    keeps: 'the transcript, scores, competency reads, evidence spans and timings',
+    caveat: 'Third parties a candidate names in passing — a former employer, a manager — cannot be found this way and may remain.',
+    candidates: due.map((d) => ({
+      candidateId: d.candidateId,
+      candidateName: d.candidateName,
+      lastInterviewAt: d.lastInterviewAt,
+      anonymiseAfter: d.anonymiseAfter,
       counts: d.counts,
     })),
   });

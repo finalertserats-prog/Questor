@@ -8,6 +8,7 @@ import { getLlm } from './providers/llm/index.js';
 import { preflight } from './preflight.js';
 
 import { startRetentionSweep } from './services/dataRights.js';
+import { startAnonymisationSweep } from './services/anonymise.js';
 import { startDemoPurge } from './services/demoPurgeJob.js';
 import { startDemoInterviewSweep } from './services/demoInterviewJob.js';
 import { startImportPurge } from './services/candidateImportPurgeJob.js';
@@ -42,6 +43,11 @@ startRetentionSweep();
 // rendered from live rows, so it runs at startup and takes itself off the
 // schedule once nothing is outstanding.
 startAwardEvidenceBackfill();
+// The other way to satisfy storage limitation: keep the interview and remove
+// the person from it. Opt-in and off by default, like the sweep above — see
+// services/anonymise.ts for why an irreversible rewrite of real candidate data
+// is never a side effect of deploying.
+startAnonymisationSweep();
 startDemoPurge();
 // The half of the demo's fifteen-minute cap that no request can enforce: a
 // visitor who closes the tab makes no further requests.

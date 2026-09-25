@@ -2630,7 +2630,9 @@ The daily check is: Admin → System health first; and only if something is red 
 | `CALIBRATION_REQUIRE_FAIRNESS_CHECK` | **`true`** | Fails closed: unreadable outcome statistics mean an adjustment is HELD. Setting it false "is a deliberate reduction in safety and should be a decision, not a default" | Left at `true` |
 | `LIBRARY_ENABLED` | `false` | The library's tenant read API and the owner's screen. Off ⇒ only `GET /api/library/status` mounts | Dark |
 | `LIBRARY_WORKER_ENABLED` | `false` | The fill worker process | Dark |
-| `RETENTION_SWEEP_ENABLED` | off | The daily retention deletion sweep. Off logs a warning every boot: *"Candidate data will be kept past its retention window, which does not satisfy storage limitation"* | **Off — and this is an open policy decision for the owner** |
+| `RETENTION_SWEEP_ENABLED` | off | The daily retention **deletion** sweep. With anonymisation also off, every boot warns that interviews are *"kept indefinitely with the candidate identified, which does not satisfy storage limitation"* | **Off — the owner chose to keep the interviews** |
+| `ANONYMISE_SWEEP_ENABLED` | off | The daily **anonymisation** sweep: the other answer to storage limitation. Keeps the interview and irreversibly removes the identifying details Questor holds about the candidate — name, address, phone, LinkedIn — from every row they appear in, including the transcript. Preview first at `GET /api/admin/anonymisation/preview` | Off — opt-in, because it cannot be undone |
+| `ANONYMISE_AFTER_DAYS` | `365` | How long identity stays attached to an interview. Twelve months, owner's decision. A value that is not a positive whole number of days is ignored and logged | Default |
 | `WEBHOOK_V1_SIGNATURE` | per-webhook | The legacy signature header. `off` is a deployment-wide kill switch; **any other value stops the server at startup** | Documents disagree; treat as not yet confirmed off |
 | `RATE_LIMIT_STORE` | `database` in production | Shared counters via `RateLimitBucket` versus per-process memory | `database`, confirmed live |
 | `EVIDENCE_ATTRIBUTION` | unset | `=semantic` enables the experimental attributor that §2.12.9 explains must not be enabled for real candidates | Off |
@@ -2716,7 +2718,8 @@ Everything in §5 — 7,001 server tests, a 37-case gold set, a nine-seat simula
 | Capability | Flag | Why it is off |
 |---|---|---|
 | Encryption of candidate content at rest | `ARTIFACT_ENCRYPTION_ENABLED` | Needs the key set and the backfill run first, in that order. No document records it as on |
-| The retention deletion sweep | `RETENTION_SWEEP_ENABLED` | **An open policy decision.** Every boot logs: "Candidate data will be kept past its retention window, which does not satisfy storage limitation" |
+| The retention deletion sweep | `RETENTION_SWEEP_ENABLED` | **Decided against.** The owner keeps the interviews: they are what quality and learning depend on |
+| The anonymisation sweep | `ANONYMISE_SWEEP_ENABLED` | Built as the alternative. Irreversible, so opt-in: preview who would be severed, then switch it on |
 | Role calibration | `CALIBRATION_ENABLED` + org policy | Needs two switches and a fairness check that fails closed |
 | The Question & Answer Library | `LIBRARY_ENABLED`, `LIBRARY_WORKER_ENABLED` | Dark by design until the pools are filled |
 | The local model fallback | `LOCAL_LLM_ENABLED` | Built and guarded; not yet needed |

@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { getEmail } from '../providers/email/index.js';
 import { getLlm, llmServingStatus, type LlmServingStatus } from '../providers/llm/index.js';
 import { sttCapability, ttsCapability, type SpeechCapability } from '../providers/speech.js';
+import { anonymiseAfterDays } from './anonymise.js';
 import { legacySignatureStatus } from './webhooks.js';
 import { plural, type CheckDef, type CheckOutcome, type SectionDef } from './systemHealthTypes.js';
 
@@ -183,13 +184,30 @@ const rateLimits: CheckDef = {
 const retention: CheckDef = {
   id: 'retention-sweep',
   label: 'Retention sweep',
-  run: async ({ deps }) => (deps.env.RETENTION_SWEEP_ENABLED === 'true'
-    ? { status: 'ok', summary: 'On: candidate data is deleted when its retention window ends.' }
-    : {
-      status: 'warn', summary: 'Off: candidate data is kept past its retention window.',
-      detail: 'Deleting data when its purpose ends is a legal obligation (storage limitation).',
-      action: 'Preview what would be deleted at GET /api/admin/retention/preview, then set RETENTION_SWEEP_ENABLED=true and restart.',
-    }),
+  // Storage limitation has two answers, not one: delete the interview when its
+  // purpose ends, or keep it and remove the person from it. A deployment that
+  // chose the second is compliant, and telling it "Off: candidate data is kept
+  // past its retention window" is both wrong and unactionable — the operator
+  // has already acted.
+  run: async ({ deps }) => {
+    if (deps.env.RETENTION_SWEEP_ENABLED === 'true') {
+      return { status: 'ok', summary: 'On: candidate data is deleted when its retention window ends.' };
+    }
+    if (deps.env.ANONYMISE_SWEEP_ENABLED === 'true') {
+      return {
+        status: 'ok',
+        summary: `On: interviews are kept, and ${anonymiseAfterDays()} days after an interview the identifying details Questor holds are irreversibly removed from it.`,
+        // Said here as well as at boot: whoever reads this page is the person
+        // who would otherwise repeat the product's claim to a customer.
+        detail: 'Third parties a candidate names in passing — a former employer, a manager — cannot be found this way and may remain in a transcript.',
+      };
+    }
+    return {
+      status: 'warn', summary: 'Off: candidate data is kept past its retention window, with the candidate identified.',
+      detail: 'Deleting data when its purpose ends is a legal obligation (storage limitation). Removing the person from data you keep satisfies it too.',
+      action: 'Either preview what would be deleted at GET /api/admin/retention/preview and set RETENTION_SWEEP_ENABLED=true, or preview who would be severed at GET /api/admin/anonymisation/preview and set ANONYMISE_SWEEP_ENABLED=true. Then restart.',
+    };
+  },
 };
 
 const legacyWebhooks: CheckDef = {

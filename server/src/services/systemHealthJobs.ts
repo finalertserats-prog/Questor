@@ -3,6 +3,7 @@ import { config } from '../config.js';
 import { DELIVER_EVERY_MS } from './webhooks.js';
 import { RATE_LIMIT_PURGE_EVERY_MS } from '../middleware/rateLimit.js';
 import { RETENTION_SWEEP_EVERY_MS } from './dataRights.js';
+import { ANONYMISATION_SWEEP_EVERY_MS } from './anonymise.js';
 import { INCOMPLETE_SWEEP_EVERY_MS } from './incompleteInterviews.js';
 import { FEEDBACK_EMAIL_JOB } from './autoFeedback.js';
 import { JD_DRAFT_JOB } from './jdDrafts.js';
@@ -45,6 +46,10 @@ export const KNOWN_JOBS: readonly KnownJob[] = [
   {
     name: 'retention-sweep', label: 'Retention sweep', intervalMs: RETENTION_SWEEP_EVERY_MS,
     notScheduled: (deps) => (deps.env.RETENTION_SWEEP_ENABLED === 'true' ? null : 'Not scheduled: the retention sweep is switched off (see Delivery and obligations).'),
+  },
+  {
+    name: 'anonymisation-sweep', label: 'Anonymisation sweep', intervalMs: ANONYMISATION_SWEEP_EVERY_MS,
+    notScheduled: (deps) => (deps.env.ANONYMISE_SWEEP_ENABLED === 'true' ? null : 'Not scheduled: anonymisation is switched off (see Delivery and obligations).'),
   },
   { name: FEEDBACK_EMAIL_JOB.name, label: 'Candidate feedback emails', intervalMs: FEEDBACK_EMAIL_JOB.intervalMs, notScheduled: () => null },
   { name: JD_DRAFT_JOB.name, label: 'JD drafts', intervalMs: JD_DRAFT_JOB.intervalMs, notScheduled: () => null },

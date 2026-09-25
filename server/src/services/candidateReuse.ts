@@ -89,7 +89,14 @@ function toPerson(rows: readonly SearchRow[]): CandidatePerson {
 export async function searchCandidatePeople(auth: AuthClaims, query: string): Promise<CandidatePerson[]> {
   const needle = fold(query.trim());
   const rows: SearchRow[] = await prisma.candidate.findMany({
-    where: (await candidateScope(auth)) as Prisma.CandidateWhereInput,
+    // Anonymised applications are excluded, and this is load-bearing rather
+    // than tidy. `personKey` groups rows by address, and an anonymised row has
+    // no address, so every anonymised candidate in the tenant would collapse
+    // into a single "person" wearing the placeholder name of whichever was
+    // newest — and that person would then be offered as one to reuse. There is
+    // also nothing to reuse: the whole point is that we no longer know who they
+    // were, so they cannot be the same person as anybody applying today.
+    where: { AND: [(await candidateScope(auth)) as Prisma.CandidateWhereInput, { anonymisedAt: null }] },
     orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     take: SEARCH_ROW_LIMIT,
     select: {
@@ -174,7 +181,12 @@ export async function findApplicationOnRole(
   tx: Prisma.TransactionClient,
   o: { readonly tenantId: string; readonly roleId: string; readonly emailNormalized: string },
 ): Promise<{ readonly id: string } | null> {
-  return tx.candidate.findFirst({ where: { tenantId: o.tenantId, roleId: o.roleId, emailNormalized: o.emailNormalized }, select: { id: true } });
+  // An anonymised application has no address, so it can never be the one this
+  // address already has. Stated rather than relied upon: every caller passes a
+  // validated address today, but a blank one reaching here would silently match
+  // every anonymised row on the role and refuse a real applicant as a duplicate
+  // of somebody nobody can look up.
+  return tx.candidate.findFirst({ where: { tenantId: o.tenantId, roleId: o.roleId, emailNormalized: o.emailNormalized, anonymisedAt: null }, select: { id: true } });
 }
 
 /**

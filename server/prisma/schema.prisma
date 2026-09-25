@@ -495,6 +495,12 @@ model Candidate {
   // stays right and the label becomes historically false. The round carries
   // its own snapshot (InterviewRound.candidateTimeZone) for that reason.
   timeZone      String?
+  // When this person was severed from their own interviews, or null while they
+  // still exist here. Anonymisation keeps the interview — transcript, scores,
+  // competency reads — and removes the human being from it, irreversibly. See
+  // services/anonymise.ts. Set once and never cleared: there is nothing to
+  // clear it back to, which is the property the whole feature rests on.
+  anonymisedAt  DateTime?
   createdAt     DateTime @default(now())
   profiles      CandidateProfileVersion[]
   interviews    InterviewSession[]

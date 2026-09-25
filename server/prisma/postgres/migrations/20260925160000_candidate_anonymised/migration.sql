@@ -1,0 +1,18 @@
+-- When a candidate's identity was severed from their interviews.
+--
+-- Anonymisation keeps the interview and removes the person from it: the
+-- transcript, scores and competency reads stay and stay usable, while the name,
+-- address, phone and LinkedIn URL are overwritten wherever they appear. Data
+-- that genuinely cannot be traced back to an individual is outside GDPR's
+-- scope, so the interview can then be kept for as long as it is useful.
+--
+-- Nullable, and null on every existing row: no interview is anonymised by this
+-- migration. The sweep that sets it is opt-in (ANONYMISE_SWEEP_ENABLED), for
+-- the same reason the retention sweep is — an irreversible transformation of
+-- real candidate data must be a decision somebody made, not a side effect of
+-- deploying.
+--
+-- There is deliberately no column recording what was overwritten. A "before"
+-- value stored anywhere is a mapping back to the person, which would make this
+-- pseudonymisation wearing the word anonymisation.
+ALTER TABLE "Candidate" ADD COLUMN "anonymisedAt" TIMESTAMP(3);

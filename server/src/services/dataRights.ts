@@ -8,6 +8,7 @@ import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredObservations } from './observerRetention.js';
 import { auditableEntityIds, clearAuditPayloads } from './auditPayloads.js';
+import { anonymisationEnabled, retentionPostureMessage } from './anonymise.js';
 
 // Candidate data-rights operations.
 //
@@ -871,19 +872,23 @@ export const RETENTION_SWEEP_EVERY_MS = 24 * 60 * 60_000;
 
 /** Start the daily retention sweep. Returns a stop function. */
 export function startRetentionSweep(intervalMs = RETENTION_SWEEP_EVERY_MS): () => void {
+  const sweepEnabled = process.env.RETENTION_SWEEP_ENABLED === 'true';
+  // Say what this deployment actually does, rather than warning about one
+  // configuration as though it were the only correct one. Deleting the
+  // interview and anonymising it are two different answers to the same
+  // obligation, and a server that only knows about the first tells an operator
+  // who chose the second that they are misconfigured. See
+  // services/anonymise.ts `retentionPostureMessage`.
+  const posture = retentionPostureMessage({ sweepEnabled, anonymiseEnabled: anonymisationEnabled() });
+  logger[posture.level](posture.message);
+
   // Opt-in, and deliberately so. Every existing session has a null `retainUntil`
   // and therefore inherits the default window the moment this ships, so the
   // first sweep on an established database can delete a large backlog of real
   // candidate data. Irreversible deletion must be a decision someone made, not
   // a side effect of deploying. Preview with GET /api/admin/retention/preview,
   // then set RETENTION_SWEEP_ENABLED=true.
-  if (process.env.RETENTION_SWEEP_ENABLED !== 'true') {
-    logger.warn(
-      'Retention sweep is DISABLED (RETENTION_SWEEP_ENABLED is not "true"). Candidate data will be kept past its retention window, ' +
-      'which does not satisfy storage limitation. Preview what would be deleted at GET /api/admin/retention/preview, then enable it.',
-    );
-    return () => {};
-  }
+  if (!sweepEnabled) return () => {};
   // Under a database lease: two instances must not sweep the same rows, and a
   // failed sweep must be recorded and alerted, not just logged.
   return startJob({
