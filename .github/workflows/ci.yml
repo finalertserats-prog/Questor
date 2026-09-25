@@ -29,6 +29,13 @@ jobs:
         run: npm run lint -w web
       - name: Unit + API tests
         run: npm test -w server
+      # The web suite is the half of the product a customer actually touches,
+      # and for a long time CI only typechecked and built it. The bug that sent
+      # two real organisations dark — a first screen with nothing to create —
+      # has a regression test in web/tests, and nothing was running it. A test
+      # CI does not run is a comment.
+      - name: Web component tests
+        run: npm test -w web
       - name: Headless interview E2E
         run: npm run test:e2e -w server
       - name: Build web
