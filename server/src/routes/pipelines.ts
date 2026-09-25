@@ -513,7 +513,8 @@ async function noticeForNewRound(
     return { sent: false, note: 'Your account cannot email candidates, so the candidate was not emailed.' };
   }
   return notifyCandidateOfHumanRound({
-    round, candidateId: o.pipeline.candidateId, roleId: o.pipeline.roleId, stageLabel: o.stageLabel, kind: 'booked',
+    round, candidateId: o.pipeline.candidateId, roleId: o.pipeline.roleId, stageLabel: o.stageLabel,
+    reason: { of: 'first', kind: 'booked' },
   });
 }
 

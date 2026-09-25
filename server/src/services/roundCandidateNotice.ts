@@ -27,6 +27,46 @@ export interface CandidateNotice {
 
 export type RoundNoticeKind = 'booked' | 'moved' | 'link' | 'cancelled';
 
+/**
+ * Why this notice is going out — and, on a retry, deliberately NOT what kind of
+ * notice it is.
+ *
+ * A first send knows its own intent: the recruiter just booked, moved, linked
+ * or cancelled the round, and nothing about the round can contradict that.
+ *
+ * A retry does not. Whatever prompted the original send may have been overtaken
+ * while the send was failing, so the kind has to be read off the round — and it
+ * has to be read off the round THE CLAIM RETURNED, not one fetched earlier. So
+ * a retry hands over only the single fact the round cannot supply: what that
+ * address's calendar was last actually told. There is no channel here through
+ * which a pre-claim reading of the round could arrive, which is the point: the
+ * first version of this fix passed a stored `kind`, the second passed a
+ * pre-claim `round`, and both were the same defect — the words and the calendar
+ * entry rendered from different moments.
+ */
+export type RoundNoticeReason =
+  | { readonly of: 'first'; readonly kind: RoundNoticeKind }
+  | { readonly of: 'retry'; readonly lastSentAt: Date | null };
+
+/**
+ * What kind of notice this is, decided against the round as the claim found it.
+ *
+ * Cancellation is tested first, so a cancelled round resolves to a withdrawal
+ * even when nothing has ever reached this address. After that the branches are
+ * mutually exclusive readings of the round and of what the recipient holds:
+ * nothing sent yet is a booking, not a change to something they never saw; a
+ * time that is not the one they hold has moved; and a time that IS the one they
+ * hold means the booking is not what changed, so the link is — or, with no link
+ * to give, there is nothing to do but restate the booking.
+ */
+function noticeKind(current: InterviewRound, reason: RoundNoticeReason): RoundNoticeKind {
+  if (current.status === 'CANCELLED') return 'cancelled';
+  if (reason.of === 'first') return reason.kind;
+  if (!reason.lastSentAt) return 'booked';
+  if (reason.lastSentAt.getTime() !== current.scheduledAt.getTime()) return 'moved';
+  return current.meetingUrl ? 'link' : 'booked';
+}
+
 interface HumanRoundEmail {
   readonly kind: RoundNoticeKind;
   readonly candidateName: string;
@@ -107,12 +147,11 @@ export async function notifyCandidateOfHumanRound(o: {
   readonly roleId: string;
   readonly stageLabel: string;
   /**
-   * What prompted this notice — but only as a starting point. A round found
-   * CANCELLED below overrides it, for the words and the calendar METHOD alike,
-   * because a retry carries the intent it was queued with and the round may
-   * have been cancelled since.
+   * A first send's intent, or the one fact a retry can honestly supply. Either
+   * way the kind is settled below, against the claimed round — see noticeKind
+   * and RoundNoticeReason.
    */
-  readonly kind: RoundNoticeKind;
+  readonly reason: RoundNoticeReason;
   /**
    * The address whose calendar this notice is correcting, when it is not
    * simply the candidate's current one.
@@ -126,6 +165,12 @@ export async function notifyCandidateOfHumanRound(o: {
   readonly deliverTo?: { readonly email: string; readonly name: string };
 }): Promise<CandidateNotice> {
   const { round } = o;
+  // The only pre-claim reading of a changeable field, and it decides nothing:
+  // it is a cheap early-out, and the authoritative version of the same check
+  // runs against the claimed round below. Getting it wrong in either direction
+  // is safe — a round that has since moved into the future returns early here,
+  // the delivery row stays queued, and the next attempt reads the new time.
+  // Everything the message is built from comes from `current`.
   if (round.scheduledAt.getTime() <= Date.now()) {
     return { sent: false, note: 'The round time has passed, so the candidate was not emailed.' };
   }
@@ -171,14 +216,12 @@ export async function notifyCandidateOfHumanRound(o: {
   if (current.scheduledAt.getTime() <= Date.now()) {
     return { sent: false, note: 'The round time has passed, so the candidate was not emailed.' };
   }
-  // The intent as the round stands NOW, not as it stood when this was queued.
-  //
-  // A retry carries the kind it was queued with. If a round was moved, the
-  // notice failed, and the round was then cancelled, replaying "moved" would
-  // send METHOD:REQUEST for an interview that is not happening — re-adding a
-  // meeting to the candidate's calendar with nothing left to correct it. The
-  // round's own status is the only thing that can answer this truthfully.
-  const kind: RoundNoticeKind = current.status === 'CANCELLED' ? 'cancelled' : o.kind;
+  // Settled here and nowhere else, against `current` — the round the claim
+  // above just re-read. Everything that can change about a round (its time, its
+  // status, its meeting link) is read from `current`; `o.round` supplies only
+  // this round's identity, which does not change. That is the invariant worth
+  // stating in one line: nothing that can change is read before the claim.
+  const kind = noticeKind(current, o.reason);
   const message = buildHumanRoundEmail({
     kind, candidateName: candidate.fullName, roleTitle: role.title, companyName,
     stageLabel: o.stageLabel, scheduledAt: current.scheduledAt, durationMinutes: current.durationMinutes,
