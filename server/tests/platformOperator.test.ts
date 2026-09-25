@@ -4,7 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { config } from '../src/config.js';
 import { issueSession, signToken, type AuthClaims } from '../src/services/auth.js';
-import { isPlatformOperator } from '../src/middleware/platformOperator.js';
+import { isPlatformOperator, isReservedOperatorEmail } from '../src/middleware/platformOperator.js';
 import { bearer, OPERATOR_EMAIL, seedReviewWorld, type ReviewWorld } from './catalogReviewFixtures.js';
 
 /**
@@ -110,5 +110,64 @@ describe('GET /api/auth/me', () => {
   it('tells the web app an ordinary admin may not', async () => {
     const res = await request(app).get('/api/auth/me').set('Authorization', bearer(world.admin.token));
     expect(res.body.user.platformOperator).toBe(false);
+  });
+});
+
+describe('the approver address is reserved too', () => {
+  /**
+   * Two settings confer deployment-wide standing and only one of them was
+   * reserved. `isOperator` (middleware/operator.ts) keys the signup queue —
+   * every organisation's applicants — on SIGNUP_APPROVER_EMAIL, while this
+   * guard checked PLATFORM_OPERATOR_EMAILS alone. An approver address with no
+   * account was therefore claimable: a tenant admin creates it inside their
+   * own organisation, signs in, and reads the other organisations' queues.
+   *
+   * Found unclaimed on the live deployment, where the approver was set and had
+   * no User row. Global email uniqueness was the only thing in the way, and
+   * that is a race, not a guard.
+   */
+  const APPROVER = 'ops@questor.invalid';
+
+  it('refuses to let anyone register the approver address', () => {
+    const before = config.signupApproverEmail;
+    try {
+      (config as { signupApproverEmail: string }).signupApproverEmail = APPROVER;
+      expect(isReservedOperatorEmail(APPROVER)).toBe(true);
+      expect(isReservedOperatorEmail(APPROVER.toUpperCase())).toBe(true);
+      expect(isReservedOperatorEmail(` ${APPROVER} `)).toBe(true);
+    } finally {
+      (config as { signupApproverEmail: string }).signupApproverEmail = before;
+    }
+  });
+
+  it('still reserves the catalog owner addresses', () => {
+    expect(isReservedOperatorEmail(OPERATOR_EMAIL)).toBe(true);
+  });
+
+  it('reserves nothing when neither setting names an address', () => {
+    const beforeApprover = config.signupApproverEmail;
+    const beforeOperators = config.platformOperatorEmails;
+    try {
+      (config as { signupApproverEmail: string }).signupApproverEmail = '';
+      (config as { platformOperatorEmails: string[] }).platformOperatorEmails = [];
+      expect(isReservedOperatorEmail(APPROVER)).toBe(false);
+      expect(isReservedOperatorEmail(OPERATOR_EMAIL)).toBe(false);
+    } finally {
+      (config as { signupApproverEmail: string }).signupApproverEmail = beforeApprover;
+      (config as { platformOperatorEmails: string[] }).platformOperatorEmails = beforeOperators;
+    }
+  });
+
+  it('does not make the approver a catalog owner', () => {
+    const before = config.signupApproverEmail;
+    try {
+      (config as { signupApproverEmail: string }).signupApproverEmail = APPROVER;
+      // Reserved is not the same as entitled. The approver reads the signup
+      // queue; the shared catalog still belongs to PLATFORM_OPERATOR_EMAILS
+      // alone, and widening the reservation must not widen that.
+      expect(isPlatformOperator(claims(APPROVER))).toBe(false);
+    } finally {
+      (config as { signupApproverEmail: string }).signupApproverEmail = before;
+    }
   });
 });
