@@ -204,7 +204,11 @@ export async function createDemoData(): Promise<DemoIds> {
 
   const tenant = await prisma.tenant.create({
     data: {
-      name: 'Acme Corp', region: 'in',
+      // Signing in resolves an organisation by slug and refuses one that has
+      // none (routes/orgs.ts), so a seeded tenant without it is an
+      // organisation nobody can reach through the front door — which is the
+      // door the README sends a new developer to.
+      name: 'Acme Corp', slug: 'acme-corp', region: 'in',
       policyJson: JSON.stringify({
         // "recorded only with your consent" described something that does not
         // happen: no audio is ever stored. What does happen is that the voice is
