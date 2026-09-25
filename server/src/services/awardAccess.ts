@@ -87,16 +87,32 @@ export function verifyDisplayUrl(verifyToken: string): string {
 }
 
 /**
- * The shape a minted token has: `randomBytes(32).toString('base64url')`, which
- * is 43 characters of the URL-safe alphabet.
+ * What is worth refusing before the database is asked, and — far more
+ * important — what is NOT.
  *
- * Bounded rather than pinned at 43 so that a token minted by an older or a
- * later build still resolves — a certificate is a document people keep, and a
- * page that stopped verifying last year's paper because the mint changed width
- * would be worse than useless. The bound is there so that a kilobyte of path
- * is never turned into a database query.
+ * A minted token is `randomBytes(32).toString('base64url')`: 43 characters of
+ * the URL-safe alphabet. It would be easy to demand exactly that here, and it
+ * would be wrong twice over.
+ *
+ * It would be wrong because a certificate is a document people keep, and a
+ * build that narrowed the mint would stop verifying last year's paper.
+ *
+ * And it would be wrong because a gate is an oracle. A caller who can tell
+ * "refused without looking" from "looked and found nothing" — by the shape of
+ * the answer or by how long it took — has been handed a way to learn which
+ * strings are worth guessing. So the only things refused here are the ones no
+ * minted token could ever be: longer than any of them, or carrying a character
+ * that cannot appear in a URL path and that Postgres would refuse to compare
+ * anyway. Everything else, `not-a-real-token` included, goes to the database
+ * and comes back as the same nothing an unknown token comes back as.
+ *
+ * The remaining difference — a token that resolves does more work than one
+ * that does not — is not removable, because answering at all means looking.
+ * What stands in front of it is 256 bits of entropy and the limiter on the
+ * route, not this line.
  */
-const VERIFY_TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,64}$/;
+const IMPOSSIBLE_TOKEN = /[^\x20-\x7e]/;
+const MAX_TOKEN_LENGTH = 128;
 
 /**
  * What the public verification page is allowed to read: one award, by its
@@ -119,7 +135,7 @@ const VERIFY_TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,64}$/;
  * out on purpose rather than by default.
  */
 export async function findAwardByVerifyToken(verifyToken: string) {
-  if (!VERIFY_TOKEN_SHAPE.test(verifyToken)) return null;
+  if (verifyToken.length > MAX_TOKEN_LENGTH || IMPOSSIBLE_TOKEN.test(verifyToken)) return null;
   return prisma.candidateAward.findUnique({
     where: { verifyToken },
     select: { id: true, tier: true, awardedAt: true, reference: true, evidenceJson: true },

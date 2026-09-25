@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
@@ -165,6 +165,25 @@ describe('what it refuses, and how it refuses', () => {
 
     expect(nonsense.status).toBe(404);
     expect(refusal(nonsense)).toEqual(refusal(unminted));
+  });
+
+  /**
+   * And it must not be refused on shape either, because a gate is an oracle:
+   * a caller who can tell "refused without looking" from "looked and found
+   * nothing" has been handed a way to learn which strings are worth guessing.
+   *
+   * Pinned on the query rather than on the clock — a stopwatch in a test suite
+   * measures the machine, not the code, and five lanes share this one. That a
+   * malformed token reaches the database is the fact that makes the two paths
+   * the same path.
+   */
+  it('looks a token that could never be real up all the same, rather than refusing it on sight', async () => {
+    const looked = vi.spyOn(prisma.candidateAward, 'findUnique');
+
+    await request(app).get('/api/v/not-a-real-token');
+    looked.mockRestore();
+
+    expect(looked).toHaveBeenCalledWith(expect.objectContaining({ where: { verifyToken: 'not-a-real-token' } }));
   });
 
   /**

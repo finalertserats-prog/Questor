@@ -1,0 +1,8 @@
+# The verification page carries a named person's record and is reached by a
+# bearer link printed on a certificate. It is not a page anybody should find by
+# searching for that person's name, and the three lines that keep it out of an
+# index are this file, the X-Robots-Tag the API sets on its own answers, and the
+# robots meta tag the page sets on itself. This one is the only one a crawler
+# reads BEFORE fetching the address at all.
+User-agent: *
+Disallow: /v/

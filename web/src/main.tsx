@@ -15,6 +15,7 @@ import './styles/about.css';
 import './styles/pipeline.css';
 import './styles/journey.css';
 import './styles/awards.css';
+import './styles/verify.css';
 import './styles/dashboard.css';
 import './styles/reports.css';
 import './styles/health.css';
