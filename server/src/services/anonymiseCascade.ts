@@ -3,7 +3,7 @@ import { redactIdentity, type KnownIdentity } from './identityRedaction.js';
 import { eraseStagedImportRows } from './candidateImport.js';
 import { observationModelRef } from './observerQuotes.js';
 import { normalizeEmail } from './userEmail.js';
-import { auditableEntityIds, clearAuditPayloads } from './auditPayloads.js';
+import { auditableEntityIds, clearAuditPayloads, redactHandlesFromSharedAuditPayloads } from './auditPayloads.js';
 
 /**
  * The per-candidate work of anonymisation: everything that has to change so
@@ -419,6 +419,14 @@ export async function anonymiseCandidateData(
     entityIds: history,
     handles: o.identity,
     removedBy: 'anonymisation',
+  }));
+  // Rows shared with other candidates are not cleared — that would destroy
+  // their record too — but this person's unique handles come out of them,
+  // which costs nobody anything. See auditPayloads.ts for why the name does
+  // not follow.
+  count('sharedAuditHandles', await redactHandlesFromSharedAuditPayloads(tx, {
+    tenantId: o.tenantId,
+    contact: o.identity,
   }));
 
   // The identity columns go last. `anonymisedAt` is already set — the claim set

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactIdentity, NAME_PLACEHOLDER, EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, LINK_PLACEHOLDER } from '../src/services/identityRedaction.js';
+import { redactIdentity, redactHandlesOnly, NAME_PLACEHOLDER, EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, LINK_PLACEHOLDER } from '../src/services/identityRedaction.js';
 
 /**
  * Removing the identifiers Questor actually holds from free text.
@@ -66,6 +66,31 @@ describe('redacting the identifiers we hold', () => {
     expect(redactIdentity(`See ${KAJAL.linkedinUrl} for more.`, KAJAL)).toBe(`See ${LINK_PLACEHOLDER} for more.`);
   });
 
+  it.each([
+    'http://linkedin.com/in/kajal-vishwakarma-8821',
+    'https://www.linkedin.com/in/kajal-vishwakarma-8821/',
+    'https://in.linkedin.com/in/kajal-vishwakarma-8821?utm_source=share',
+    'linkedin.com/in/kajal-vishwakarma-8821',
+  ])('removes the profile however the link was written: %j', (written) => {
+    // Matching the stored string literally was the original mistake. A scheme,
+    // a trailing slash or a tracking parameter and it stopped matching, and the
+    // profile stayed in the transcript the owner keeps for ever.
+    expect(redactIdentity(`Profile: ${written}`, KAJAL)).toBe(`Profile: ${LINK_PLACEHOLDER}`);
+  });
+
+  it('removes the profile slug said on its own, which is how people actually give it out', () => {
+    expect(redactIdentity('my linkedin is kajal-vishwakarma-8821', KAJAL))
+      .toBe(`my linkedin is ${LINK_PLACEHOLDER}`);
+  });
+
+  it('leaves a longer handle that merely contains the slug alone', () => {
+    // Only the profile is known here, so this isolates the slug's own
+    // boundaries from the name-part matching tested above — which would fire on
+    // "kajal" and is a separate, deliberate behaviour.
+    const profileOnly = { fullName: '', email: '', emailNormalized: '', phone: '', linkedinUrl: KAJAL.linkedinUrl };
+    expect(redactIdentity('kajal-vishwakarma-8821-archive', profileOnly)).toBe('kajal-vishwakarma-8821-archive');
+  });
+
   it('removes a name written with a non-ASCII letter, where a plain word boundary does not work', () => {
     const jose = { ...KAJAL, fullName: 'José Álvarez', email: '', emailNormalized: '', phone: '', linkedinUrl: '' };
     expect(redactIdentity('I asked José about it.', jose)).toBe(`I asked ${NAME_PLACEHOLDER} about it.`);
@@ -95,5 +120,21 @@ describe('redacting the identifiers we hold', () => {
     const json = JSON.stringify({ quote: 'Kajal said the index helped', reviewer: 'unchanged' });
     const parsed = JSON.parse(redactIdentity(json, KAJAL)) as { quote: string; reviewer: string };
     expect(parsed).toEqual({ quote: `${NAME_PLACEHOLDER} said the index helped`, reviewer: 'unchanged' });
+  });
+});
+
+describe('redacting only the handles, for text that is not one candidate’s to rewrite', () => {
+  it('takes out the address, the phone and the profile', () => {
+    const shared = `write to ${KAJAL.email} or call 9876543210, profile ${KAJAL.linkedinUrl}`;
+    expect(redactHandlesOnly(shared, KAJAL))
+      .toBe(`write to ${EMAIL_PLACEHOLDER} or call ${PHONE_PLACEHOLDER}, profile ${LINK_PLACEHOLDER}`);
+  });
+
+  it('leaves the name, because a row shared with other candidates is not this one’s to edit', () => {
+    // A handle belongs to exactly one person, so removing it takes nothing from
+    // anybody else in the row. A name does not: matching name parts in shared
+    // text would mangle everyone else's record to satisfy one person's timer.
+    expect(redactHandlesOnly('Kajal Vishwakarma explained the trade-off well', KAJAL))
+      .toBe('Kajal Vishwakarma explained the trade-off well');
   });
 });

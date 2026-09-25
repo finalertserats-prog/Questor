@@ -33,13 +33,24 @@ export const EMAIL_PLACEHOLDER = '[email]';
 export const PHONE_PLACEHOLDER = '[phone]';
 export const LINK_PLACEHOLDER = '[link]';
 
-/** The identifiers we hold for one candidate, exactly as the Candidate row stores them. */
-export interface KnownIdentity {
-  readonly fullName: string;
+/**
+ * The identifiers that belong to exactly one person. No name.
+ *
+ * Split from `KnownIdentity` so that a function which must not touch names
+ * cannot be handed one. `redactHandlesOnly` takes this, so passing a whole
+ * candidate to it — and quietly reintroducing name matching into text shared
+ * with other people — will not compile.
+ */
+export interface ContactIdentity {
   readonly email: string;
   readonly emailNormalized: string;
   readonly phone: string;
   readonly linkedinUrl: string;
+}
+
+/** The identifiers we hold for one candidate, exactly as the Candidate row stores them. */
+export interface KnownIdentity extends ContactIdentity {
+  readonly fullName: string;
 }
 
 /**
@@ -67,6 +78,27 @@ const PHONE_GAP = String.raw`[\s().+\-]{0,2}`;
  */
 const BEFORE = String.raw`(?<![\p{L}\p{N}_])`;
 const AFTER = String.raw`(?![\p{L}\p{N}_])`;
+
+/**
+ * Shortest profile slug worth matching on its own. Below this it is not
+ * distinctive enough to be safe — a four-letter slug could be a word.
+ */
+export const MIN_SLUG = 6;
+
+/**
+ * The distinctive part of a LinkedIn profile URL, or "" when there is not one
+ * long enough to be safe.
+ *
+ * Shared with services/auditPayloads.ts so both the kept prose and the audit
+ * payloads recognise a profile by the same rule. Matching the stored URL
+ * literally was the original mistake: `http` for `https`, a trailing slash or
+ * a `?utm_source=` on the end and it stops matching, and a candidate who types
+ * the slug on its own into a transcript is not matched at all.
+ */
+export function linkedinSlug(url: string): string {
+  const slug = /linkedin\.com\/in\/([^/?#\s]+)/i.exec(url)?.[1] ?? '';
+  return slug.length >= MIN_SLUG ? slug : '';
+}
 
 const escape = (literal: string): string => literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
@@ -130,6 +162,35 @@ function phoneNeedles(phone: string): readonly Needle[] {
 }
 
 /**
+ * Match the profile by its slug, in every shape it is written in.
+ *
+ * Any scheme, any subdomain, any trailing path or query — and the bare slug on
+ * its own, because "my LinkedIn is priya-sharma-4417" is a sentence people say.
+ * A stored URL with no usable slug falls back to matching the literal string,
+ * which is all there is to go on.
+ */
+function linkedinNeedles(linkedinUrl: string): readonly Needle[] {
+  const url = linkedinUrl.trim();
+  if (!url) return [];
+  const slug = linkedinSlug(url);
+  if (!slug) return [{ pattern: new RegExp(escape(url), 'giu'), replacement: LINK_PLACEHOLDER }];
+  return [
+    // The full URL first, so a link becomes one placeholder rather than a
+    // scheme followed by one.
+    {
+      pattern: new RegExp(String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${escape(slug)}[^\s"'<>)\]]*`, 'giu'),
+      replacement: LINK_PLACEHOLDER,
+    },
+    // Then the slug alone. Hyphens count as part of the token, so a slug is
+    // never matched inside a longer hyphenated string.
+    {
+      pattern: new RegExp(`(?<![\p{L}\p{N}_-])${escape(slug)}(?![\p{L}\p{N}_-])`, 'giu'),
+      replacement: LINK_PLACEHOLDER,
+    },
+  ];
+}
+
+/**
  * Every pattern that removes this candidate, in the order it must be applied.
  *
  * ORDER IS LOAD-BEARING. The address contains the name
@@ -139,18 +200,42 @@ function phoneNeedles(phone: string): readonly Needle[] {
  * structured identifiers go first; the loose name parts go last.
  */
 export function identityNeedles(identity: KnownIdentity): readonly Needle[] {
-  const urls = [identity.linkedinUrl].filter((u) => u.trim().length > 0);
+  return [...handleNeedles(identity), ...nameNeedles(identity.fullName)];
+}
+
+/**
+ * The identifiers that belong to exactly one person: the LinkedIn profile, the
+ * address, the phone number. Everything except the name.
+ *
+ * Separated out because there are places where the name must NOT be redacted —
+ * free text on a row shared by many candidates, where matching a name part
+ * would mangle everybody else's record to satisfy one person's timer ("grace
+ * under pressure" is not a candidate called Grace). A handle has no such
+ * problem: it is unique, so removing it takes nothing from anyone else.
+ */
+export function handleNeedles(identity: ContactIdentity): readonly Needle[] {
   // Both spellings of the address: the stored one and the normalised one may
   // differ in case, and either may be the form that ended up in the text.
   const emails = [...new Set([identity.email, identity.emailNormalized].map((e) => e.trim()).filter(Boolean))]
     .sort((a, b) => b.length - a.length);
 
   return [
-    ...urls.map((url) => ({ pattern: new RegExp(escape(url), 'giu'), replacement: LINK_PLACEHOLDER })),
+    ...linkedinNeedles(identity.linkedinUrl),
     ...emails.map((email) => ({ pattern: new RegExp(escape(email), 'giu'), replacement: EMAIL_PLACEHOLDER })),
     ...phoneNeedles(identity.phone),
-    ...nameNeedles(identity.fullName),
   ];
+}
+
+/**
+ * Remove only the unique handles, leaving the name in place.
+ *
+ * For text that is not this candidate's to rewrite — a calibration theme, an
+ * import batch's record — where taking out an address harms nobody and taking
+ * out a name would.
+ */
+export function redactHandlesOnly(text: string, identity: ContactIdentity): string {
+  if (!text) return text;
+  return handleNeedles(identity).reduce((redacted, n) => redacted.replace(n.pattern, n.replacement), text);
 }
 
 /**

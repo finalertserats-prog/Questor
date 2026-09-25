@@ -58,22 +58,29 @@ describe('the content backstop under erasure', () => {
     expect(after.afterJson).toBe(PAYLOAD_REMOVED);
   });
 
-  it('matches the address however it was capitalised', async () => {
+  it.each([
+    ['all caps', 'PRIYA.SHARMA@EXAMPLE.COM'],
+    ['the mixed case a person actually types', 'Priya.Sharma@Example.com'],
+    ['as stored', 'priya.sharma@example.com'],
+  ])('matches the address written in %s', async (_label, written) => {
     // Prisma's `contains` is case-sensitive on Postgres and `mode:
     // "insensitive"` is unavailable to a client generated for sqlite, so the
-    // spellings are emitted rather than the comparison relaxed.
+    // match is done in SQL with lower() on both sides. Emitting case variants
+    // covered the two ends and missed the middle — which is the spelling a
+    // person actually types at signup, and the exact false negative this net
+    // exists to prevent.
     const ids = await candidateWhoAskedForAnAccommodation();
-    const shouty = await prisma.auditEvent.create({
+    const row = await prisma.auditEvent.create({
       data: {
         tenantId: ids.tenantId, actorId: 'system', actorType: 'system',
         action: 'integration.pushed', entityType: 'SomethingWeNeverListed', entityId: 'external-43',
-        afterJson: JSON.stringify({ to: 'PRIYA.SHARMA@EXAMPLE.COM' }),
+        afterJson: JSON.stringify({ to: written }),
       },
     });
 
     await erase(ids);
 
-    expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: shouty.id } })).afterJson).toBe(PAYLOAD_REMOVED);
+    expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } })).afterJson).toBe(PAYLOAD_REMOVED);
   });
 
   it('leaves another candidate’s history alone, even one with the same name', async () => {
@@ -143,5 +150,77 @@ describe('erasure reports and refuses', () => {
       where: { action: 'accommodation.requested', entityId: ids.sessionId },
     });
     expect(event.afterJson).toMatch(/hearing impairment/);
+  });
+});
+
+/**
+ * Rows shared with other candidates.
+ *
+ * Clearing one would destroy everybody else's record to satisfy one person, so
+ * they are left in place — but a handle belongs to exactly one person, so
+ * taking that out costs nobody anything. An earlier version of this lane said
+ * nothing could be done here, and that was too strong.
+ */
+describe('audit rows that belong to many candidates at once', () => {
+  beforeEach(async () => { await wipe(); });
+
+  async function sharedRow(tenantId: string, afterJson: string) {
+    return prisma.auditEvent.create({
+      data: {
+        tenantId, actorId: 'approver', actorType: 'user',
+        action: 'calibration.anchor_decided', entityType: 'CalibrationAnchorProposal',
+        entityId: 'anchor-1', afterJson,
+      },
+    });
+  }
+
+  it('loses this candidate’s address, phone and profile', async () => {
+    const ids = await candidateWhoAskedForAnAccommodation();
+    await prisma.candidate.update({
+      where: { id: ids.candidateId },
+      data: { phone: '+91 98765 43210', linkedinUrl: 'https://www.linkedin.com/in/priya-sharma-4417' },
+    });
+    const row = await sharedRow(ids.tenantId, JSON.stringify({
+      reason: 'declining: chased priya.sharma@example.com on 9876543210, see linkedin.com/in/priya-sharma-4417',
+    }));
+
+    await erase(ids);
+
+    const after = (await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } })).afterJson;
+    expect(after).toBe(JSON.stringify({ reason: 'declining: chased [email] on [phone], see [link]' }));
+  });
+
+  it('keeps the row, and keeps what it says about everybody else', async () => {
+    const ids = await candidateWhoAskedForAnAccommodation();
+    const row = await sharedRow(ids.tenantId, JSON.stringify({
+      reason: 'applied: three reviewers agreed this anchor describes a strong answer',
+    }));
+
+    await erase(ids);
+
+    const after = await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.afterJson).toBe(row.afterJson);
+  });
+
+  it('leaves the name, because the row is not this candidate’s to edit', async () => {
+    // Catching a name here means matching name parts, and matching name parts
+    // in shared text mangles everyone else's record — "grace under pressure" is
+    // not a candidate called Grace. The residual says so rather than pretending
+    // otherwise.
+    const ids = await candidateWhoAskedForAnAccommodation();
+    const row = await sharedRow(ids.tenantId, JSON.stringify({ reason: 'declining: came from the Priya Sharma interview' }));
+
+    await erase(ids);
+
+    expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } })).afterJson).toBe(row.afterJson);
+  });
+
+  it('reports how many shared rows it touched, separately from the ones it cleared', async () => {
+    const ids = await candidateWhoAskedForAnAccommodation();
+    await sharedRow(ids.tenantId, JSON.stringify({ reason: 'chased priya.sharma@example.com' }));
+
+    const result = await erase(ids);
+
+    expect(result.deleted.sharedAuditHandles).toBe(1);
   });
 });

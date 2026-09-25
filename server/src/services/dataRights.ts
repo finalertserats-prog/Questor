@@ -7,7 +7,7 @@ import { eraseStagedImportRows } from './candidateImport.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredObservations } from './observerRetention.js';
-import { auditableEntityIds, clearAuditPayloads } from './auditPayloads.js';
+import { auditableEntityIds, clearAuditPayloads, redactHandlesFromSharedAuditPayloads } from './auditPayloads.js';
 import { anonymisationEnabled, retentionPostureMessage } from './anonymise.js';
 
 // Candidate data-rights operations.
@@ -321,7 +321,7 @@ export async function eraseCandidate(o: {
     // email and linkedinUrl as well as the normalised address: they are the
     // handles the audit-payload sweep below matches on, and they have to be
     // read before the row is deleted out from under it.
-    select: { id: true, email: true, emailNormalized: true, linkedinUrl: true },
+    select: { id: true, email: true, emailNormalized: true, linkedinUrl: true, phone: true },
   });
   if (!candidate) throw new Error('Candidate not found in this tenant');
 
@@ -375,6 +375,13 @@ export async function eraseCandidate(o: {
         handles: candidate,
         removedBy: 'erasure',
       }),
+    }));
+    // Rows shared with other candidates are not cleared — that would destroy
+    // their record too — but this person's unique handles come out of them,
+    // which costs nobody anything. See auditPayloads.ts for why the name does
+    // not follow.
+    await count('sharedAuditHandles', async () => ({
+      count: await redactHandlesFromSharedAuditPayloads(tx, { tenantId: o.tenantId, contact: candidate }),
     }));
     await deleteSessionCascade(tx, sessionIds, count);
     await deleteProfileCascade(tx, o.candidateId, count);
