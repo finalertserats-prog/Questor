@@ -267,8 +267,16 @@ export interface AnonymiseResult {
  * check in candidateReuse.ts, kept local rather than exported from there so
  * this file does not reach across lanes for two lines.
  */
-const isSerializationFailure = (err: unknown): boolean =>
-  err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+const isSerializationFailure = (err: unknown): boolean => {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError)) return false;
+  // P2034 is Prisma's own write-conflict code. A serialization failure raised
+  // by a RAW statement — which `lockCandidateRecord` is — surfaces as P2010
+  // carrying Postgres's 40001 instead, and the one race the lock exists for is
+  // exactly when that happens. Without this the outcome is still safe (the
+  // hold wins) but the run is recorded as failed and the operator is alerted
+  // for what this file describes as an ordinary skip.
+  return err.code === 'P2034' || (err.code === 'P2010' && /40001|could not serialize/i.test(err.message));
+};
 
 /**
  * One retry. A conflict here means somebody wrote to this candidate's
@@ -331,9 +339,9 @@ export async function runAnonymisationSweep(now = new Date()): Promise<Anonymise
         // a new interview between the selection and here, which restarts their
         // clock, and severing them at that moment would anonymise an interview
         // happening today under a rule about interviews from a year ago. This
-        // one cannot ride on the write below: no portable Prisma filter can
-        // express "anchor + n days", which is why Serializable is doing the
-        // real work for it.
+        // one cannot ride on the write below — no portable Prisma filter can
+        // express "anchor + n days" — so it rests on the lock taken above,
+        // which holds the candidate and their sessions for the transaction.
         // Before anything is read that a hold could change. lockCandidateRecord
         // is a no-op on SQLite, which serialises writers anyway.
         await lockCandidateRecord(tx, candidate.candidateId);
@@ -347,7 +355,9 @@ export async function runAnonymisationSweep(now = new Date()): Promise<Anonymise
 
         // A hold on an AI-observed human round. RoundObservation has no
         // relation back to Candidate, so this cannot be part of the claim's
-        // predicate either, and is a read that Serializable protects.
+        // predicate either. The sweep writes these rows itself, so a hold
+        // arriving concurrently does conflict on them — this is the one place
+        // Serializable genuinely carries the weight.
         if (await tx.roundObservation.count({ where: { candidateId: row.id, legalHold: true } }) > 0) return 'skipped';
 
         // THE GUARD. Everything that can disqualify this candidate and CAN be

@@ -438,7 +438,12 @@ export async function eraseCandidate(o: {
     // shortening the timeout: a slow erasure is survivable, a refused one is
     // the thing ERASURE_TX exists to prevent.
     await count('unownedAuditHandles', async () => ({
-      count: await redactHandlesFromUnownedAuditPayloads(tx, { tenantId: o.tenantId, handles: candidate, ownedEntityIds: auditableIds }),
+      count: await redactHandlesFromUnownedAuditPayloads(tx, {
+        tenantId: o.tenantId, handles: candidate, ownedEntityIds: auditableIds,
+        // See anonymiseCascade.ts: only the ids that can link this person to a
+        // row that still has a name.
+        references: [o.candidateId, ...sessionIds],
+      }),
     }));
   }, ERASURE_TX);
 

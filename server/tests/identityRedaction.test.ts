@@ -152,6 +152,65 @@ describe('redacting only the unique handles, for text that is not one candidate�
   });
 });
 
+/**
+ * The rule that has now been broken twice, held generically.
+ *
+ * A handle may only be removed from a row this candidate does not own if it
+ * identifies exactly one person. A needle without boundaries does not: it
+ * matches every longer string that merely starts or ends with the handle, so
+ * `…/priya-sharma-44179` and `apriya.sharma@corp.com` — other people — were
+ * being rewritten out of records belonging to them.
+ *
+ * It was fixed on the address needle and not on the LinkedIn one, because the
+ * test covered a case rather than the rule. This iterates every value a
+ * `UniqueHandles` carries, so a needle built from a field added later is
+ * covered without anyone remembering to extend this, and a needle added
+ * without boundaries fails here rather than in somebody's audit log.
+ */
+describe('no needle used on an unowned row eats a longer string', () => {
+  const handles = { email: KAJAL.email, emailNormalized: KAJAL.emailNormalized, linkedinUrl: KAJAL.linkedinUrl };
+  const slug = 'kajal-vishwakarma-8821';
+
+  // A SUFFIX makes a different identifier of every kind: a longer address, a
+  // longer slug, a longer profile path. A PREFIX only does so for the ones
+  // that are not self-delimiting — putting a letter in front of a full URL
+  // leaves this candidate's URL sitting inside it, and redacting that is
+  // correct rather than a boundary failure.
+  const longer = (value: string) => [`${value}9`, `${value}-archive`];
+  const different = (value: string) => [...longer(value), `x${value}`];
+
+  it.each([
+    ...different(handles.email),
+    ...different(handles.emailNormalized),
+    ...different(slug),
+    ...longer(handles.linkedinUrl),
+  ])('leaves %j alone', (text) => {
+    expect(redactUniqueHandles(text, handles)).toBe(text);
+  });
+
+  it('still removes the handle when it stands on its own', () => {
+    // The control: without this, a needle that matched nothing at all would
+    // sail through every assertion above.
+    expect(redactUniqueHandles(`write to ${KAJAL.email} or see ${KAJAL.linkedinUrl}`, handles))
+      .toBe(`write to ${EMAIL_PLACEHOLDER} or see ${LINK_PLACEHOLDER}`);
+  });
+
+  it('does not strip a plus-tag on somebody else’s row, because that is a different mailbox', () => {
+    // normalizeEmail is trim-and-lower only, so priya.sharma+2@ IS a different
+    // candidate in this product — the fixtures model exactly that. Stripping
+    // the tag here would redact a live person's address.
+    const tagged = { email: 'kajal+jobs@example.com', emailNormalized: 'kajal+jobs@example.com', linkedinUrl: '' };
+    expect(redactUniqueHandles('kajal@example.com is someone else', tagged))
+      .toBe('kajal@example.com is someone else');
+  });
+
+  it('does not strip accents on somebody else’s row either', () => {
+    const accented = { email: 'jos\u00e9@corp.com', emailNormalized: 'jos\u00e9@corp.com', linkedinUrl: '' };
+    expect(redactUniqueHandles('jose@corp.com is someone else', accented))
+      .toBe('jose@corp.com is someone else');
+  });
+});
+
 describe('spellings that mean the same thing', () => {
   it('matches a percent-encoded profile against the one a browser shows', () => {
     const encoded = { ...KAJAL, linkedinUrl: 'https://www.linkedin.com/in/kajal%2Dvishwakarma-8821' };

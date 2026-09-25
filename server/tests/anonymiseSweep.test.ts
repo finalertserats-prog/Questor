@@ -337,8 +337,8 @@ describe('the record of an anonymisation', () => {
 /**
  * The test this lane exists for.
  *
- * Every other test here checks a place we remembered. This one checks the
- * places we did not: it walks every model in the schema, reads every row, and
+ * Every other test here checks a place we remembered. This one walks every
+ * model in the schema, reads every row, and
  * looks at every string it finds for any spelling of the person. A leak in a
  * column nobody thought about is exactly how "anonymised" quietly becomes
  * "pseudonymised", and it is not something a hand-written list of tables can
@@ -429,9 +429,13 @@ describe('irreversibility', () => {
  * Re-reading the hold inside the transaction narrows the window between check
  * and delete; it does not close it, because the read still happens before the
  * writes and nothing stops an administrator committing a hold in between. The
- * predicate therefore rides on a WRITE — the claim — so the database decides,
- * and the sweep runs Serializable so a hold committed after the claim aborts
- * the transaction rather than losing to it.
+ * predicate therefore rides on a WRITE — the claim — so the database decides.
+ *
+ * What closes the remaining window is a ROW LOCK, not Serializable. This
+ * docblock used to say a hold committed after the claim aborted the
+ * transaction; it does not, because SSI only binds transactions that are
+ * themselves serializable and an administrator placing a hold runs an ordinary
+ * read-committed update. See lockCandidateRecord.
  */
 describe('claiming a candidate', () => {
   beforeEach(async () => { await wipe(); });

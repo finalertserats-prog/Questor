@@ -484,6 +484,12 @@ export async function anonymiseCandidateData(
     tenantId: o.tenantId,
     handles: o.identity,
     ownedEntityIds: history,
+    // Only the two ids that can LINK this person to a named row: the candidate
+    // and their sessions. An assessment or award id in somebody else's payload
+    // leads to rows that are themselves anonymised, so removing it would cost a
+    // shared record its provenance and buy no severance — and every id added
+    // here is another full scan inside the transaction.
+    references: [o.candidateId, ...o.sessionIds],
   }));
 
   // The identity columns go last. `anonymisedAt` is already set — the claim set

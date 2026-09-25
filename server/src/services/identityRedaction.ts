@@ -198,11 +198,23 @@ interface Needle {
  * over-redacts, and only where the cost lands inside this person's own record.
  * It is not used on text shared with other candidates; see `UniqueHandles`.
  */
+function encodings(value: string): readonly string[] {
+  return [...new Set([value.normalize('NFC'), value.normalize('NFD')].filter((v) => v.trim().length > 0))];
+}
+
+/**
+ * The encodings PLUS the accent-stripped form.
+ *
+ * `jose` for `josé` is a different string that usually means the same person,
+ * which is a guess — a good one inside that person's own record, where
+ * over-redaction costs only them, and not one to make anywhere else. The
+ * docblock above used to claim this was never used on shared text while
+ * `emailNeedles` flat-mapped it into the unowned set; that is now true rather
+ * than asserted, because the unowned builders take `encodings` instead.
+ */
 function spellings(value: string): readonly string[] {
-  const nfc = value.normalize('NFC');
-  const nfd = value.normalize('NFD');
-  const stripped = nfd.replace(/\p{M}+/gu, '');
-  return [...new Set([nfc, nfd, stripped].filter((v) => v.trim().length > 0))];
+  const stripped = value.normalize('NFD').replace(/\p{M}+/gu, '');
+  return [...new Set([...encodings(value), stripped].filter((v) => v.trim().length > 0))];
 }
 
 /** One part of a name, matching whichever way it was encoded. */
@@ -282,19 +294,34 @@ function linkedinNeedles(linkedinUrl: string): readonly Needle[] {
   const url = linkedinUrl.trim();
   if (!url) return [];
   const slug = readableSlug(url);
-  if (!slug) return [{ pattern: new RegExp(escape(url), 'giu'), replacement: LINK_PLACEHOLDER }];
+  // No usable slug — a path with no `/in/`, or one too short to be
+  // distinctive. `normalizeLinkedinUrl` accepts any linkedin.com path, so a
+  // bare `https://www.linkedin.com/` is storable, and an unbounded literal
+  // would then prefix-match every LinkedIn link in a row it was selected into.
+  if (!slug) {
+    return [{ pattern: new RegExp(`${escape(url)}${URL_TAIL}`, 'giu'), replacement: LINK_PLACEHOLDER }];
+  }
   const body = slugPattern(slug);
 
   return [
     // The full URL first, so a link becomes one placeholder rather than a
     // scheme followed by one.
+    //
+    // BOUNDED AT BOTH ENDS. The trailing `[^\s"'<>)\]]*` used to swallow
+    // whatever followed the slug, so `…/priya-sharma-44179` and
+    // `…/priya-sharma-4417-archive` — other people — matched this candidate.
+    // That ran against rows belonging to somebody else, which is the one place
+    // the rule says a handle may only be removed if it belongs to exactly one
+    // person. The leading guard stops `mylinkedin.com/in/…` matching too.
     {
-      pattern: new RegExp(String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${body}[^\s"'<>)\]]*`, 'giu'),
+      pattern: new RegExp(
+        String.raw`(?<![\w@.-])(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${body}(?![\p{L}\p{N}_-])(?:[/?#][^\s"'<>)\]]*)?`,
+        'giu',
+      ),
       replacement: LINK_PLACEHOLDER,
     },
     // Then the slug alone, because "my LinkedIn is priya-sharma-4417" is a
-    // sentence people say. Hyphens count as part of the token, so a slug is
-    // never matched inside a longer hyphenated string.
+    // sentence people say.
     {
       pattern: new RegExp(`(?<![\\p{L}\\p{N}_@-])${body}(?![\\p{L}\\p{N}_@-])`, 'giu'),
       replacement: LINK_PLACEHOLDER,
@@ -322,6 +349,10 @@ export function identityNeedles(identity: KnownIdentity): readonly Needle[] {
  * not as a SUBSTRING, which is the whole reason these guards exist.
  */
 const ADDRESS_CHAR = String.raw`A-Za-z0-9._%+@-`;
+/** The same, minus the dot, which the trailing guard handles on its own. */
+const ADDRESS_TAIL = String.raw`A-Za-z0-9_%+@-`;
+/** Nothing may follow a matched URL that could have continued it. */
+const URL_TAIL = String.raw`(?![\p{L}\p{N}_/-])`;
 
 /**
  * Every address needle, bounded so it cannot eat somebody else's.
@@ -345,17 +376,56 @@ const ADDRESS_CHAR = String.raw`A-Za-z0-9._%+@-`;
  * is Gmail-specific, and at most providers it is a different mailbox
  * belonging to a different person. See the residual.
  */
-function emailNeedles(addresses: readonly string[]): readonly Needle[] {
+function addressNeedle(email: string, o: { readonly domainMayContinue: boolean }): Needle {
+  // A trailing dot is ambiguous: `a@b.com.` ends a sentence and `a@b.com.au`
+  // continues a domain, and only case distinguishes them, which is too weak to
+  // rely on. So the ambiguity is resolved by AUDIENCE rather than by guessing.
+  // On the candidate's own record the dot is allowed to end the match, which
+  // over-redacts `a@b.com.au` and costs only them. On somebody else's row it
+  // is not, which under-redacts rather than rewriting an address that is not
+  // this candidate's.
+  const guard = o.domainMayContinue ? String.raw`(?!\.[A-Za-z0-9])` : '';
+  return {
+    pattern: new RegExp(`(?<![${ADDRESS_CHAR}])${escape(email)}(?![${ADDRESS_TAIL}])${guard}`, 'giu'),
+    replacement: EMAIL_PLACEHOLDER,
+  };
+}
+
+const byLongest = (a: string, b: string) => b.length - a.length;
+
+/**
+ * Addresses to remove from the candidate's OWN record, where a guess that
+ * costs them a little is better than leaving them in data kept for ever.
+ *
+ * The plus-tag is stripped: `priya.sharma+jobs@x.com` and `priya.sharma@x.com`
+ * are one mailbox wherever plus-addressing exists, and the untagged form is
+ * the one a person says out loud.
+ */
+function ownAddressNeedles(addresses: readonly string[]): readonly Needle[] {
   const bases = addresses.map((a) => a.trim()).filter(Boolean);
   const untagged = bases.map((a) => a.replace(/\+[^@]*(?=@)/, ''));
-  const all = [...new Set([...bases, ...untagged].flatMap(spellings))]
+  return [...new Set([...bases, ...untagged].flatMap(spellings))]
     .filter((a) => a.includes('@'))
-    .sort((a, b) => b.length - a.length);
+    .sort(byLongest)
+    .map((email) => addressNeedle(email, { domainMayContinue: false }));
+}
 
-  return all.map((email) => ({
-    pattern: new RegExp(`(?<![${ADDRESS_CHAR}])${escape(email)}(?![${ADDRESS_CHAR.replace('.', '')}])(?!\\.[A-Za-z0-9])`, 'giu'),
-    replacement: EMAIL_PLACEHOLDER,
-  }));
+/**
+ * Addresses to remove from a row this candidate does not own.
+ *
+ * EXACTLY WHAT IS STORED, in its two encodings and nothing else. No plus-strip
+ * and no accent-strip, because both are guesses that name a DIFFERENT mailbox,
+ * and on a row belonging to somebody else a wrong guess rewrites a live
+ * person's address. Questor's own model agrees: `normalizeEmail` is trim and
+ * lower-case only, so `priya.sharma+2@example.com` is a different candidate —
+ * the test fixtures model exactly that — and stripping the tag would have
+ * redacted the untagged address of a person still in process.
+ */
+function uniqueAddressNeedles(addresses: readonly string[]): readonly Needle[] {
+  return [...new Set(addresses.map((a) => a.trim()).filter(Boolean).flatMap(encodings))]
+    .filter((a) => a.includes('@'))
+    .sort(byLongest)
+    .map((email) => addressNeedle(email, { domainMayContinue: true }));
 }
 
 /**
@@ -371,7 +441,7 @@ function emailNeedles(addresses: readonly string[]): readonly Needle[] {
 export function uniqueHandleNeedles(handles: UniqueHandles): readonly Needle[] {
   return [
     ...linkedinNeedles(handles.linkedinUrl),
-    ...emailNeedles([handles.email, handles.emailNormalized]),
+    ...uniqueAddressNeedles([handles.email, handles.emailNormalized]),
   ];
 }
 
@@ -435,7 +505,7 @@ export function handleNeedles(identity: ContactIdentity): readonly Needle[] {
   // differ in case, and either may be the form that ended up in the text.
   return [
     ...linkedinNeedles(identity.linkedinUrl),
-    ...emailNeedles([identity.email, identity.emailNormalized]),
+    ...ownAddressNeedles([identity.email, identity.emailNormalized]),
     ...phoneNeedles(identity.phone),
   ];
 }

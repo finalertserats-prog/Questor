@@ -28,6 +28,15 @@ import { redactReferences, redactUniqueHandles, slugSpellingsForSearch, type Uni
  * corroborating detail, and for a person who has asked to be erased it is
  * detail we have no right to keep.
  *
+ * ONE CONSEQUENCE WORTH KNOWING: anything that reads state back OUT of an
+ * audit payload stops working for a cleared row. `routes/assessments.ts` finds
+ * a prior review by matching its id inside `afterJson`, so a retried submit on
+ * an anonymised candidate would write a second decision row rather than
+ * recognising the first. Reachable only through anonymisation — erasure
+ * deletes the assessment — and only for an interview a year past its decision.
+ * The answer is for that check to read a column rather than a log, not for
+ * this to keep the payload.
+ *
  * Removal rather than redaction, deliberately. Redaction can only remove the
  * identifiers we hold and can pattern-match; these payloads carry things we do
  * not hold — the accommodation prose most sharply — and an action audited for
@@ -330,9 +339,11 @@ export async function redactHandlesFromUnownedAuditPayloads(
     readonly handles: UniqueHandles;
     /** Rows already cleared by ownership, which must not be redacted on top. */
     readonly ownedEntityIds: readonly string[];
+    /** The ids whose presence in someone else's row is a link back to a name. */
+    readonly references: readonly string[];
   },
 ): Promise<number> {
-  const matched = await auditIdsMatchingHandles(tx, o.tenantId, contentNeedles(o.handles, o.ownedEntityIds));
+  const matched = await auditIdsMatchingHandles(tx, o.tenantId, contentNeedles(o.handles, o.references));
   if (matched.length === 0) return 0;
 
   // Only rows the content net found. With the phone out of `UniqueHandles`
@@ -350,8 +361,8 @@ export async function redactHandlesFromUnownedAuditPayloads(
 
   let changed = 0;
   for (const row of rows) {
-    const beforeJson = redactReferences(redactUniqueHandles(row.beforeJson, o.handles), o.ownedEntityIds);
-    const afterJson = redactReferences(redactUniqueHandles(row.afterJson, o.handles), o.ownedEntityIds);
+    const beforeJson = redactReferences(redactUniqueHandles(row.beforeJson, o.handles), o.references);
+    const afterJson = redactReferences(redactUniqueHandles(row.afterJson, o.handles), o.references);
     if (beforeJson === row.beforeJson && afterJson === row.afterJson) continue;
     await tx.auditEvent.update({ where: { id: row.id }, data: { beforeJson, afterJson } });
     changed += 1;
