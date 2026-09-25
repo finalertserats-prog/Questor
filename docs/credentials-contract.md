@@ -58,6 +58,20 @@ model CandidateAward {
   /// certificate states what was true when it was struck, and re-reading the
   /// database later would silently rewrite history. Same reasoning as
   /// CandidateFeedbackEmail.optInAsked.
+  /// VERSIONED, and the version describes the CONTENT, not the era. Version 1
+  /// is the rows alone; version 2 is the rows plus everything a certificate
+  /// prints — the candidate's name and the role's title frozen at strike time,
+  /// and the two signature blocks. A tier that prints no certificate is a
+  /// version-1 record by nature rather than by age, which is why Diamond is
+  /// written as version 1 today: freezing a name onto a record nothing renders
+  /// would store personal data for nothing to read.
+  ///
+  /// The two shapes are deliberately mutually exclusive — a record carrying
+  /// everything a current one has, wearing version 1, must not parse as the
+  /// older shape and silently drop the name it was holding. That is the defect
+  /// this versioning exists to prevent, and it is the defect that shipped:
+  /// before 2026-09-25 the writer stored one shape and the reader demanded
+  /// another, so every certificate export and send answered 500.
   evidenceJson    String
   sentToCandidateAt DateTime?
   sentByUserId    String?
@@ -160,8 +174,19 @@ text — searchable, selectable, screen-reader legible. Never a screenshot.
 - Structure is identical across Bronze, Silver and Gold: header, kicker, name,
   rule, claim line with `*`, **exactly five evidence rows**, **two signature
   blocks** flanking the seal, footnote. Bronze's left signature reads
-  "Questor — Assessed by · scorecard v4, no human review", which is how the
-  absence of a person stays visible.
+  "Assessed by · scorecard v\<N\>, no human review", which is how the absence
+  of a person stays visible. `\<N\>` is the version of the scorecard the CV was
+  actually read against, taken from the fit — never a fixed number. This doc
+  said "v4" for months while the writer had always built it from the stored
+  version; the first certificate ever issued in production read v5. When
+  Questor holds no version at all it reads "Assessed by · approved scorecard,
+  no human review" rather than inventing one.
+- The right-hand block reads **"Recorded by · the hiring team"**. Recorded,
+  never assessed: Bronze's `awardedByUserId` is null because nobody assessed
+  it, and somebody did put the application into Questor, so naming what they
+  actually did claims nothing about a reading that never happened. The design
+  mockup at `docs/design/questor-credentials.html` still says "talent lead";
+  the product does not, and the product is right.
 
 **Sending is an admin action.** `POST .../certificate/send` requires a user who
 may administer the tenant. It is never automatic, never on the journey row, and
