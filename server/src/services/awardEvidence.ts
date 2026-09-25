@@ -160,7 +160,7 @@ export const CURRENT_EVIDENCE_VERSION = 2;
  * Flatly strict here was the first attempt and it is a trap. Any genuine
  * version-1 row that had picked up a field of its own would stop parsing as
  * legacy and start parsing as CORRUPT — skipped by the sweep, uncounted by
- * `countLegacy`, and refused by the export for ever, with nothing anywhere
+ * `countOutstanding`, and refused by the export for ever, with nothing anywhere
  * saying why. Permanent and invisible is the worst pair.
  *
  * So the guard is aimed at what it is actually for. The recurrence this must
@@ -168,6 +168,18 @@ export const CURRENT_EVIDENCE_VERSION = 2;
  * record current-shaped is precisely these three fields. Naming them keeps
  * that guard exactly as strong while an unrelated extra is tolerated and
  * simply dropped when the record is rewritten.
+ *
+ * ---- The five rows, and the one version-1 record that does not have them
+ *
+ * This demands five rows because it exists to serve the certificate path, and
+ * five is the frame. Diamond is also a version-1 record and holds two, so it
+ * would be read as corrupt here rather than as old.
+ *
+ * That is safe because nothing hands a Diamond record to this: the export and
+ * the send both refuse Diamond before parsing anything, and the backfill only
+ * ever reads awards whose tier carries a certificate. It is safe by that
+ * gating and by nothing else, so this is the line that breaks the day a
+ * caller parses an award without first asking whether its tier prints one.
  */
 const CURRENT_ONLY_FIELDS = ['candidateName', 'roleTitle', 'signatures'] as const;
 

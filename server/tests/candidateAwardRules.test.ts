@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   AWARD_TIERS, awardsForPromotion, formatReference, referenceBlocks,
   awardEvidence, serialiseEvidence, upgradeLegacyEvidence, unearnedReason, tierCode, journeyTiers, awardHeadline,
-  type AwardFacts, type LegacyStoredEvidence,
+  type AwardFacts, type RowsOnlyEvidence,
 } from '../src/domain/candidateAwards.js';
 import {
   awardEvidenceSchema, CERTIFICATE_TIERS, CURRENT_EVIDENCE_VERSION, legacyAwardEvidenceSchema,
@@ -314,7 +314,7 @@ describe('the writer and the reader, held against each other', () => {
  * a schema that can render it.
  */
 describe('telling one stored version from another', () => {
-  const legacyOf = (tier: 'bronze' | 'silver' | 'gold'): LegacyStoredEvidence => ({
+  const legacyOf = (tier: 'bronze' | 'silver' | 'gold'): RowsOnlyEvidence => ({
     version: 1,
     rows: awardEvidence(tier, facts).map((row) => ({ what: row.what, when: row.when ? row.when.toISOString() : null })),
   });
@@ -323,6 +323,41 @@ describe('telling one stored version from another', () => {
     const written = JSON.parse(serialiseEvidence('silver', facts)) as { version: number };
 
     expect(written.version).toBe(CURRENT_EVIDENCE_VERSION);
+  });
+
+  /**
+   * Diamond prints no certificate, so nothing will ever read a name out of its
+   * record — and a name held for nothing to print is personal data stored for
+   * no purpose. The backfill already refuses to add one; the writer must not
+   * put one there either, or the two would be undoing each other.
+   *
+   * This is the regression test for a slip that did exactly that: the writer
+   * returned the certificate shape for every tier, so a Gold → Diamond
+   * promotion froze a person's name onto a record nothing renders.
+   */
+  it('writes no candidate name onto a Diamond, which prints nothing', () => {
+    const written = JSON.parse(serialiseEvidence('diamond', facts)) as Record<string, unknown>;
+
+    expect([
+      written.version,
+      'candidateName' in written,
+      'roleTitle' in written,
+      'signatures' in written,
+    ]).toEqual([1, false, false, false]);
+  });
+
+  it('puts nothing of the person into a Diamond record at all', () => {
+    // Belt to the braces above: the rows themselves name the person who made
+    // the move, never the candidate, so the whole record can be searched.
+    const written = serialiseEvidence('diamond', facts);
+
+    expect(written).not.toContain(facts.candidateName);
+  });
+
+  it('still gives Diamond the rows its journey row reads', () => {
+    const written = JSON.parse(serialiseEvidence('diamond', facts)) as { rows: unknown[] };
+
+    expect(written.rows.length).toBeGreaterThan(0);
   });
 
   it('will not read a version 1 record as a current one', () => {
@@ -408,7 +443,7 @@ describe('telling one stored version from another', () => {
  * What an award struck before the name was frozen can honestly be turned into.
  */
 describe('upgrading a record struck before this shape existed', () => {
-  const legacy: LegacyStoredEvidence = {
+  const legacy: RowsOnlyEvidence = {
     version: 1,
     rows: awardEvidence('silver', facts).map((row) => ({ what: row.what, when: row.when ? row.when.toISOString() : null })),
   };
@@ -436,7 +471,7 @@ describe('upgrading a record struck before this shape existed', () => {
     // The old writer stored `what` as it came. A control character in one
     // would be refused by the reader, so the upgrade — which is a write — is
     // where it gets taken out.
-    const dirty: LegacyStoredEvidence = { version: 1, rows: legacy.rows.map((row, index) => (index === 0 ? { ...row, what: 'Progressed by\r\nBcc: someone@elsewhere.test' } : row)) };
+    const dirty: RowsOnlyEvidence = { version: 1, rows: legacy.rows.map((row, index) => (index === 0 ? { ...row, what: 'Progressed by\r\nBcc: someone@elsewhere.test' } : row)) };
 
     const result = upgradeLegacyEvidence({ legacy: dirty, candidateName: 'Priya Sharma', roleTitle: 'A Role' });
 

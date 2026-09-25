@@ -2,7 +2,7 @@ import { prisma } from '../db.js';
 import { logAuditIn } from './audit.js';
 import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
-import { upgradeLegacyEvidence, type LegacyStoredEvidence } from '../domain/candidateAwards.js';
+import { upgradeLegacyEvidence, type RowsOnlyEvidence } from '../domain/candidateAwards.js';
 import { CERTIFICATE_TIERS, parseAwardEvidence, parseStoredEvidence } from './awardEvidence.js';
 
 /**
@@ -45,6 +45,11 @@ import { CERTIFICATE_TIERS, parseAwardEvidence, parseStoredEvidence } from './aw
  * candidate's name onto a record that will never print one — which is
  * personal data stored for no purpose, and the argument for freezing a name
  * at all is that a certificate needs it.
+ *
+ * The writer agrees, and has to: `buildEvidence` returns the rows-only shape
+ * for Diamond for the same reason. It briefly did not, and the two halves
+ * then contradicted each other — every promotion into Diamond froze a name
+ * that this sweep exists to decline to add.
  */
 
 /** Read in pages so a large tenant is never loaded at once. */
@@ -70,7 +75,7 @@ const PAGE = 200;
  */
 const UPGRADE_TX = { timeout: 30_000, maxWait: 15_000 } as const;
 
-/** Hourly, and it stops itself once there is nothing left — see `startAwardEvidenceBackfill`. */
+/** Hourly, and it keeps running — see `startAwardEvidenceBackfill` for why it does not stop. */
 export const AWARD_EVIDENCE_BACKFILL_EVERY_MS = 60 * 60_000;
 
 export interface BackfillResult {
@@ -132,7 +137,7 @@ export async function backfillLegacyAwardEvidence(): Promise<BackfillResult> {
     if (page.length < PAGE) break;
   }
 
-  return { upgraded, overtaken, failed, remaining: await countLegacy() };
+  return { upgraded, overtaken, failed, remaining: await countOutstanding() };
 }
 
 /**
@@ -141,7 +146,7 @@ export async function backfillLegacyAwardEvidence(): Promise<BackfillResult> {
  * version is left where it is: it is corrupt rather than old, and a migration
  * is not the place to decide what to do about that.
  */
-function legacyRecordOf(award: LegacyAward): LegacyStoredEvidence | null {
+function legacyRecordOf(award: LegacyAward): RowsOnlyEvidence | null {
   try {
     const stored = parseStoredEvidence(award.id, award.evidenceJson);
     return stored.kind === 'legacy' ? stored.legacy : null;
@@ -178,7 +183,7 @@ type Outcome = 'upgraded' | 'overtaken' | 'failed';
 
 async function settle(
   award: LegacyAward,
-  legacy: LegacyStoredEvidence,
+  legacy: RowsOnlyEvidence,
   names: Awaited<ReturnType<typeof resolveNames>>,
 ): Promise<Outcome> {
   try {
@@ -246,18 +251,37 @@ async function settle(
   }
 }
 
-async function countLegacy(): Promise<number> {
-  const awards = await prisma.candidateAward.findMany({
-    where: { tier: { in: [...CERTIFICATE_TIERS] } },
-    select: { id: true, evidenceJson: true },
-  });
-  return awards.filter((award) => {
-    try {
-      return parseStoredEvidence(award.id, award.evidenceJson).kind === 'legacy';
-    } catch {
-      return false;
+/**
+ * Paged like the sweep itself. This runs on every pass, including the many
+ * passes after the last record has been migrated, so it must not be the thing
+ * that loads a whole table into memory once an hour for ever.
+ */
+async function countOutstanding(): Promise<number> {
+  let outstanding = 0;
+  let cursor: string | undefined;
+
+  for (;;) {
+    const page = await prisma.candidateAward.findMany({
+      where: { tier: { in: [...CERTIFICATE_TIERS] } },
+      orderBy: { id: 'asc' },
+      take: PAGE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      select: { id: true, evidenceJson: true },
+    });
+    if (page.length === 0) break;
+    cursor = page[page.length - 1].id;
+
+    for (const award of page) {
+      try {
+        if (parseStoredEvidence(award.id, award.evidenceJson).kind === 'legacy') outstanding += 1;
+      } catch {
+        // Neither version. Corrupt rather than outstanding, and counting it
+        // would have the sweep for ever reporting work it can never do.
+      }
     }
-  }).length;
+    if (page.length < PAGE) break;
+  }
+  return outstanding;
 }
 
 export function backfillRunNote(result: BackfillResult): string {
@@ -265,42 +289,33 @@ export function backfillRunNote(result: BackfillResult): string {
 }
 
 /**
- * A one-shot migration wearing a job's clothes.
+ * A migration, run as a sweep that keeps running.
  *
- * It runs at startup rather than on a delay, because until it finishes every
- * certificate for an existing award is refused, and it takes itself off the
- * schedule the moment nothing is outstanding. It stays on the schedule while
- * anything has failed, so a transient database fault is retried rather than
- * needing somebody to notice.
+ * It runs at startup rather than on a delay, because until it has finished,
+ * every certificate for an award struck before the record held a name is
+ * refused.
+ *
+ * It does NOT take itself off the schedule when it finds nothing outstanding.
+ * An earlier version did, and that quietly made the sweep correct only while
+ * exactly one build of Questor was ever running: a new instance sweeps clean
+ * and unschedules, an older instance still serving traffic writes another
+ * version-1 record, and nothing is left to upgrade it — so its certificate is
+ * refused until somebody restarts the process. Today's deploy restarts a
+ * single process rather than overlapping two, so the sequence cannot occur;
+ * but that is a fact about `scripts/deploy.sh`, not about this file, and code
+ * should not rest on a deployment topology that is nowhere stated beside it.
+ *
+ * The cost of not unscheduling is one paged scan an hour over the awards that
+ * carry certificates, which is what the other sweeps in this service cost and
+ * far less than the class of bug it removes. It also makes the sweep
+ * self-healing for any other way a version-1 record could appear — a
+ * restored backup, a rolled-back build.
  */
 export function startAwardEvidenceBackfill(intervalMs = AWARD_EVIDENCE_BACKFILL_EVERY_MS): () => void {
-  let unschedule: (() => void) | null = null;
-  let done = false;
-
-  unschedule = startJob({
+  return startJob({
     name: 'award-evidence-backfill',
     intervalMs,
     ttlMs: 10 * 60_000,
-    fn: async () => {
-      // `unschedule` is assigned before the first tick can reach here, because
-      // taking the run's lease is asynchronous. Re-checked anyway so that a
-      // finished sweep always ends up off the schedule rather than relying on
-      // that ordering.
-      if (done) {
-        unschedule?.();
-        return 'nothing left to bring up to date';
-      }
-      const result = await backfillLegacyAwardEvidence();
-      if (result.remaining === 0) {
-        done = true;
-        unschedule?.();
-      }
-      return backfillRunNote(result);
-    },
+    fn: async () => backfillRunNote(await backfillLegacyAwardEvidence()),
   });
-
-  return () => {
-    done = true;
-    unschedule?.();
-  };
 }

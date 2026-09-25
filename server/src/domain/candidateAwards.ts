@@ -43,8 +43,19 @@ export const TIER_LABELS: Readonly<Record<AwardTier, string>> = {
   bronze: 'Bronze', silver: 'Silver', gold: 'Gold', diamond: 'Diamond',
 };
 
-/** Diamond records what an employer decided, which is theirs to announce; the other three record what a candidate did. */
-export function tierHasCertificate(tier: AwardTier): boolean {
+/** The three tiers whose award is printed on paper. */
+export type CertificateAwardTier = Exclude<AwardTier, 'diamond'>;
+
+/**
+ * Diamond records what an employer decided, which is theirs to announce; the
+ * other three record what a candidate did.
+ *
+ * A type guard rather than a plain boolean, so that everything which exists
+ * only because a certificate is printed — the candidate's name, the role's
+ * title, the two signatures — is unreachable for Diamond by construction
+ * instead of by everyone remembering.
+ */
+export function tierHasCertificate(tier: AwardTier): tier is CertificateAwardTier {
   return tier !== 'diamond';
 }
 
@@ -378,7 +389,7 @@ const UNATTRIBUTED = 'Questor';
 const ASSESSED_BY_SME = 'Assessed by · subject-matter expert';
 const RECORDED_BY_TEAM = 'Recorded by · the hiring team';
 
-function assessorOf(tier: AwardTier, facts: AwardFacts): AwardSignature {
+function assessorOf(tier: CertificateAwardTier, facts: AwardFacts): AwardSignature {
   switch (tier) {
     case 'bronze': {
       const version = facts.profile?.scorecardVersion ?? null;
@@ -405,11 +416,6 @@ function assessorOf(tier: AwardTier, facts: AwardFacts): AwardSignature {
         ? { name: first, role: ASSESSED_BY_SME }
         : { name: UNATTRIBUTED, role: 'Assessed by · no interview round on record' };
     }
-    case 'diamond':
-      // Diamond records what the hiring team decided, not an assessment, and
-      // carries no certificate to print this on. It is written anyway so that
-      // every award row holds the same shape.
-      return { name: UNATTRIBUTED, role: 'Assessed by · no assessment at this tier' };
     default: {
       const unreachable: never = tier;
       throw new Error(`Unknown award tier: ${String(unreachable)}`);
@@ -461,8 +467,20 @@ export interface StoredEvidence {
   readonly signatures: AwardSignatures;
 }
 
-/** Version 1, kept as a type because the upgrade has to read one. */
-export interface LegacyStoredEvidence {
+/**
+ * Version 1: the rows, and nothing saying whose record they are.
+ *
+ * Not only a shape from the past, which is why it is not called a legacy one.
+ * The version describes the CONTENT rather than the era — version 1 is the
+ * rows alone, version 2 is the rows plus everything a certificate prints — so
+ * a tier that prints no certificate is a version-1 record by nature rather
+ * than by age.
+ *
+ * Two kinds of record hold it, and the distinction matters when reading the
+ * backfill: awards struck before a certificate's record carried a name, which
+ * are migrated, and Diamond, which is not and never will be.
+ */
+export interface RowsOnlyEvidence {
   readonly version: 1;
   readonly rows: readonly StoredEvidenceRow[];
 }
@@ -503,7 +521,7 @@ const MAX = { name: 120, signatureRole: 160, person: 200, row: 400 } as const;
 const NAME_ABSENT = 'Name not on record';
 const ROLE_ABSENT = 'Role not on record';
 
-function signaturesFor(tier: AwardTier, facts: AwardFacts): AwardSignatures {
+function signaturesFor(tier: CertificateAwardTier, facts: AwardFacts): AwardSignatures {
   const clean = (signature: AwardSignature): AwardSignature => ({
     name: printable(signature.name, MAX.name, UNATTRIBUTED),
     role: printable(signature.role, MAX.signatureRole, RECORDED_BY_TEAM),
@@ -519,15 +537,26 @@ function signaturesFor(tier: AwardTier, facts: AwardFacts): AwardSignatures {
  * assemble a partial record: a caller cannot write rows and forget the name,
  * which is exactly how the two halves of this contract drifted apart.
  */
-export function buildEvidence(tier: AwardTier, facts: AwardFacts): StoredEvidence {
+export function buildEvidence(tier: AwardTier, facts: AwardFacts): StoredEvidence | RowsOnlyEvidence {
+  const rows = awardEvidence(tier, facts).map((row) => ({
+    what: printable(row.what, MAX.row, 'Not on record'),
+    when: row.when ? row.when.toISOString() : null,
+  }));
+
+  // Diamond keeps the rows and nothing else. Nothing renders its record — it
+  // carries no certificate, and the journey reads only the rows — so a name
+  // frozen here would be personal data stored for nothing to print, which is
+  // the one thing that cannot be justified by the argument for freezing a name
+  // at all. `awardEvidenceBackfill.ts` refuses to add one for the same reason;
+  // writing one here would have had the writer doing hourly what the sweep
+  // exists to decline.
+  if (!tierHasCertificate(tier)) return { version: 1, rows };
+
   return {
     version: 2,
     candidateName: printable(facts.candidateName, MAX.person, NAME_ABSENT),
     roleTitle: printable(facts.roleTitle, MAX.person, ROLE_ABSENT),
-    rows: awardEvidence(tier, facts).map((row) => ({
-      what: printable(row.what, MAX.row, 'Not on record'),
-      when: row.when ? row.when.toISOString() : null,
-    })),
+    rows,
     signatures: signaturesFor(tier, facts),
   };
 }
@@ -558,7 +587,7 @@ export function buildEvidence(tier: AwardTier, facts: AwardFacts): StoredEvidenc
  * stored value gets, because the old writer did none.
  */
 export function upgradeLegacyEvidence(o: {
-  readonly legacy: LegacyStoredEvidence;
+  readonly legacy: RowsOnlyEvidence;
   readonly candidateName: string;
   readonly roleTitle: string;
 }): StoredEvidence {

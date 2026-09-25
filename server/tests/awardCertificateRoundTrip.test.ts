@@ -393,9 +393,8 @@ describe('bringing the awards struck before the shape changed up to date', () =>
   it('leaves Diamond where it is, because nothing ever prints its record', async () => {
     // Freezing a name onto a record no certificate draws from would be storing
     // personal data for no purpose, and needing it for a certificate is the
-    // whole argument for freezing one at all.
-    await downgradeToVersionOne(candidateId, 'diamond');
-
+    // whole argument for freezing one at all. Nothing is downgraded first: a
+    // struck Diamond is already a version-1 record, and that is the point.
     await backfillLegacyAwardEvidence();
 
     expect(await versionOf('diamond')).toBe(1);
@@ -550,6 +549,16 @@ describe('the personal data this lane started storing', () => {
 
   it('freezes the candidate’s name into a column that previously held none', async () => {
     expect(await nameIsStoredOnAnyAward()).toBe(true);
+  });
+
+  it('keeps the name off the one award that prints nothing', async () => {
+    // The Diamond struck by the same promotion as the Gold. It carries no
+    // certificate, so there is nothing for a name to be printed on, and a name
+    // that nothing prints is personal data held for no reason — an erasure
+    // liability bought for nothing.
+    const diamond = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier: 'diamond' } });
+
+    expect(diamond.evidenceJson).not.toContain(CANDIDATE_NAME);
   });
 
   it('leaves no award carrying the name once the candidate is erased', async () => {
