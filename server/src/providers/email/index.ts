@@ -175,13 +175,26 @@ class SmtpEmailProvider implements EmailProvider {
       mail: {
         from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html,
         // nodemailer writes `contentType` into the part's Content-Type header
-        // verbatim, parameters and all. `encoding` is always base64 here
-        // because the message crosses to the child as JSON, where a binary
-        // file has no other way through.
+        // verbatim, parameters and all, which is what keeps an iTIP `method=`
+        // matching the METHOD in the body.
+        //
+        // `content` is passed through EXACTLY as it was given, and `encoding`
+        // only when the attachment declares one. Encoding everything to base64
+        // here would have been tidier and would have been a change to a
+        // shipping feature: a text attachment would go out under a different
+        // Content-Transfer-Encoding than the one it goes out under today, and
+        // anything asserting on what the child was handed would be asserting
+        // on base64 instead of on the text it was written against. A binary
+        // attachment arrives here already base64 — it has no other way across
+        // the `serialization: 'json'` hop to the child — and says so, and
+        // nodemailer decodes it on that say-so.
         ...(msg.attachments?.length
           ? {
             attachments: msg.attachments.map((file) => ({
-              filename: file.filename, content: base64Of(file), contentType: file.contentType, encoding: 'base64',
+              filename: file.filename,
+              content: file.content,
+              contentType: file.contentType,
+              ...(file.encoding ? { encoding: file.encoding } : {}),
             })),
           }
           : {}),
