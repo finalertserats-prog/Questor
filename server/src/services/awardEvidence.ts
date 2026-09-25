@@ -12,7 +12,15 @@ import type { Tier } from './badgeGeometry.js';
  * silently rewrite a document somebody has already filed. The same reasoning
  * as `CandidateFeedbackEmail.optInAsked`.
  *
- * This is the shape the award lane writes into `CandidateAward.evidenceJson`.
+ * This is the shape the award lane writes into `CandidateAward.evidenceJson`:
+ * `StoredEvidence` in `domain/candidateAwards.ts` is the other end of it, and
+ * the two are changed together or not at all. They were not, once — the writer
+ * stored rows and nothing else while this demanded a name, a role title and
+ * two signatures — and because the only tests of this side fed it JSON a test
+ * author had written by hand, every real certificate export answered 500 for
+ * months without a single test going red. `awardCertificateRoundTrip.test.ts`
+ * is the test that now stands between the two halves.
+ *
  * Changing it is a contract change (docs/credentials-contract.md §2), not a
  * local edit.
  */
@@ -46,9 +54,45 @@ const signature = z.object({
 const row = z.object({
   /** May carry `**emphasis**` around the names of people involved. */
   what: printable(400),
-  /** Already formatted for reading — "22 Sep 2026", or "—" when there is no date. */
-  when: printable(40),
+  /**
+   * The instant the row is about, or null where Questor holds no date.
+   *
+   * Stored as an instant and formatted at render time, which is the one place
+   * this contract deliberately does NOT freeze what is printed. The date is
+   * the fact; "22 Sep 2026" is typography. Freezing the typography would put a
+   * display string into the journey endpoint's payload, where the client needs
+   * a date it can reason about, and would leave certificates struck under an
+   * older house style unreproducible. `whenLabel` is the only place it is
+   * turned into words.
+   */
+  when: z.string().datetime().nullable(),
 });
+
+const EM_DASH = '—';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] as const;
+
+/**
+ * The date a row prints, or the dash that stands for a fact Questor does not
+ * hold.
+ *
+ * The month names are written out rather than taken from `toLocaleDateString`,
+ * which renders September as "Sept" in en-GB under CLDR 42 and later. The
+ * approved design prints "Sep", and a certificate whose dates change shape
+ * because the Node image was upgraded is a document that cannot be reproduced.
+ *
+ * UTC, like `issuedOn`, so that the same award reads the same way wherever it
+ * is exported from.
+ */
+export function whenLabel(when: string | null): string {
+  if (when === null) return EM_DASH;
+  const at = new Date(when);
+  // Unreachable through `parseAwardEvidence`, which has already refused
+  // anything that is not an instant; kept because this is exported and a
+  // renderer must never be handed the string "Invalid Date".
+  if (Number.isNaN(at.getTime())) return EM_DASH;
+  return `${at.getUTCDate()} ${MONTHS[at.getUTCMonth()]} ${at.getUTCFullYear()}`;
+}
 
 /**
  * Exactly five rows, never four and never six.
@@ -57,7 +101,14 @@ const row = z.object({
  * Silver and Gold, so that two certificates can be held side by side and read
  * as the same document. A render that quietly dropped or added a row would
  * make one candidate's record look structurally different from another's for
- * no reason a reader could see.
+ * no reason a reader could see. The writer holds up its end — a fact Questor
+ * does not have is named as absent rather than dropped — so this stays a
+ * demand rather than becoming a tolerance.
+ *
+ * This is the contract for a record that will be RENDERED, which is why the
+ * count is here rather than on the stored column. Diamond stores two rows and
+ * is never parsed by this: it carries no certificate, and padding its journey
+ * out with three "no record" lines would be inventing a document.
  */
 export const awardEvidenceSchema = z.object({
   version: z.literal(1),
@@ -155,7 +206,9 @@ export function footnoteFor(tier: CertificateTier): string {
  * asserts it rather than trusting it.
  *
  * The qualifier beneath still comes from the evidence, because it names the
- * scorecard version that actually read the CV.
+ * scorecard version that actually read the CV — `domain/candidateAwards.ts`
+ * builds it from the version the fit was measured against. A constant for it
+ * used to sit here spelling a fixed "v4"; it was never read, and it would have
+ * been wrong on the first role whose scorecard was revised.
  */
 export const BRONZE_ASSESSOR_NAME = 'Questor';
-export const BRONZE_ASSESSOR_ROLE = 'Assessed by · scorecard v4, no human review';

@@ -171,6 +171,19 @@ export interface AwardHumanRound {
 /** Everything the evidence rows are built from, read once, just before the award is written. */
 export interface AwardFacts {
   readonly awardedAt: Date;
+  /**
+   * The candidate's name and the role's title as they stood at this moment.
+   *
+   * Frozen rather than looked up when the certificate is rendered. A role
+   * renamed or a name corrected six months later must not silently rewrite a
+   * document somebody has already filed, and a certificate has to stay
+   * renderable after the rows it was derived from are gone — which is the
+   * whole reason `evidenceJson` exists. The cost is that the award carries
+   * personal data of its own, which is why erasing a candidate deletes their
+   * awards outright rather than blanking the rows behind them.
+   */
+  readonly candidateName: string;
+  readonly roleTitle: string;
   readonly candidateCreatedAt: Date | null;
   readonly profile: {
     readonly readAt: Date;
@@ -192,6 +205,17 @@ export interface AwardFacts {
   readonly promotedTo: string;
   /** The person who moved them; empty for Bronze. */
   readonly promotedByName: string;
+  /**
+   * The person whose act this award rides on, for the right-hand signature:
+   * the one who promoted the candidate, or on Bronze the one who put the CV
+   * into Questor. Empty when Questor holds no name for them.
+   *
+   * "Recorded by", never "assessed by". Bronze's `awardedByUserId` stays null
+   * because nobody assessed it, and this is the other half of that sentence —
+   * somebody did record the application, and naming them under a line that
+   * says what they actually did claims nothing about the reading.
+   */
+  readonly recordedByName: string;
 }
 
 const MISSING = (what: string): AwardEvidenceRow => ({ what, when: null });
@@ -322,16 +346,177 @@ export function awardEvidence(tier: AwardTier, facts: AwardFacts): AwardEvidence
   }
 }
 
-/** The stored shape. Versioned: a certificate struck under an older layout still has to render. */
-export interface StoredEvidence {
-  readonly version: 1;
-  readonly rows: readonly { readonly what: string; readonly when: string | null }[];
+// ---------------------------------------------------------------------------
+// The two signatures
+// ---------------------------------------------------------------------------
+
+export interface AwardSignature {
+  readonly name: string;
+  /** The line under the rule: "Assessed by · subject-matter expert". */
+  readonly role: string;
 }
 
-export function serialiseEvidence(rows: readonly AwardEvidenceRow[]): string {
-  const stored: StoredEvidence = {
+/** Left is who assessed; right is who recorded. Both are always present. */
+export interface AwardSignatures {
+  readonly left: AwardSignature;
+  readonly right: AwardSignature;
+}
+
+/**
+ * The name a slot carries when no person belongs in it.
+ *
+ * Bronze's assessor slot is the original case: no human assesses a Bronze, so
+ * the name says Questor and the line beneath says what stood in for a person.
+ * Every other gap is answered the same way — a Silver struck before a
+ * subject-matter expert read the assessment, a Gold whose rounds are not on
+ * record. The two wrong answers are a blank, which a reader fills in
+ * themselves, and the nearest available name, which would put the talent lead
+ * who pressed the button under "assessed by".
+ */
+const UNATTRIBUTED = 'Questor';
+
+const ASSESSED_BY_SME = 'Assessed by · subject-matter expert';
+const RECORDED_BY_TEAM = 'Recorded by · the hiring team';
+
+function assessorOf(tier: AwardTier, facts: AwardFacts): AwardSignature {
+  switch (tier) {
+    case 'bronze': {
+      const version = facts.profile?.scorecardVersion ?? null;
+      // The qualifier names the scorecard version that actually read the CV,
+      // so the claim is checkable against a specific artefact rather than
+      // against "the scorecard", which changes.
+      return {
+        name: UNATTRIBUTED,
+        role: version === null
+          ? 'Assessed by · approved scorecard, no human review'
+          : `Assessed by · scorecard v${version}, no human review`,
+      };
+    }
+    case 'silver':
+      return facts.humanReview
+        ? { name: facts.humanReview.reviewerName, role: ASSESSED_BY_SME }
+        : { name: UNATTRIBUTED, role: 'Assessed by · structured interview, no human review' };
+    case 'gold': {
+      // The first round's interviewer, matching the first interview row. Where
+      // two people conducted it the row names both and the signature names the
+      // first, because a signature block is one name over one rule.
+      const first = facts.humanRounds[0]?.interviewers[0] ?? '';
+      return first
+        ? { name: first, role: ASSESSED_BY_SME }
+        : { name: UNATTRIBUTED, role: 'Assessed by · no interview round on record' };
+    }
+    case 'diamond':
+      // Diamond records what the hiring team decided, not an assessment, and
+      // carries no certificate to print this on. It is written anyway so that
+      // every award row holds the same shape.
+      return { name: UNATTRIBUTED, role: 'Assessed by · no assessment at this tier' };
+    default: {
+      const unreachable: never = tier;
+      throw new Error(`Unknown award tier: ${String(unreachable)}`);
+    }
+  }
+}
+
+function recorderOf(facts: AwardFacts): AwardSignature {
+  return facts.recordedByName.trim()
+    ? { name: facts.recordedByName, role: RECORDED_BY_TEAM }
+    : { name: UNATTRIBUTED, role: 'Recorded by · no person on record' };
+}
+
+// ---------------------------------------------------------------------------
+// The stored shape
+// ---------------------------------------------------------------------------
+
+/**
+ * The stored shape. Versioned: a certificate struck under an older layout
+ * still has to render.
+ *
+ * This is the whole of what `services/awardEvidence.ts` reads back, and the
+ * two must be changed together. They were not, once: the writer stored
+ * `{ version, rows }` while the reader required a name, a role title and two
+ * signatures nothing in the repository ever wrote, and every certificate
+ * export answered 500 for as long as the only tests of the reader fed it JSON
+ * a test author had typed out by hand.
+ */
+export interface StoredEvidenceRow {
+  readonly what: string;
+  /** An instant, or null where Questor holds no date. Formatted for reading at render time. */
+  readonly when: string | null;
+}
+
+export interface StoredEvidence {
+  readonly version: 1;
+  readonly candidateName: string;
+  readonly roleTitle: string;
+  readonly rows: readonly StoredEvidenceRow[];
+  readonly signatures: AwardSignatures;
+}
+
+/**
+ * A value made printable at the moment it is frozen, rather than at the moment
+ * somebody tries to print it.
+ *
+ * The reader refuses a control character outright, because `roleTitle` is
+ * interpolated into the subject line of the email the send endpoint composes
+ * and a carriage return in the middle of a header is how a second header is
+ * smuggled in. That refusal is the right answer for a row already in the
+ * database. It is the wrong moment to discover the problem for a row being
+ * written — a promotion would roll back over a stray tab in a job title — so
+ * the writer cleans here and the reader's refusal stays the backstop it was
+ * meant to be.
+ */
+function printable(value: string, max: number, whenEmpty: string): string {
+  const cleaned = value.replace(/\p{Cc}/gu, ' ').replace(/\s+/g, ' ').trim();
+  return cleaned.slice(0, max).trim() || whenEmpty;
+}
+
+/**
+ * Limits taken from the reader's schema. A name or a title long enough to
+ * overflow one is truncated rather than refused, for the same reason as above:
+ * the alternative is a stage move that fails over a job title somebody pasted
+ * a paragraph into.
+ */
+const MAX = { name: 120, signatureRole: 160, person: 200, row: 400 } as const;
+
+/**
+ * Nothing sensible to print, which the database's own constraints should make
+ * unreachable — `Candidate.fullName` and `Role.title` are both required. The
+ * placeholder exists so that a row which somehow got past them still produces
+ * a certificate that says what is missing, rather than one that cannot be
+ * produced at all.
+ */
+const NAME_ABSENT = 'Name not on record';
+const ROLE_ABSENT = 'Role not on record';
+
+function signaturesFor(tier: AwardTier, facts: AwardFacts): AwardSignatures {
+  const clean = (signature: AwardSignature): AwardSignature => ({
+    name: printable(signature.name, MAX.name, UNATTRIBUTED),
+    role: printable(signature.role, MAX.signatureRole, RECORDED_BY_TEAM),
+  });
+  return { left: clean(assessorOf(tier, facts)), right: clean(recorderOf(facts)) };
+}
+
+/**
+ * Everything a certificate for this award is allowed to say, built once from
+ * facts read at the moment it is struck.
+ *
+ * One function, taking the tier and the facts, so that there is no way to
+ * assemble a partial record: a caller cannot write rows and forget the name,
+ * which is exactly how the two halves of this contract drifted apart.
+ */
+export function buildEvidence(tier: AwardTier, facts: AwardFacts): StoredEvidence {
+  return {
     version: 1,
-    rows: rows.map((row) => ({ what: row.what, when: row.when ? row.when.toISOString() : null })),
+    candidateName: printable(facts.candidateName, MAX.person, NAME_ABSENT),
+    roleTitle: printable(facts.roleTitle, MAX.person, ROLE_ABSENT),
+    rows: awardEvidence(tier, facts).map((row) => ({
+      what: printable(row.what, MAX.row, 'Not on record'),
+      when: row.when ? row.when.toISOString() : null,
+    })),
+    signatures: signaturesFor(tier, facts),
   };
-  return JSON.stringify(stored);
+}
+
+export function serialiseEvidence(tier: AwardTier, facts: AwardFacts): string {
+  return JSON.stringify(buildEvidence(tier, facts));
 }

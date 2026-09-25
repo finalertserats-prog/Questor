@@ -5,6 +5,7 @@ import { prisma } from '../src/db.js';
 import { wipe } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
 import { _resetRateLimits } from '../src/middleware/rateLimit.js';
+import { serialiseEvidence, type AwardFacts, type AwardTier } from '../src/domain/candidateAwards.js';
 
 /**
  * Exporting a credential.
@@ -15,6 +16,13 @@ import { _resetRateLimits } from '../src/middleware/rateLimit.js';
  * candidate belonging to another organisation is unreachable by every route on
  * this router. A screenshot, or a query missing its tenant filter, would pass
  * a status-code test and fail these.
+ *
+ * The stored evidence these awards carry is written by the award lane itself,
+ * never typed out here. An earlier version of this file hand-built the JSON it
+ * fed the renderer, and so it went on passing for months while every real
+ * export answered 500: the reader had only ever been shown data the test
+ * author wrote for it. The one place hand-built JSON survives is the last
+ * describe, where a record the writer CANNOT produce is the subject.
  */
 
 const app = createApp();
@@ -22,24 +30,32 @@ const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
 const ROLE_TITLE = 'Senior Marketing Manager';
 
-function evidence(overrides: Record<string, unknown> = {}): string {
-  return JSON.stringify({
-    version: 1,
-    candidateName: 'Priya Sharma',
-    roleTitle: ROLE_TITLE,
-    rows: [
-      { what: 'CV read against the approved scorecard, version 4', when: '21 Sep 2026' },
-      { what: 'Structured interview completed — 24 of 30 minutes, ten competencies', when: '22 Sep 2026' },
-      { what: 'Every rating carries a verbatim quote from the transcript', when: '22 Sep 2026' },
-      { what: 'Assessed by **Aparna Rao**, subject-matter expert', when: '23 Sep 2026' },
-      { what: 'Progressed to Gold by **Rahul Menon**, talent lead', when: '24 Sep 2026' },
-    ],
-    signatures: {
-      left: { name: 'Aparna Rao', role: 'Assessed by · subject-matter expert' },
-      right: { name: 'Rahul Menon', role: 'Recorded by · talent lead' },
-    },
-    ...overrides,
-  });
+/**
+ * The facts an award is struck from, as a rich journey leaves them: a CV read
+ * against an approved scorecard, a completed AI interview, a subject-matter
+ * expert's review, and two human rounds at Gold.
+ */
+const FACTS: AwardFacts = {
+  awardedAt: new Date('2026-09-24T00:00:00.000Z'),
+  candidateName: 'Priya Sharma',
+  roleTitle: ROLE_TITLE,
+  recordedByName: 'Rahul Menon',
+  candidateCreatedAt: new Date('2026-09-20T09:00:00.000Z'),
+  profile: { readAt: new Date('2026-09-21T09:00:00.000Z'), scorecardVersion: 4, competenciesEvidenced: 8, competenciesTotal: 10 },
+  aiInterview: { completedAt: new Date('2026-09-22T09:00:00.000Z'), minutes: 24, competencies: 10, quotedEvidence: true },
+  humanReview: { at: new Date('2026-09-23T09:00:00.000Z'), reviewerName: 'Aparna Rao' },
+  humanRounds: [
+    { completedAt: new Date('2026-09-22T09:00:00.000Z'), minutes: 48, interviewers: ['Aparna Rao'] },
+    { completedAt: new Date('2026-09-23T09:00:00.000Z'), minutes: 40, interviewers: ['Devika Iyer'] },
+  ],
+  priorAwardAt: new Date('2026-09-21T09:00:00.000Z'),
+  promotedTo: 'Gold',
+  promotedByName: 'Rahul Menon',
+};
+
+/** Exactly what the award lane would have frozen onto this tier. */
+function evidence(tier: AwardTier = 'silver', overrides: Partial<AwardFacts> = {}): string {
+  return serialiseEvidence(tier, { ...FACTS, ...overrides });
 }
 
 /**
@@ -84,7 +100,7 @@ async function makeOrg(slug: string, candidateName: string): Promise<Org> {
   };
 }
 
-async function award(org: Org, tier: string, reference: string, verifyToken: string, evidenceJson = evidence()) {
+async function award(org: Org, tier: AwardTier, reference: string, verifyToken: string, evidenceJson = evidence(tier)) {
   return prisma.candidateAward.create({
     data: {
       tenantId: org.tenantId,
@@ -207,12 +223,16 @@ describe('the structure the owner settled on', () => {
    * drift between tiers is a defect rather than a variation — two certificates
    * must be able to sit side by side and read as the same document.
    */
-  it.each(['bronze', 'silver', 'gold'])('holds every part of the frame on %s', async (tier) => {
+  it.each(['bronze', 'silver', 'gold'] as const)('holds every part of the frame on %s', async (tier) => {
     await prisma.candidateAward.deleteMany({ where: { candidateId: a.candidateId } });
     await award(a, tier, `QS-XXX-FRAME-${tier}`, `v-frame-${tier}`);
 
     const text = await textOf((await certificate(a, tier, a.adminToken)).body);
-    const rowDates = ['21 Sep 2026', '22 Sep 2026', '23 Sep 2026', '24 Sep 2026'];
+    // Each tier records different things, so the rows are read off what the
+    // award lane wrote for THIS tier and then looked for on the page. A row
+    // dropped for want of a fact is the drift the fixed frame exists to stop,
+    // and it is invisible to a reader holding one certificate.
+    const written = (JSON.parse(evidence(tier)) as { rows: { what: string }[] }).rows;
 
     expect({
       wordmark: text.includes('QUESTOR'),
@@ -224,17 +244,22 @@ describe('the structure the owner settled on', () => {
       claim: /Questor’s (Bronze|Silver|Gold)/.test(text),
       asterisk: text.includes('*'),
       evidenceHeading: text.includes('WHAT THIS RECORDS'),
-      // Five rows, every one of them dated. Four distinct dates because two
-      // rows share one; what matters is that no row was dropped or added.
-      rows: rowDates.every((date) => text.includes(date)),
+      rows: written.length === 5 && written.every((row) => text.includes(row.what)),
       leftSignature: /ASSESSED BY · /.test(text),
-      rightSignature: /RECORDED BY · TALENT LEAD/.test(text),
+      rightSignature: /RECORDED BY · THE HIRING TEAM/.test(text),
       footnote: text.includes('Evidence of process, not a recommendation.'),
     }).toEqual({
       wordmark: true, reference: true, issued: true, verify: true, kicker: true, name: true,
       claim: true, asterisk: true, evidenceHeading: true, rows: true,
       leftSignature: true, rightSignature: true, footnote: true,
     });
+  });
+
+  it.each(['bronze', 'silver', 'gold'] as const)('lays out five rows on %s and never four or six', async (tier) => {
+    // The frame is the same document on every tier, so the count is asserted
+    // on what the award lane wrote rather than on what the page happens to
+    // show: a row dropped here would be invisible to a reader.
+    expect((JSON.parse(evidence(tier)) as { rows: unknown[] }).rows).toHaveLength(5);
   });
 });
 
@@ -245,13 +270,7 @@ describe('the Bronze certificate', () => {
       'bronze',
       'QS-BRZ-2D9P-1183',
       'v-alpha-bronze-random',
-      evidence({
-        candidateName: 'Mei Lin Chua',
-        signatures: {
-          left: { name: 'Rahul Menon', role: 'Assessed by · scorecard v4, no human review' },
-          right: { name: 'Rahul Menon', role: 'Recorded by · talent lead' },
-        },
-      }),
+      evidence('bronze', { candidateName: 'Mei Lin Chua' }),
     );
   });
 
@@ -273,13 +292,24 @@ describe('the Bronze certificate', () => {
     expect(text).toContain('Held by the hiring team; not issued to the candidate.');
   });
 
-  it('signs the assessor slot "Questor" even when the stored evidence names a person', async () => {
-    // The absence of a human assessor is the point of the row. A Bronze that
-    // printed the talent lead who merely pressed the button would look
-    // human-reviewed when nothing human read the CV.
+  it('names the scorecard version in the assessor slot and no person at all', async () => {
+    // The absence of a human assessor is the point of the row, and the
+    // qualifier names the scorecard version that actually read the CV so the
+    // claim is checkable against a specific artefact.
     const text = await textOf((await certificate(a, 'bronze', a.adminToken)).body);
 
-    expect(text).toContain('ASSESSED BY · SCORECARD V4, NO HUMAN REVIEW');
+    // The name sits directly above its qualifier, so the pair read together
+    // is what says whether a person is being claimed as the assessor.
+    expect([text.includes('Questor ASSESSED BY · SCORECARD V4, NO HUMAN REVIEW'), text.includes('Rahul Menon ASSESSED BY')])
+      .toEqual([true, false]);
+  });
+
+  it('records the person who put the CV into Questor, under a line that claims nothing', async () => {
+    // Somebody did upload this CV, and naming them beside "recorded by" is
+    // attributable without implying that they read it.
+    const text = await textOf((await certificate(a, 'bronze', a.adminToken)).body);
+
+    expect([text.includes('Rahul Menon'), text.includes('RECORDED BY · THE HIRING TEAM')]).toEqual([true, true]);
   });
 });
 
@@ -480,7 +510,7 @@ describe('what a second application must not do', () => {
         tier: 'silver',
         reference: 'QS-SLV-LATER-0001',
         verifyToken: 'v-alpha-silver-later',
-        evidenceJson: evidence({ roleTitle: 'Head of Growth' }),
+        evidenceJson: evidence('silver', { roleTitle: 'Head of Growth' }),
         awardedAt: new Date('2026-10-30T00:00:00.000Z'),
       },
     });
@@ -528,34 +558,80 @@ describe('a send that does not go out', () => {
   });
 });
 
-describe('stored evidence that could reach a mail header', () => {
+/**
+ * The reader's own robustness, and the one place JSON is written by hand.
+ *
+ * Everything here is a row the award lane CANNOT produce — the writer strips
+ * control characters, guarantees five rows and signs both slots before it
+ * stores anything. These rows exist anyway: a database is edited by hand, a
+ * restore lands an older shape, a future lane writes the column directly. The
+ * reader is the backstop for all three, and a backstop can only be tested
+ * against damage the writer will not make.
+ *
+ * The distinction matters because it is what went wrong. When EVERY fixture
+ * on this file was hand-built, the reader was only ever shown data that
+ * satisfied it, and the writer's real output was never put in front of it.
+ */
+describe('a stored record the award lane would never have written', () => {
+  const store = (evidenceJson: string) =>
+    prisma.candidateAward.updateMany({ where: { reference: 'QS-SLV-8F2K-4471' }, data: { evidenceJson } });
+
+  const exported = () =>
+    request(app).get(`/api/candidates/${a.candidateId}/awards/silver/certificate.pdf`).set(auth(a.adminToken));
+
+  /** The writer's output, to be damaged one field at a time. */
+  const stored = () => JSON.parse(evidence('silver')) as Record<string, unknown>;
+
   it('refuses a role title carrying a line break', async () => {
     // `roleTitle` is interpolated into the subject line. A carriage return
-    // there is how a second header gets smuggled into the message.
-    await prisma.candidateAward.updateMany({
-      where: { reference: 'QS-SLV-8F2K-4471' },
-      data: { evidenceJson: evidence({ roleTitle: 'Senior Marketing Manager\r\nBcc: someone@elsewhere.test' }) },
-    });
+    // there is how a second header gets smuggled into the message, so this is
+    // refused rather than quietly stripped: the stored row is wrong, and
+    // printing something other than what was frozen would hide that.
+    await store(JSON.stringify({ ...stored(), roleTitle: 'Senior Marketing Manager\r\nBcc: someone@elsewhere.test' }));
 
-    const res = await request(app)
-      .get(`/api/candidates/${a.candidateId}/awards/silver/certificate.pdf`)
-      .set(auth(a.adminToken));
-
-    expect(res.status).toBe(500);
+    expect((await exported()).status).toBe(500);
   });
-});
 
-describe('a stored record that cannot be rendered', () => {
-  it('says the record is incomplete rather than that the award is missing', async () => {
-    await prisma.candidateAward.updateMany({
-      where: { reference: 'QS-SLV-8F2K-4471' },
-      data: { evidenceJson: JSON.stringify({ version: 1, candidateName: 'Priya Sharma', roleTitle: ROLE_TITLE, rows: [], signatures: {} }) },
-    });
+  it('refuses a record with no rows rather than printing an empty frame', async () => {
+    await store(JSON.stringify({ ...stored(), rows: [], signatures: {} }));
 
-    const res = await request(app)
-      .get(`/api/candidates/${a.candidateId}/awards/silver/certificate.pdf`)
-      .set(auth(a.adminToken));
+    const res = await exported();
 
     expect([res.status, /stored record is incomplete/.test(res.body.error ?? '')]).toEqual([500, true]);
+  });
+
+  it('refuses four rows and six alike, because the frame is fixed', async () => {
+    const rows = (stored().rows as unknown[]);
+
+    const four = await store(JSON.stringify({ ...stored(), rows: rows.slice(0, 4) })).then(exported);
+    const six = await store(JSON.stringify({ ...stored(), rows: [...rows, rows[0]] })).then(exported);
+
+    expect([four.status, six.status]).toEqual([500, 500]);
+  });
+
+  it('says the record is incomplete rather than that the award is missing', async () => {
+    // A 404 would send a recruiter looking for a candidate who is plainly on
+    // their screen, and would bury a data fault nobody then fixes.
+    const { signatures: _dropped, ...withoutSignatures } = stored();
+    await store(JSON.stringify(withoutSignatures));
+
+    const res = await exported();
+
+    expect([res.status, /stored record is incomplete/.test(res.body.error ?? '')]).toEqual([500, true]);
+  });
+
+  it('signs a Bronze "Questor" even when the stored record names a person there', async () => {
+    // The render asserts the absence of a human assessor rather than trusting
+    // it, so a row that named the talent lead who pressed the button cannot
+    // produce a certificate that looks human-reviewed.
+    const bronze = JSON.parse(evidence('bronze')) as { signatures: { left: unknown; right: unknown } };
+    await award(a, 'bronze', 'QS-BRZ-HAND-0001', 'v-alpha-bronze-hand', JSON.stringify({
+      ...bronze,
+      signatures: { ...bronze.signatures, left: { name: 'Rahul Menon', role: 'Assessed by · subject-matter expert' } },
+    }));
+
+    const text = await textOf((await certificate(a, 'bronze', a.adminToken)).body);
+
+    expect([text.includes('Questor ASSESSED BY'), text.includes('Rahul Menon ASSESSED BY')]).toEqual([true, false]);
   });
 });

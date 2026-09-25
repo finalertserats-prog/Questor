@@ -5,6 +5,7 @@ import {
   claimFor,
   footnoteFor,
   kickerFor,
+  whenLabel,
   type AwardEvidence,
   type CertificateTier,
 } from './awardEvidence.js';
@@ -326,14 +327,18 @@ function plan(doc: PDFKit.PDFDocument, input: CertificateInput): Plan {
     claimLines = layoutRuns(doc, runs, claimWidth);
   }
 
+  // The stored row holds an instant; the date column holds words. Turned into
+  // words once, here, so that the column is measured against exactly what the
+  // rows below will print.
+  const whens = input.evidence.rows.map((row) => whenLabel(row.when));
   const dateWidth = Math.max(
-    ...input.evidence.rows.map((row) => doc.font(FONT.sans).fontSize(TYPE.evidence).widthOfString(row.when)),
+    ...whens.map((when) => doc.font(FONT.sans).fontSize(TYPE.evidence).widthOfString(when)),
   );
   const textWidth = EVIDENCE_W - dateWidth - 11.7;
-  const rows = input.evidence.rows.map((row) => {
+  const rows = input.evidence.rows.map((row, index) => {
     const rowRuns = emphasised(row.what, { regular: FONT.sans, bold: FONT.sansBold }, TYPE.evidence, blend(0.9));
     const lines = layoutRuns(doc, rowRuns, textWidth);
-    return { runs: rowRuns, lines, when: row.when, height: Math.max(1, lines.length) * TYPE.evidenceLeading };
+    return { runs: rowRuns, lines, when: whens[index], height: Math.max(1, lines.length) * TYPE.evidenceLeading };
   });
 
   const gaps = Object.values(GAP).reduce((sum, value) => sum + value, 0) + GAP.rowPad * 9;

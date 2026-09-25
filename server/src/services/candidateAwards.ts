@@ -7,7 +7,7 @@ import type { PipelineStage } from '../domain/pipelineStages.js';
 import type { FitScore, AssessmentResult } from '../domain/types.js';
 import { comparableFitScore } from '../domain/fitVocabulary.js';
 import {
-  AWARD_TIERS, awardEvidence, awardsForPromotion, formatReference, referenceBlocks,
+  AWARD_TIERS, awardsForPromotion, formatReference, referenceBlocks,
   serialiseEvidence, TIER_LABELS, type AwardFacts, type AwardHumanRound, type AwardTier,
 } from '../domain/candidateAwards.js';
 
@@ -116,6 +116,12 @@ export function isAwardConflict(err: unknown): boolean {
  * transaction holds its locks for. Gathering everything for every tier put
  * eight reads inside the resume path, which is the slowest transaction in the
  * server already and the one that times out first.
+ *
+ * The candidate and the role are NOT in this table: every tier needs them, on
+ * every award, because the certificate prints the candidate's name and the
+ * role's title from the frozen evidence and has nothing to print without them.
+ * Two reads that cannot be skipped, against a certificate that otherwise
+ * cannot be rendered at all.
  */
 const FACTS_NEEDED: Readonly<Record<AwardTier, { profile: boolean; interview: boolean; rounds: boolean }>> = {
   bronze: { profile: true, interview: false, rounds: false },
@@ -126,13 +132,16 @@ const FACTS_NEEDED: Readonly<Record<AwardTier, { profile: boolean; interview: bo
 
 async function gatherFacts(
   tx: Prisma.TransactionClient,
-  o: AwardTarget & { readonly tier: AwardTier; readonly awardedAt: Date; readonly stageKeyLeft: string; readonly promotedTo: string; readonly promotedByName: string; readonly priorTier: AwardTier | null },
+  o: AwardTarget & { readonly tier: AwardTier; readonly awardedAt: Date; readonly stageKeyLeft: string; readonly promotedTo: string; readonly promotedByName: string; readonly recordedByName: string; readonly priorTier: AwardTier | null },
 ): Promise<AwardFacts> {
   const needs = FACTS_NEEDED[o.tier];
 
-  const candidate = needs.profile
-    ? await tx.candidate.findUnique({ where: { id: o.candidateId }, select: { createdAt: true } })
-    : null;
+  // Tenant-filtered, like every read on the way to a document about a named
+  // person. Both ids reached here through a tenant-scoped read already, so
+  // this changes nothing today; it means a certificate can never come to carry
+  // another organisation's name because a caller was refactored.
+  const candidate = await tx.candidate.findFirst({ where: { id: o.candidateId, tenantId: o.tenantId }, select: { createdAt: true, fullName: true } });
+  const role = await tx.role.findFirst({ where: { id: o.roleId, tenantId: o.tenantId }, select: { title: true } });
   const profileRow = needs.profile
     ? await tx.candidateProfileVersion.findFirst({
       where: { candidateId: o.candidateId }, orderBy: { version: 'desc' }, select: { createdAt: true, fitScoreJson: true },
@@ -178,6 +187,8 @@ async function gatherFacts(
 
   return {
     awardedAt: o.awardedAt,
+    candidateName: candidate?.fullName ?? '',
+    roleTitle: role?.title ?? '',
     candidateCreatedAt: candidate?.createdAt ?? null,
     profile: profileRow && fit
       ? {
@@ -209,6 +220,7 @@ async function gatherFacts(
     priorAwardAt: prior?.awardedAt ?? null,
     promotedTo: o.promotedTo,
     promotedByName: o.promotedByName,
+    recordedByName: o.recordedByName,
   };
 }
 
@@ -244,7 +256,7 @@ async function strike(
   // upload or a repeated promotion must not rewrite it.
   if (already) return null;
 
-  const evidenceJson = serialiseEvidence(awardEvidence(o.tier, o.facts));
+  const evidenceJson = serialiseEvidence(o.tier, o.facts);
   for (let attempt = 0; attempt < REFERENCE_ATTEMPTS; attempt++) {
     const { block, digits } = referenceBlocks();
     const reference = formatReference(o.tier, block, digits);
@@ -292,6 +304,9 @@ export async function awardOnPromotion(tx: Prisma.TransactionClient, o: Promotio
       tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId,
       tier, awardedAt, stageKeyLeft: tier === 'diamond' ? o.fromStageKey : tier,
       promotedTo: toLabel, promotedByName: actor?.name ?? '',
+      // The same person on a promotion: they moved the candidate, and moving
+      // them is the act this award records.
+      recordedByName: actor?.name ?? '',
       priorTier: priorTierOf(tier),
     });
     const award = await strike(tx, {
@@ -317,6 +332,15 @@ function priorTierOf(tier: AwardTier): AwardTier | null {
 export interface BronzeAwardInput extends AwardTarget {
   /** The fit just written, as JSON, so the stamp is read from what was stored rather than from the role. */
   readonly fitScoreJson: string;
+  /**
+   * Who put the CV into Questor, for the certificate's right-hand signature.
+   *
+   * Not who assessed it — `awardedByUserId` stays null on a Bronze precisely
+   * because nobody did. This is the other slot, and it names a real act: a
+   * person uploaded this CV, and the line under their name says "recorded by",
+   * which claims nothing about the reading.
+   */
+  readonly recordedByUserId: string;
 }
 
 /**
@@ -329,11 +353,16 @@ export interface BronzeAwardInput extends AwardTarget {
  * stand in for an approved one anywhere a decision is later justified from.
  */
 export async function awardBronze(tx: Prisma.TransactionClient, o: BronzeAwardInput): Promise<StruckAward[]> {
+  // Read before the facts, and only once the fit has decided there is an award
+  // to strike at all: an unapproved reading leaves this transaction without
+  // having touched the user table.
   if (!approvedFit(o.fitScoreJson)) return [];
+  const recorder = await tx.user.findFirst({ where: { id: o.recordedByUserId, tenantId: o.tenantId }, select: { name: true } });
   const awardedAt = new Date();
   const facts = await gatherFacts(tx, {
     tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId,
-    tier: 'bronze', awardedAt, stageKeyLeft: 'bronze', promotedTo: '', promotedByName: '', priorTier: null,
+    tier: 'bronze', awardedAt, stageKeyLeft: 'bronze', promotedTo: '', promotedByName: '',
+    recordedByName: recorder?.name ?? '', priorTier: null,
   });
   const award = await strike(tx, {
     tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId,

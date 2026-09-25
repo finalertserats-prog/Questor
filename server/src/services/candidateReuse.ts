@@ -223,7 +223,7 @@ export async function applyCandidateToRole(auth: AuthClaims, sourceId: string, r
     // an id no other attempt has, and two applies for the same person on the
     // same role are already stopped by the duplicate check above.
     const awards = stored
-      ? await awardBronze(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, fitScoreJson: JSON.stringify(stored.fit) })
+      ? await awardBronze(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, fitScoreJson: JSON.stringify(stored.fit), recordedByUserId: auth.userId })
       : [];
     const events: PipelineEvent[] = stored ? ['candidate.onboarded', 'candidate.profiled'] : ['candidate.onboarded'];
     const started = await startPipeline(tx, { tenantId: auth.tenantId, candidateId: candidate.id, roleId, events });

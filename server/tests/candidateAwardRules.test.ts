@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   AWARD_TIERS, awardsForPromotion, formatReference, referenceBlocks,
-  awardEvidence, unearnedReason, tierCode, journeyTiers, awardHeadline, type AwardFacts,
+  awardEvidence, serialiseEvidence, unearnedReason, tierCode, journeyTiers, awardHeadline, type AwardFacts,
 } from '../src/domain/candidateAwards.js';
+import { awardEvidenceSchema, CERTIFICATE_TIERS, whenLabel } from '../src/services/awardEvidence.js';
 import { DEFAULT_STAGES } from '../src/domain/pipelineStages.js';
 
 /**
@@ -161,6 +162,9 @@ describe('the reason an unearned tier is not there yet', () => {
 
 const facts: AwardFacts = {
   awardedAt: new Date('2026-09-24T09:00:00Z'),
+  candidateName: 'Priya Sharma',
+  roleTitle: 'Senior Marketing Manager',
+  recordedByName: 'Rahul Menon',
   candidateCreatedAt: new Date('2026-09-20T09:00:00Z'),
   profile: { readAt: new Date('2026-09-21T09:00:00Z'), scorecardVersion: 4, competenciesEvidenced: 8, competenciesTotal: 10 },
   aiInterview: { completedAt: new Date('2026-09-22T09:00:00Z'), minutes: 24, competencies: 10, quotedEvidence: true },
@@ -218,5 +222,105 @@ describe('the evidence frozen onto an award', () => {
         expect(row.when === null || row.when instanceof Date).toBe(true);
       }
     }
+  });
+});
+
+/**
+ * The writer, checked against the reader that has to render what it wrote.
+ *
+ * The two halves of this contract drifted apart once and nothing caught it:
+ * the writer stored rows and nothing else, the reader demanded a name, a role
+ * title and two signatures, and every certificate export answered 500 for
+ * months. What each side was tested against was the other side's absence.
+ *
+ * So the writer's output is fed to the reader's schema here, on facts rich
+ * enough and facts thin enough, for every tier that carries a certificate.
+ * `awardCertificateRoundTrip.test.ts` does the same through HTTP; this does it
+ * across the permutations of missing facts that no single journey produces.
+ */
+describe('the writer and the reader, held against each other', () => {
+  const accepted = (tier: 'bronze' | 'silver' | 'gold', from: AwardFacts) =>
+    awardEvidenceSchema.safeParse(JSON.parse(serialiseEvidence(tier, from)));
+
+  it.each(CERTIFICATE_TIERS)('writes a %s record the certificate reader accepts', (tier) => {
+    expect(accepted(tier, facts).success).toBe(true);
+  });
+
+  // The honest failure mode: a tier struck for a candidate whose journey has
+  // gaps. Nothing here may be dropped, because a dropped field is a 500 at the
+  // moment somebody presses Certificate and not before.
+  it.each(CERTIFICATE_TIERS)('writes a %s record the reader accepts when Questor holds almost nothing', (tier) => {
+    const thin: AwardFacts = {
+      ...facts, profile: null, aiInterview: null, humanReview: null, humanRounds: [],
+      priorAwardAt: null, promotedTo: '', promotedByName: '', recordedByName: '',
+    };
+
+    expect(accepted(tier, thin).success).toBe(true);
+  });
+
+  it.each(CERTIFICATE_TIERS)('still signs both slots on a %s nobody is named on', (tier) => {
+    const thin: AwardFacts = { ...facts, humanReview: null, humanRounds: [], recordedByName: '' };
+
+    const parsed = accepted(tier, thin);
+
+    // "Questor", never a blank a reader fills in themselves and never the
+    // nearest available name, which would put somebody under "assessed by"
+    // for a reading they did not make.
+    expect(parsed.success && [parsed.data.signatures.left.name, parsed.data.signatures.right.name])
+      .toEqual(['Questor', 'Questor']);
+  });
+
+  it('prints a name and a role even when the rows behind them are blank', () => {
+    const nameless: AwardFacts = { ...facts, candidateName: '', roleTitle: '   ' };
+
+    const parsed = accepted('silver', nameless);
+
+    expect(parsed.success && [parsed.data.candidateName, parsed.data.roleTitle])
+      .toEqual(['Name not on record', 'Role not on record']);
+  });
+
+  /**
+   * `roleTitle` is interpolated into the subject line of the email the send
+   * endpoint composes, and a carriage return there is how a second header is
+   * smuggled in. The reader refuses one outright; the writer must never hand
+   * it one, or a promotion would roll back over a pasted job title.
+   */
+  it('strips a control character out of a role title instead of storing one', () => {
+    const smuggled: AwardFacts = { ...facts, roleTitle: 'Senior Marketing Manager\r\nBcc: someone@elsewhere.test' };
+
+    const parsed = accepted('silver', smuggled);
+
+    expect(parsed.success && parsed.data.roleTitle).toBe('Senior Marketing Manager Bcc: someone@elsewhere.test');
+  });
+
+  it('truncates a name too long for the certificate rather than refusing the award', () => {
+    const shouted: AwardFacts = { ...facts, candidateName: 'A'.repeat(500) };
+
+    expect(accepted('silver', shouted).success).toBe(true);
+  });
+});
+
+/**
+ * The date a row prints. Formatted at render time rather than frozen, because
+ * the instant is the fact and "22 Sep 2026" is typography.
+ */
+describe('the date a row prints', () => {
+  it('prints the day, the short month and the year, as the approved design sets them', () => {
+    expect(whenLabel('2026-09-22T09:00:00.000Z')).toBe('22 Sep 2026');
+  });
+
+  // en-GB renders September as "Sept" under CLDR 42 and later, so a
+  // locale-formatted certificate changes shape when the Node image is
+  // upgraded. The month names are written out for exactly this date.
+  it('says Sep, not Sept, whichever ICU the runtime ships', () => {
+    expect(whenLabel('2026-09-01T00:00:00.000Z')).not.toContain('Sept');
+  });
+
+  it('reads the instant in UTC, so the same award reads the same way everywhere', () => {
+    expect(whenLabel('2026-09-22T23:30:00.000Z')).toBe('22 Sep 2026');
+  });
+
+  it('stands a dash where Questor holds no date', () => {
+    expect(whenLabel(null)).toBe('—');
   });
 });

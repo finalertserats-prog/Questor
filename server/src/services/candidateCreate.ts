@@ -114,7 +114,7 @@ export async function attachResume(
     const struck = strikeBronze && candidate.roleId
       ? await awardBronze(tx, {
         tenantId: auth.tenantId, candidateId: candidate.id, roleId: candidate.roleId,
-        fitScoreJson: JSON.stringify(result.fit),
+        fitScoreJson: JSON.stringify(result.fit), recordedByUserId: auth.userId,
       })
       : [];
     return { stored: result, awards: struck };
