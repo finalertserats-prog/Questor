@@ -134,4 +134,28 @@ describe('erasure and the audit log', () => {
     const erasure = await prisma.auditEvent.findFirst({ where: { action: { contains: 'erase' } } });
     expect(erasure).not.toBeNull();
   });
+
+  /**
+   * The erasure's own audit row is written AFTER the payloads are cleared, so
+   * nothing cleans it. Today that is safe because the row records
+   * `reasonProvided` as a boolean rather than the operator's sentence — but
+   * the operator is typing free text into a field called `reason`, and the
+   * day somebody decides the trail would be more useful with the words in it,
+   * this is the only thing standing between that decision and a health
+   * disclosure surviving the erasure that was supposed to remove it.
+   *
+   * Raised by an adversarial review as a live blocker. It was wrong about
+   * today and right about tomorrow.
+   */
+  it('never writes the operator\'s own words into the erasure record', async () => {
+    const erasure = await prisma.auditEvent.findFirstOrThrow({
+      where: { action: { contains: 'erase' } },
+      select: { beforeJson: true, afterJson: true },
+    });
+    const payload = `${erasure.beforeJson} ${erasure.afterJson}`.toLowerCase();
+    // The reason passed to eraseCandidate above, and the candidate it was about.
+    for (const needle of ['asked to be erased', 'priya', 'sharma', 'dyslexia']) {
+      expect(payload, `the erasure record repeated "${needle}"`).not.toContain(needle);
+    }
+  });
 });
