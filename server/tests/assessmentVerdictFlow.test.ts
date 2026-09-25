@@ -38,15 +38,27 @@ async function seeded() {
 
 type Seeded = Awaited<ReturnType<typeof seeded>>;
 
-/** An assessed AI interview: the candidate is at Gold by the time a person reviews. */
+/**
+ * An assessed AI interview, with the candidate standing at the round it was
+ * conducted for.
+ *
+ * Walking them to Silver is a person's decision now and nothing else will make
+ * it (domain/pipelineAutonomy.ts), so this presses Advance the way a recruiter
+ * has to — through the endpoint, not by writing the stage, because a stage set
+ * by hand would hide exactly the kind of defect this file exists to catch.
+ */
 async function assessed(ids: Seeded) {
+  const created = await request(app).post('/api/pipelines').set('Authorization', ids.auth).send({ candidateId: ids.candidateId });
+  const pipelineId = created.body.pipeline.id as string;
+  for (const toStageKey of ['bronze', 'silver']) {
+    await request(app).post(`/api/pipelines/${pipelineId}/advance`).set('Authorization', ids.auth).send({ toStageKey });
+  }
   await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: true, accepted: true });
   await request(app).post(`/api/portal/${ids.token}/start`).send({});
   for (const text of ANSWERS) await request(app).post(`/api/portal/${ids.token}/turn`).send({ text });
   await finalizeInterview(ids.sessionId);
   const assessment = await prisma.assessmentVersion.findFirstOrThrow({ where: { sessionId: ids.sessionId }, orderBy: { version: 'desc' } });
-  const pipeline = await prisma.candidatePipeline.findFirstOrThrow({ where: { candidateId: ids.candidateId } });
-  return { assessmentId: assessment.id, pipelineId: pipeline.id };
+  return { assessmentId: assessment.id, pipelineId };
 }
 
 function load(ids: Seeded, assessmentId: string) {
@@ -79,7 +91,7 @@ describe('the journey the assessment page reads', () => {
     const { journey } = (await load(ids, assessmentId)).body;
 
     expect({ stage: journey.currentStageKey, label: journey.currentStageLabel, status: journey.status })
-      .toEqual({ stage: 'gold', label: 'Gold', status: 'ACTIVE' });
+      .toEqual({ stage: 'silver', label: 'Silver', status: 'ACTIVE' });
     expect(journey.consequences.map((c: { verdict: string }) => c.verdict)).toEqual([...VERDICTS]);
   });
 
@@ -121,17 +133,21 @@ describe('the consequence shown beside the button', () => {
     });
   }
 
-  it('is still what happens when the assessed event has not caught up', async () => {
+  // A candidate can be interviewed while their pipeline still says Bronze,
+  // because nothing moves them off it by itself. The preview has to be honest
+  // about that too: Proceed brings them up to the round that was judged, and
+  // says Silver rather than Gold.
+  it('is still what happens for a candidate the pipeline left at Bronze', async () => {
     const ids = await seeded();
     const { assessmentId, pipelineId } = await assessed(ids);
-    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'silver' } });
+    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'bronze' } });
     const { journey } = (await load(ids, assessmentId)).body;
     const promised = journey.consequences.find((c: { verdict: string }) => c.verdict === 'PROCEED');
 
     const done = (await submit(ids, assessmentId, 'PROCEED')).body.journey;
 
-    expect([promised.fromStageKey, promised.toStageKey, promised.moves]).toEqual(['silver', 'gold', true]);
-    expect([done.fromStageKey, done.toStageKey, done.moves]).toEqual(['silver', 'gold', true]);
+    expect([promised.fromStageKey, promised.toStageKey, promised.moves]).toEqual(['bronze', 'silver', true]);
+    expect([done.fromStageKey, done.toStageKey, done.moves]).toEqual(['bronze', 'silver', true]);
   });
 });
 
@@ -226,26 +242,27 @@ describe('"Just record it"', () => {
   });
 
   /**
-   * It cannot un-assess the interview. Reviewing one is what assesses it, and
-   * that stage event is a fact about the interview rather than about the
-   * verdict — so a candidate the event has not caught up with still moves.
-   * The page says so beside the button rather than implying otherwise.
+   * "Just record it" now holds back everything there is to hold back.
+   *
+   * It used to be unable to keep a candidate still: reviewing an interview
+   * assessed it, and an assessed interview carried its candidate to Gold
+   * whatever the verdict said — so the page had to admit that the move would
+   * happen anyway. It does not happen any more, and the honest sentence is the
+   * opposite one.
    */
-  it('does not pretend to hold back the move that reviewing the interview causes', async () => {
+  it('leaves the candidate exactly where they were', async () => {
     const ids = await seeded();
     const { assessmentId, pipelineId } = await assessed(ids);
-    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'silver' } });
 
     const res = await submit(ids, assessmentId, 'PROCEED', { applyToJourney: false });
 
-    expect([res.body.journey.toStageKey, res.body.journey.moves]).toEqual(['gold', true]);
-    expect((await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipelineId } })).currentStageKey).toBe('gold');
+    expect([res.body.journey.toStageKey, res.body.journey.moves]).toEqual(['silver', false]);
+    expect((await prisma.candidatePipeline.findUniqueOrThrow({ where: { id: pipelineId } })).currentStageKey).toBe('silver');
   });
 
-  it('records no decision on the round, even when the candidate moved', async () => {
+  it('records no decision on the round', async () => {
     const ids = await seeded();
     const { assessmentId, pipelineId } = await assessed(ids);
-    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'silver' } });
 
     await submit(ids, assessmentId, 'DO_NOT_PROGRESS', { applyToJourney: false });
 
