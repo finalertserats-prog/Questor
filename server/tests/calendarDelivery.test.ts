@@ -373,6 +373,79 @@ describe('a delivery whose interview has gone', () => {
   });
 });
 
+/**
+ * The words have to be rebuilt too, not just the calendar entry.
+ *
+ * Fixing the METHOD for cancellation left the same defect one status value
+ * away: a retry kept the intent it was queued with for every round that was
+ * not cancelled. So a "your meeting link is ready" notice that failed, on a
+ * round that then moved, would retry with the new time in the .ics and the old
+ * sentence in the body — the message saying one thing in its words and another
+ * in its calendar entry, which is the thing this whole area exists to stop.
+ */
+describe('a notice queued for one reason and retried after another', () => {
+  async function linkOwedThenMoved(): Promise<string> {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    // A meeting link whose notice fails: queued carrying "link".
+    mail.failNext = true;
+    await request(app).put(`/api/pipelines/${pipelineId}/rounds/${roundId}/meeting-link`).set(auth())
+      .send({ url: 'https://meet.example.com/ready' });
+    mail.failNext = false;
+    // The round then moves with no delivering provider, so that notice reaches
+    // nobody and leaves the queued row untouched — still saying "link".
+    mail.delivers = false;
+    await move(pipelineId, roundId, '15:00');
+    mail.delivers = true;
+    return roundId;
+  }
+
+  it('is still carrying the older reason when the retry picks it up', async () => {
+    const roundId = await linkOwedThenMoved();
+
+    const row = await prisma.calendarDelivery.findFirstOrThrow({ where: { targetId: roundId } });
+    expect({ status: row.status, kind: row.kind }).toEqual({ status: 'QUEUED', kind: 'link' });
+  });
+
+  it('tells the candidate their interview moved, which is what actually happened', async () => {
+    await linkOwedThenMoved();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(toCandidate().at(-1)?.text ?? '').toMatch(/has moved/);
+  });
+
+  it('does not announce a meeting link as though nothing else had changed', async () => {
+    await linkOwedThenMoved();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(toCandidate().at(-1)?.text ?? '').not.toMatch(/Here is the meeting link/);
+  });
+
+  it('carries the new time in the calendar entry as well as in the words', async () => {
+    const roundId = await linkOwedThenMoved();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+    expect(icsProperty(calendarOf(toCandidate().at(-1))!.content, 'DTSTART')).toBe(`DTSTART:${utcStamp(round.scheduledAt)}`);
+  });
+
+  it('reads as a first booking when nothing has ever reached that calendar', async () => {
+    const pipelineId = await goldPipeline();
+    mail.failNext = true;
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    mail.failNext = false;
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    const row = await prisma.calendarDelivery.findFirstOrThrow({ where: { targetId: roundId } });
+    expect({ sent: row.status, words: /is booked for/.test(toCandidate().at(-1)?.text ?? '') })
+      .toEqual({ sent: 'SENT', words: true });
+  });
+});
+
 describe('an interview that lost its time while somebody held an entry', () => {
   it('is reported, because their calendar still shows a meeting', async () => {
     const pipelineId = await goldPipeline();

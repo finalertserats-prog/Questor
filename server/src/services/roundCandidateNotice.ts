@@ -139,10 +139,19 @@ export async function notifyCandidateOfHumanRound(o: {
   // the candidate's current one otherwise. The demo block and the send below
   // both test THIS address rather than the candidate record's.
   //
-  // The guard above is deliberately still about the candidate record. A
-  // candidate with no address at all is someone this product can no longer
-  // write to, and a retry for them is closed and reported rather than sent to
-  // an address only the delivery row remembers.
+  // The guard above is deliberately still about the candidate record, and it
+  // is safe because of a constraint rather than because of a convention:
+  // Candidate.email is non-nullable (schema.prisma), no route anywhere updates
+  // it — the only candidate.update in the codebase writes timeZone — and
+  // erasure deletes the row rather than scrubbing the address in place. So
+  // `!candidate?.email` can only mean `candidate` is null, i.e. the person has
+  // been erased, and closing the delivery is then exactly right because there
+  // is nobody left to correct a calendar for.
+  //
+  // If either of those ever changes — the column becomes nullable, or some
+  // path starts blanking the address — this guard silently begins abandoning
+  // rows whose recipientEmail is still perfectly deliverable. That is what it
+  // would break, and this is where to look.
   const recipient = o.deliverTo ?? { email: candidate.email, name: candidate.fullName };
   if (await demoRecipientBlocked(round.tenantId, recipient.email)) {
     return { sent: false, note: 'In the demo, email goes only to you, so the candidate was not emailed.' };

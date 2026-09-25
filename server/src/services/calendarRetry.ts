@@ -1,4 +1,4 @@
-import type { CalendarDelivery } from '@prisma/client';
+import type { CalendarDelivery, InterviewRound } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { getEmail } from '../providers/email/index.js';
@@ -43,12 +43,45 @@ async function giveUp(row: CalendarDelivery, reason: string): Promise<void> {
 }
 
 /**
+ * What this notice actually IS, now, rather than what it was queued as.
+ *
+ * Deriving only the calendar METHOD from current state left the same defect one
+ * status value away: a row queued as "your meeting link is ready", on a round
+ * that then moved, retried with the new time in the .ics and the old sentence
+ * in the body. The message said one thing in its words and another in its
+ * calendar entry, which is the thing this whole area exists to prevent.
+ *
+ * Every branch is a reading of the round and of what this address was last
+ * actually told. `scheduledAtSent` is the only record of what their calendar
+ * holds, which is what makes "moved" distinguishable from "booked" at all:
+ *
+ *  - the round is cancelled  -> a withdrawal, whatever was owed before;
+ *  - nothing ever reached them -> this is their first notice, so it reads as a
+ *    booking rather than as a change to something they never saw;
+ *  - the time is not the one they hold -> it moved, and that is the fact that
+ *    matters more than whatever prompted the original send;
+ *  - the time is the one they hold -> the booking is not what changed, so the
+ *    link is; and with no link to give, there is nothing left but to restate
+ *    the booking.
+ *
+ * The stored `kind` is therefore never read. It stays on the row because it
+ * records what was being attempted when the send failed, which is worth having
+ * in a diagnosis even though it must not shape a later message.
+ */
+function kindForRetry(row: CalendarDelivery, round: InterviewRound): RoundNoticeKind {
+  if (round.status === 'CANCELLED') return 'cancelled';
+  if (!row.scheduledAtSent) return 'booked';
+  if (row.scheduledAtSent.getTime() !== round.scheduledAt.getTime()) return 'moved';
+  return round.meetingUrl ? 'link' : 'booked';
+}
+
+/**
  * A round's entry, rebuilt through the very function that sends it in the
  * first place — so a retry cannot drift from a first attempt. That function
- * re-reads the round under a fresh claim, derives the calendar METHOD from the
- * round's status at that moment rather than from the intent this row was
- * queued with, and records the outcome on this row itself, which is why
- * nothing is recorded here.
+ * re-reads the round under a fresh claim and records the outcome on this row
+ * itself, which is why nothing is recorded here. What kind of notice this is —
+ * the words and the calendar METHOD alike — is derived from the round's current
+ * state by kindForRetry, not carried over from the row.
  */
 async function retryRound(row: CalendarDelivery): Promise<'sent' | 'closed' | 'retry'> {
   const round = await prisma.interviewRound.findUnique({ where: { id: row.targetId } });
@@ -63,10 +96,9 @@ async function retryRound(row: CalendarDelivery): Promise<'sent' | 'closed' | 'r
     candidateId: pipeline.candidateId,
     roleId: pipeline.roleId,
     stageLabel,
-    // The words follow the intent this was queued with. The calendar METHOD
-    // does not — a round cancelled since then sends a withdrawal, whatever
-    // this says.
-    kind: (row.kind as RoundNoticeKind) || 'moved',
+    // Derived from the round and from what this address was last told — never
+    // the intent stored on the row. See kindForRetry.
+    kind: kindForRetry(row, round),
     // THIS row's address, not whoever the candidate is reachable at today.
     // The row is one address's copy of the entry; correcting it means writing
     // to that address. Sending to a newer address would leave the stale copy
