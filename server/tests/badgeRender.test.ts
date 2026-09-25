@@ -41,6 +41,37 @@ describe('badge geometry', () => {
     expect([large, small]).toEqual([true, false]);
   });
 
+  /**
+   * Ids are document-wide, and an inlined badge shares a document with
+   * whatever else is on the page.
+   *
+   * Every badge used to declare `qg0`. As a standalone .svg that is safe, and
+   * it is the only way this renderer is consumed today — but paste four tiers
+   * into one page and every `url(#qg0)` resolves to whichever came first, so
+   * three of them silently wear the first one's metal. Valid SVG, no error,
+   * wrong badge. That is exactly what happened the first time all four were
+   * shown together.
+   *
+   * Asserted across tiers rather than within one badge, because within one
+   * badge the ids were always distinct — the collision only exists between
+   * two renders, which is the case no single-badge test could see.
+   */
+  it('gives two tiers gradient ids that cannot collide in one document', () => {
+    const idsOf = (svg: string): string[] => [...svg.matchAll(/id="([^"]+)"/g)].map((m) => m[1]);
+    const all = TIERS.flatMap((tier) => idsOf(badgeSvg(tier, 360)));
+
+    expect([all.length > 0, new Set(all).size]).toEqual([true, all.length]);
+  });
+
+  /**
+   * The id is derived from tier and size, not randomised: `badgeSize` snaps
+   * `?size=` to six values so one badge is one fixed asset, and two requests
+   * for it must answer with the same bytes.
+   */
+  it('answers the same bytes for the same tier and size', () => {
+    expect(badgeSvg('gold', 360)).toBe(badgeSvg('gold', 360));
+  });
+
   it('drops the guilloché field and the hallmark at row sizes', () => {
     // Below 56px they collapse into a grey smear that makes Silver and Gold
     // hard to tell apart, which is the one thing the badge exists to do.

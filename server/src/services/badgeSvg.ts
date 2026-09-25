@@ -48,7 +48,7 @@ function gradientDef(paint: Paint, id: string): string {
   return `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${n(paint.from.x)}" y1="${n(paint.from.y)}" x2="${n(paint.to.x)}" y2="${n(paint.to.y)}">${stops}</linearGradient>`;
 }
 
-function renderShape(shape: Shape, index: number): { readonly def: string; readonly body: string } {
+function renderShape(shape: Shape, index: number, prefix: string): { readonly def: string; readonly body: string } {
   if (shape.op === 'text') {
     const opacity = shape.alpha < 1 ? ` fill-opacity="${n(shape.alpha)}"` : '';
     return {
@@ -65,7 +65,7 @@ function renderShape(shape: Shape, index: number): { readonly def: string; reado
       body: `<path d="${pathData(shape.subpaths, shape.closed)}" fill="none" stroke="${shape.colour}" stroke-width="${n(shape.width)}"${opacity}/>`,
     };
   }
-  const id = `qg${index}`;
+  const id = `${prefix}${index}`;
   const { fill, opacity } = paintAttrs(shape.paint, id);
   return {
     def: gradientDef(shape.paint, id),
@@ -74,7 +74,23 @@ function renderShape(shape: Shape, index: number): { readonly def: string; reado
 }
 
 export function badgeSvg(tier: Tier, size: number): string {
-  const parts = badgeShapes(tier, size).map(renderShape);
+  // The gradient id has to survive being inlined beside other badges.
+  //
+  // Every badge used to declare `qg0`. A standalone .svg file is its own
+  // document so that was safe, and it is the only way this renderer is
+  // consumed today — but ids are document-wide, so the moment two are pasted
+  // into one page every `url(#qg0)` resolves to whichever came first and the
+  // rest silently wear its metal. Valid SVG, no error, wrong badge. The
+  // browser component has guarded against exactly this since it was written;
+  // this one had not, and the trap was sprung by a page showing all four
+  // tiers together, where three of them came out Bronze.
+  //
+  // Derived from tier and size rather than randomised, because the route
+  // snaps `?size=` to six values so that one badge is one fixed asset. Two
+  // renders of the same tier at the same size must stay byte-identical, and
+  // they may share an id precisely because they are the same drawing.
+  const prefix = `qg-${tier}-${n(size)}-`;
+  const parts = badgeShapes(tier, size).map((shape, index) => renderShape(shape, index, prefix));
   const defs = parts.map((p) => p.def).filter(Boolean).join('');
   const body = parts.map((p) => p.body).join('');
   const label = escapeXml(badgeLabel(tier));
