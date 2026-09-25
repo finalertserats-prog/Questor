@@ -94,3 +94,17 @@ export function formatScheduledTime(at: Date, timeZone: string | null | undefine
   if (!zone || UTC_NAMES.has(zone)) return inZone;
   return `${inZone} · ${UTC_CLOCK.format(at)} UTC`;
 }
+
+/**
+ * The same instant on the candidate's own clock, for a reader who has been
+ * told the time in somebody else's zone.
+ *
+ * Null — no sentence at all — when their zone is unknown, or is the zone the
+ * time was already stated in. Restating the booking zone as "your own clock"
+ * to someone it is not would sound checked when it is a guess, which is the
+ * whole failure this work exists to stop.
+ */
+export function candidateClockSentence(at: Date, statedZone: string, candidateZone: string | null | undefined): string | null {
+  if (!candidateZone || !isKnownTimeZone(candidateZone) || candidateZone === statedZone) return null;
+  return `That is ${formatRoundTime(at, candidateZone)}, on your own clock.`;
+}

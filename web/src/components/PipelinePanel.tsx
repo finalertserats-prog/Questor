@@ -14,6 +14,7 @@ import { formatScheduled } from './dateFormat';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker } from './TimeZoneDateTimePicker';
 import { browserTimeZone, schedulePreview, scheduleRequest, type ScheduleDraft } from './zonedScheduleModel';
 import { useOrgTimeZoneStatus } from './useOrgTimeZone';
+import { useCandidateTimeZone } from './useCandidateTimeZone';
 import { orgTimeZoneLoadNotice } from './orgTimeZone';
 import { RoundActions, RoundMeeting } from './RoundMeeting';
 import { useAuth } from '../auth';
@@ -293,6 +294,10 @@ export function PipelinePanel(
 
   const [roundDraft, setRoundDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
   const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
+  // What a round for this person should default to. Undefined until it is
+  // read, so the picker does not pre-fill on the organisation's clock and then
+  // change under the recruiter.
+  const candidateTimeZone = useCandidateTimeZone(candidateId);
   const [interviewers, setInterviewers] = useState('');
   // Who will conduct the round. Only asked at the AI's own stage, which is the
   // only stage where there is a choice to make.
@@ -705,7 +710,14 @@ export function PipelinePanel(
             ) : isInterviewStage ? (
               <>
                 {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
-                <TimeZoneDateTimePicker idPrefix="round-when" value={roundDraft} onChange={setRoundDraft} orgZone={orgZone} disabled={busy} />
+                <TimeZoneDateTimePicker
+                  idPrefix="round-when"
+                  value={roundDraft}
+                  onChange={setRoundDraft}
+                  orgZone={orgZone}
+                  candidateZone={candidateTimeZone.loaded ? candidateTimeZone.timeZone : undefined}
+                  disabled={busy}
+                />
                 {/* Only the AI's own stage has a choice to make: everything
                     later is conducted by a person whatever is selected. */}
                 {current?.kind === 'ai_interview' && (

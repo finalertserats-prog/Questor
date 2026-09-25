@@ -7,6 +7,7 @@ import { logAudit } from '../services/audit.js';
 import { hasCapability } from '../services/access.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice, type RoundNoticeKind } from '../services/roundCandidateNotice.js';
 import { notifyRoundInterviewers, type InterviewerNotice, type InterviewerNoticeKind } from '../services/roundInterviewerNotice.js';
+import { candidateOwnZone } from '../services/scheduleZone.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
 import {
@@ -117,9 +118,17 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, 'A decision has already been recorded for this pipeline.');
   if (round.meetingStatus === MEETING_STATUS.CREATING && !isStaleCreation(round)) throw new HttpError(409, BUSY);
 
+  // The candidate's zone is taken again, not carried over: moving a round is
+  // choosing its time afresh, and the fact worth recording is where the
+  // candidate was when THIS time was picked. Null when HR has not said, so an
+  // old snapshot cannot outlive the answer it was a snapshot of.
+  const candidateTimeZone = await candidateOwnZone(req.auth!.tenantId, pipeline.candidateId);
   const moved = await prisma.interviewRound.updateMany({
     where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED', meetingStatus: round.meetingStatus },
-    data: { scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}) },
+    data: {
+      scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, candidateTimeZone,
+      ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}),
+    },
   });
   if (moved.count !== 1) throw new HttpError(409, NOT_SCHEDULED);
 

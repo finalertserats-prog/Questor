@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import { timeZoneField } from '../services/scheduleZone.js';
 import { prisma, parseJsonOptional } from '../db.js';
 import { config } from '../config.js';
 import { asyncHandler, authenticate, HttpError } from '../middleware/index.js';
@@ -229,11 +230,14 @@ authRouter.post('/code', asyncHandler(async (req, res) => {
 }));
 
 /** The fields of a user the signed-in user themselves may see. */
-function publicUser(user: { id: string; name: string; email: string; role: string; tourCompletedAt: Date | null; digestOptOut?: boolean }) {
+function publicUser(user: { id: string; name: string; email: string; role: string; tourCompletedAt: Date | null; digestOptOut?: boolean; timeZone?: string | null }) {
   return {
     id: user.id, name: user.name, email: user.email, role: user.role, tourCompletedAt: user.tourCompletedAt?.toISOString() ?? null,
     // Whether the HR-Box daily summary email is switched off (Settings).
     digestOptOut: user.digestOptOut ?? false,
+    // The clock this person's email is written on. Null means the
+    // organisation's is used, and the product says so rather than assuming it.
+    timeZone: user.timeZone ?? null,
     // The same list requireCapability checks, so the web app can hide what
     // would only end in "permission denied" instead of mirroring the map.
     capabilities: [...capabilitiesOf(user.role)],
@@ -486,14 +490,26 @@ authRouter.post('/tour/complete', authenticate, asyncHandler(async (req, res) =>
 
 // The caller's own email preferences. Only the HR-Box daily summary for now;
 // strict, so a mistyped field fails instead of silently changing nothing.
-const preferencesSchema = z.object({ digestOptOut: z.boolean() }).strict();
+//
+// Both fields are optional so each can be changed without restating the other,
+// and `timeZone: null` means "put me back on the organisation's clock" rather
+// than "leave it alone" — which is why absent and null have to be told apart
+// here rather than collapsed with `??`.
+const preferencesSchema = z.object({
+  digestOptOut: z.boolean().optional(),
+  timeZone: timeZoneField.nullable().optional(),
+}).strict();
 
 authRouter.patch('/me/preferences', authenticate, asyncHandler(async (req, res) => {
   const body = preferencesSchema.parse(req.body);
-  const user = await prisma.user.update({ where: { id: req.auth!.userId }, data: { digestOptOut: body.digestOptOut }, select: { digestOptOut: true } });
+  const data = {
+    ...(body.digestOptOut === undefined ? {} : { digestOptOut: body.digestOptOut }),
+    ...('timeZone' in body ? { timeZone: body.timeZone ?? null } : {}),
+  };
+  const user = await prisma.user.update({ where: { id: req.auth!.userId }, data, select: { digestOptOut: true, timeZone: true } });
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId, action: 'user.preferences_changed',
-    entityType: 'User', entityId: req.auth!.userId, after: { digestOptOut: user.digestOptOut },
+    entityType: 'User', entityId: req.auth!.userId, after: { digestOptOut: user.digestOptOut, timeZone: user.timeZone },
   });
-  res.json({ digestOptOut: user.digestOptOut });
+  res.json({ digestOptOut: user.digestOptOut, timeZone: user.timeZone });
 }));

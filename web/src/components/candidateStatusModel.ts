@@ -88,14 +88,32 @@ export function statusDay(value: string | null, timeZone: string | null): string
   });
 }
 
-/** "Tue 22 Sep, 18:05 IST" — used only where the hour genuinely matters. */
-export function statusMoment(value: string | null, timeZone: string | null): string {
+/**
+ * "Tue 22 Sep, 18:05 GMT+5:30 (13:35 your time)" — used only where the hour
+ * genuinely matters.
+ *
+ * The hiring team's clock first, because that is the clock the deadline was
+ * set on, and the candidate's own alongside it when the two differ. This page
+ * is the one place in Questor where the reader's zone is genuinely knowable —
+ * it is their own browser — and leaving them to convert an hour that is about
+ * them was the last silent conversion on it.
+ */
+export function statusMoment(
+  value: string | null,
+  timeZone: string | null,
+  viewerZone: string | undefined = Intl.DateTimeFormat().resolvedOptions().timeZone,
+): string {
   const at = parse(value);
   if (!at) return '';
-  return at.toLocaleString('en-GB', {
-    timeZone: usableZone(timeZone), weekday: 'short', day: 'numeric', month: 'short',
+  const zone = usableZone(timeZone);
+  const stated = at.toLocaleString('en-GB', {
+    timeZone: zone, weekday: 'short', day: 'numeric', month: 'short',
     hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZoneName: 'short',
   });
+  const viewer = usableZone(viewerZone ?? null);
+  if (!viewer) return stated;
+  const clock = (z: string | undefined) => at.toLocaleTimeString('en-GB', { timeZone: z, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return clock(viewer) === clock(zone) ? stated : `${stated} (${clock(viewer)} your time)`;
 }
 
 /** The name they are greeted by. Their own first name, never a nickname we invented. */
@@ -430,6 +448,22 @@ export function privacyNoticeHref(hasPrivacyPage: boolean): string {
   return hasPrivacyPage ? PRIVACY_ROUTE : CANDIDATE_NOTICE_FALLBACK;
 }
 
+/**
+ * When what was kept from this interview is due to be deleted.
+ *
+ * Deliberately a bare day, with no hour and no zone named — reviewed
+ * 2026-09-25 and left alone. Every other instant on this page gained a zone
+ * because somebody has to be somewhere at that minute; a retention deadline is
+ * not one of those. It is a window measured in months, the sentence already
+ * says "due to be", and the day is written on the hiring organisation's
+ * calendar, which is the calendar the obligation actually runs on. Adding
+ * "17:30 GMT+5:30 (13:00 your time)" to a privacy sentence would make it
+ * harder to read in exchange for a precision the underlying fact does not have.
+ *
+ * What would be wrong is converting it as if it were a plain date: it is a real
+ * instant, statusDay renders it in one named zone, and that is stable for every
+ * reader rather than shifting by a day with the browser.
+ */
 export function retentionLine(v: StatusView): string {
   const until = statusDay(v.retainUntil, v.timeZone);
   return until

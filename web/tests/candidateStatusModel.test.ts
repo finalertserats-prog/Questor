@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   conversationLine, feedbackHeading, feedbackNote, firstName, privacyNoticeHref,
-  retentionLine, statusDay, statusHeading, statusSteps, whatHappensNext,
+  retentionLine, statusDay, statusHeading, statusMoment, statusSteps, whatHappensNext,
   CANDIDATE_NOTICE_FALLBACK, PRIVACY_ROUTE, type StatusView,
 } from '../src/components/candidateStatusModel';
 
@@ -223,5 +223,32 @@ describe('dates on the clock the interview was booked on', () => {
 
   it('prints nothing for a date we do not have', () => {
     expect(statusDay(null, 'Asia/Kolkata')).toBe('');
+  });
+});
+
+/**
+ * The candidate is the one reader of this page whose own clock is knowable:
+ * it is their browser. An hour named only in the hiring team's zone leaves the
+ * person the deadline belongs to converting it themselves.
+ */
+describe('an hour the candidate has to act on', () => {
+  it('names the zone it is stated in', () => {
+    expect(statusMoment('2026-09-22T12:30:00Z', 'Asia/Kolkata', 'Asia/Kolkata')).toContain('18:00');
+  });
+
+  it('adds the candidate’s own clock when it differs', () => {
+    expect(statusMoment('2026-09-22T12:30:00Z', 'Asia/Kolkata', 'Europe/London')).toContain('13:30');
+  });
+
+  it('says whose clock the addition is', () => {
+    expect(statusMoment('2026-09-22T12:30:00Z', 'Asia/Kolkata', 'Europe/London')).toContain('your time');
+  });
+
+  it('does not repeat the same hour twice when the reader is in that zone', () => {
+    expect(statusMoment('2026-09-22T12:30:00Z', 'Asia/Kolkata', 'Asia/Kolkata')).not.toContain('your time');
+  });
+
+  it('prints nothing for a moment we do not have', () => {
+    expect(statusMoment(null, 'Asia/Kolkata', 'Europe/London')).toBe('');
   });
 });

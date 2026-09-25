@@ -6,7 +6,9 @@ import { companyEmail, escapeHtml, headerSafe } from '../providers/email/brandin
 import { firstName } from '../engines/openingModel.js';
 import { demoRecipientBlocked } from './demoPolicy.js';
 import { tenantTimeZone } from './tenantTimeZone.js';
-import { formatScheduledTime } from './zonedTime.js';
+import { candidateClockSentence, formatScheduledTime } from './zonedTime.js';
+import { candidateOwnZone } from './scheduleZone.js';
+import { roundCalendarAttachment } from './interviewCalendar.js';
 
 /**
  * Telling the candidate about an interview round a person runs.
@@ -33,6 +35,13 @@ interface HumanRoundEmail {
   readonly stageLabel: string;
   readonly scheduledAt: Date;
   readonly timeZone: string;
+  /**
+   * The candidate's own zone, when HR has recorded one. Null leaves the line
+   * out altogether rather than restating the booking zone as if it were theirs:
+   * a sentence saying "that is 19:30 your time" to someone it is not is worse
+   * than no sentence, because it sounds like it was checked.
+   */
+  readonly candidateTimeZone: string | null;
   readonly durationMinutes: number;
   readonly meetingUrl: string | null;
 }
@@ -49,15 +58,21 @@ export function buildHumanRoundEmail(d: HumanRoundEmail): EmailMessage {
   const label = d.stageLabel.replace(/[\x00-\x1f\x7f]+/g, ' ').trim();
   const when = formatScheduledTime(d.scheduledAt, d.timeZone);
   if (d.kind === 'cancelled') return cancelledEmail(d, first, label, when);
+  const theirClock = candidateClockSentence(d.scheduledAt, d.timeZone, d.candidateTimeZone);
   const opening =`${OPENING[d.kind](label, d.roleTitle, when)} It takes about ${d.durationMinutes} minutes.`;
   const join = d.meetingUrl ? `Join the meeting: ${d.meetingUrl}` : 'We will send you the meeting link before then.';
-  const text = [`Hi ${first},`, '', opening, '', join, '', 'Best regards,', `The ${d.companyName} hiring team`].join('\n');
+  const text = [
+    `Hi ${first},`, '', opening,
+    ...(theirClock ? ['', theirClock] : []),
+    '', join, '', 'Best regards,', `The ${d.companyName} hiring team`,
+  ].join('\n');
   const joinHtml = d.meetingUrl
     ? `<p style="margin:0 0 18px">Join the meeting: <a href="${escapeHtml(d.meetingUrl)}">${escapeHtml(d.meetingUrl)}</a></p>`
     : `<p style="margin:0 0 18px">${escapeHtml(join)}</p>`;
   const html = [
     `<p style="margin:0 0 14px">Hi ${escapeHtml(first)},</p>`,
     `<p style="margin:0 0 18px">${escapeHtml(opening)}</p>`,
+    ...(theirClock ? [`<p style="margin:0 0 18px">${escapeHtml(theirClock)}</p>`] : []),
     joinHtml,
     `<p style="margin:0">Best regards,<br>The ${escapeHtml(d.companyName)} hiring team</p>`,
   ].join('\n');
@@ -82,6 +97,25 @@ function cancelledEmail(d: HumanRoundEmail, first: string, label: string, when: 
 }
 
 /**
+ * The round's record of where the candidate was when its time was chosen,
+ * writing it once if it is not there yet.
+ *
+ * Written once and never overwritten: the whole point of a snapshot is that it
+ * stops answering a question about today. Rescheduling re-chooses the time and
+ * so legitimately re-takes it — that write belongs to the reschedule route,
+ * which does it before calling here.
+ */
+async function pinnedCandidateZone(round: InterviewRound, candidateId: string): Promise<string | null> {
+  if (round.candidateTimeZone) return round.candidateTimeZone;
+  const zone = await candidateOwnZone(round.tenantId, candidateId);
+  if (!zone) return null;
+  // Conditional on the column still being empty: two notices racing must not
+  // let the second one's read of Candidate.timeZone replace the first's.
+  await prisma.interviewRound.updateMany({ where: { id: round.id, candidateTimeZone: null }, data: { candidateTimeZone: zone } });
+  return zone;
+}
+
+/**
  * Email the candidate about a human round. Only for a round still ahead: a
  * round recorded after it happened tells the candidate nothing new. Reports
  * honestly whether anything went, as notifyScheduler does.
@@ -97,6 +131,12 @@ export async function notifyCandidateOfHumanRound(o: {
   if (round.scheduledAt.getTime() <= Date.now()) {
     return { sent: false, note: 'The round time has passed, so the candidate was not emailed.' };
   }
+  // Pinned here, above the delivery guards, and only ever for a round still
+  // ahead — which the check above has just established. That ordering is what
+  // makes this safe: the snapshot is the answer to "where was the candidate
+  // when this time was chosen", and it can never be written against a round
+  // that has already happened, whatever Candidate.timeZone says today.
+  const candidateTimeZone = await pinnedCandidateZone(round, o.candidateId);
   const [candidate, role, tenant] = await Promise.all([
     prisma.candidate.findFirst({ where: { id: o.candidateId, tenantId: round.tenantId }, select: { fullName: true, email: true } }),
     prisma.role.findFirst({ where: { id: o.roleId, tenantId: round.tenantId }, select: { title: true } }),
@@ -110,13 +150,26 @@ export async function notifyCandidateOfHumanRound(o: {
   if (!email.delivers) {
     return { sent: false, note: `Email is not configured to deliver (provider "${email.name}"), so the candidate was not emailed. Tell them yourself.` };
   }
+  const companyName = tenant?.name ?? 'our';
   const message = buildHumanRoundEmail({
-    kind: o.kind, candidateName: candidate.fullName, roleTitle: role.title, companyName: tenant?.name ?? 'our',
+    kind: o.kind, candidateName: candidate.fullName, roleTitle: role.title, companyName,
     stageLabel: o.stageLabel, scheduledAt: round.scheduledAt, durationMinutes: round.durationMinutes,
-    timeZone: round.scheduledTimeZone ?? await tenantTimeZone(round.tenantId), meetingUrl: round.meetingUrl,
+    timeZone: round.scheduledTimeZone ?? await tenantTimeZone(round.tenantId), candidateTimeZone,
+    meetingUrl: round.meetingUrl,
+  });
+  // The candidate's own copy, naming only them. It may say what the interview
+  // is for — it is theirs — which a copy for anyone else may not.
+  const invite = await roundCalendarAttachment(round.id, {
+    recipientName: candidate.fullName, recipientEmail: candidate.email,
+    summary: `${companyName}: ${o.stageLabel} interview — ${role.title}`,
+    description: message.text,
+    location: round.meetingUrl,
+    startsAt: round.scheduledAt, durationMinutes: round.durationMinutes,
+    method: o.kind === 'cancelled' ? 'CANCEL' : 'REQUEST',
+    organizerName: `${companyName} hiring team`,
   });
   try {
-    await email.send({ ...message, to: candidate.email });
+    await email.send({ ...message, to: candidate.email, attachments: [invite] });
     return { sent: true, note: `The candidate was emailed at ${candidate.email}.` };
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), roundId: round.id }, 'Round email to the candidate failed');

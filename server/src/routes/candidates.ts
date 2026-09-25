@@ -28,6 +28,7 @@ import {
   searchCandidatePeople,
 } from '../services/candidateReuse.js';
 import { attachResume, createApplication } from '../services/candidateCreate.js';
+import { candidateOwnZone, orgZone, timeZoneField } from '../services/scheduleZone.js';
 
 export const candidatesRouter = Router();
 candidatesRouter.use(authenticate);
@@ -93,6 +94,10 @@ const createSchema = z.object({
   email: z.string().trim().email().max(254),
   phone: z.string().trim().max(40).optional(),
   roleId: z.string().min(1).max(64),
+  // Where this person is. Optional, and left unknown when it is not given —
+  // the alternative, defaulting it to the recruiter's own zone, is exactly the
+  // guess this field exists to replace.
+  timeZone: timeZoneField.optional(),
 });
 
 // Create a candidate under a role. The same service adds each person in a
@@ -371,6 +376,47 @@ candidatesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(a
 }));
 
 /**
+ * Where this candidate is.
+ *
+ * HR's statement, not a guess: the only browser Questor could ask belongs to
+ * the recruiter, who is usually in a different country from the person they
+ * are booking. `null` puts it back to unknown, which the scheduler reports as
+ * unknown rather than quietly substituting the organisation's clock.
+ *
+ * It is the default for rounds booked from here on; rounds already booked keep
+ * the snapshot they were given, so somebody moving does not re-date the
+ * interviews they have already sat.
+ */
+const timeZoneBodySchema = z.object({ timeZone: timeZoneField.nullable() }).strict();
+
+/**
+ * What the scheduler needs to book this person's next interview honestly: the
+ * zone HR set, the zone that stands in for it, and which of the two it is
+ * about to use. The third is the point — substituting the organisation's clock
+ * and saying nothing is what left everybody guessing in the first place.
+ */
+candidatesRouter.get('/:id/time-zone', requireCapability('candidate:read'), asyncHandler(async (req, res) => {
+  const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
+  const [chosen, org] = await Promise.all([
+    candidateOwnZone(req.auth!.tenantId, candidate.id),
+    orgZone(req.auth!.tenantId),
+  ]);
+  res.json({ timeZone: chosen, orgTimeZone: org.zone, source: chosen ? 'candidate' : org.source });
+}));
+
+candidatesRouter.patch('/:id/time-zone', requireCapability('candidate:create'), asyncHandler(async (req, res) => {
+  const candidate = await assertCanAccessCandidate(req.auth!, req.params.id);
+  const { timeZone } = timeZoneBodySchema.parse(req.body ?? {});
+  const updated = await prisma.candidate.update({ where: { id: candidate.id }, data: { timeZone }, select: { timeZone: true } });
+  await logAudit({
+    tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId, action: 'candidate.time_zone_set',
+    entityType: 'Candidate', entityId: candidate.id,
+    before: { timeZone: candidate.timeZone ?? null }, after: { timeZone: updated.timeZone },
+  });
+  res.json({ timeZone: updated.timeZone });
+}));
+
+/**
  * How many other applications the same address has, for the erase control —
  * so only for a caller who may erase, and counted within their scope, which
  * for an admin is the whole organisation. Null for anyone else.
@@ -417,4 +463,4 @@ candidatesRouter.delete('/:id', requireCapability('candidate:erase'), asyncHandl
 // so every route that reached for it inherited the hole. `assertCanAccessCandidate`
 // is now the only lookup path.
 
-function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email, phone: c.phone, linkedinUrl: c.linkedinUrl ?? '', roleId: c.roleId, createdAt: c.createdAt }; }
+function shape(c: any) { return { id: c.id, fullName: c.fullName, email: c.email, phone: c.phone, linkedinUrl: c.linkedinUrl ?? '', roleId: c.roleId, timeZone: c.timeZone ?? null, createdAt: c.createdAt }; }

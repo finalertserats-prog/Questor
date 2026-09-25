@@ -40,6 +40,7 @@ import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy
 import { decidePipeline } from '../services/pipelineAutonomy.js';
 import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from '../services/candidateAwards.js';
 import { humanReviewCheck } from '../services/humanReviewGate.js';
+import { candidateOwnZone } from '../services/scheduleZone.js';
 import { humanReviewRefusal, HUMAN_REVIEW_REQUIRED } from '../domain/humanReviewRule.js';
 import {
   createMeeting, initialMeetingFields, isStaleCreation, tenantMeetingProvider, MEETING_STATUS, type MeetingOutcome,
@@ -661,6 +662,13 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         conductedBy: roles.conductedBy, aiObserver: roles.aiObserver, hrMayObserve: roles.hrMayObserve,
         sessionId: body.sessionId ?? null, interviewersJson: JSON.stringify(body.interviewers ?? []),
         scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, createdById: req.auth!.userId,
+        // Where the candidate was when this time was chosen, which is not the
+        // zone it was booked in: a Bengaluru recruiter booking a Berlin
+        // candidate produces two, and only this one answers "their time".
+        // Pinned here rather than read later, because Candidate.timeZone is
+        // what HR believes today and a past round must keep meaning the
+        // instant it always meant.
+        candidateTimeZone: await candidateOwnZone(tenantId, pipeline.candidateId),
         ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}),
         ...meetingFields,
       },
