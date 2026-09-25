@@ -715,7 +715,7 @@ export function PipelinePanel(
                   value={roundDraft}
                   onChange={setRoundDraft}
                   orgZone={orgZone}
-                  candidateZone={candidateTimeZone.loaded ? candidateTimeZone.timeZone : undefined}
+                  candidate={candidateTimeZone}
                   disabled={busy}
                 />
                 {/* Only the AI's own stage has a choice to make: everything

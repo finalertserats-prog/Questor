@@ -187,6 +187,145 @@ describe('the candidate’s own clock', () => {
   });
 });
 
+/**
+ * A snapshot is only worth having if nothing can take it again after the fact.
+ *
+ * The first version of this lane filled a missing snapshot at the moment a
+ * notice was sent, which quietly reintroduced the bug the snapshot exists to
+ * prevent: a round booked before the column existed, a profile corrected
+ * afterwards, and any resend or cancellation would re-date the round to where
+ * the candidate lives now. A null means "nobody recorded where they were", and
+ * that stays true until somebody chooses the time again.
+ */
+describe('a round booked before anyone recorded where the candidate was', () => {
+  async function roundWithNoSnapshot(): Promise<{ pipelineId: string; roundId: string }> {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    // As a row written before the column existed.
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { candidateTimeZone: null } });
+    await prisma.candidate.update({ where: { id: demo.candidateId }, data: { timeZone: 'Europe/London' } });
+    return { pipelineId, roundId };
+  }
+
+  const snapshotOf = async (roundId: string) =>
+    (await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } })).candidateTimeZone;
+
+  const addLink = (pipelineId: string, roundId: string) =>
+    request(app).put(`/api/pipelines/${pipelineId}/rounds/${roundId}/meeting-link`).set(auth())
+      .send({ url: 'https://meet.example.com/late' });
+
+  it('is not back-filled by sending a notice about it', async () => {
+    const { pipelineId, roundId } = await roundWithNoSnapshot();
+
+    // Asserted, so this cannot pass by the notice never going out.
+    const res = await addLink(pipelineId, roundId);
+    expect(res.body.candidateNotice).toMatchObject({ sent: true });
+
+    expect(await snapshotOf(roundId)).toBeNull();
+  });
+
+  it('is not back-filled by cancelling it either', async () => {
+    const { pipelineId, roundId } = await roundWithNoSnapshot();
+
+    await request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/cancel`).set(auth()).send({});
+
+    expect(await snapshotOf(roundId)).toBeNull();
+  });
+
+  it('never tells the candidate a clock is theirs on the strength of a later edit', async () => {
+    const { pipelineId, roundId } = await roundWithNoSnapshot();
+
+    await addLink(pipelineId, roundId);
+
+    expect(lastToCandidate()?.text ?? '').not.toContain('your own clock');
+  });
+
+  it('is taken afresh only when the time itself is chosen again', async () => {
+    const { pipelineId, roundId } = await roundWithNoSnapshot();
+
+    await request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/reschedule`).set(auth())
+      .send({ date: futureDate(6), time: '15:00', timeZone: 'America/New_York' });
+
+    expect(await snapshotOf(roundId)).toBe('Europe/London');
+  });
+});
+
+/**
+ * Two people moving the same round at once used to be able to leave the
+ * recipient's calendar showing the time neither of them chose last.
+ *
+ * The sequence number was claimed independently of the row it described, so a
+ * slow request could send an older time under a HIGHER sequence — and a higher
+ * sequence is precisely what a calendar client is told to prefer. The property
+ * being held to here is the one that matters to the person turning up: the
+ * message carrying the highest sequence describes the time the round actually
+ * holds.
+ */
+describe('a round moved more than once', () => {
+  const utcStamp = (at: Date) => `${at.toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`;
+
+  async function movableRound(): Promise<{ pipelineId: string; roundId: string }> {
+    const pipelineId = await goldPipeline();
+    return { pipelineId, roundId: (await bookGold(pipelineId)).body.round.id as string };
+  }
+
+  const move = (pipelineId: string, roundId: string, time: string) =>
+    request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/reschedule`).set(auth())
+      .send({ date: futureDate(6), time, timeZone: 'America/New_York' });
+
+  /** The .ics with the highest SEQUENCE of everything sent to the candidate. */
+  function newestEntry(): { sequence: number; dtstart: string | undefined } {
+    const entries = toCandidate().flatMap((m) => {
+      const ics = calendarOf(m);
+      return ics ? [ics.content] : [];
+    });
+    const ranked = entries
+      .map((content) => ({ sequence: Number(icsProperty(content, 'SEQUENCE')?.split(':')[1]), dtstart: icsProperty(content, 'DTSTART') }))
+      .sort((a, b) => a.sequence - b.sequence);
+    return ranked[ranked.length - 1];
+  }
+
+  it('leaves the calendar on the time the round holds after one move', async () => {
+    const { pipelineId, roundId } = await movableRound();
+
+    await move(pipelineId, roundId, '15:00');
+
+    const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+    expect(newestEntry().dtstart).toBe(`DTSTART:${utcStamp(round.scheduledAt)}`);
+  });
+
+  it('leaves the calendar on the time the round holds after several', async () => {
+    const { pipelineId, roundId } = await movableRound();
+
+    for (const time of ['15:00', '16:00', '17:00']) await move(pipelineId, roundId, time);
+
+    const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+    expect(newestEntry().dtstart).toBe(`DTSTART:${utcStamp(round.scheduledAt)}`);
+  });
+
+  // The interleaving is whatever the runtime gives us; the invariant is not.
+  it('leaves the calendar on the time the round holds when two moves race', async () => {
+    const { pipelineId, roundId } = await movableRound();
+
+    await Promise.all([move(pipelineId, roundId, '15:00'), move(pipelineId, roundId, '16:00')]);
+
+    const round = await prisma.interviewRound.findUniqueOrThrow({ where: { id: roundId } });
+    expect(newestEntry().dtstart).toBe(`DTSTART:${utcStamp(round.scheduledAt)}`);
+  });
+
+  it('never hands out the same sequence twice', async () => {
+    const { pipelineId, roundId } = await movableRound();
+
+    for (const time of ['15:00', '16:00', '17:00']) await move(pipelineId, roundId, time);
+
+    const sequences = toCandidate().flatMap((m) => {
+      const ics = calendarOf(m);
+      return ics ? [Number(icsProperty(ics.content, 'SEQUENCE')?.split(':')[1])] : [];
+    });
+    expect(new Set(sequences).size).toBe(sequences.length);
+  });
+});
+
 describe('the calendar attachment on an AI interview invitation', () => {
   const invite = () => request(app).post(`/api/interviews/${demo.sessionId}/schedule`).set(auth())
     .send({ date: futureDate(), time: '14:30', timeZone: 'Asia/Kolkata', send: true });

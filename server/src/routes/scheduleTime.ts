@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { HttpError } from '../middleware/index.js';
-import { isKnownTimeZone } from '../services/roundTime.js';
 import { zonedLocalToUtc } from '../services/zonedTime.js';
+import { timeZoneField } from '../services/scheduleZone.js';
 
 /**
  * The two ways a scheduled time arrives.
@@ -35,7 +35,19 @@ export const scheduleTimeFields = {
   scheduledAt: z.string().datetime({ offset: true }).optional(),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-10-01.').optional(),
   time: z.string().regex(/^\d{2}:\d{2}$/, 'Use a 24-hour time like 14:30.').optional(),
-  timeZone: z.string().trim().max(64).refine(isKnownTimeZone, 'Use an IANA time zone such as "Asia/Kolkata".').optional(),
+  // The SAME check that guards Candidate.timeZone and User.timeZone, and for
+  // the stronger reason: this is the zone every reader of this booking ends up
+  // formatting against. It was `isKnownTimeZone`, which Intl satisfies for a
+  // bare offset — so "+05:30" was storable as a round's zone, and an offset
+  // carries no daylight-saving rules. A round booked at "+01:00" in March then
+  // reads an hour out in July with nothing anywhere reporting it.
+  //
+  // Tightening this refuses a request an API client could previously make. That
+  // is deliberate and it is the safer failure: the console has never sent an
+  // offset (zonedScheduleModel always sends a named zone), and a client that
+  // did was already getting a booking that quietly breaks at the next clock
+  // change. A 400 naming the fix beats a wrong time nobody can see.
+  timeZone: timeZoneField.optional(),
 };
 
 type ScheduleTimeInput = { scheduledAt?: string; date?: string; time?: string; timeZone?: string };

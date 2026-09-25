@@ -42,7 +42,7 @@ import { replanPending } from '../services/interviewReplan.js';
 import { candidateClockSentence, formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
 import { candidateOwnZone } from '../services/scheduleZone.js';
-import { sessionCalendarAttachment } from '../services/interviewCalendar.js';
+import { claimSessionCalendar, sessionInviteAttachment } from '../services/interviewCalendar.js';
 import { interviewListQuerySchema, listInterviews } from '../services/interviewList.js';
 import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 
@@ -732,13 +732,21 @@ async function inviteCalendar(o: {
   readonly durationMinutes: number;
 }): Promise<readonly EmailAttachment[]> {
   if (!o.startsAt) return [];
-  return [await sessionCalendarAttachment(o.sessionId, {
+  // The sequence and the interview's state are taken as one write, and the
+  // entry describes what came back — so two people scheduling the same
+  // interview at once cannot leave the later sequence on the earlier time.
+  const claimed = await claimSessionCalendar(o.sessionId);
+  const startsAt = claimed.session.scheduledAt;
+  // Unscheduled or overtaken while we were claiming: the number is spent, but
+  // an entry pointing at nothing is worse than no entry.
+  if (!startsAt || startsAt.getTime() <= Date.now()) return [];
+  return [sessionInviteAttachment(claimed, {
     recipientName: o.candidate.fullName, recipientEmail: o.candidate.email,
     // The candidate's own copy, so it may name the company and the role.
     summary: `${o.companyName}: interview — ${o.roleTitle}`,
     description: o.message.text,
     location: o.portalUrl,
-    startsAt: o.startsAt, durationMinutes: o.durationMinutes,
+    startsAt, durationMinutes: claimed.session.durationMinutes,
     method: 'REQUEST',
     organizerName: `${o.companyName} hiring team`,
   })];

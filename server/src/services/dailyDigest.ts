@@ -49,6 +49,22 @@ const USERS_PER_RUN = 100;
  */
 const DIGEST_WINDOW_HOURS = 6;
 
+/**
+ * How recently a summary must NOT have gone out for another to be allowed.
+ *
+ * The once-a-day claim is keyed on the reader's own calendar date, which is
+ * what makes "today" mean their today — but a calendar date is not monotonic
+ * when the person carrying it gets on a plane. Flying east their local date
+ * jumps forward, which is a brand-new key hours after the last summary went
+ * out, and the claim alone would let a second one through the same morning.
+ *
+ * Derived from the window rather than picked: the tightest legitimate pair of
+ * mornings is the last moment of one day's window and the first of the next,
+ * which is 24 - DIGEST_WINDOW_HOURS apart. Staying an hour inside that can
+ * never block a first summary and always blocks a second.
+ */
+const RESEND_COOLDOWN_MS = (24 - DIGEST_WINDOW_HOURS - 1) * 3_600_000;
+
 /** The organisation's day ("YYYY-MM-DD") while its summary window is open there, else null. */
 export function digestDayFor(now: Date, timeZone: string, hour: number): string | null {
   const wall = zonedWallClock(now, timeZone);
@@ -91,7 +107,10 @@ async function recipients(now: Date, limit: number): Promise<Recipient[]> {
   const users = await prisma.user.findMany({
     where: { tenantId: { in: [...orgZoneOf.keys()] }, digestOptOut: false, role: { in: readers } },
     orderBy: { id: 'asc' },
-    select: { id: true, tenantId: true, role: true, email: true, name: true, timeZone: true, digestDeliveries: { orderBy: { day: 'desc' }, take: 1, select: { day: true } } },
+    // Ordered by when it was claimed, not by its date string: the date string
+    // is the reader's local one and can go backwards when they move zones, so
+    // "the newest" has to be asked of the clock rather than of the calendar.
+    select: { id: true, tenantId: true, role: true, email: true, name: true, timeZone: true, digestDeliveries: { orderBy: { claimedAt: 'desc' }, take: 1, select: { day: true, claimedAt: true } } },
   });
   return users
     .map((u) => {
@@ -104,21 +123,36 @@ async function recipients(now: Date, limit: number): Promise<Recipient[]> {
         // the day's own midnight. It is measured on the reader's clock now
         // rather than their employer's, which is the only thing that moved.
         day: digestDayFor(now, timeZone, config.hrBox.digestHour) ?? '',
-        last: u.digestDeliveries[0]?.day ?? '',
+        lastClaimedAt: u.digestDeliveries[0]?.claimedAt ?? null,
       };
     })
-    // Both dates are now this reader's own days, so comparing them is still
-    // comparing like with like. Someone who moves zones can repeat or skip a
-    // calendar day; the unique claim on (userId, day) means a repeat sends
-    // nothing rather than sending twice.
-    .filter((u) => u.day && u.last < u.day)
+    // Two conditions, and neither is an ordering of date strings. The claim on
+    // (userId, day) is what makes it at most one per reader per local day —
+    // that is enforced by the database, not here (see `claim`). This only adds
+    // the cooling-off period, which is what a local date cannot express,
+    // because a reader who changes zone changes what their dates mean.
+    //
+    // The previous `last < day` compared two local date strings and assumed
+    // they only ever move forward. They do not: flying west makes today's
+    // string SMALLER than the one already claimed, and the reader was then
+    // skipped until the calendar caught up.
+    .filter((u) => u.day && (u.lastClaimedAt === null || now.getTime() - u.lastClaimedAt.getTime() >= RESEND_COOLDOWN_MS))
     .slice(0, limit)
-    .map(({ last: _last, ...u }) => u);
+    .map(({ lastClaimedAt: _lastClaimedAt, ...u }) => u);
 }
 
-async function claim(user: Recipient): Promise<string | null> {
+/**
+ * `claimedAt` is the run's own instant, not the database's default.
+ *
+ * The cooling-off period is measured against it, and the run already carries
+ * the clock every other decision here is made on — leaving the two to separate
+ * sources would make "has a summary gone out recently" answerable differently
+ * from "is it morning for this reader", which is how a job becomes untestable
+ * and, worse, inconsistent across a clock skew between app and database.
+ */
+async function claim(user: Recipient, now: Date): Promise<string | null> {
   try {
-    const row = await prisma.digestDelivery.create({ data: { userId: user.id, tenantId: user.tenantId, day: user.day }, select: { id: true } });
+    const row = await prisma.digestDelivery.create({ data: { userId: user.id, tenantId: user.tenantId, day: user.day, claimedAt: now }, select: { id: true } });
     return row.id;
   } catch (err) {
     if ((err as { code?: unknown } | null)?.code === 'P2002') return null;
@@ -130,7 +164,7 @@ async function sendOne(user: Recipient, now: Date): Promise<'sent' | 'empty' | '
   // They may have switched it off since the list was read.
   const still = await prisma.user.findFirst({ where: { id: user.id, digestOptOut: false }, select: { id: true } });
   if (!still) return 'taken';
-  const id = await claim(user);
+  const id = await claim(user, now);
   if (!id) return 'taken';
   const auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
   const { total, rows } = await collectNeedsYou(auth, now, DIGEST_ROW_LIMIT);

@@ -453,7 +453,7 @@ export function InterviewDetail() {
             value={draft}
             onChange={setDraft}
             orgZone={orgZone}
-            candidateZone={candidateTimeZone.loaded ? candidateTimeZone.timeZone : undefined}
+            candidate={candidateTimeZone}
             disabled={busyAction !== null}
           />
           <div className="row" style={{ gap: 8 }}>

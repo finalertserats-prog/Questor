@@ -1,3 +1,4 @@
+import type { InterviewRound, InterviewSession } from '@prisma/client';
 import { prisma } from '../db.js';
 import { config } from '../config.js';
 import type { EmailAttachment } from '../providers/email/index.js';
@@ -5,7 +6,7 @@ import { calendarAttachment, roundCalendarUid, sessionCalendarUid, type Calendar
 
 /**
  * The stored half of the calendar invitation: the sequence counter that makes
- * an update an update, and the two ways of turning a booking into an .ics.
+ * an update an update, and the row state that number is a statement about.
  *
  * Kept apart from calendarInvite.ts so that the format itself stays a pure
  * function of its inputs — the part with the fiddly rules is the part worth
@@ -25,17 +26,44 @@ function organizerAddress(): string {
 }
 
 /**
- * Take the sequence number this message goes out under, and move the counter on.
+ * A sequence number AND the row it is a statement about, read as one write.
  *
- * Numbered from zero, and claimed before the send rather than after, so a send
- * that fails still burns its number: a later message with a number already used
- * is precisely what a calendar client is entitled to ignore.
+ * WHY THEY COME BACK TOGETHER. A calendar client is told to prefer the highest
+ * SEQUENCE it has seen for a UID. So if the number is claimed independently of
+ * the row it describes, two people moving the same round at once can leave a
+ * recipient on the time neither of them chose last: A writes 15:00, B writes
+ * 16:00 and sends under sequence 2, A — delayed — claims sequence 3 and sends
+ * its stale 15:00, and the calendar dutifully reverts.
+ *
+ * `UPDATE ... RETURNING` is one statement, so the number and the state are
+ * taken under the same row lock. Claims therefore serialise, and a later claim
+ * can only ever see a state at least as new as an earlier one's: the highest
+ * sequence always describes the newest state any sender saw. The caller must
+ * describe the row it gets back here, not the one it was holding.
  */
-async function claimSequence(kind: 'round' | 'session', id: string): Promise<number> {
-  const after = kind === 'round'
-    ? await prisma.interviewRound.update({ where: { id }, data: { calendarSequence: { increment: 1 } }, select: { calendarSequence: true } })
-    : await prisma.interviewSession.update({ where: { id }, data: { calendarSequence: { increment: 1 } }, select: { calendarSequence: true } });
-  return after.calendarSequence - 1;
+export interface ClaimedRoundCalendar {
+  readonly sequence: number;
+  readonly round: InterviewRound;
+}
+
+export interface ClaimedSessionCalendar {
+  readonly sequence: number;
+  readonly session: InterviewSession;
+}
+
+/**
+ * Numbered from zero, and claimed before the send rather than after, so a send
+ * that fails still burns its number: a later message reusing a number already
+ * spent is precisely what a calendar client is entitled to ignore.
+ */
+export async function claimRoundCalendar(roundId: string): Promise<ClaimedRoundCalendar> {
+  const round = await prisma.interviewRound.update({ where: { id: roundId }, data: { calendarSequence: { increment: 1 } } });
+  return { sequence: round.calendarSequence - 1, round };
+}
+
+export async function claimSessionCalendar(sessionId: string): Promise<ClaimedSessionCalendar> {
+  const session = await prisma.interviewSession.update({ where: { id: sessionId }, data: { calendarSequence: { increment: 1 } } });
+  return { sequence: session.calendarSequence - 1, session };
 }
 
 export interface RecipientInvite {
@@ -57,22 +85,16 @@ export interface RecipientInvite {
   readonly organizerName: string;
 }
 
-/** The invitation for one recipient of one pipeline round. */
-export async function roundCalendarAttachment(roundId: string, invite: RecipientInvite): Promise<EmailAttachment> {
+/** One recipient's copy of a pipeline round's entry, under a claimed sequence. */
+export function roundInviteAttachment(claimed: ClaimedRoundCalendar, invite: RecipientInvite): EmailAttachment {
   return calendarAttachment({
-    ...invite,
-    uid: roundCalendarUid(roundId),
-    sequence: await claimSequence('round', roundId),
-    organizerEmail: organizerAddress(),
+    ...invite, uid: roundCalendarUid(claimed.round.id), sequence: claimed.sequence, organizerEmail: organizerAddress(),
   });
 }
 
-/** The invitation for one recipient of one AI interview. */
-export async function sessionCalendarAttachment(sessionId: string, invite: RecipientInvite): Promise<EmailAttachment> {
+/** One recipient's copy of an AI interview's entry, under a claimed sequence. */
+export function sessionInviteAttachment(claimed: ClaimedSessionCalendar, invite: RecipientInvite): EmailAttachment {
   return calendarAttachment({
-    ...invite,
-    uid: sessionCalendarUid(sessionId),
-    sequence: await claimSequence('session', sessionId),
-    organizerEmail: organizerAddress(),
+    ...invite, uid: sessionCalendarUid(claimed.session.id), sequence: claimed.sequence, organizerEmail: organizerAddress(),
   });
 }

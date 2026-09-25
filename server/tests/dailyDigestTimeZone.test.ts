@@ -141,6 +141,67 @@ describe('a reader who has not set a time zone', () => {
   });
 });
 
+/**
+ * A reader who crosses the date line.
+ *
+ * Keying the once-a-day claim on the reader's own calendar date is what makes
+ * "today" mean their today — but a calendar date is not monotonic when the
+ * person carrying it gets on a plane. Flying east, their local date jumps
+ * forward, which is a brand-new key hours after the last summary went out; the
+ * claim alone would happily allow a second one the same morning.
+ */
+describe('a reader who moves between zones', () => {
+  /** 09:00 in Los Angeles on the 23rd. */
+  const LA_MORNING = new Date('2026-09-23T16:00:00.000Z');
+  /** Two hours later — and already 08:00 on the 24th in Kiritimati. */
+  const TWO_HOURS_ON = new Date('2026-09-23T18:00:00.000Z');
+
+  it('is not sent a second summary hours later under a new calendar date', async () => {
+    const { user } = await setup({ orgZone: 'Asia/Kolkata', userZone: 'America/Los_Angeles' });
+    await runDailyDigest(null, LA_MORNING);
+    expect(mail.messages).toHaveLength(1);
+
+    await prisma.user.update({ where: { id: user.id }, data: { timeZone: 'Pacific/Kiritimati' } });
+    await runDailyDigest(null, TWO_HOURS_ON);
+
+    expect(mail.messages).toHaveLength(1);
+  });
+
+  it('claims nothing for the day it declined to send on', async () => {
+    const { user } = await setup({ orgZone: 'Asia/Kolkata', userZone: 'America/Los_Angeles' });
+    await runDailyDigest(null, LA_MORNING);
+    await prisma.user.update({ where: { id: user.id }, data: { timeZone: 'Pacific/Kiritimati' } });
+
+    await runDailyDigest(null, TWO_HOURS_ON);
+
+    expect(await prisma.digestDelivery.count()).toBe(1);
+  });
+});
+
+/**
+ * The gap that stops a second summary must never stop a first one.
+ *
+ * The window is six hours wide, so two consecutive days' summaries can be as
+ * little as eighteen hours apart — the latest possible moment on one day and
+ * the earliest on the next. Anything longer than that as a cooling-off period
+ * would silently drop a legitimate morning.
+ */
+describe('the tightest legitimate pair of mornings', () => {
+  /** 13:30 in Kolkata: the last half-hour of a window that opened at 08:00. */
+  const LATE_IN_THE_WINDOW = new Date('2026-09-23T08:00:00.000Z');
+  /** 08:00 in Kolkata the next day: the first minute of the next window. */
+  const EARLIEST_NEXT_DAY = new Date('2026-09-24T02:30:00.000Z');
+
+  it('still sends both', async () => {
+    await setup({ orgZone: 'Asia/Kolkata', userZone: 'Asia/Kolkata' });
+
+    await runDailyDigest(null, LATE_IN_THE_WINDOW);
+    await runDailyDigest(null, EARLIEST_NEXT_DAY);
+
+    expect(mail.messages).toHaveLength(2);
+  });
+});
+
 describe('what per-reader timing must not break', () => {
   it('still sends nothing to someone who switched the summary off', async () => {
     const { user } = await setup({ orgZone: 'Asia/Kolkata', userZone: 'Europe/London' });

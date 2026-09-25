@@ -102,6 +102,36 @@ describe('scheduling an interview in a chosen zone', () => {
     expect(res.status).toBe(400);
   });
 
+  // Intl accepts a bare offset as a time zone and formats happily against it,
+  // which is exactly what makes storing one dangerous: an offset carries no
+  // daylight-saving rules, so a round booked at "+01:00" in March reads an
+  // hour out in July and nothing anywhere reports a problem.
+  it('refuses a bare offset, which cannot survive a clock change', async () => {
+    const res = await request(app).post(`/api/interviews/${demo.sessionId}/schedule`).set(auth())
+      .send({ date: futureDate(), time: '09:00', timeZone: '+05:30' });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('says what a usable zone looks like rather than just refusing', async () => {
+    const res = await request(app).post(`/api/interviews/${demo.sessionId}/schedule`).set(auth())
+      .send({ date: futureDate(), time: '09:00', timeZone: '+05:30' });
+
+    expect(JSON.stringify(res.body)).toContain('Asia/Kolkata');
+  });
+
+  it('refuses a bare offset on a round as well as on an interview', async () => {
+    const pipelineId = (await request(app).post('/api/pipelines').set(auth()).send({ candidateId: demo.candidateId })).body.pipeline.id as string;
+    for (const key of ['bronze', 'silver', 'gold']) {
+      await request(app).post(`/api/pipelines/${pipelineId}/advance`).set(auth()).send({ toStageKey: key });
+    }
+
+    const res = await request(app).post(`/api/pipelines/${pipelineId}/rounds`).set(auth())
+      .send({ stageKey: 'gold', date: futureDate(), time: '10:00', timeZone: '-08' });
+
+    expect(res.status).toBe(400);
+  });
+
   it('refuses a round booked in year 99 rather than storing 1999', async () => {
     const pipelineId = (await request(app).post('/api/pipelines').set(auth()).send({ candidateId: demo.candidateId })).body.pipeline.id as string;
     for (const key of ['bronze', 'silver', 'gold']) {
