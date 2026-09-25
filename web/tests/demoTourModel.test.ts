@@ -9,8 +9,14 @@ const story = { orgSlug: 'acme-demo', roleId: 'role1', candidateId: 'cand1', ses
 const status: DemoStatus = { visitor: { name: 'Rhea Kapoor', firstName: 'Rhea' }, caps: { roles: 2, candidates: 3, interviews: 3 }, modes: { candidate: true, observer: false }, story };
 
 describe('the script', () => {
-  it('tells nineteen beats in order, each with something to say', () => {
-    expect(DEMO_BEATS.map((b) => b.id)).toEqual(Array.from({ length: 19 }, (_, i) => `B${String(i + 1).padStart(2, '0')}`));
+  // Ids name the beats rather than number them, so cutting B02 and B17 leaves
+  // gaps on purpose: the anchors, the e2e walk and the script document all call
+  // the remaining beats by the labels they already had.
+  it('tells seventeen beats in order, each with something to say', () => {
+    expect(DEMO_BEATS.map((b) => b.id)).toEqual([
+      'B01', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B09', 'B10',
+      'B11', 'B12', 'B13', 'B14', 'B15', 'B16', 'B18', 'B19',
+    ]);
     for (const beat of DEMO_BEATS) expect(beat.body.trim().length).toBeGreaterThan(20);
   });
 
@@ -26,24 +32,27 @@ describe('the script', () => {
 
 describe('which beats a sandbox can show', () => {
   it('offers everything when the story and an interview mode are present', () => {
-    expect(offeredBeats(DEMO_BEATS, status)).toHaveLength(19);
+    expect(offeredBeats(DEMO_BEATS, status)).toHaveLength(17);
   });
 
   it('leaves out the story beats when the sandbox has no story', () => {
     const offered = offeredBeats(DEMO_BEATS, { ...status, story: null });
-    expect(offered.map((b) => b.id)).toEqual(['B01', 'B03', 'B04', 'B05', 'B06', 'B17', 'B18', 'B19']);
+    expect(offered.map((b) => b.id)).toEqual(['B01', 'B03', 'B04', 'B05', 'B06', 'B18', 'B19']);
   });
 
   it('leaves out the interview card when no way of sitting it is on offer', () => {
-    expect(beatOffered(DEMO_BEATS[18], { ...status, modes: { candidate: false, observer: false } })).toBe(false);
+    expect(beatOffered(DEMO_BEATS.find((b) => b.id === 'B19')!, { ...status, modes: { candidate: false, observer: false } })).toBe(false);
   });
 
-  it('leaves out the door when the organisation has no address', () => {
-    expect(beatOffered(DEMO_BEATS[1], { ...status, story: { ...story, orgSlug: null } })).toBe(false);
+  // B02 (the organisation's sign-in page) and B17 (the account-request page)
+  // were cut: a visitor who is already inside should not be sent back out to a
+  // public page to be told how the door works.
+  it('never leaves the signed-in product', () => {
+    const outside = DEMO_BEATS.filter((b) => b.route.startsWith('/o/') || b.route.startsWith('/signup'));
+    expect(outside).toEqual([]);
   });
 
   it('fills the sandbox\'s ids into each route', () => {
-    expect(resolveRoute(DEMO_BEATS[1], status)).toBe('/o/acme-demo?tour=door');
     expect(resolveRoute(DEMO_BEATS.find((b) => b.id === 'B13')!, status)).toBe('/assessments/ass1');
     expect(resolveRoute(DEMO_BEATS.find((b) => b.id === 'B10')!, status)).toBe('/candidates/cand1?tab=journey');
   });
@@ -53,8 +62,9 @@ describe('the tour\'s steps', () => {
   it('are the offered beats, each on its screen', () => {
     const steps = demoSteps(DEMO_BEATS, status);
     expect(steps.map((s) => s.id)).toEqual(DEMO_BEATS.map((b) => b.id));
-    expect(steps[12].route).toBe('/assessments/ass1');
-    expect(steps[12].anchor).toBe('assessment-ai');
+    const aiBeat = steps.find((step) => step.id === 'B13')!;
+    expect(aiBeat.route).toBe('/assessments/ass1');
+    expect(aiBeat.anchor).toBe('assessment-ai');
   });
 
   it('greets the visitor by name on the welcome card, and by nothing when the name is unknown', () => {

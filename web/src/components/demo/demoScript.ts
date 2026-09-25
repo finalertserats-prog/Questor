@@ -26,14 +26,22 @@ export interface DemoBeat {
   readonly closing?: 'explore' | 'interview';
 }
 
+/**
+ * Ids are the beats' names, not their positions, so they do not close up when
+ * one is cut — B02 and B17 are gone and the rest keep the labels the anchors,
+ * the e2e walk and the script document already call them by.
+ *
+ * Those two were the only beats that left the product: the organisation's
+ * sign-in page at step 2, and the account-request page at step 17. Both told
+ * the truth about how Questor is entered, and both did it by throwing a
+ * visitor who is already inside back out to a public page — the second of them
+ * straight after watching a hire decided. A demo arrives by link and never
+ * needs either door explained.
+ */
 export const DEMO_BEATS: readonly DemoBeat[] = [
   {
     id: 'B01', title: 'Welcome to Questor', route: '/',
     body: 'In the next few minutes you’ll follow one hire from beginning to end — a role, a candidate, an interview, the evidence, and a decision — over the real product, so what you see is what your team would see. Use Next and Back, or the arrow keys; Escape skips.',
-  },
-  {
-    id: 'B02', title: 'The door', route: '/o/{orgSlug}?tour=door', anchor: 'org-signin',
-    body: 'Every organisation on Questor has its own sign-in page at its own address — this one is your sandbox’s. Your demo link brought you past it; your team would come in through it each morning.',
   },
   {
     id: 'B03', title: 'Home', route: '/?tab=home', anchor: 'home-needs-you',
@@ -90,10 +98,6 @@ export const DEMO_BEATS: readonly DemoBeat[] = [
   {
     id: 'B16', title: 'The decision', route: '/assessments/{assessmentId}', anchor: 'assessment-verdict', needsStory: true,
     body: 'A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence.',
-  },
-  {
-    id: 'B17', title: 'Asking to be let in', route: '/signup', anchor: 'signup-modes',
-    body: 'Nobody opens an account by themselves. A new organisation starts here; a person asks to join theirs here. Each request goes to a human, who opens the door — or doesn’t. Slower than a sign-up button, and that’s the point.',
   },
   {
     id: 'B18', title: 'Yours to explore', route: '/?tab=home', closing: 'explore',

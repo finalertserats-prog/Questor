@@ -67,13 +67,6 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
   > Welcome to Questor. In the next five minutes you'll follow one hire from beginning to end: a role, a candidate, an interview, the evidence, and a decision. The real product moves behind these words, so what you see is what your team would see.
 - **Duration:** 44 words · ~18 s
 
-### B02 · The door — 0:19
-- **Screen:** `/o/<company>-demo` — the sandbox's own organisation sign-in page, in the public shell (no sidebar, no demo bar; the player carries End demo). Shown, never submitted; the visitor's session is untouched. **Anchor:** `org-signin` *(new — the sign-in card)*.
-- **Narration / caption:**
-  > First, where you are. Every organisation on Questor has its own sign-in page at its own address — this one is your sandbox's. Your demo link brought you past it; your team would come in through it each morning.
-- **Why here:** the visitor arrived inside an organisation without signing in, which is quietly disorienting. The door first says where they are; "come in each morning" hands straight to Home.
-- **Duration:** 38 words · ~15 s
-
 ### B03 · Home — 0:35
 - **Screen:** `/` Home — the app returns to the shell. **Anchor:** `home-needs-you` *(new — the "What needs you" section)*. On a phone the drawer stays closed; this is page content.
 - **Narration / caption:**
@@ -162,13 +155,6 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
   > This is where the decision is recorded. A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence.
 - **Duration:** 39 words · ~16 s
 
-### B17 · Asking to be let in — 4:26
-- **Screen:** `/signup` (public shell). **Anchor:** `signup-modes` *(new — the "What are you asking for?" fieldset, with both options inside it)*.
-- **Narration / caption:**
-  > When you want in for real — nobody opens an account by themselves. A new organisation starts here; a person asks to join theirs here. Each request goes to a human, who opens the door, or doesn't. Slower than a sign-up button. That's the point.
-- **Why here, not with the door:** the door says where you are; this answers "how would I get in", which a visitor only asks once they want in. Administrative trivia at the start, the natural next step at the end.
-- **Duration:** 46 words · ~18 s
-
 ### B18 · Yours to explore — 4:45
 - **Screen:** `/` Home. **Anchor:** none (centred card). The tour overlay lifts as this line ends; the app is live underneath.
 - **Narration / caption:**
@@ -193,7 +179,6 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 | Beat | Screen | Anchor | Words | ~s | Ends at |
 |---|---|---|---|---|---|
 | B01 Welcome | Home | — | 44 | 18 | 0:18 |
-| B02 The door | /o/slug | org-signin | 38 | 15 | 0:34 |
 | B03 Home | Home | home-needs-you | 35 | 14 | 0:49 |
 | B04 Dashboard tab | Dashboard | landing-tab-dashboard | 10 | 4 | 0:54 |
 | B05 Key metrics | Dashboard | kpis | 36 | 14 | 1:09 |
@@ -208,12 +193,11 @@ Recording notes: a single narrator; conversational studio read at roughly 150 wo
 | B14 Reviewer | Assessment · 2 | assessment-review | 54 | 22 | 3:53 |
 | B15 Differ | Assessment · 3 | assessment-differences | 36 | 14 | 4:08 |
 | B16 Decision | Assessment · 2 | assessment-verdict | 39 | 16 | 4:25 |
-| B17 Asking in | /signup | signup-modes | 46 | 18 | 4:44 |
 | B18 Explore | Home | — | 43 | 17 | 5:02 |
 | B19 Interview | Home | — | 45 | 18 | 5:21 |
 | | | **Total** | **761** | **~304 + ~18 nav** | **~5:22** |
 
-Every anchor marked *new* is one `data-tour` attribute on an element that already exists. Twelve new anchors, seven existing (`nav-roles`, `nav-candidates`, `nav-interviews` are brushed in passing; `kpis`, `workflow`, `landing-tab-*`, `nav-dashboard` are landed on). The public pages (`/o/:slug`, `/signup`) were re-checked against 1f41c29: the org page is the organisation's own sign-in card with "No account yet? Ask <org> for one"; signup now asks for a password and offers "Start a new organisation" / "Join an organisation" — the B17 line was reworded to match ("starts here" / "asks to join theirs here").
+Every anchor marked *new* is one `data-tour` attribute on an element that already exists. Twelve new anchors, seven existing (`nav-roles`, `nav-candidates`, `nav-interviews` are brushed in passing; `kpis`, `workflow`, `landing-tab-*`, `nav-dashboard` are landed on). The `org-signin` and `signup-modes` anchors are no longer used by the tour; they are left on their pages, harmless, in case a future beat wants them.
 
 ---
 
@@ -221,7 +205,7 @@ Every anchor marked *new* is one `data-tour` attribute on an element that alread
 
 **Revised 2026-09-25 (owner's verdict on the built version):** the docked player and the self-advancing narration are gone. The demo is presented exactly as the product tour is — the spotlight ring and scrim, and a coach-mark card anchored beside the element (a sheet at phone width), carrying "Step 8 of 19", a title, the line, and **Skip tour / Back / Next** (Finish on the last). The visitor reads and presses Next; nothing advances on its own, and no audio is played or waited for. The two closing cards carry their buttons above Back and Next (B18: **New role**; B19: exactly the ways of sitting the interview that are on), and **End demo** sits under a rule at the foot of every card, with its own confirm, so the way out is there on the public pages where the demo bar is not. The lines above were written to be spoken; `demoScript.ts` carries them cut for reading on a card (the list of competencies in B08 is left to the screen, which is spotlighting it), with nothing they taught removed. The rest of this section is kept for the recording, should it ever be wanted.
 
-Focus stays in the card while the tour runs (the product tour's focus trap); Tab wraps within it. With `prefers-reduced-motion`, the spotlight jumps instead of gliding and the page scrolls instantly (`tourMotion`). Because B02 and B17 are public-shell pages, the overlay mounts above both shells.
+Focus stays in the card while the tour runs (the product tour's focus trap); Tab wraps within it. With `prefers-reduced-motion`, the spotlight jumps instead of gliding and the page scrolls instantly (`tourMotion`). Every beat is now inside the signed-in shell, so the overlay only has one shell to mount above.
 
 ---
 
@@ -234,7 +218,7 @@ Focus stays in the card while the tour runs (the product tour's focus trap); Tab
 4. **The role header reads "Bengaluru (Hybrid) | Employment type: Full-time | Level: Senior" as the location**, because `DEMO_JD` puts all three on one line and the heuristic takes the whole line. A one-line change to the seed text (three lines instead of one) fixes what the visitor sees; the engine is untouched.
 5. **Exploring lets them create, within 2 roles / 3 candidates / 3 interviews** (owner, 2026-09-24). `assertDemoCreationCap` is lowered, nothing else about the guards changes, and every refusal (a cap, `/admin`, a blocked action) is reworded to the demo's friendly form — "This is a read-only part of the demo" / "That's the demo's limit — two roles is enough to see how it works" — never an error tone. The cap numbers on the B18 card come from the server.
 6. **When the AI is degraded** (no credit: built-in writer, browser voice) the pre-recorded narration and the seeded evidence are unaffected, which is why the story is seeded rather than generated. For the live parts, the rule (owner, 2026-09-24) is that nothing below the product's standard is offered, so there is nothing to disclaim: `GET /demo/status` reports which ways of sitting the interview are on (`modes.candidate`, `modes.observer` — both the demo-interview lane's switches, in `services/demoPolicy.ts`), the B19 card renders exactly those, and the beat is not played when neither is on. The narration never mentions voice, model or mode, so one recording holds in every state. The demo bar's own "Try the interview as the candidate" button is the interview lane's to gate by the same signal.
-7. **The door opens the story (B02) and the account request closes it (B17)** — the owner's call, 2026-09-24. Both are public-shell pages, so the tour overlay mounts above both the app shell and the public shell, and the player carries End demo on them.
+7. **The door (B02) and the account request (B17) were CUT** — the owner's call, 2026-09-25, reversing 2026-09-24. Both left the product to explain how the product is entered: B02 sent a visitor who had just arrived back out to a sign-in page, and B17 did it again at step 17, straight after they had watched a hire decided. "Once you are already in Questor you again go back to login page — does not make sense." A demo arrives by link and needs neither door explained.
 
 ### Which of these gate the build
 

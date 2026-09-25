@@ -64,24 +64,25 @@ test('the story is told over the real pages, one card at a time, at the visitor\
   await expect(page.getByTestId('demo-replay-story')).toBeVisible();
 });
 
-test('the door is shown to the signed-in visitor and left again', async ({ page }) => {
+// B02 (the organisation's sign-in page) and B17 (the account-request page) were
+// cut. Both told a visitor who is already inside how to get inside, by sending
+// them back out to a public page to hear it. This is the guard against either
+// coming back: the tour stays in the signed-in product from first beat to last.
+test('the tour never leaves the signed-in product', async ({ page }) => {
   await openDemo(page);
-  await page.getByTestId('tour-next').click();
-  await expect(page.getByTestId('tour')).toHaveAttribute('data-step', 'B02', { timeout: 15_000 });
-  await expect(page).toHaveURL(/\/o\/.+\?tour=door$/);
-  await expect(page.getByTestId('tour-card')).toBeVisible();
-  // The sandbox's own door, with its name on it — not "Link not recognised".
-  await expect(page.locator('[data-tour="org-signin"]').getByRole('heading', { name: 'Audit Co (demo)' })).toBeVisible();
-  await expect(page.locator('[data-tour="org-signin"]').getByLabel('Email')).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.getByTestId('tour')).toHaveCount(0);
-  await expect(page).toHaveURL(/\/$|\/\?tab=/);
+  for (let step = 0; step < 25; step += 1) {
+    await expect(page).not.toHaveURL(/\/o\/|\/signup/);
+    const next = page.getByTestId('tour-next');
+    if (await next.count() === 0) break;
+    await next.click();
+    await page.waitForTimeout(150);
+  }
 });
 
 test('the keys and the buttons drive it: arrows step, Escape skips, and the story can be replayed from the bar', async ({ page }) => {
   await openDemo(page);
   await page.keyboard.press('ArrowRight');
-  await expect(page.getByTestId('tour')).toHaveAttribute('data-step', 'B02', { timeout: 15_000 });
+  await expect(page.getByTestId('tour')).toHaveAttribute('data-step', 'B03', { timeout: 15_000 });
   await expect(page.getByTestId('tour-card')).toBeVisible();
   await page.getByTestId('tour-back').click();
   await expect(page.getByTestId('tour')).toHaveAttribute('data-step', 'B01', { timeout: 15_000 });
