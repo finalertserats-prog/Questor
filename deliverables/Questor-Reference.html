@@ -1121,7 +1121,7 @@ datasource db {
 </table>
 <p>The reason these are not capabilities: "<code>admin:manage</code> alone would hand them to the admin of every customer."</p>
 <h3 id="gate-2-object-scope">Gate 2 — object scope</h3>
-<p><code>server/src/services/access.ts</code>, 188 lines, used at <strong>134 call sites across 34 files</strong>. It returns reusable <code>where</code> fragments and assertion helpers, and it is where the sharpest reasoning in the tenancy design lives.</p>
+<p><code>server/src/services/access.ts</code>, 188 lines, used at <strong>109 call sites across 37 files</strong>. It returns reusable <code>where</code> fragments and assertion helpers, and it is where the sharpest reasoning in the tenancy design lives.</p>
 <p><strong>404, never 403:</strong></p>
 <pre><code class="language-ts">// 404 rather than 403 throughout: telling an unauthorised caller that an object
 // exists but is off-limits confirms the id, which is itself a disclosure.
@@ -1214,8 +1214,11 @@ export async function assertCanAccessRole(auth: AuthClaims, roleId: string) {
 </tbody>
 </table>
 <h3 id="the-residual-risk-named">The residual risk, named</h3>
-<p>With no Prisma extension, tenant isolation is <strong>a convention enforced 134 times by hand</strong>. A new query that forgets <code>tenantId</code> is a silent cross-tenant read, and nothing but review and tests would catch it. <code>ModelExecution</code> already carries no tenant key at all.</p>
-<p>This is the single largest structural risk in the codebase, and it is the one an incoming engineer should understand first. The mitigation available today is the test suite; the mitigation available tomorrow is a Prisma client extension that requires a tenant key on every tenant-scoped model, which would convert a class of silent defects into compile-time or runtime errors. See §7.</p>
+<p>With no Prisma extension, tenant isolation is <strong>a convention, enforced by hand at roughly 380 of the 1,342 Prisma call sites in <code>server/src</code></strong>. A new query that forgets <code>tenantId</code> is a silent cross-tenant read, and nothing but review and tests would catch it.</p>
+<p>The count on its own understates the shape of the risk, and an earlier draft of this document understated it twice over — it reported 134, which was the number of calls into <code>services/access.ts</code> rather than the number of hand-written tenant filters, and it named <code>ModelExecution</code> as the sole model without a tenant key. Measured against the schema:</p>
+<p><strong>43 of the 86 Prisma models carry no <code>tenantId</code> column at all.</strong> They are not under-filtered; they <em>cannot</em> be filtered directly, and are reachable only by traversing a relation to something that does carry a key. That set includes <code>Turn</code>, <code>AssessmentVersion</code>, <code>HumanReview</code>, <code>Invitation</code>, <code>RoleScorecardVersion</code>, <code>CandidateProfileVersion</code>, <code>InterviewPlanVersion</code>, <code>EvidenceNode</code>, <code>EvidenceEdge</code>, <code>IntegrityEvent</code>, <code>RoleAssignment</code> and <code>CandidateAssignment</code> — which is to say the transcript, the assessment and the human review, the three artefacts the legal posture rests on.</p>
+<p>No cross-tenant leak is known. The isolation tests are real and specific (see the table above), and the route sites that reach tenant-less models do so through the service layer, which checks scope first. The risk is prospective: there is no second line, so the guarantee is only ever as good as the last query someone wrote.</p>
+<p>This is the single largest structural risk in the codebase, and it is the one an incoming engineer should understand first. The mitigation available today is the test suite; the mitigation available tomorrow is a Prisma client extension that requires a tenant key on every tenant-scoped model, which would convert a class of silent defects into compile-time or runtime errors — though note that an extension alone cannot protect the 43 models with no key to require. See §7.</p>
 <hr />
 <h2 id="29-how-a-cv-becomes-facts">2.9 How a CV becomes facts</h2>
 <p><code>server/src/engines/</code> is where the reasoning lives. Thirty-nine files. A house-style note before the detail: <strong>nearly every constant in this layer carries a comment naming the specific production incident it exists to prevent.</strong> The comments are the design record. Reading them is the fastest way into the codebase, and this section quotes them rather than paraphrasing.</p>
@@ -3503,8 +3506,9 @@ cd server &amp;&amp; npx prisma migrate deploy --schema prisma/postgres/schema.p
 <p>For completeness, <code>readArtifactContent</code> currently has <strong>no production call sites</strong> — only tests and the backfill. Nothing in the running application reads the sealed content back today.</p>
 <h2 id="74-structural-risks">7.4 Structural risks</h2>
 <h3 id="tenant-isolation-is-a-convention-not-a-mechanism">Tenant isolation is a convention, not a mechanism</h3>
-<p>134 hand-written scope checks, no Prisma extension, no row-level security. A new query that forgets <code>tenantId</code> is a silent cross-tenant read, and only review and tests would catch it. <code>ModelExecution</code> already carries no tenant key.</p>
-<p>This is the largest structural risk in the codebase. The fix is well understood — a Prisma client extension that requires a tenant key on every tenant-scoped model — and would convert a class of silent defects into errors.</p>
+<p>Roughly 380 hand-written tenant filters across 1,342 Prisma call sites, no Prisma extension, no row-level security. A new query that forgets <code>tenantId</code> is a silent cross-tenant read, and only review and tests would catch it.</p>
+<p>Worse than the count: <strong>43 of the 86 models carry no <code>tenantId</code> column at all</strong> — including <code>Turn</code>, <code>AssessmentVersion</code>, <code>HumanReview</code> and <code>Invitation</code> — so they cannot be filtered directly even in principle, only reached by relation. No leak is known and the isolation tests are real, but there is no second line behind them. See §4 for the full list and the measurement.</p>
+<p>This is the largest structural risk in the codebase. The usual fix — a Prisma client extension requiring a tenant key on every tenant-scoped model — would convert a class of silent defects into errors, but it only covers the 43 models that have a key. The other half needs either a key added or an explicit, written decision that relation traversal is the guarantee.</p>
 <h3 id="there-is-no-local-commit-gate">There is no local commit gate</h3>
 <p>No husky, no pre-commit hook, no lint-staged. Every mechanical check happens in CI, which does not run the web test suite, the Postgres suite, the JD benchmark, or the server build.</p>
 <h3 id="coverage-is-unmeasured">Coverage is unmeasured</h3>
