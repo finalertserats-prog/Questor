@@ -3,6 +3,7 @@ import { redactIdentity, type KnownIdentity } from './identityRedaction.js';
 import { eraseStagedImportRows } from './candidateImport.js';
 import { observationModelRef } from './observerQuotes.js';
 import { normalizeEmail } from './userEmail.js';
+import { auditableEntityIds, clearAuditPayloads } from './auditPayloads.js';
 
 /**
  * The per-candidate work of anonymisation: everything that has to change so
@@ -43,13 +44,19 @@ export type AnonymiseCounter = (label: string, count: number) => void;
  * Proof that the DATABASE, not this file's statement ordering, decided this
  * candidate may be anonymised.
  *
- * The brand below is module-private, so no other file can construct one of
- * these. The only way to hold a claim is to have called
- * `claimCandidateForAnonymisation`, which asks the question as part of a
- * write. `anonymiseCandidateData` takes a claim, so there is no path to the
- * destructive work that skipped the check — an edit that tried would not
- * compile. A guard you have to remember to call is a guard somebody will one
- * day not call.
+ * The brand below is module-private, so the ordinary way to hold a claim is to
+ * have called `claimCandidateForAnonymisation`, which asks the question as part
+ * of a write. `anonymiseCandidateData` takes a claim, so the path to the
+ * destructive work runs through the check by default rather than by memory.
+ *
+ * BE CLEAR ABOUT WHAT THIS IS. It is friction, not a hard guard. The brand is
+ * a compile-time fiction; `as unknown as ClaimedCandidate` defeats it, and this
+ * module itself mints the value with exactly that cast. What it buys is that
+ * the unsafe path is awkward and conspicuous — somebody bypassing the claim has
+ * to write a cast that says what they are doing — rather than being the thing
+ * that happens when a future edit simply forgets. The guarantee that actually
+ * holds at runtime is the conditional write plus Serializable isolation, not
+ * this type.
  */
 declare const claimBrand: unique symbol;
 
@@ -164,144 +171,49 @@ async function scrub(
 const asTextRows = (delegate: unknown): TextRows => delegate as TextRows;
 
 /**
- * What is left in an audit payload once the person is removed from it.
+ * WHY THE AUDIT WORK LIVES IN services/auditPayloads.ts, AND WHAT IT DOES NOT
+ * REACH.
  *
- * A marker rather than an empty string, because "" is the column's default and
- * already means "this action recorded no payload". An audit trail whose own
- * history you cannot read straight is worth less than one that says plainly
- * where something was taken out.
+ * Erasure got there first and shipped to production, so that module is the one
+ * implementation and this file calls it. The reasoning is written there: the
+ * payloads go and the rows stay, because an audit trail's job is to say that
+ * somebody did a thing to something at a time and every one of those is a
+ * column.
+ *
+ * THREE ENTITY TYPES ARE OUT OF SCOPE, and none of them is a per-candidate
+ * row. Each covers many people at once, so clearing one to remove a single
+ * person would destroy a record belonging to everybody else in it — which is
+ * neither what erasure asks for nor what a timer expiring justifies. Each was
+ * traced rather than assumed:
+ *
+ * `CandidateImportBatch` — safe, and provably so. `candidate_import.started`
+ * audits `{ roleId }`; `candidate_import.confirmed` audits three integers. The
+ * per-row failure messages and the names live in the HTTP response, never in a
+ * payload. `CandidateImportRow.readError` reaches no audit call anywhere.
+ * Pinned by a test, because it is safe by construction rather than by schema.
+ *
+ * `CalibrationAdjustment` — safe on the automatic path. `decision.reason` is a
+ * nine-value enum and `decision.statement` is a template over integers and
+ * dates, produced by domain/calibration.ts, which touches no database.
+ *
+ * `CalibrationAnchorProposal`, and the `themes` on an activated adjustment —
+ * NOT provably safe, and this lane's one named residual. An anchor is a
+ * model-written phrase of at most eighty characters that has to generalise
+ * over at least three candidates' reviews by at least three reviewers, built
+ * from `CalibrationObservation.reasonText` — reviewer prose that is checked
+ * for protected-characteristic language and NOT for names. A contact detail
+ * can no longer survive into one (services/calibrationAggregate.ts rejects it
+ * on the way in). A name still could, because no code can find a name in a
+ * free-text phrase. The other half is `opts.reason` on a calibration or anchor
+ * decision: two thousand characters an approver types, unvalidated.
+ *
+ * Neither is fixable from here. These rows are aggregates over many people, so
+ * a name reaching one is a defect in the calibration pipeline, not something a
+ * sweep can tidy up afterwards without harming everybody else in the row. It
+ * belongs upstream, and is raised as its own lane rather than papered over
+ * with a wider net.
  */
-export const AUDIT_PAYLOAD_REMOVED = '{"removed":"anonymisation"}';
 
-/**
- * Every entity id an audit row about this candidate could be filed under.
- *
- * `AuditEvent` has no foreign keys — it is found by `entityId`, the id of the
- * thing the action was about — so this has to be assembled by hand, and it has
- * to be assembled BEFORE the deletes run, because most of these rows are about
- * to stop existing.
- *
- * The seven entity types here are the candidate-related ones actually passed to
- * `logAudit` anywhere in the server. Catching them by ENTITY rather than by an
- * allow-list of action names is the point: `identity.code_send_failed` files a
- * raw SMTP rejection under the session id, and an SMTP rejection routinely
- * quotes the address it bounced — a leak nobody would find by reading the call
- * site, and one an action list would have missed.
- *
- * Two kinds of row are deliberately out of scope.
- *
- * `CandidateImportBatch`: a batch holds many people, and clearing its history
- * because one of them aged out would destroy the record of an import that
- * concerns others who are still here. If a batch's payload really does carry
- * this person's address, the content pass catches it on its own merits.
- *
- * `CalibrationAdjustment` and `CalibrationAnchorProposal`: their payloads carry
- * prose — a reason, a statement, anchor sentences — that can be drawn from real
- * interviews, but the rows are cross-candidate aggregates, not this person's
- * history, and they are built by code that strips identity on the way in. One
- * candidate ageing out is not a reason to gut a calibration record covering
- * everyone. Again, the content pass still reaches them if this person's address
- * actually appears.
- */
-export async function auditableEntityIds(
-  tx: Prisma.TransactionClient,
-  o: { readonly candidateId: string; readonly sessionIds: readonly string[] },
-): Promise<string[]> {
-  const sessions = { in: [...o.sessionIds] };
-  const [assessments, pipelines, observations, awards, smeReviews] = await Promise.all([
-    tx.assessmentVersion.findMany({ where: { sessionId: sessions }, select: { id: true } }),
-    tx.candidatePipeline.findMany({ where: { candidateId: o.candidateId }, select: { id: true } }),
-    tx.roundObservation.findMany({ where: { candidateId: o.candidateId }, select: { id: true } }),
-    tx.candidateAward.findMany({ where: { candidateId: o.candidateId }, select: { id: true } }),
-    tx.smeReview.findMany({ where: { candidateId: o.candidateId }, select: { id: true } }),
-  ]);
-  const ids = [assessments, pipelines, observations, awards, smeReviews].flat().map((r) => r.id);
-  return [...new Set([o.candidateId, ...o.sessionIds, ...ids])];
-}
-
-/**
- * Take the person out of their own audit history.
- *
- * THE PROBLEM. `AuditEvent` is the one table deliberately exempt from erasure
- * and from the retention sweep (see the header of dataRights.ts): you cannot
- * demonstrate compliance with a deletion obligation whose record you also
- * deleted. But `beforeJson` and `afterJson` are `JSON.stringify` of whatever
- * the calling code passed, and for a candidate that includes the name, the
- * address and the phone written at creation, at import and at every profile
- * update — all filed under `entityId = candidateId`. Left alone, the sweep
- * severs the person from the interview and leaves a row beside it saying who
- * they were. That is the same mapping table as the ATS link, in the one place
- * the design had exempted from being looked at.
- *
- * THE DECISION, and what it costs. The payloads go entirely; the rows stay.
- * An audit trail's job is to record that an actor did a thing to an entity at a
- * time, and all four of those are COLUMNS — `actorId`, `action`, `entityType`,
- * `entityId`, `createdAt` — every one of which survives untouched. The payload
- * is corroborating detail, and for this candidate it is detail we can no longer
- * safely keep.
- *
- * Redacting the payloads instead was the obvious answer and it is not good
- * enough. Redaction removes the identifiers we HOLD; these payloads carry
- * things we do not hold and cannot pattern-match — most sharply a candidate's
- * free-text accommodation request, which the product's own code says may
- * describe a health condition, written verbatim into `afterJson`. We cannot
- * enumerate what is in every payload ever written, and a new audited action
- * added next year would leak without anyone noticing. Removing what we cannot
- * inspect is the only version of this that stays true as the code changes.
- *
- * What is lost is an echo, not the fact. The primary record of what happened
- * lives in the domain tables and anonymisation preserves it: the pipeline still
- * says it was rejected at Gold, the assessment still holds its scores, the
- * round still holds its shape. What is gone is the audit log's second copy of
- * the detail, for one person, twelve months on.
- *
- * Exported alongside `auditableEntityIds` because erasure has the same hole and
- * worse: `eraseCandidate` deletes the person but leaves their audit payloads,
- * so a candidate who exercised their right to erasure still has their
- * accommodation request sitting in `afterJson`. Fixing that is a three-line
- * call from dataRights.ts and is not this lane's to make.
- */
-export async function clearAuditPayloads(
-  tx: Prisma.TransactionClient,
-  o: { readonly tenantId: string; readonly identity: KnownIdentity; readonly entityIds: readonly string[] },
-  count: AnonymiseCounter,
-): Promise<void> {
-  // A second net under the first. The id pass above is exhaustive for rows
-  // filed against something of this candidate's; this catches a row filed
-  // against something we could not enumerate whose payload nonetheless holds
-  // the person.
-  //
-  // It matches on the ADDRESS and the LinkedIn URL only, never the name. A name
-  // is not unique — two people called Priya Sharma in one organisation is
-  // ordinary — and clearing the audit history of a namesake who is still here,
-  // still in a live process, would be a real loss inflicted on the wrong
-  // person. The address is this system's own key for "the same human being".
-  const handles = [o.identity.email, o.identity.emailNormalized, o.identity.linkedinUrl]
-    .map((h) => h.trim())
-    .filter((h) => h.length > 0);
-  const contains = handles.flatMap((handle) => [
-    { beforeJson: { contains: handle } },
-    { afterJson: { contains: handle } },
-  ]);
-
-  const mine: Prisma.AuditEventWhereInput = {
-    tenantId: o.tenantId,
-    OR: [{ entityId: { in: [...o.entityIds] } }, ...contains],
-  };
-
-  // Two statements, so a row that never had a `before` is not given one. The
-  // marker means "something was taken out here"; an empty column means "this
-  // action never recorded anything", and conflating them would make the audit
-  // log lie about itself in a new way while fixing the old one.
-  count('auditBefore', (await tx.auditEvent.updateMany({
-    where: { AND: [mine, { NOT: { beforeJson: '' } }, { NOT: { beforeJson: AUDIT_PAYLOAD_REMOVED } }] },
-    data: { beforeJson: AUDIT_PAYLOAD_REMOVED },
-  })).count);
-  count('auditAfter', (await tx.auditEvent.updateMany({
-    where: { AND: [mine, { NOT: { afterJson: '' } }, { NOT: { afterJson: AUDIT_PAYLOAD_REMOVED } }] },
-    data: { afterJson: AUDIT_PAYLOAD_REMOVED },
-  })).count);
-}
 
 /**
  * Delete what anonymisation cannot make anonymous.
@@ -529,13 +441,18 @@ export async function anonymiseCandidateData(
   // The candidate's own history, collected BEFORE anything is deleted: an audit
   // row is found by the id of the thing it is about, and most of those things
   // are about to stop existing.
-  const history = await auditableEntityIds(tx, o);
+  const history = await auditableEntityIds(tx, { tenantId: o.tenantId, candidateId: o.candidateId, sessionIds: o.sessionIds });
 
   await deleteUnanonymisable(tx, { ...o, emailNormalized }, count);
   // Scrubbing runs second: the deletes above remove whole rows, so there is no
   // point redacting text that is about to cease to exist.
   await scrubEverythingKept(tx, o, count);
-  await clearAuditPayloads(tx, { tenantId: o.tenantId, identity: o.identity, entityIds: history }, count);
+  count('auditPayloads', await clearAuditPayloads(tx, {
+    tenantId: o.tenantId,
+    entityIds: history,
+    handles: o.identity,
+    removedBy: 'anonymisation',
+  }));
 
   // The identity columns go last. `anonymisedAt` is already set — the claim set
   // it, which is what made this call reachable — so all that is left is the

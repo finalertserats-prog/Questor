@@ -42,7 +42,73 @@ import type { Prisma } from '@prisma/client';
  * lie about itself in a new way while fixing the old one — a reader could no
  * longer tell a silent action from a cleared one.
  */
-export const PAYLOAD_REMOVED = '{"removed":"erasure"}';
+export type PayloadRemovedBy = 'erasure' | 'anonymisation';
+
+export const payloadRemoved = (by: PayloadRemovedBy): string => `{"removed":"${by}"}`;
+
+/**
+ * The erasure spelling, which production and its test already use. Anonymisation
+ * severs a person from a record that is KEPT, which is a different act with a
+ * different justification, and a reader of the log should be able to tell which
+ * one emptied a payload.
+ */
+export const PAYLOAD_REMOVED = payloadRemoved('erasure');
+
+/**
+ * The identifiers the content net is allowed to match on.
+ *
+ * A deliberately narrow type, and the narrowness is the point: it CANNOT carry
+ * the name. A name is not unique — two people called Priya Sharma in one
+ * organisation is ordinary — and clearing the audit history of a namesake who
+ * is still here, still in a live process, would be real harm done to the wrong
+ * person. The address is this system's own key for "the same human being", and
+ * the LinkedIn URL is a handle only one person has.
+ *
+ * Expressed as a type rather than as a comment because the rule has to survive
+ * the next person to call this. Passing a `Candidate` row wholesale, and
+ * quietly widening the net to the name with it, will not compile.
+ */
+export interface IdentityHandles {
+  readonly email: string;
+  readonly emailNormalized: string;
+  readonly linkedinUrl: string;
+}
+
+/**
+ * How little a LinkedIn URL has to change to stop matching: `http` for
+ * `https`, a trailing slash, a `?utm_source=` on the end. Matching the profile
+ * slug instead survives all of those, and the slug is the part that is
+ * actually the person's own unique handle. Six characters minimum, so a
+ * truncated slug does not become a net wide enough to catch other people.
+ */
+const MIN_SLUG = 6;
+
+function linkedinSlug(url: string): string {
+  const slug = /linkedin\.com\/in\/([^/?#\s]+)/i.exec(url)?.[1] ?? '';
+  return slug.length >= MIN_SLUG ? slug : '';
+}
+
+/**
+ * The strings the content net looks for, in the spellings a database might
+ * actually hold them.
+ *
+ * CASE IS A REAL LIMIT HERE, not a theoretical one. Prisma's `contains` is
+ * case-sensitive on Postgres, and `mode: 'insensitive'` is not available to
+ * us: the datasource is declared `sqlite`, so the client is generated without
+ * it. Emitting the stored spelling, the lower-cased one and the upper-cased
+ * one covers what is actually seen — a mixed-case address written at signup
+ * against its normalised twin — but not every casing a raw import could have
+ * produced.
+ *
+ * That residual is why this is a BACKSTOP and the id pass is the load-bearing
+ * mechanism.
+ */
+function contentNeedles(handles: IdentityHandles): readonly string[] {
+  const raw = [handles.email, handles.emailNormalized, linkedinSlug(handles.linkedinUrl)]
+    .map((h) => h.trim())
+    .filter((h) => h.length > 0);
+  return [...new Set(raw.flatMap((h) => [h, h.toLowerCase(), h.toUpperCase()]))];
+}
 
 /**
  * The entities whose audit rows belong to one candidate and nobody else.
@@ -64,7 +130,10 @@ export async function auditableEntityIds(
     o.sessionIds.length > 0
       ? tx.assessmentVersion.findMany({ where: { sessionId: { in: [...o.sessionIds] } }, select: { id: true } })
       : Promise.resolve([]),
-    tx.roundObservation.findMany({ where: { round: { pipeline: where } }, select: { id: true } }),
+    // Direct on candidateId rather than through round -> pipeline: the column
+    // exists, and an observation whose pipeline has already gone would be
+    // invisible to the relation walk while its audit rows were not.
+    tx.roundObservation.findMany({ where, select: { id: true } }),
     tx.candidateAward.findMany({ where, select: { id: true } }),
     tx.smeReview.findMany({ where, select: { id: true } }),
   ]);
@@ -92,21 +161,45 @@ export async function auditableEntityIds(
  */
 export async function clearAuditPayloads(
   tx: Prisma.TransactionClient,
-  o: { readonly tenantId: string; readonly entityIds: readonly string[] },
+  o: {
+    readonly tenantId: string;
+    readonly entityIds: readonly string[];
+    /** The second net. Omit it to run the id pass alone. */
+    readonly handles?: IdentityHandles;
+    readonly removedBy?: PayloadRemovedBy;
+  },
 ): Promise<number> {
-  if (o.entityIds.length === 0) return 0;
-  const ids = [...o.entityIds];
+  // A second net under the first. The id pass is exhaustive for rows filed
+  // against something of this candidate's; this catches a row filed against
+  // something we could not enumerate whose payload nonetheless holds the
+  // person. `IdentityHandles` is what makes the name impossible to pass.
+  const contains = (o.handles ? contentNeedles(o.handles) : []).flatMap((handle) => [
+    { beforeJson: { contains: handle } },
+    { afterJson: { contains: handle } },
+  ]);
+  if (o.entityIds.length === 0 && contains.length === 0) return 0;
 
+  const marker = payloadRemoved(o.removedBy ?? 'erasure');
+  const mine: Prisma.AuditEventWhereInput = {
+    tenantId: o.tenantId,
+    OR: [{ entityId: { in: [...o.entityIds] } }, ...contains],
+  };
+
+  // Two statements rather than one: a row that never carried a `before` is not
+  // given one, so the log does not gain a payload where it never had a thought.
+  // Each also skips rows already carrying the marker, so a re-run counts only
+  // what it actually changed.
   const [before, after] = await Promise.all([
     tx.auditEvent.updateMany({
-      where: { tenantId: o.tenantId, entityId: { in: ids }, NOT: { beforeJson: '' } },
-      data: { beforeJson: PAYLOAD_REMOVED },
+      where: { AND: [mine, { NOT: { beforeJson: '' } }, { NOT: { beforeJson: marker } }] },
+      data: { beforeJson: marker },
     }),
     tx.auditEvent.updateMany({
-      where: { tenantId: o.tenantId, entityId: { in: ids }, NOT: { afterJson: '' } },
-      data: { afterJson: PAYLOAD_REMOVED },
+      where: { AND: [mine, { NOT: { afterJson: '' } }, { NOT: { afterJson: marker } }] },
+      data: { afterJson: marker },
     }),
   ]);
 
   return Math.max(before.count, after.count);
 }
+

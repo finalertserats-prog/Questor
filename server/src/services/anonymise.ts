@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
-import { logAudit } from './audit.js';
 import { startJob } from './jobs.js';
 import { anonymiseCandidateData, claimCandidateForAnonymisation, type AnonymiseCounter } from './anonymiseCascade.js';
 
@@ -351,9 +350,43 @@ export async function runAnonymisationSweep(now = new Date()): Promise<Anonymise
         });
         if (!claim) return 'skipped';
 
-        // Unreachable without a claim: `anonymiseCandidateData` takes one, and
-        // a claim can only be minted by the conditional write above.
+        // Taking a claim is the only way to reach this: `anonymiseCandidateData`
+        // requires one, and only the conditional write above mints one.
         await anonymiseCandidateData(tx, claim, count);
+
+        // The record of what just happened, written in the SAME transaction.
+        //
+        // It used to be written after the commit, on the reasoning that an
+        // audit row must never claim a change that rolled back. True, but it
+        // bought that by taking the opposite risk: if the write failed, the
+        // candidate was anonymised, `anonymisedAt` was set, and nothing
+        // anywhere recorded it — and no later run would notice, because the
+        // candidate is no longer eligible. Inside the transaction both
+        // directions hold: no record without the change, no change without the
+        // record. Written through `tx` rather than `logAudit`, which uses the
+        // global client and swallows its own failures.
+        //
+        // Counts and dates only. The audit trail outlives the data it
+        // describes, and a row naming the person we just removed would BE the
+        // mapping table this design exists to avoid — which is also why the
+        // sweep clears the payloads of the candidate's OWN history (see
+        // anonymiseCascade.ts `clearAuditPayloads`).
+        await tx.auditEvent.create({
+          data: {
+            tenantId: claim.tenantId,
+            actorType: 'system',
+            actorId: 'anonymisation-sweep',
+            action: 'candidate.anonymised',
+            entityType: 'Candidate',
+            entityId: claim.candidateId,
+            afterJson: JSON.stringify({
+              reason: 'anonymisation window elapsed',
+              anonymiseAfterDays: days,
+              lastInterviewAt: candidate.lastInterviewAt?.toISOString() ?? null,
+              changed,
+            }),
+          },
+        });
         return 'anonymised';
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: ANONYMISE_TIMEOUT_MS }));
     } catch (err) {
@@ -364,27 +397,6 @@ export async function runAnonymisationSweep(now = new Date()): Promise<Anonymise
     if (outcome === 'skipped') { skipped += 1; continue; }
     anonymised += 1;
     for (const [k, v] of Object.entries(changed)) totals[k] = (totals[k] ?? 0) + v;
-
-    // Written after the commit, so the record can never claim an anonymisation
-    // that rolled back. Counts and dates only. The audit trail outlives the
-    // data it describes, and an audit row naming the person we just removed
-    // would BE the mapping table this whole design exists to avoid — which is
-    // also why the sweep clears the payloads of the candidate's OWN history
-    // (see anonymiseCascade.ts `clearAuditPayloads`).
-    await logAudit({
-      tenantId: candidate.tenantId,
-      actorType: 'system',
-      actorId: 'anonymisation-sweep',
-      action: 'candidate.anonymised',
-      entityType: 'Candidate',
-      entityId: candidate.candidateId,
-      after: {
-        reason: 'anonymisation window elapsed',
-        anonymiseAfterDays: days,
-        lastInterviewAt: candidate.lastInterviewAt?.toISOString() ?? null,
-        changed,
-      },
-    });
   }
 
   const result: AnonymiseResult = { candidatesAnonymised: anonymised, skipped, failed: failures.length, failures, changed: totals };

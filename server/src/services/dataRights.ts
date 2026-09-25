@@ -35,7 +35,12 @@ import { anonymisationEnabled, retentionPostureMessage } from './anonymise.js';
 // describe a health condition; `identity.code_send_failed` writes an SMTP
 // rejection that quotes the address. So erasure now empties the payloads of a
 // candidate's own audit rows before deleting them (services/auditPayloads.ts)
-// and keeps the columns that make it an audit trail.
+// and keeps the columns that make it an audit trail. Anonymisation does the
+// same thing for the same reason (services/anonymiseCascade.ts).
+//
+// If you are about to add an audited action that puts candidate text in a
+// payload: don't. And if you must, know that this is the table nothing else
+// deletes.
 
 /**
  * Default retention window for interview data, in days.
@@ -313,7 +318,10 @@ export async function eraseCandidate(o: {
 }): Promise<ErasureResult> {
   const candidate = await prisma.candidate.findFirst({
     where: { id: o.candidateId, tenantId: o.tenantId },
-    select: { id: true, emailNormalized: true },
+    // email and linkedinUrl as well as the normalised address: they are the
+    // handles the audit-payload sweep below matches on, and they have to be
+    // read before the row is deleted out from under it.
+    select: { id: true, email: true, emailNormalized: true, linkedinUrl: true },
   });
   if (!candidate) throw new Error('Candidate not found in this tenant');
 
@@ -350,10 +358,22 @@ export async function eraseCandidate(o: {
     // you performed is not compliance — but it was surviving with the
     // candidate still inside it, which the rule beside it wrongly assumed
     // could not happen. The rows stay; what they said about the person goes.
+    //
+    // Inside the transaction, and that is the point rather than a detail. An
+    // erasure that deleted the person and reported success while their
+    // accommodation request stayed in `afterJson` is the failure shape this
+    // whole file is written against: it looks done and it isn't. If this
+    // cannot complete, the erasure rolls back and is retried rather than being
+    // recorded as satisfied.
     await count('auditPayloads', async () => ({
       count: await clearAuditPayloads(tx, {
         tenantId: o.tenantId,
         entityIds: await auditableEntityIds(tx, { tenantId: o.tenantId, candidateId: o.candidateId, sessionIds }),
+        // The second net, for a row filed against something we could not
+        // enumerate. `IdentityHandles` is what stops it ever matching on a
+        // name — see auditPayloads.ts.
+        handles: candidate,
+        removedBy: 'erasure',
       }),
     }));
     await deleteSessionCascade(tx, sessionIds, count);

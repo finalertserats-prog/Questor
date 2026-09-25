@@ -226,6 +226,17 @@ function parseThemes(raw: unknown, total: number): ReasonTheme[] {
     if (label.length < 3) continue;
     // The one thing a theme may never be: a verdict on the person who wrote it.
     if (JUDGING.test(label)) throw new Error('a theme characterised a reviewer');
+    // Nor a contact detail. The prompt already forbids repeating a name or an
+    // address, but a prompt is a request and this is a check: these labels
+    // become anchors and audit payloads on CROSS-CANDIDATE rows, which nothing
+    // can clean up afterwards — clearing one to remove a single person would
+    // destroy a record covering everybody else in it. The only place this can
+    // be dealt with is here, on the way in.
+    //
+    // Deliberately limited to what a machine can actually recognise. A name
+    // cannot be detected in a free-text phrase, so this does not pretend to;
+    // see the residual noted on anonymiseCascade.ts `auditableEntityIds`.
+    if (carriesContactDetail(label)) throw new Error('a theme carried a contact detail');
     const count = Number(e.count);
     themes.push({
       label,
@@ -238,3 +249,20 @@ function parseThemes(raw: unknown, total: number): ReasonTheme[] {
 }
 
 const JUDGING = /\b(wrong|incorrect|mistaken|harsh|lenient|biased|unfair|inconsistent|overrated|underrated|should have)\b/i;
+
+const CONTACT_DETAIL = /[\w.+-]+@[\w-]+\.[\w.-]+|(?<![0-9])[0-9](?:[\s().+-]{0,2}[0-9]){6,}(?![0-9])/;
+
+/**
+ * Whether a theme label carries an email address or a run of digits long
+ * enough to be a phone number.
+ *
+ * Bounded so ordinary engineering vocabulary survives: "p99", "1200ms" and
+ * "http 500" are four digits at most, and seven digits in a row is not
+ * something a theme about what a strong answer contains ever needs.
+ *
+ * Exported so the rule can be tested as the rule it is, rather than only
+ * through a mocked model call.
+ */
+export function carriesContactDetail(label: string): boolean {
+  return CONTACT_DETAIL.test(label);
+}
