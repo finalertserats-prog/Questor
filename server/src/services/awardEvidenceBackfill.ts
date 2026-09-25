@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { logAudit } from './audit.js';
+import { logAuditIn } from './audit.js';
 import { logger } from '../logger.js';
 import { startJob } from './jobs.js';
 import { upgradeLegacyEvidence, type LegacyStoredEvidence } from '../domain/candidateAwards.js';
@@ -92,11 +92,18 @@ export async function backfillLegacyAwardEvidence(): Promise<BackfillResult> {
     if (page.length === 0) break;
     cursor = page[page.length - 1].id;
 
-    const outstanding = page.filter((award) => isLegacy(award));
+    const outstanding = page.flatMap((award) => {
+      const legacy = legacyRecordOf(award);
+      // The parsed record is carried rather than re-derived in `settle`. A
+      // second parse there would have to be narrowed or cast back to legacy,
+      // and a cast is a claim the compiler stops checking — the kind that is
+      // right until the classification above changes.
+      return legacy ? [{ award, legacy }] : [];
+    });
     if (outstanding.length > 0) {
-      const names = await resolveNames(outstanding);
-      for (const award of outstanding) {
-        const outcome = await settle(award, names);
+      const names = await resolveNames(outstanding.map((entry) => entry.award));
+      for (const entry of outstanding) {
+        const outcome = await settle(entry.award, entry.legacy, names);
         if (outcome === 'upgraded') upgraded += 1;
         else if (outcome === 'overtaken') overtaken += 1;
         else failed += 1;
@@ -114,15 +121,16 @@ export async function backfillLegacyAwardEvidence(): Promise<BackfillResult> {
  * version is left where it is: it is corrupt rather than old, and a migration
  * is not the place to decide what to do about that.
  */
-function isLegacy(award: LegacyAward): boolean {
+function legacyRecordOf(award: LegacyAward): LegacyStoredEvidence | null {
   try {
-    return parseStoredEvidence(award.id, award.evidenceJson).kind === 'legacy';
+    const stored = parseStoredEvidence(award.id, award.evidenceJson);
+    return stored.kind === 'legacy' ? stored.legacy : null;
   } catch (err) {
     logger.error(
       { awardId: award.id, err: err instanceof Error ? err.message : String(err) },
       'award evidence can be read as neither version; the backfill has left it alone',
     );
-    return false;
+    return null;
   }
 }
 
@@ -148,9 +156,12 @@ async function resolveNames(awards: readonly LegacyAward[]) {
 
 type Outcome = 'upgraded' | 'overtaken' | 'failed';
 
-async function settle(award: LegacyAward, names: Awaited<ReturnType<typeof resolveNames>>): Promise<Outcome> {
+async function settle(
+  award: LegacyAward,
+  legacy: LegacyStoredEvidence,
+  names: Awaited<ReturnType<typeof resolveNames>>,
+): Promise<Outcome> {
   try {
-    const legacy = (parseStoredEvidence(award.id, award.evidenceJson) as { legacy: LegacyStoredEvidence }).legacy;
     const upgraded = upgradeLegacyEvidence({
       legacy,
       // An absent row leaves the placeholder the writer uses for the same gap,
@@ -165,31 +176,44 @@ async function settle(award: LegacyAward, names: Awaited<ReturnType<typeof resol
     // renderer would then refuse.
     parseAwardEvidence(award.id, evidenceJson);
 
-    // Conditional on the bytes that were read, so two instances sweeping
-    // together cannot both apply it and neither can overwrite a record that
-    // changed underneath.
-    const claimed = await prisma.candidateAward.updateMany({
-      where: { id: award.id, tenantId: award.tenantId, evidenceJson: award.evidenceJson },
-      data: { evidenceJson },
-    });
-    if (claimed.count === 0) return 'overtaken';
+    /**
+     * The record and the note that it changed, in one transaction.
+     *
+     * `logAudit` would have been the obvious call and it is the wrong one
+     * here: it runs on the shared client and swallows its own failures, so an
+     * audit that could not be written would leave a row already upgraded, no
+     * event saying so, and — the part that makes it permanent — nothing that
+     * would ever retry, because the row no longer reads as legacy and the next
+     * run skips it. This sweep says it audits what it changes; both or neither
+     * is what makes that true rather than usually true.
+     */
+    return await prisma.$transaction(async (tx) => {
+      // Conditional on the bytes that were read, so two instances sweeping
+      // together cannot both apply it and neither can overwrite a record that
+      // changed underneath.
+      const claimed = await tx.candidateAward.updateMany({
+        where: { id: award.id, tenantId: award.tenantId, evidenceJson: award.evidenceJson },
+        data: { evidenceJson },
+      });
+      if (claimed.count === 0) return 'overtaken';
 
-    await logAudit({
-      tenantId: award.tenantId,
-      // The system, because it is one. Nobody asked for this and nobody
-      // approved it; a trail naming a person for a migration would be the
-      // wrong sentence about them.
-      actorId: 'evidence-backfill',
-      actorType: 'system',
-      action: 'candidate.award.evidence_upgraded',
-      entityType: 'CandidateAward',
-      entityId: award.id,
-      // The tier and the reference, and never the name that was resolved. The
-      // trail outlives the award, so a name written here would be a copy of it
-      // in a place an erasure does not reach.
-      after: { tier: award.tier, reference: award.reference, from: 1, to: 2 },
+      await logAuditIn(tx, {
+        tenantId: award.tenantId,
+        // The system, because it is one. Nobody asked for this and nobody
+        // approved it; a trail naming a person for a migration would be the
+        // wrong sentence about them.
+        actorId: 'evidence-backfill',
+        actorType: 'system',
+        action: 'candidate.award.evidence_upgraded',
+        entityType: 'CandidateAward',
+        entityId: award.id,
+        // The tier and the reference, and never the name that was resolved.
+        // The trail outlives the award, so a name written here would be a copy
+        // of it in a place an erasure does not reach.
+        after: { tier: award.tier, reference: award.reference, from: 1, to: 2 },
+      });
+      return 'upgraded';
     });
-    return 'upgraded';
   } catch (err) {
     // One award that cannot be migrated must not stop the sweep reaching the
     // rest. It stays version 1, so the export goes on refusing it and the next

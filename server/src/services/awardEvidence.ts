@@ -149,11 +149,47 @@ export const CURRENT_EVIDENCE_VERSION = 2;
  * stored, so a legacy row may carry a control character or run long; the
  * upgrade cleans it on the way through, which is a write and therefore the
  * right moment to. See `awardEvidenceBackfill.ts`.
+ *
+ * ---- Why this one names what it refuses instead of refusing everything
+ *
+ * The current schema above is strict, and can afford to be: it describes what
+ * this build writes, so an unknown field there means a newer writer and the
+ * number should have moved. This one describes records written in the past,
+ * which nobody can go back and change.
+ *
+ * Flatly strict here was the first attempt and it is a trap. Any genuine
+ * version-1 row that had picked up a field of its own would stop parsing as
+ * legacy and start parsing as CORRUPT — skipped by the sweep, uncounted by
+ * `countLegacy`, and refused by the export for ever, with nothing anywhere
+ * saying why. Permanent and invisible is the worst pair.
+ *
+ * So the guard is aimed at what it is actually for. The recurrence this must
+ * catch is a current-shaped record wearing the old number, and what makes a
+ * record current-shaped is precisely these three fields. Naming them keeps
+ * that guard exactly as strong while an unrelated extra is tolerated and
+ * simply dropped when the record is rewritten.
  */
+const CURRENT_ONLY_FIELDS = ['candidateName', 'roleTitle', 'signatures'] as const;
+
 export const legacyAwardEvidenceSchema = z.object({
   version: z.literal(1),
-  rows: z.array(z.object({ what: z.string(), when: z.string().datetime().nullable() }).strict()).length(5),
-}).strict();
+  rows: z.array(z.object({ what: z.string(), when: z.string().datetime().nullable() })).length(5),
+})
+  // Passthrough rather than strip, because the refinement below has to be able
+  // to SEE a field that should not be there; a stripping parse would have
+  // removed it before anything could object.
+  .passthrough()
+  .superRefine((value, ctx) => {
+    for (const field of CURRENT_ONLY_FIELDS) {
+      if (field in value) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [field],
+          message: 'is a version 2 field on a record calling itself version 1',
+        });
+      }
+    }
+  });
 
 export type LegacyAwardEvidence = z.infer<typeof legacyAwardEvidenceSchema>;
 

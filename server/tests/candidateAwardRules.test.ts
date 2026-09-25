@@ -370,13 +370,37 @@ describe('telling one stored version from another', () => {
     ]).toEqual([false, false]);
   });
 
-  it('refuses a field nobody put in either shape', () => {
+  it('refuses a field nobody put in the current shape', () => {
+    // Strict where it describes what this build writes: an unknown field here
+    // means a newer writer, and the number should have moved with it.
     const current = JSON.parse(serialiseEvidence('silver', facts)) as object;
 
+    expect(awardEvidenceSchema.safeParse({ ...current, surprise: 'a field from a later writer' }).success).toBe(false);
+  });
+
+  /**
+   * The legacy shape describes records written in the past, which nobody can
+   * go back and change — so it names what it refuses rather than refusing
+   * everything it does not recognise.
+   *
+   * Flatly strict there was the first attempt and it was a trap: a genuine old
+   * record carrying a field of its own would have stopped parsing as legacy
+   * and started parsing as corrupt, which means skipped by the backfill,
+   * uncounted, and refused by the export for ever with nothing saying why.
+   */
+  it('still reads an old record that picked up a field of its own', () => {
+    expect(legacyAwardEvidenceSchema.safeParse({ ...legacyOf('silver'), struckByJobVersion: 'a past lane' }).success)
+      .toBe(true);
+  });
+
+  it('refuses the three fields whose presence means the number is lying', () => {
+    const old = legacyOf('silver');
+
     expect([
-      awardEvidenceSchema.safeParse({ ...current, surprise: 'a field from a later writer' }).success,
-      legacyAwardEvidenceSchema.safeParse({ ...legacyOf('silver'), surprise: 'likewise' }).success,
-    ]).toEqual([false, false]);
+      legacyAwardEvidenceSchema.safeParse({ ...old, candidateName: 'Priya Sharma' }).success,
+      legacyAwardEvidenceSchema.safeParse({ ...old, roleTitle: 'Senior Marketing Manager' }).success,
+      legacyAwardEvidenceSchema.safeParse({ ...old, signatures: { left: {}, right: {} } }).success,
+    ]).toEqual([false, false, false]);
   });
 });
 
