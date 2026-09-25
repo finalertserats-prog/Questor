@@ -154,6 +154,13 @@ awardVerifyRouter.get('/:token/certificate.pdf', asyncHandler(async (req, res) =
     // header, which the caller chooses: a certificate printing a verification
     // link at an address an attacker named would be a forgery Questor rendered
     // on request.
+    //
+    // The caller's own string rather than the stored column, and they are the
+    // same string: the lookup was an exact match on a unique column, so an
+    // award only reached this line because the two are equal. The column stays
+    // out of the select on purpose — `verifiable` returns a spread of this row,
+    // and a token in it is one careless `res.json(award)` away from being
+    // published.
     verifyUrl: verifyDisplayUrl(req.params.token),
     issuedAt: award.awardedAt,
     evidence,
