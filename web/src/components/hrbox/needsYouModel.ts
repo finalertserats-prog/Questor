@@ -306,7 +306,12 @@ export function countWord(n: number): string {
 export function crewNote(member: CrewMember, timeZone: string): string {
   if (member.status === 'live') return 'live';
   if (member.status === 'done') return 'done';
-  if (member.status === 'scheduled' && member.at) return timeOfDay(member.at, timeZone);
+  // A bare "14:00" here read as the reader's own clock to anyone who was not
+  // sitting in the organisation's. The offset costs four characters.
+  if (member.status === 'scheduled' && member.at) {
+    const clock = timeOfDay(member.at, timeZone);
+    return clock ? `${clock} ${zoneOffsetLabel(Date.parse(member.at), timeZone)}` : '';
+  }
   return 'free';
 }
 
@@ -317,6 +322,58 @@ export function timeOfDay(at: string, timeZone: string): string {
   } catch {
     return '';
   }
+}
+
+/**
+ * "GMT+5:30", "BST": what clock an instant is being written on.
+ *
+ * An offset, never a city. Home used to special-case Asia/Kolkata to "IST" and
+ * otherwise print the last segment of the zone id — so a New York round was
+ * labelled "New York", which is neither an abbreviation nor an offset and
+ * conveys nothing to someone trying to work out when to turn up.
+ */
+export function zoneOffsetLabel(at: number, timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', { timeZone, timeZoneName: 'shortOffset', hour: '2-digit', hourCycle: 'h23' }).formatToParts(at);
+    return parts.find((p) => p.type === 'timeZoneName')?.value ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function knownZone(timeZone: string | null): string | null {
+  if (!timeZone) return null;
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone });
+    return timeZone;
+  } catch {
+    // A zone this browser does not know is not worth failing Home over.
+    return null;
+  }
+}
+
+/**
+ * The clock a coming-up row belongs on: the zone its interview was booked in,
+ * else the organisation's. The server has always sent the first of those; the
+ * page used to ignore it and write every row on the second.
+ */
+export function itemZone(item: ComingUpItem, orgZone: string): string {
+  return knownZone(item.timeZone) ?? orgZone;
+}
+
+/**
+ * When a coming-up row is, naming the clock it is on.
+ *
+ * The zone is spelled out only when it is not the organisation's — on the
+ * organisation's own clock the offset is enough, and repeating "Asia/Kolkata"
+ * down a column of rows that are all in it buries the one row that is not.
+ */
+export function comingUpWhen(item: ComingUpItem, orgZone: string, withDay: boolean): string {
+  const zone = itemZone(item, orgZone);
+  const at = Date.parse(item.at);
+  const clock = withDay ? dayAndTime(item.at, zone) : timeOfDay(item.at, zone);
+  const offset = zoneOffsetLabel(at, zone);
+  return zone === orgZone ? `${clock} ${offset}` : `${clock} ${offset} (${zone})`;
 }
 
 /** The calendar day of an instant in a zone, "YYYY-MM-DD". */

@@ -9,9 +9,10 @@ import { DEFAULT_PAGE_SIZE, type PageSize } from '../components/listPagingModel'
 import { Crew } from '../components/hrbox/Crew';
 import { NeedsYouQueue, NeedsYouSkeleton } from '../components/hrbox/NeedsYouQueue';
 import {
-  comingUpState, crewSentence, dayAndTime, doneLine, greetingFor, hasNothingYet, hourIn, splitComingUp, timeOfDay,
-  waitLabel, type ComingUpItem, type NeedsYouFeed,
+  comingUpState, comingUpWhen, crewSentence, doneLine, greetingFor, hasNothingYet, hourIn, splitComingUp,
+  waitLabel, zoneOffsetLabel, type ComingUpItem, type NeedsYouFeed,
 } from '../components/hrbox/needsYouModel';
+import { effectiveOrgTimeZone } from '../components/orgTimeZone';
 
 type Load =
   | { readonly status: 'loading' }
@@ -56,14 +57,18 @@ export function Home() {
   const feed = load.status === 'ready' ? load.feed : null;
   // The server's clock when it answered, so every "waiting 3 h" on the page agrees.
   const now = feed ? Date.parse(feed.generatedAt) : Date.now();
-  const zone = feed?.timeZone ?? 'Asia/Kolkata';
+  // Through the shared fallback, not a literal: 'Asia/Kolkata' written here was
+  // the same default as everywhere else by coincidence rather than by rule, and
+  // it also swallowed a zone the browser does not recognise. Before the feed
+  // arrives there is no zone to name, so the header does not name one.
+  const zone = effectiveOrgTimeZone(feed?.timeZone);
   const hello = `${greetingFor(hourIn(zone, now))}${firstName ? `, ${firstName}` : ''}.`;
   const dayWord = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone: zone }).format(now);
 
   return (
     <section className="hb-home hb-motion" aria-labelledby="hb-greeting" aria-busy={load.status === 'loading'}>
       <header className="hb-greet">
-        <span className="hb-micro">{dayWord} · {zoneShort(zone)}</span>
+        <span className="hb-micro">{dayWord}{feed && ` · ${zone} ${zoneOffsetLabel(now, zone)}`}</span>
         <h1 id="hb-greeting" className="hb-greeting">{hello}</h1>
         {feed
           ? <p className="hb-sentence">{crewSentence(feed.crew, feed.needsYou)}</p>
@@ -131,17 +136,12 @@ export function Home() {
   );
 }
 
-function zoneShort(zone: string): string {
-  if (zone === 'Asia/Kolkata') return 'IST';
-  return zone.split('/').pop()?.replace(/_/g, ' ') ?? zone;
-}
-
 function ComingUpList({ items, timeZone, now, withDay }: { items: readonly ComingUpItem[]; timeZone: string; now: number; withDay: boolean }) {
   return (
     <ul className="hb-today">
       {items.map((item) => (
         <li key={`${item.kind}-${item.id}`}>
-          <span className="hb-today-t">{item.live ? 'now' : withDay ? dayAndTime(item.at, timeZone) : timeOfDay(item.at, timeZone)}</span>
+          <span className="hb-today-t">{item.live ? 'now' : comingUpWhen(item, timeZone, withDay)}</span>
           <span className="hb-today-n">
             <Link to={item.to}>{item.candidate.name}</Link>
             <span>{item.role.title}</span>
@@ -164,7 +164,7 @@ function ComingUp({ items, timeZone, now }: { items: readonly ComingUpItem[]; ti
     <section className="hb-block" aria-labelledby="hb-coming">
       <div className="hb-block-head">
         <h2 id="hb-coming">Coming up</h2>
-        <small>Times in {zoneShort(timeZone)}</small>
+        <small>Each time on the clock its interview was booked on</small>
       </div>
       {items.length === 0 && <p className="muted small">Nothing booked for this week.</p>}
       {today.length > 0 && (

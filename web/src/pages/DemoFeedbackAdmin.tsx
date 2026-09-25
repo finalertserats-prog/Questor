@@ -4,6 +4,7 @@ import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { Banner, Badge } from '../components/ui';
 import { Icon } from '../components/Icon';
+import { formatDateTime } from '../components/dateFormat';
 
 interface FeedbackRow {
   id: string;
@@ -27,9 +28,14 @@ interface Payload {
   spend: { dayKey: string; used: number; ceiling: number; perRun: number };
 }
 
+/**
+ * Through the shared formatter, which names the zone. This page used to write
+ * its own toLocaleString: the reader's clock, in whatever format the browser
+ * picked, with nothing to say which clock that was — and this is the page the
+ * platform owner reads to decide whether a sandbox is about to be purged.
+ */
 function day(iso: string | null): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return iso ? formatDateTime(iso) : '—';
 }
 
 /**

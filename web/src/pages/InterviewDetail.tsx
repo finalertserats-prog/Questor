@@ -12,6 +12,7 @@ import { formatDateTime, formatScheduled } from '../components/dateFormat';
 import { EMPTY_SCHEDULE, TimeZoneDateTimePicker, isSchedulable } from '../components/TimeZoneDateTimePicker';
 import { scheduleRequest, type ScheduleDraft } from '../components/zonedScheduleModel';
 import { useOrgTimeZoneStatus } from '../components/useOrgTimeZone';
+import { useCandidateTimeZone } from '../components/useCandidateTimeZone';
 import { orgTimeZoneLoadNotice } from '../components/orgTimeZone';
 import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
@@ -75,6 +76,10 @@ export function InterviewDetail() {
   const [copied, setCopied] = useState(false);
   const [draft, setDraft] = useState<ScheduleDraft>(EMPTY_SCHEDULE);
   const { timeZone: orgZone, failed: orgZoneFailed } = useOrgTimeZoneStatus();
+  // The clock this candidate's interview should be booked on. Read separately
+  // from the interview itself so the picker has it whether or not this page's
+  // payload ever carries it.
+  const candidateTimeZone = useCandidateTimeZone(data?.candidate?.id);
   const [busyAction, setBusyAction] = useState<Action | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [reason, setReason] = useState('');
@@ -443,7 +448,14 @@ export function InterviewDetail() {
             </p>
           )}
           {orgZoneFailed && <Banner kind="info"><span data-testid="org-zone-failed">{orgTimeZoneLoadNotice()}</span></Banner>}
-          <TimeZoneDateTimePicker idPrefix="schedule" value={draft} onChange={setDraft} orgZone={orgZone} disabled={busyAction !== null} />
+          <TimeZoneDateTimePicker
+            idPrefix="schedule"
+            value={draft}
+            onChange={setDraft}
+            orgZone={orgZone}
+            candidate={candidateTimeZone}
+            disabled={busyAction !== null}
+          />
           <div className="row" style={{ gap: 8 }}>
             {acts.invite && (
               <button type="button" className="btn" onClick={() => schedule(true)} disabled={busyAction !== null || !isSchedulable(draft)}>

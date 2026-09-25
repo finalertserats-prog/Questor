@@ -158,8 +158,11 @@ describe('the greeting', () => {
     expect(crewSentence([], { total: 0, items: [] })).toBe('Nothing needs you right now. The interviewers will say when something does.');
   });
 
-  it('gives a scheduled interviewer their time on the organisation clock', () => {
-    expect(crewNote(member({ status: 'scheduled', at: '2026-09-22T11:00:00.000Z' }), 'Asia/Kolkata')).toBe('16:30');
+  // The hour alone read as the reader's own clock to anyone outside the
+  // organisation's zone, which on a strip of five interviewers is five
+  // unmarked times.
+  it('gives a scheduled interviewer their time, naming the clock it is on', () => {
+    expect(crewNote(member({ status: 'scheduled', at: '2026-09-22T11:00:00.000Z' }), 'Asia/Kolkata')).toBe('16:30 GMT+5:30');
   });
 });
 

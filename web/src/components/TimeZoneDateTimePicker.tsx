@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import {
   browserTimeZone, initialTimeZone, listTimeZones, schedulePreview, timeZoneOptionLabel, type ScheduleDraft,
 } from './zonedScheduleModel';
+import { candidateZoneUnsetNotice, effectiveOrgTimeZone } from './orgTimeZone';
 
 export const EMPTY_SCHEDULE: ScheduleDraft = { timeZone: '', date: '', time: '' };
 
@@ -11,6 +12,18 @@ interface Props {
   readonly onChange: (next: ScheduleDraft) => void;
   /** The organisation's zone; undefined while it loads. */
   readonly orgZone: string | null | undefined;
+  /**
+   * Where the candidate is, for a booking that is about one. Omitted entirely
+   * where the booking is not about a particular candidate.
+   *
+   * `loaded` is not decoration. The organisation's zone and the candidate's
+   * arrive from two different requests, and this field is filled once; a bare
+   * `string | null` cannot tell "HR recorded nothing" from "the answer has not
+   * come back yet", so whenever the organisation's landed first the picker
+   * settled on it and ignored the candidate's when it arrived. That is the
+   * silent substitution this whole area exists to stop, reappearing as a race.
+   */
+  readonly candidate?: { readonly timeZone: string | null; readonly loaded: boolean };
   readonly disabled?: boolean;
   /** Hides the labels for a compact inline form; they stay for screen readers. */
   readonly compact?: boolean;
@@ -24,7 +37,7 @@ interface Props {
  * The zone field is a type-ahead over every zone the browser knows, starting
  * on the organisation's zone (IST when it has none).
  */
-export function TimeZoneDateTimePicker({ idPrefix, value, onChange, orgZone, disabled = false, compact = false }: Props) {
+export function TimeZoneDateTimePicker({ idPrefix, value, onChange, orgZone, candidate, disabled = false, compact = false }: Props) {
   const zones = useMemo(() => {
     const now = new Date();
     return listTimeZones().map((zone) => ({ zone, offset: timeZoneOptionLabel(zone, now) }));
@@ -33,12 +46,27 @@ export function TimeZoneDateTimePicker({ idPrefix, value, onChange, orgZone, dis
 
   // Filled once, when the organisation's zone is known. Only once: someone
   // clearing the field to search must not have it refilled under them.
+  //
+  // The candidate's zone wins where there is one: the owner's rule is that HR
+  // records where the candidate is and interviews are booked on that clock.
+  // Where there is not, the organisation's stands in — and the notice below
+  // says it is standing in.
+  //
+  // It waits for BOTH answers where a candidate is involved. Filling on the
+  // first to arrive is what let the organisation's zone win a race it should
+  // never have been in.
+  const answersIn = orgZone !== undefined && (candidate === undefined || candidate.loaded);
   const suggested = useRef(false);
   useEffect(() => {
-    if (suggested.current || orgZone === undefined) return;
+    if (suggested.current || !answersIn) return;
     suggested.current = true;
-    if (!value.timeZone) onChange({ ...value, timeZone: initialTimeZone(orgZone) });
-  }, [orgZone, value, onChange]);
+    if (!value.timeZone) onChange({ ...value, timeZone: candidate?.timeZone ?? initialTimeZone(orgZone) });
+  }, [answersIn, orgZone, candidate, value, onChange]);
+
+  // Only once we know there is nothing to fall back FROM: a booking that is
+  // not about a candidate has nothing to say here, and one whose answer is
+  // still coming must not accuse HR of having left it blank.
+  const substituting = answersIn && candidate !== undefined && candidate.timeZone === null;
 
   const preview = schedulePreview(value, new Date(), viewerZone);
   const labelClass = compact ? 'visually-hidden' : undefined;
@@ -46,6 +74,11 @@ export function TimeZoneDateTimePicker({ idPrefix, value, onChange, orgZone, dis
 
   return (
     <div className="tz-picker" data-testid={`${idPrefix}-picker`}>
+      {substituting && (
+        <p className="muted small" data-testid={`${idPrefix}-candidate-zone-unset`}>
+          {candidateZoneUnsetNotice(effectiveOrgTimeZone(orgZone))}
+        </p>
+      )}
       <label className={labelClass} htmlFor={`${idPrefix}-zone`}>Time zone</label>
       <input
         id={`${idPrefix}-zone`}

@@ -28,3 +28,16 @@ export function orgTimeZoneLoadNotice(): string {
 export function effectiveOrgTimeZone(orgZone: string | null | undefined): string {
   return orgZone && isKnownTimeZone(orgZone) ? orgZone : DEFAULT_ORG_TIME_ZONE;
 }
+
+/**
+ * Shown beside the picker when nobody has recorded where the candidate is.
+ *
+ * Saying it out loud is the whole point. Quietly booking in the organisation's
+ * zone is what Questor already did, and it is why nobody could tell whether a
+ * time was the candidate's or the recruiter's — a nicer-looking version of the
+ * same ambiguity is not a fix for it.
+ */
+export function candidateZoneUnsetNotice(orgZone: string): string {
+  return `This candidate's time zone is not set, so this is being booked in your organisation's, ${orgZone}. `
+    + 'Set theirs on their profile if you know it.';
+}

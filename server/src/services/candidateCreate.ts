@@ -25,6 +25,8 @@ export interface NewApplication {
   readonly email: string;
   readonly phone?: string;
   readonly linkedinUrl?: string;
+  /** Where HR says this person is. Absent means unknown, not "assume ours". */
+  readonly timeZone?: string;
 }
 
 export type CreateApplicationResult =
@@ -57,7 +59,7 @@ export async function createApplication(auth: AuthClaims, input: NewApplication,
     const made = await tx.candidate.create({
       data: {
         tenantId, roleId: input.roleId, fullName: input.fullName, email: input.email, emailNormalized,
-        phone: input.phone ?? '', linkedinUrl: input.linkedinUrl ?? '',
+        phone: input.phone ?? '', linkedinUrl: input.linkedinUrl ?? '', timeZone: input.timeZone ?? null,
       },
     });
     // Role assignment alone would already cover this candidate, but the explicit

@@ -15,7 +15,7 @@ import { resolveCandidateBand } from '../engines/bandCalibration.js';
 import type { FitScore, InterviewPlan, NormalizedProfile, RoleSuccessProfile } from '../domain/types.js';
 import { assertTransition, canTransition } from '../domain/stateMachine.js';
 import { humanVerdict } from '../domain/reviewedAssessment.js';
-import { getEmail } from '../providers/email/index.js';
+import { getEmail, type EmailAttachment, type EmailMessage } from '../providers/email/index.js';
 import { meetingCapability } from '../providers/meeting/index.js';
 import { brandedEmail, companyEmail, emailButton, headerSafe, escapeHtml } from '../providers/email/branding.js';
 import { firstName } from '../engines/openingModel.js';
@@ -39,85 +39,16 @@ import { assertRoleOpen } from '../services/roleOpen.js';
 import { aiConclusionVisible, assertUnblindedReadAllowed, BLIND_REVIEW_REQUIRED } from '../services/shadowMode.js';
 import { notePipelineEvent } from '../services/pipelineAutonomy.js';
 import { replanPending } from '../services/interviewReplan.js';
-import { formatScheduledTime } from '../services/zonedTime.js';
+import { candidateClockSentence, formatScheduledTime } from '../services/zonedTime.js';
 import { tenantTimeZone } from '../services/tenantTimeZone.js';
+import { candidateOwnZone } from '../services/scheduleZone.js';
+import { composeInvitation, type ComposedInvitation } from '../services/interviewInvite.js';
+import { calendarDeliveryFor, calendarStateNote, recordCalendarFailure, recordCalendarSent, type CalendarTarget } from '../services/calendarDelivery.js';
 import { interviewListQuerySchema, listInterviews } from '../services/interviewList.js';
 import { assertInFuture, resolveScheduleTime, scheduleTimeFields } from './scheduleTime.js';
 
 export const interviewsRouter = Router();
 interviewsRouter.use(authenticate);
-
-/** The invitation a candidate receives. It reads as a note from the company's
- *  hiring team: what the next step is, how long it takes, and the link. How the
- *  interview works, including that the interviewer is an AI, is explained on the
- *  page the link opens, before the interview starts and before consent is asked.
- *  Plain-text and HTML bodies are built from the same facts, and the link is
- *  also written out, because some mail clients (Gmail in spam) disable links. */
-interface InviteDetails {
-  readonly candidateName: string;
-  readonly roleTitle: string;
-  readonly companyName: string;
-  readonly portalUrl: string;
-  readonly durationMinutes: number;
-  readonly expiresAt: Date | null;
-  /** The booked time, when one is set and still ahead. */
-  readonly scheduledAt: Date | null;
-  /** The zone the email states times in: the booking's, else the organisation's (IST when it has none). */
-  readonly timeZone: string;
-}
-
-function inviteDate(at: Date, timeZone: string): string {
-  const day = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(at);
-  return `${day} (${timeZone})`;
-}
-
-function buildInvite(d: InviteDetails) {
-  const first = firstName(d.candidateName) || 'there';
-  const booked = d.scheduledAt ? formatScheduledTime(d.scheduledAt, d.timeZone) : null;
-  const intro = booked
-    ? `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you do online. It is booked for ${booked}, and takes about ${d.durationMinutes} minutes.`
-    : `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you can do online, whenever it suits you. It takes about ${d.durationMinutes} minutes.`;
-  const tips = [
-    'Find a quiet spot. A laptop or a phone both work.',
-    'Speak or type your answers, whichever you prefer.',
-    'If you need any adjustments, you can ask for them when you open the link.',
-  ];
-  // The portal has no way to book a time, so an unbooked invite offers none.
-  const whenToStart = booked
-    ? 'Please open the link at that time.'
-    : `You can start whenever suits you${d.expiresAt ? ' before then' : ''}.`;
-  const until = d.expiresAt ? `The link is open until ${inviteDate(d.expiresAt, d.timeZone)}. ${whenToStart}` : whenToStart;
-  const text = [
-    `Hi ${first},`,
-    '',
-    intro,
-    '',
-    `Start your interview: ${d.portalUrl}`,
-    '',
-    'A few things that help:',
-    ...tips.map((tip) => `- ${tip}`),
-    '',
-    until,
-    '',
-    'Best regards,',
-    `The ${d.companyName} hiring team`,
-  ].join('\n');
-  const html = [
-    `<p style="margin:0 0 14px">Hi ${escapeHtml(first)},</p>`,
-    `<p style="margin:0 0 18px">${escapeHtml(intro)}</p>`,
-    emailButton(d.portalUrl, 'Start your interview'),
-    '<p style="margin:4px 0 6px;font-weight:600">A few things that help</p>',
-    `<ul style="margin:0 0 16px;padding-left:20px">${tips.map((tip) => `<li style="margin:0 0 6px">${escapeHtml(tip)}</li>`).join('')}</ul>`,
-    `<p style="margin:0 0 18px;color:#5a5a6e;font-size:14px">${escapeHtml(until)}</p>`,
-    `<p style="margin:0">Best regards,<br>The ${escapeHtml(d.companyName)} hiring team</p>`,
-  ].join('\n');
-  return companyEmail({
-    to: '',
-    subject: `Your interview for ${headerSafe(d.roleTitle)} at ${headerSafe(d.companyName)}`,
-    text,
-    html,
-  }, d.companyName);
-}
 
 const createSchema = z.object({
   candidateId: z.string(),
@@ -499,9 +430,16 @@ export async function writeSessionSchedule(
 ): Promise<{ saved: boolean; rebooking: boolean }> {
   const rebooking = REBOOKABLE_STATES.has(session.state);
   if (rebooking) assertTransition(session.state, 'RESCHEDULE_REQUIRED');
+  // Where the candidate is, as at this booking. Read through the session
+  // rather than taken as an argument so that every caller gets it without
+  // having to remember to — including the pipeline, which schedules an AI
+  // round's interview from a different file. Null when HR has not said, which
+  // the readers report rather than paper over.
+  const owner = await db.interviewSession.findUnique({ where: { id: session.id }, select: { tenantId: true, candidateId: true } });
+  const candidateTimeZone = owner ? await candidateOwnZone(owner.tenantId, owner.candidateId) : null;
   const { count } = await db.interviewSession.updateMany({
     where: rebooking ? { id: session.id, state: session.state } : { id: session.id, state: { in: [...SCHEDULABLE_STATES] } },
-    data: { scheduledAt: at, scheduledTimeZone: timeZone, ...(rebooking ? { state: 'RESCHEDULE_REQUIRED' } : {}) },
+    data: { scheduledAt: at, scheduledTimeZone: timeZone, candidateTimeZone, ...(rebooking ? { state: 'RESCHEDULE_REQUIRED' } : {}) },
   });
   return { saved: count === 1, rebooking };
 }
@@ -637,7 +575,7 @@ interviewsRouter.post('/:id/resend', requireCapability('interview:invite'), asyn
   res.json(await resendInvitation(req, session));
 }));
 
-type ResendableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null };
+type ResendableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null; candidateTimeZone: string | null };
 
 async function resendInvitation(req: Request, session: ResendableSession) {
   // The link only starts an interview from these states. Resending it for one
@@ -668,8 +606,11 @@ async function resendInvitation(req: Request, session: ResendableSession) {
 
   try {
     const tenant = await prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } });
-    const timing = await inviteTiming(session);
-    await email.send({ ...buildInvite({ candidateName: candidate!.fullName, roleTitle: role!.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt: invitation.expiresAt, ...timing }), to: candidate!.email });
+    const companyName = tenant?.name ?? 'our';
+    const composed = await composeInvitation({
+      session, candidate: candidate!, roleTitle: role!.title, companyName, portalUrl, expiresAt: invitation.expiresAt,
+    });
+    await sendInvitationMessage({ session, candidate: candidate!, composed, email });
   } catch (err) {
     logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation resend failed');
     throw new HttpError(502, 'The email could not be sent. Copy the link and send it yourself, or try again.');
@@ -686,14 +627,54 @@ async function resendInvitation(req: Request, session: ResendableSession) {
 }
 
 /**
- * The booked time an invitation states, and the zone it states every date in.
- * A time already gone is left out: "booked for yesterday" helps nobody. The
- * zone falls back to the organisation's (IST when it has none), never the
- * server's clock.
+ * The calendar entry that travels with an invitation, when there is a time to
+ * put in a calendar.
+ *
+ * None for an invitation the candidate may open whenever suits them: an entry
+ * with no real start would sit in their calendar claiming an appointment that
+ * does not exist. The body still carries everything; this is in addition to it,
+ * for the one thing an email cannot do — render the instant on the reader's
+ * own clock, wherever they are.
  */
-async function inviteTiming(session: { tenantId: string; scheduledAt: Date | null; scheduledTimeZone: string | null }) {
-  const ahead = session.scheduledAt && session.scheduledAt.getTime() > Date.now() ? session.scheduledAt : null;
-  return { scheduledAt: ahead, timeZone: session.scheduledTimeZone ?? await tenantTimeZone(session.tenantId) };
+/** This interview, as the calendar outbox identifies it. */
+function calendarTargetFor(session: { id: string; tenantId: string }): CalendarTarget {
+  return { type: 'interview', id: session.id, tenantId: session.tenantId };
+}
+
+/**
+ * Send an invitation and record what it told the candidate's calendar.
+ *
+ * Inline, and the caller learns the outcome in its own response — a recruiter
+ * who presses Invite must not be left to find out later. The queue is only for
+ * what to do AFTER a failure: the calendar sequence travelled inside the
+ * attachment and is already spent, so their calendar is behind by a number
+ * nobody can reuse, and something has to go back and correct it.
+ *
+ * Rethrows, because every caller already reports a failed send honestly.
+ */
+async function sendInvitationMessage(o: {
+  readonly session: { id: string; tenantId: string };
+  readonly candidate: { fullName: string; email: string };
+  readonly composed: ComposedInvitation;
+  readonly email: { send: (msg: EmailMessage) => Promise<unknown> };
+}): Promise<void> {
+  const target = calendarTargetFor(o.session);
+  const recipient = { email: o.candidate.email, name: o.candidate.fullName };
+  try {
+    await o.email.send({ ...o.composed.message, to: o.candidate.email, attachments: o.composed.attachments });
+  } catch (err) {
+    // Only where an entry actually went: an invitation with no booked time
+    // carries no calendar entry, so there is none to be behind.
+    if (o.composed.sequence !== null) {
+      await recordCalendarFailure({ target, recipient, kind: 'invited', error: err instanceof Error ? err.message : String(err) });
+    }
+    throw err;
+  }
+  if (o.composed.sequence !== null && o.composed.scheduledAt) {
+    await recordCalendarSent({
+      target, recipient, kind: 'invited', sequence: o.composed.sequence, scheduledAt: o.composed.scheduledAt,
+    });
+  }
 }
 
 // Schedule (FR-013).
@@ -942,7 +923,7 @@ interviewsRouter.get('/:id/transcript', requireCapability('candidate:read'), asy
  * only the tenant in hand — the tenant-only lookup this replaced was the single
  * line behind every leak on this router.
  */
-type InvitableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; personaJson: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null };
+type InvitableSession = { id: string; tenantId: string; candidateId: string; roleId: string; state: string; personaJson: string; durationMinutes: number; scheduledAt: Date | null; scheduledTimeZone: string | null; candidateTimeZone: string | null };
 
 async function inviteSession(req: Request, session: InvitableSession) {
   // Here rather than in each route, so single, bulk and schedule-and-send all refuse a closed role.
@@ -978,7 +959,12 @@ async function inviteSession(req: Request, session: InvitableSession) {
   const portalUrl = `${config.webOrigin}/portal/${token}`;
   const email = getEmail();
   const tenant = await prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } });
-  const invite = buildInvite({ candidateName: candidate.fullName, roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, durationMinutes: session.durationMinutes, expiresAt, ...await inviteTiming(session) });
+  const companyName = tenant?.name ?? 'our';
+  // Composed once, before either send path below: claiming a second calendar
+  // sequence for one message would make the first look like an update nobody
+  // sent, and reading the interview's time twice would let the words and the
+  // calendar entry describe different appointments.
+  const composed = await composeInvitation({ session, candidate, roleTitle: role.title, companyName, portalUrl, expiresAt });
 
   // Delivery is reported honestly, and a failure never loses the invitation.
   // The link is the valuable artefact — a recruiter who can see it can send it
@@ -987,16 +973,16 @@ async function inviteSession(req: Request, session: InvitableSession) {
   let delivered = false;
   let deliveryNote: string;
   if (!email.delivers) {
-    await email.send({ ...invite, to: candidate.email }); // logs it
+    await email.send({ ...composed.message, to: candidate.email, attachments: composed.attachments }); // logs it
     deliveryNote = `No email was sent: EMAIL_PROVIDER is "${email.name}", which does not deliver. Copy the link and send it yourself.`;
     logger.warn({ sessionId: session.id }, 'Invitation created but NOT emailed — no delivering email provider configured');
   } else {
     try {
-      await email.send({ ...invite, to: candidate.email });
+      await sendInvitationMessage({ session, candidate, composed, email });
       delivered = true;
       deliveryNote = `Emailed to ${candidate.email}.`;
     } catch (err) {
-      deliveryNote = 'The invitation link was created, but the email could not be sent. Copy the link and send it yourself.';
+      deliveryNote = `The invitation link was created, but the email could not be sent. Copy the link and send it yourself.${calendarStateNote(await calendarDeliveryFor(calendarTargetFor(session), candidate.email))}`;
       logger.error({ err: err instanceof Error ? err.message : String(err), sessionId: session.id }, 'Invitation email failed to send');
     }
   }

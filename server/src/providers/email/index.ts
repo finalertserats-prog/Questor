@@ -4,11 +4,31 @@ import { logger } from '../../logger.js';
 import { EMAIL_SEND_TIMEOUT_MS, SMTP_KILL_DEADLINE_MS, smtpTransportOptions } from './timing.js';
 import { sendViaSmtpChild } from './smtpChild.js';
 
+/**
+ * A file travelling with a message. Text only, and UTF-8: the one thing
+ * Questor attaches is a calendar invitation (services/calendarInvite.ts), and
+ * keeping the content a string rather than a Buffer means a test can read what
+ * was sent instead of decoding it.
+ */
+export interface EmailAttachment {
+  readonly filename: string;
+  readonly content: string;
+  /** Carries its parameters, e.g. `text/calendar; charset=utf-8; method=REQUEST`. */
+  readonly contentType: string;
+}
+
 export interface EmailMessage {
   to: string;
   subject: string;
   html: string;
   text: string;
+  /**
+   * Never the only place a fact appears. Most people never open an attachment,
+   * and some mail systems strip them, so anything that matters is in the body
+   * as well — the calendar invitation is in addition to the readable time, not
+   * instead of it.
+   */
+  attachments?: readonly EmailAttachment[];
 }
 
 export interface EmailProvider {
@@ -48,7 +68,11 @@ class ConsoleEmailProvider implements EmailProvider {
       return { status: 'logged', id: `console-${Date.now()}` };
     }
     logger.info({ to: msg.to, subject: msg.subject }, `📧 [console email — NOT DELIVERED] ${msg.subject} -> ${msg.to}`);
-    logger.info(`\n----- EMAIL BODY -----\n${msg.text}\n----------------------`);
+    // Names only, never the content: an attachment is the one part of a message
+    // whose size makes a log unreadable, and the calendar invitation repeats
+    // nothing the body does not already say.
+    const files = msg.attachments?.length ? `\nattachments: ${msg.attachments.map((f) => f.filename).join(', ')}` : '';
+    logger.info(`\n----- EMAIL BODY -----\n${msg.text}${files}\n----------------------`);
     // 'logged', never 'sent'. The caller decides what to tell the user, and it
     // cannot decide honestly if this lies about what happened.
     return { status: 'logged', id: `console-${Date.now()}` };
@@ -78,6 +102,18 @@ class SendgridEmailProvider implements EmailProvider {
           { type: 'text/plain', value: msg.text },
           { type: 'text/html', value: msg.html },
         ],
+        // SendGrid takes base64 and its own `type`, which keeps the MIME
+        // parameters the calendar invitation depends on (`method=REQUEST`).
+        ...(msg.attachments?.length
+          ? {
+            attachments: msg.attachments.map((file) => ({
+              content: Buffer.from(file.content, 'utf8').toString('base64'),
+              filename: file.filename,
+              type: file.contentType,
+              disposition: 'attachment',
+            })),
+          }
+          : {}),
       }),
     });
     if (!res.ok) throw new Error(`SendGrid error ${res.status}`);
@@ -120,7 +156,15 @@ class SmtpEmailProvider implements EmailProvider {
   async send(msg: EmailMessage) {
     const info = await sendViaSmtpChild({
       transport: this.options,
-      mail: { from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html },
+      mail: {
+        from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html,
+        // nodemailer writes `contentType` into the part's Content-Type header
+        // verbatim, parameters and all, which is what keeps the iTIP `method=`
+        // matching the METHOD in the body.
+        ...(msg.attachments?.length
+          ? { attachments: msg.attachments.map((file) => ({ filename: file.filename, content: file.content, contentType: file.contentType })) }
+          : {}),
+      },
       deadlineMs: SMTP_KILL_DEADLINE_MS,
     });
     return { status: 'sent', id: info.messageId };

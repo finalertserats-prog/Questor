@@ -82,6 +82,14 @@ model User {
   // behaving like a recruiter. (This list said "program_owner" for a long time,
   // which nothing had ever enforced; the enum is the schema now.)
   role         String   @default("recruiter")
+  // The zone this person reads times in, as an IANA zone. Null until they set
+  // one, and then the organisation's is used.
+  //
+  // It exists for the people email is the only channel to. An expert seated on
+  // a Gold round may never open the console at all; the reminder and the daily
+  // digest are the whole product to them, and a time stated on an organisation
+  // clock they do not share is a time they have to convert by hand.
+  timeZone     String?
   createdAt    DateTime @default(now())
   // When the guided product tour was finished or skipped. Null until then, so
   // it runs once on the user's first sign-in — on every browser, not just one.
@@ -476,6 +484,17 @@ model Candidate {
   phone         String   @default("")
   // An https link on linkedin.com, or "". Set by bulk import; checked before storing.
   linkedinUrl   String   @default("")
+  // Where HR says this person is, as an IANA zone. Null until HR sets one, and
+  // deliberately so: a candidate's zone is a fact somebody has to know, not one
+  // a browser can be asked for — the browser here belongs to the recruiter, who
+  // is usually somewhere else entirely.
+  //
+  // It is the DEFAULT for a round booked from now on, never the source of
+  // truth for one already booked. A candidate who moves would otherwise
+  // re-write every past round's "their time" into the new zone: the instant
+  // stays right and the label becomes historically false. The round carries
+  // its own snapshot (InterviewRound.candidateTimeZone) for that reason.
+  timeZone      String?
   createdAt     DateTime @default(now())
   profiles      CandidateProfileVersion[]
   interviews    InterviewSession[]
@@ -583,6 +602,18 @@ model InterviewSession {
   // and the email read it on that clock. Null for a time set before zones were
   // chosen, or through the older offset-only API.
   scheduledTimeZone String?
+  // Where the candidate was when this time was chosen — NOT the same fact as
+  // scheduledTimeZone, which is the zone the recruiter booked in. A Bengaluru
+  // recruiter booking a Berlin candidate produces two different zones, and a
+  // reader who wants "their time" wants this one.
+  //
+  // Snapshotted rather than read from Candidate.timeZone, so a candidate who
+  // moves does not silently re-date every interview they have already had.
+  candidateTimeZone String?
+  // iTIP SEQUENCE for the calendar invitation this interview sends. Outlook
+  // ignores an update whose sequence did not move, so it is bumped on every
+  // change that goes out — see services/calendarInvite.ts.
+  calendarSequence  Int      @default(0)
   startedAt         DateTime?
   completedAt       DateTime?
   // Separate from completedAt on purpose. An interview that stopped part-way
@@ -1431,6 +1462,16 @@ model InterviewRound {
   // The IANA zone the round was booked in; null when set through the older
   // offset-only API. Emails fall back to the tenant's zone, then UTC.
   scheduledTimeZone String?
+  // Where the candidate was when this round's time was chosen. A different
+  // fact from scheduledTimeZone — a Bengaluru recruiter booking a Berlin
+  // candidate produces two zones, and "the candidate's time" is this one.
+  //
+  // A snapshot, not a link to Candidate.timeZone: a candidate who moves would
+  // otherwise re-date every round they have already sat.
+  candidateTimeZone String?
+  // iTIP SEQUENCE for this round's calendar invitation. Outlook ignores an
+  // update whose sequence did not move — see services/calendarInvite.ts.
+  calendarSequence  Int     @default(0)
   status           String   @default("SCHEDULED") // SCHEDULED | COMPLETED | CANCELLED
   notes            String   @default("")
   // When the round was completed with notes; the notes' retention runs from here.
@@ -2412,6 +2453,64 @@ model DemoSpendDay {
 // Nothing is shown before it is earned: a candidate whose Silver interview is
 // finished but who has not been progressed has no row here, and therefore no
 // badge, no certificate and no export — only the reason it is not there yet.
+/// One recipient's copy of one interview's calendar entry, and whether their
+/// copy is up to date.
+///
+/// WHY A ROW AT ALL. The sequence number a calendar update goes out under is
+/// INSIDE the .ics attachment, so it has to be spent before the send — which
+/// means a send that fails has already burned it, and until now nothing
+/// recorded that the recipient's calendar was left describing an older time.
+/// The recruiter was told "tell them yourself"; the calendar entry was not
+/// mentioned, because nothing knew about it.
+///
+/// The third instance of the outbox shape this codebase already uses twice —
+/// WebhookDelivery and CandidateFeedbackEmail. Claim, attempt, back off,
+/// reap a claim whose worker died.
+///
+/// WHAT IT DELIBERATELY DOES NOT STORE: the message. A retry rebuilds from the
+/// row as it stands at that moment, because the round may have moved again
+/// while the send was failing and replaying a frozen payload would deliver a
+/// time nobody holds any more. Only what was SENT is recorded, and only so the
+/// gap between it and the truth can be seen.
+model CalendarDelivery {
+  id              String   @id @default(cuid())
+  tenantId        String
+  /// "round" | "interview": which kind of calendar object this is a copy of.
+  /// With targetId it is the UID the recipient's calendar keys on, so the pair
+  /// is the identity — there is one entry per person per interview, updated,
+  /// never a second one.
+  ///
+  /// Not a foreign key, because it points at one of two tables. Erasure
+  /// therefore has to reach these rows by hand; services/dataRights.ts does,
+  /// and a test holds it to that — this row carries an email address.
+  targetType      String
+  targetId        String
+  recipientEmail  String
+  recipientName   String
+  /// The latest intent: booked | moved | link | cancelled | invited. Used for
+  /// the words, never for the method — whether the entry is a request or a
+  /// withdrawal is read from the round's own status at send time.
+  kind            String
+  /// QUEUED | SENDING | SENT | FAILED
+  status          String   @default("QUEUED")
+  attempts        Int      @default(0)
+  nextAttemptAt   DateTime?
+  claimedAt       DateTime?
+  lastError       String   @default("")
+  /// What this person's calendar was actually last told. `scheduledAtSent`
+  /// differing from the interview's time now IS the divergence: it is the
+  /// queryable form of "their calendar is wrong and we know it".
+  sequenceSent    Int?
+  scheduledAtSent DateTime?
+  sentAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([targetType, targetId, recipientEmail])
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, status])
+}
+
 model CandidateAward {
   id              String   @id @default(cuid())
   tenantId        String

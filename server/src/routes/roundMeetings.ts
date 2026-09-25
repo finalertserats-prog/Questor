@@ -7,6 +7,7 @@ import { logAudit } from '../services/audit.js';
 import { hasCapability } from '../services/access.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice, type RoundNoticeKind } from '../services/roundCandidateNotice.js';
 import { notifyRoundInterviewers, type InterviewerNotice, type InterviewerNoticeKind } from '../services/roundInterviewerNotice.js';
+import { candidateOwnZone } from '../services/scheduleZone.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
 import {
@@ -72,7 +73,9 @@ async function tellCandidate(req: Request, pipeline: PipelineWithRounds, roundId
     return { sent: false, note: 'Your account cannot email candidates, so the candidate was not emailed.' };
   }
   const round = await prisma.interviewRound.findFirstOrThrow({ where: { id: roundId, pipelineId: pipeline.id, tenantId: req.auth!.tenantId } });
-  return notifyCandidateOfHumanRound({ round, candidateId: pipeline.candidateId, roleId: pipeline.roleId, stageLabel, kind });
+  return notifyCandidateOfHumanRound({
+    round, candidateId: pipeline.candidateId, roleId: pipeline.roleId, stageLabel, reason: { of: 'first', kind },
+  });
 }
 
 /**
@@ -96,6 +99,7 @@ async function tellInterviewers(
 }
 
 const NOT_SCHEDULED = 'This round has already been completed or cancelled.';
+const MOVED_UNDERNEATH = 'Somebody else moved this round while you were working on it. Reload and try again.';
 // The AI interview's time and availability live on its interview session;
 // moving or cancelling only the round would leave the session usable at the old time.
 const AI_ROUND = 'The AI interview is managed from the interview itself, not from the round. Reschedule or cancel it on the interview page.';
@@ -117,11 +121,31 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
   if (pipeline.status !== 'ACTIVE') throw new HttpError(409, 'A decision has already been recorded for this pipeline.');
   if (round.meetingStatus === MEETING_STATUS.CREATING && !isStaleCreation(round)) throw new HttpError(409, BUSY);
 
+  // The candidate's zone is taken again, not carried over: moving a round is
+  // choosing its time afresh, and the fact worth recording is where the
+  // candidate was when THIS time was picked. Null when HR has not said, so an
+  // old snapshot cannot outlive the answer it was a snapshot of.
+  const candidateTimeZone = await candidateOwnZone(req.auth!.tenantId, pipeline.candidateId);
+  // Conditional on the time this request read, as well as on the round still
+  // being movable. Without `scheduledAt` in the guard, two people moving the
+  // same round both succeed, and the one whose email goes out last decides
+  // what the candidate's calendar says — which need not be the time the round
+  // ends up holding. Losing this race is a fact worth telling a person about,
+  // so it is a 409 rather than a silent overwrite.
   const moved = await prisma.interviewRound.updateMany({
-    where: { id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED', meetingStatus: round.meetingStatus },
-    data: { scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}) },
+    where: {
+      id: round.id, pipelineId: pipeline.id, status: 'SCHEDULED',
+      meetingStatus: round.meetingStatus, scheduledAt: round.scheduledAt,
+    },
+    data: {
+      scheduledAt: booked.at, scheduledTimeZone: booked.timeZone, candidateTimeZone,
+      ...(body.durationMinutes ? { durationMinutes: body.durationMinutes } : {}),
+    },
   });
-  if (moved.count !== 1) throw new HttpError(409, NOT_SCHEDULED);
+  if (moved.count !== 1) {
+    const still = await prisma.interviewRound.findFirst({ where: { id: round.id, status: 'SCHEDULED' }, select: { id: true } });
+    throw new HttpError(409, still ? MOVED_UNDERNEATH : NOT_SCHEDULED);
+  }
 
   await logAudit({
     tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,

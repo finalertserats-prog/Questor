@@ -4,7 +4,8 @@ import { api } from '../../api/client';
 import { Banner } from '../ui';
 import { Icon } from '../Icon';
 import { VerdictCell } from '../VerdictCell';
-import { formatDate } from '../dateFormat';
+import { formatScheduled } from '../dateFormat';
+import { useOrgTimeZone } from '../useOrgTimeZone';
 import { formatScoreOutOf100, hasScore } from '../scoreFormat';
 import { ComparabilityMark } from './CandidatesTable';
 import { useIsPhone } from '../ResponsiveList';
@@ -79,7 +80,21 @@ function CompetencyCell({ candidate, competency }: { candidate: ComparedCandidat
  * comparison becomes one block per candidate, read by scrolling down rather
  * than sideways past the column that matters.
  */
-function PhoneComparison({ candidates, competencies }: { candidates: readonly ComparedCandidate[]; competencies: readonly GridCompetency[] }) {
+/**
+ * The next booked interview, on the clock it was booked on.
+ *
+ * It used to be a day-only `formatDate` on the viewer's own browser clock,
+ * while the server was already sending the round's zone on the same object. A
+ * 09:00 Kolkata round therefore read as the previous day to anyone comparing
+ * candidates from the United States — a comparison of when two people are being
+ * seen, off by a day, with nothing on screen to suggest it.
+ */
+function NextRound({ candidate, orgZone }: { candidate: ComparedCandidate; orgZone: string | undefined }) {
+  if (!candidate.nextRoundAt) return <>Nothing booked</>;
+  return <>{formatScheduled(candidate.nextRoundAt, candidate.nextRoundTimeZone, orgZone)}</>;
+}
+
+function PhoneComparison({ candidates, competencies, orgZone }: { candidates: readonly ComparedCandidate[]; competencies: readonly GridCompetency[]; orgZone: string | undefined }) {
   return (
     <ul className="cmp-phone" aria-label="Shortlisted candidates compared">
       {candidates.map((c) => (
@@ -112,7 +127,7 @@ function PhoneComparison({ candidates, competencies }: { candidates: readonly Co
             </dl>
           )}
           <p className="muted small">
-            Next interview booked: {c.nextRoundAt ? formatDate(c.nextRoundAt) : 'Nothing booked'}
+            Next interview booked: <NextRound candidate={c} orgZone={orgZone} />
           </p>
         </li>
       ))}
@@ -126,6 +141,9 @@ export function SideBySide(props: {
   readonly onClose: () => void;
 }) {
   const isPhone = useIsPhone();
+  // The zone a round booked without one is shown in — the same source the
+  // journey board reads, so the two pages never disagree about one round.
+  const orgZone = useOrgTimeZone();
   const [data, setData] = useState<ComparisonPayload | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -156,7 +174,7 @@ export function SideBySide(props: {
       {loading && <p className="muted small">Loading the comparison…</p>}
 
       {!loading && !error && candidates.length > 0 && isPhone && (
-        <PhoneComparison candidates={candidates} competencies={data?.competencies ?? []} />
+        <PhoneComparison candidates={candidates} competencies={data?.competencies ?? []} orgZone={orgZone} />
       )}
 
       {!loading && !error && candidates.length > 0 && !isPhone && (
@@ -197,7 +215,7 @@ export function SideBySide(props: {
                   <th scope="row" className="cmp-rowhead">Next interview booked</th>
                   {candidates.map((c) => (
                     <td key={c.id} className="muted small">
-                      {c.nextRoundAt ? formatDate(c.nextRoundAt) : 'Nothing booked'}
+                      <NextRound candidate={c} orgZone={orgZone} />
                     </td>
                   ))}
                 </tr>

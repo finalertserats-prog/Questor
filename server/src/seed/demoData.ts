@@ -114,6 +114,11 @@ export async function wipe(): Promise<void> {
   assertNotProduction('wipe');
   await prisma.webhookDelivery.deleteMany();
   await prisma.webhookEndpoint.deleteMany();
+  // Who holds a calendar entry for an interview. No foreign key — it names one
+  // of two tables by id — so nothing below cascades into it, and a wipe that
+  // left these behind would carry one file's recipients into the next file's
+  // staleness queries and its erasure counts.
+  await prisma.calendarDelivery.deleteMany();
   // The "reminders active from" stamp: no foreign keys, but it outlives every
   // row it applies to, so a wipe that left it behind would make the next test
   // (or the next seed) run against a cutoff it never set.

@@ -27,6 +27,15 @@ export interface DigestDetails {
   readonly homeUrl: string;
   readonly settingsUrl: string;
   readonly now: Date;
+  /** The clock this summary was timed to — the reader's own, or the organisation's. */
+  readonly timeZone: string;
+  /**
+   * Whether that clock is the organisation's because the reader has set none.
+   * It is said out loud when it is: "today" in a summary timed to somebody
+   * else's morning means somebody else's today, and a reader who does not know
+   * which clock they are being addressed on cannot tell.
+   */
+  readonly onOrgClock: boolean;
 }
 
 /** "18 min", "3 h", "5 days": how long a row has waited. */
@@ -43,11 +52,15 @@ export function buildDigestEmail(d: DigestDetails): EmailMessage {
   const lead = d.total === 1 ? 'One thing needs you today.' : `${d.total} things need you today.`;
   const more = d.total > d.rows.length ? `And ${d.total - d.rows.length} more on your Home page.` : '';
   const line = (r: DigestRow) => `${KIND_LABEL[r.kind]}${r.urgent ? ' (urgent)' : ''}: ${r.who}${r.role ? `, ${r.role}` : ''}. Waiting ${waitedFor(r.since, d.now)}.`;
+  const clockNote = d.onOrgClock
+    ? `"Today" here is your organisation's day in ${d.timeZone}, because you have not set your own time zone. You can set it in Settings.`
+    : null;
   const text = [
     `Hi ${first},`, '', lead, '',
     ...d.rows.map((r) => `- ${line(r)}${r.href ? ` ${r.href}` : ''}`),
     ...(more ? ['', more] : []),
     '', `Open Home: ${d.homeUrl}`, '',
+    ...(clockNote ? [clockNote, ''] : []),
     `You get this summary each morning when something is waiting. Turn it off in Settings: ${d.settingsUrl}`,
   ].join('\n');
   const html = [
@@ -58,6 +71,7 @@ export function buildDigestEmail(d: DigestDetails): EmailMessage {
     '</ul>',
     more ? `<p>${escapeHtml(more)}</p>` : '',
     emailButton(d.homeUrl, 'Open Home'),
+    clockNote ? `<p style="color:#5a5a6e;font-size:13px">${escapeHtml(clockNote)}</p>` : '',
     `<p style="color:#5a5a6e;font-size:13px">You get this summary each morning when something is waiting. <a href="${escapeHtml(d.settingsUrl)}">Turn it off in Settings</a>.</p>`,
   ].join('\n');
   return brandedEmail({ to: '', subject: d.total === 1 ? 'Questor: one thing needs you today' : `Questor: ${d.total} things need you today`, text, html });
