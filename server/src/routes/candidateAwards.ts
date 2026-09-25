@@ -10,7 +10,8 @@ import { logAudit } from '../services/audit.js';
 import { getEmail } from '../providers/email/index.js';
 import { logger } from '../logger.js';
 import { assertCanAccessAward, badgeFilename, certificateFilename, readTier, verifyDisplayUrl } from '../services/awardAccess.js';
-import { AwardEvidenceError, NO_DIAMOND_CERTIFICATE, hasCertificate, parseAwardEvidence } from '../services/awardEvidence.js';
+import { AwardEvidenceError, NO_DIAMOND_CERTIFICATE, hasCertificate } from '../services/awardEvidence.js';
+import { certificateEvidence } from '../services/awardEvidenceUpgrade.js';
 import { certificatePdf, issuedOn } from '../services/certificatePdf.js';
 import { badgeSvg } from '../services/badgeSvg.js';
 import { badgePng } from '../services/badgePng.js';
@@ -89,6 +90,11 @@ candidateAwardsRouter.get('/:id/awards', requireCapability('candidate:read'), as
         reason: unearnedReason(stages, tier),
       };
     }
+    // The rows, whichever version the record is: both hold them under the same
+    // name, and this list wants nothing else from it. Deliberately does NOT
+    // upgrade a version-1 record — a journey is read far more often than a
+    // certificate is exported, and repairing a stored row on the way past a
+    // list view is a write nobody asked for. The export path does it, once.
     const evidence = parseJsonOptional<Partial<StoredEvidence>>(
       award.evidenceJson, {}, { model: 'CandidateAward', id: award.id, field: 'evidenceJson' },
     ).rows ?? [];
@@ -124,6 +130,12 @@ candidateAwardsRouter.get('/:id/awards', requireCapability('candidate:read'), as
  * Every route reads from the award's frozen `evidenceJson` and never from the
  * live candidate, role or user rows. A certificate states what was true when
  * it was struck.
+ *
+ * The one exception is an award struck before the record held a name at all.
+ * `certificateEvidence` resolves that once, writes the result back and audits
+ * it, so the exception applies to the first export of such an award and to
+ * nothing afterwards — see `services/awardEvidenceUpgrade.ts` for why that is
+ * a resolution rather than a re-derivation.
  */
 
 
@@ -192,7 +204,7 @@ candidateAwardsRouter.get(
     const award = await assertCanAccessAward(req.auth!, req.params.id, tier);
     if (!hasCertificate(tier)) throw new HttpError(409, NO_DIAMOND_CERTIFICATE, 'no_certificate_for_tier');
 
-    const evidence = parseAwardEvidence(award.id, award.evidenceJson);
+    const evidence = await certificateEvidence({ award });
     const pdf = await certificatePdf({
       tier,
       reference: award.reference,
@@ -319,7 +331,7 @@ candidateAwardsRouter.post(
       throw new HttpError(409, 'This certificate has already been sent to the candidate.', 'already_sent');
     }
 
-    const evidence = parseAwardEvidence(award.id, award.evidenceJson);
+    const evidence = await certificateEvidence({ award });
     const candidate = await prisma.candidate.findFirstOrThrow({
       where: { id: award.candidateId, tenantId: award.tenantId },
       select: { email: true },

@@ -111,7 +111,7 @@ export function whenLabel(when: string | null): string {
  * out with three "no record" lines would be inventing a document.
  */
 export const awardEvidenceSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   candidateName: printable(200),
   roleTitle: printable(200),
   rows: z.array(row).length(5),
@@ -120,11 +120,45 @@ export const awardEvidenceSchema = z.object({
 
 export type AwardEvidence = z.infer<typeof awardEvidenceSchema>;
 
+/** What a strike writes today. Bumped whenever the shape above gains or loses a field. */
+export const CURRENT_EVIDENCE_VERSION = 2;
+
+/**
+ * What a strike wrote before the name, the title and the signatures were
+ * frozen onto it.
+ *
+ * Version 1 is not a draft or a mistake: it is what every award in the
+ * database was written as, and it holds the five evidence rows and nothing
+ * that says whose record they are. The number went up rather than the meaning
+ * of `1` changing under it, because a reader that cannot tell a valid old
+ * record from a corrupt new one has no way to answer either of them properly.
+ *
+ * `what` is NOT held to `printable` here. The old writer did not clean what it
+ * stored, so a legacy row may carry a control character or run long; the
+ * upgrade cleans it on the way through, which is a write and therefore the
+ * right moment to. See `awardEvidenceUpgrade.ts`.
+ */
+export const legacyAwardEvidenceSchema = z.object({
+  version: z.literal(1),
+  rows: z.array(z.object({ what: z.string(), when: z.string().datetime().nullable() })).length(5),
+});
+
+export type LegacyAwardEvidence = z.infer<typeof legacyAwardEvidenceSchema>;
+
+export type StoredEvidenceRead =
+  | { readonly kind: 'current'; readonly evidence: AwardEvidence }
+  | { readonly kind: 'legacy'; readonly legacy: LegacyAwardEvidence };
+
 export class AwardEvidenceError extends Error {
   constructor(readonly awardId: string, readonly detail: string) {
     super(`CandidateAward ${awardId} cannot be rendered: ${detail}`);
     this.name = 'AwardEvidenceError';
   }
+}
+
+function refusal(awardId: string, error: z.ZodError): AwardEvidenceError {
+  const first = error.issues[0];
+  return new AwardEvidenceError(awardId, `${first.path.join('.') || 'evidenceJson'} — ${first.message}`);
 }
 
 export function parseAwardEvidence(awardId: string, evidenceJson: string): AwardEvidence {
@@ -135,11 +169,42 @@ export function parseAwardEvidence(awardId: string, evidenceJson: string): Award
     throw new AwardEvidenceError(awardId, 'evidenceJson is not valid JSON');
   }
   const parsed = awardEvidenceSchema.safeParse(raw);
-  if (!parsed.success) {
-    const first = parsed.error.issues[0];
-    throw new AwardEvidenceError(awardId, `${first.path.join('.') || 'evidenceJson'} — ${first.message}`);
-  }
+  if (!parsed.success) throw refusal(awardId, parsed.error);
   return parsed.data;
+}
+
+const versionProbe = z.object({ version: z.number().int() });
+
+/**
+ * A stored record, read as whichever version it says it is.
+ *
+ * The version is read first and then the matching schema is applied, so a
+ * refusal names what is actually wrong with THAT shape instead of listing the
+ * fields a different version was never supposed to have. A number this build
+ * does not know is refused rather than guessed at: a record from a newer
+ * writer is not a record this one may reinterpret.
+ */
+export function parseStoredEvidence(awardId: string, evidenceJson: string): StoredEvidenceRead {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(evidenceJson);
+  } catch {
+    throw new AwardEvidenceError(awardId, 'evidenceJson is not valid JSON');
+  }
+  const version = versionProbe.safeParse(raw);
+  if (!version.success) throw new AwardEvidenceError(awardId, 'evidenceJson carries no version');
+
+  if (version.data.version === 1) {
+    const legacy = legacyAwardEvidenceSchema.safeParse(raw);
+    if (!legacy.success) throw refusal(awardId, legacy.error);
+    return { kind: 'legacy', legacy: legacy.data };
+  }
+  if (version.data.version === CURRENT_EVIDENCE_VERSION) {
+    const current = awardEvidenceSchema.safeParse(raw);
+    if (!current.success) throw refusal(awardId, current.error);
+    return { kind: 'current', evidence: current.data };
+  }
+  throw new AwardEvidenceError(awardId, `evidenceJson is version ${version.data.version}, which this build cannot render`);
 }
 
 /** The three tiers that carry a certificate. Diamond deliberately does not. */

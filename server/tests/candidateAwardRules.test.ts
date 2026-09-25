@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   AWARD_TIERS, awardsForPromotion, formatReference, referenceBlocks,
-  awardEvidence, serialiseEvidence, unearnedReason, tierCode, journeyTiers, awardHeadline, type AwardFacts,
+  awardEvidence, serialiseEvidence, upgradeLegacyEvidence, unearnedReason, tierCode, journeyTiers, awardHeadline,
+  type AwardFacts, type LegacyStoredEvidence,
 } from '../src/domain/candidateAwards.js';
-import { awardEvidenceSchema, CERTIFICATE_TIERS, whenLabel } from '../src/services/awardEvidence.js';
+import {
+  awardEvidenceSchema, CERTIFICATE_TIERS, CURRENT_EVIDENCE_VERSION, legacyAwardEvidenceSchema,
+  parseStoredEvidence, whenLabel,
+} from '../src/services/awardEvidence.js';
 import { DEFAULT_STAGES } from '../src/domain/pipelineStages.js';
 
 /**
@@ -297,6 +301,99 @@ describe('the writer and the reader, held against each other', () => {
     const shouted: AwardFacts = { ...facts, candidateName: 'A'.repeat(500) };
 
     expect(accepted('silver', shouted).success).toBe(true);
+  });
+});
+
+/**
+ * The number on the record, which is the part that was got wrong.
+ *
+ * The stored shape changed while the version stayed at 1, so the reader could
+ * not tell a valid old record from a corrupt new one and answered both with a
+ * 500. These pin the thing that stops it happening again: the two versions
+ * must be mutually exclusive, so that a schema which accepts a record is also
+ * a schema that can render it.
+ */
+describe('telling one stored version from another', () => {
+  const legacyOf = (tier: 'bronze' | 'silver' | 'gold'): LegacyStoredEvidence => ({
+    version: 1,
+    rows: awardEvidence(tier, facts).map((row) => ({ what: row.what, when: row.when ? row.when.toISOString() : null })),
+  });
+
+  it('stamps what it writes with the version this build reads', () => {
+    const written = JSON.parse(serialiseEvidence('silver', facts)) as { version: number };
+
+    expect(written.version).toBe(CURRENT_EVIDENCE_VERSION);
+  });
+
+  it('will not read a version 1 record as a current one', () => {
+    // The whole defect in one assertion. If this ever passes, the two shapes
+    // have become indistinguishable again and a corrupt record will be
+    // rendered as though it were merely old.
+    expect(awardEvidenceSchema.safeParse(legacyOf('silver')).success).toBe(false);
+  });
+
+  it('will not read a current record as a version 1 one', () => {
+    expect(legacyAwardEvidenceSchema.safeParse(JSON.parse(serialiseEvidence('silver', facts))).success).toBe(false);
+  });
+
+  it.each(['bronze', 'silver', 'gold'] as const)('reads a struck %s as the current version', (tier) => {
+    expect(parseStoredEvidence('a1', serialiseEvidence(tier, facts)).kind).toBe('current');
+  });
+
+  it.each(['bronze', 'silver', 'gold'] as const)('reads an old %s as the version it says it is', (tier) => {
+    expect(parseStoredEvidence('a1', JSON.stringify(legacyOf(tier))).kind).toBe('legacy');
+  });
+
+  it('refuses a version this build has never written rather than guessing', () => {
+    // A record from a newer writer is not one an older reader may reinterpret.
+    expect(() => parseStoredEvidence('a1', JSON.stringify({ version: 99, rows: [] })))
+      .toThrow(/version 99/);
+  });
+});
+
+/**
+ * What an award struck before the name was frozen can honestly be turned into.
+ */
+describe('upgrading a record struck before this shape existed', () => {
+  const legacy: LegacyStoredEvidence = {
+    version: 1,
+    rows: awardEvidence('silver', facts).map((row) => ({ what: row.what, when: row.when ? row.when.toISOString() : null })),
+  };
+
+  const upgraded = (over: Partial<{ candidateName: string; roleTitle: string }> = {}) =>
+    upgradeLegacyEvidence({ legacy, candidateName: 'Priya Sharma', roleTitle: 'Senior Marketing Manager', ...over });
+
+  it('produces a record the certificate reader accepts', () => {
+    expect(awardEvidenceSchema.safeParse(upgraded()).success).toBe(true);
+  });
+
+  it('carries the five frozen rows across unchanged', () => {
+    expect(upgraded().rows.map((row) => row.what)).toEqual(legacy.rows.map((row) => row.what));
+  });
+
+  it('says no assessor was recorded rather than naming the one the live rows show today', () => {
+    // `facts` names a subject-matter expert. A version-1 record did not, and
+    // reading one out of today's rows would re-derive a claim about the past —
+    // the exact thing the frozen column exists to prevent.
+    expect([upgraded().signatures.left.name, upgraded().signatures.left.role])
+      .toEqual(['Questor', 'Assessed by · not recorded on this award']);
+  });
+
+  it('cleans a row the old writer never cleaned', () => {
+    // The old writer stored `what` as it came. A control character in one
+    // would be refused by the reader, so the upgrade — which is a write — is
+    // where it gets taken out.
+    const dirty: LegacyStoredEvidence = { version: 1, rows: legacy.rows.map((row, index) => (index === 0 ? { ...row, what: 'Progressed by\r\nBcc: someone@elsewhere.test' } : row)) };
+
+    const result = upgradeLegacyEvidence({ legacy: dirty, candidateName: 'Priya Sharma', roleTitle: 'A Role' });
+
+    expect([result.rows[0].what, awardEvidenceSchema.safeParse(result).success])
+      .toEqual(['Progressed by Bcc: someone@elsewhere.test', true]);
+  });
+
+  it('says what is missing when the candidate row it pointed at has gone', () => {
+    expect([upgraded({ candidateName: '' }).candidateName, upgraded({ roleTitle: '' }).roleTitle])
+      .toEqual(['Name not on record', 'Role not on record']);
   });
 });
 

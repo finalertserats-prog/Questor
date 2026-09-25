@@ -313,6 +313,41 @@ describe('what is written onto an award', () => {
     expect(now.evidenceJson).toBe(struck.evidenceJson);
   });
 
+  /**
+   * Both tiers of one promotion are about the same person and the same role,
+   * and they were struck in the same instant. The identity is read once,
+   * before the moment is stamped, so two awards from one move cannot disagree
+   * with each other about who they are for — and neither can name a title that
+   * only became true after the instant they claim to have been struck at.
+   */
+  it('gives the two tiers one promotion earns the same moment and the same subject', async () => {
+    const ids = await seeded();
+    const pipelineId = await pipelineAt(ids, 'gold');
+
+    await advance(ids, pipelineId, 'diamond');
+
+    const rows = await prisma.candidateAward.findMany({
+      where: { candidateId: ids.candidateId, tier: { in: ['gold', 'diamond'] } },
+    });
+    const named = rows.map((row) => {
+      const { candidateName, roleTitle } = JSON.parse(row.evidenceJson) as { candidateName: string; roleTitle: string };
+      return `${candidateName}|${roleTitle}|${row.awardedAt.toISOString()}`;
+    });
+
+    expect([rows.length, new Set(named).size]).toEqual([2, 1]);
+  });
+
+  it('freezes the name and title the candidate and role held when it was struck', async () => {
+    const ids = await seeded();
+    const pipelineId = await pipelineAt(ids, 'silver');
+    const before = await prisma.candidate.findUniqueOrThrow({ where: { id: ids.candidateId }, select: { fullName: true } });
+
+    await advance(ids, pipelineId, 'gold');
+
+    const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId: ids.candidateId, tier: 'silver' } });
+    expect((JSON.parse(award.evidenceJson) as { candidateName: string }).candidateName).toBe(before.fullName);
+  });
+
   it('writes five evidence rows, which is the certificate structure', async () => {
     const ids = await seeded();
     const pipelineId = await pipelineAt(ids, 'silver');

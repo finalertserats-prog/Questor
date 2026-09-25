@@ -71,6 +71,25 @@ async function walkedToDiamond(ids: Seeded): Promise<string> {
 const certificate = (ids: Seeded, candidateId: string, tier: string) =>
   request(app).get(`/api/candidates/${candidateId}/awards/${tier}/certificate.pdf`).set('Authorization', ids.auth).responseType('blob');
 
+/**
+ * An award as the strike left it BEFORE this lane: the same five rows, from
+ * the same row builder, and none of the name, the title or the signatures that
+ * nothing in the repository wrote until now.
+ *
+ * Taken apart from a real award rather than typed out, so it stays a record
+ * the old writer really could have left behind. Every award in production is
+ * one of these, and the lane that changed the stored shape is the one that has
+ * to reach them.
+ */
+async function downgradeToVersionOne(candidateId: string, tier: string): Promise<string> {
+  const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier } });
+  const { candidateName: _name, roleTitle: _title, signatures: _signatures, ...legacy } =
+    JSON.parse(award.evidenceJson) as Record<string, unknown>;
+  const evidenceJson = JSON.stringify({ ...legacy, version: 1 });
+  await prisma.candidateAward.update({ where: { id: award.id }, data: { evidenceJson } });
+  return evidenceJson;
+}
+
 describe('a certificate exported from an award the product actually struck', () => {
   let ids: Seeded;
   let candidateId: string;
@@ -156,5 +175,190 @@ describe('a certificate exported from an award the product actually struck', () 
 
     expect([text.includes(CANDIDATE_NAME), text.includes('Someone Else Entirely'), text.includes('A Different Role')])
       .toEqual([true, false, false]);
+  });
+});
+
+/**
+ * The awards that already exist.
+ *
+ * Changing what a record holds without changing the number on it leaves the
+ * reader unable to tell a valid old award from a corrupt new one, and leaves
+ * every award struck before the change answering 500 for ever. The version
+ * field was put on this column for exactly this day.
+ *
+ * A version-1 record holds the five evidence rows and nothing that says whose
+ * record it is. What is done about that, and why, is set out at the top of
+ * `services/awardEvidenceUpgrade.ts`; these are the promises it makes.
+ */
+describe('an award struck before the stored shape changed', () => {
+  let ids: Seeded;
+  let candidateId: string;
+  let roleTitle: string;
+
+  beforeEach(async () => {
+    ids = await seeded();
+    candidateId = await walkedToDiamond(ids);
+    roleTitle = (await prisma.role.findUniqueOrThrow({ where: { id: ids.roleId }, select: { title: true } })).title;
+  });
+
+  it.each(['bronze', 'silver', 'gold'])('renders a %s certificate rather than answering 500 for ever', async (tier) => {
+    await downgradeToVersionOne(candidateId, tier);
+
+    const res = await certificate(ids, candidateId, tier);
+
+    expect([res.status, (res.body as Buffer).subarray(0, 5).toString('latin1')]).toEqual([200, '%PDF-']);
+  });
+
+  it('prints the five rows it really did freeze, untouched', async () => {
+    const legacy = await downgradeToVersionOne(candidateId, 'silver');
+    const rows = (JSON.parse(legacy) as { rows: { what: string }[] }).rows;
+
+    const text = await textOf((await certificate(ids, candidateId, 'silver')).body);
+
+    expect([rows.length, rows.every((row) => text.includes(row.what))]).toEqual([5, true]);
+  });
+
+  it('resolves the name and the role the award always pointed at', async () => {
+    await downgradeToVersionOne(candidateId, 'silver');
+
+    const text = await textOf((await certificate(ids, candidateId, 'silver')).body);
+
+    expect([text.includes(CANDIDATE_NAME), text.includes(roleTitle)]).toEqual([true, true]);
+  });
+
+  it('says no assessor was recorded rather than inventing one', async () => {
+    // A version-1 record never held a signature. Naming the reviewer the live
+    // rows happen to show today would be re-deriving the claim the frozen
+    // column exists to prevent.
+    await downgradeToVersionOne(candidateId, 'silver');
+
+    const text = await textOf((await certificate(ids, candidateId, 'silver')).body);
+
+    expect(text).toContain('ASSESSED BY · NOT RECORDED ON THIS AWARD');
+  });
+
+  /**
+   * The reason the upgrade is written back rather than done on the way past.
+   * Resolving the name on every render would let two exports of one reference
+   * disagree, which is the thing freezing exists to stop.
+   */
+  it('freezes what it resolved, so a later export cannot disagree with an earlier one', async () => {
+    await downgradeToVersionOne(candidateId, 'silver');
+    const before = await textOf((await certificate(ids, candidateId, 'silver')).body);
+
+    await prisma.candidate.update({ where: { id: candidateId }, data: { fullName: 'Someone Else Entirely' } });
+    const after = await textOf((await certificate(ids, candidateId, 'silver')).body);
+
+    expect([before.includes(CANDIDATE_NAME), after.includes(CANDIDATE_NAME), after.includes('Someone Else Entirely')])
+      .toEqual([true, true, false]);
+  });
+
+  it('leaves a version 2 record behind, so it is upgraded once and not on every read', async () => {
+    await downgradeToVersionOne(candidateId, 'silver');
+
+    await certificate(ids, candidateId, 'silver');
+
+    const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier: 'silver' } });
+    expect((JSON.parse(award.evidenceJson) as { version: number }).version).toBe(2);
+  });
+
+  it('records the upgrade in the audit trail, without the name it resolved', async () => {
+    await downgradeToVersionOne(candidateId, 'silver');
+
+    await certificate(ids, candidateId, 'silver');
+
+    const events = await prisma.auditEvent.findMany({ where: { action: 'candidate.award.evidence_upgraded' } });
+    expect([events.length, events.some((event) => event.afterJson.includes(CANDIDATE_NAME))]).toEqual([1, false]);
+  });
+
+  it('sends a certificate struck before the shape changed', async () => {
+    await downgradeToVersionOne(candidateId, 'silver');
+
+    const res = await request(app)
+      .post(`/api/candidates/${candidateId}/awards/silver/certificate/send`)
+      .set('Authorization', ids.auth);
+
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses a record that is neither version rather than guessing which it meant', async () => {
+    await prisma.candidateAward.updateMany({
+      where: { candidateId, tier: 'silver' },
+      data: { evidenceJson: JSON.stringify({ version: 7, rows: [] }) },
+    });
+
+    const res = await request(app)
+      .get(`/api/candidates/${candidateId}/awards/silver/certificate.pdf`)
+      .set('Authorization', ids.auth);
+
+    expect([res.status, /stored record is incomplete/.test(res.body.error ?? '')]).toEqual([500, true]);
+  });
+});
+
+/**
+ * The frozen name is a second store of candidate personal data, in a column
+ * that held none before this lane.
+ *
+ * Freezing the name is what makes a certificate reproducible, and it is only
+ * defensible because an erasure takes the award with it. That reasoning is
+ * asserted in a comment on `AwardFacts`; these are the tests that make it a
+ * fact rather than an intention. The paths worth checking are the ones written
+ * when an award held no name at all, because those are the ones nobody
+ * reconsidered when it started to.
+ */
+describe('the personal data this lane started storing', () => {
+  let ids: Seeded;
+  let candidateId: string;
+
+  beforeEach(async () => {
+    ids = await seeded();
+    candidateId = await walkedToDiamond(ids);
+  });
+
+  const nameIsStoredOnAnyAward = async () => {
+    const awards = await prisma.candidateAward.findMany({ select: { evidenceJson: true } });
+    return awards.some((award) => award.evidenceJson.includes(CANDIDATE_NAME));
+  };
+
+  const erase = () =>
+    request(app).delete(`/api/candidates/${candidateId}`).set('Authorization', ids.auth)
+      .send({ reason: 'The candidate asked to be removed from our records.' });
+
+  it('freezes the candidate’s name into a column that previously held none', async () => {
+    expect(await nameIsStoredOnAnyAward()).toBe(true);
+  });
+
+  it('leaves no award carrying the name once the candidate is erased', async () => {
+    await erase();
+
+    expect([await nameIsStoredOnAnyAward(), await prisma.candidateAward.count({ where: { candidateId } })])
+      .toEqual([false, 0]);
+  });
+
+  it('closes every export and send path that could still have printed it', async () => {
+    await erase();
+
+    const paths = [
+      await certificate(ids, candidateId, 'silver'),
+      await request(app).get(`/api/candidates/${candidateId}/awards/silver/badge.svg`).set('Authorization', ids.auth),
+      await request(app).post(`/api/candidates/${candidateId}/awards/silver/certificate/send`).set('Authorization', ids.auth),
+      await request(app).get(`/api/candidates/${candidateId}/awards`).set('Authorization', ids.auth),
+    ];
+
+    expect(paths.map((res) => res.status)).toEqual([404, 404, 404, 404]);
+  });
+
+  it('never writes the frozen name into the audit trail', async () => {
+    // The award lane records that a badge was struck, exported and sent. None
+    // of those rows may carry the name: the trail outlives the award, so a
+    // name written there would survive the erasure that takes the award away.
+    await request(app).post(`/api/candidates/${candidateId}/awards/silver/certificate/send`).set('Authorization', ids.auth);
+    await certificate(ids, candidateId, 'silver');
+    await erase();
+
+    const events = await prisma.auditEvent.findMany();
+    const carrying = events.filter((event) => `${event.beforeJson}${event.afterJson}`.includes(CANDIDATE_NAME));
+
+    expect(carrying.map((event) => event.action)).toEqual([]);
   });
 });

@@ -117,11 +117,10 @@ export function isAwardConflict(err: unknown): boolean {
  * eight reads inside the resume path, which is the slowest transaction in the
  * server already and the one that times out first.
  *
- * The candidate and the role are NOT in this table: every tier needs them, on
- * every award, because the certificate prints the candidate's name and the
- * role's title from the frozen evidence and has nothing to print without them.
- * Two reads that cannot be skipped, against a certificate that otherwise
- * cannot be rendered at all.
+ * The candidate and the role are NOT in this table, and not read here at all.
+ * Every tier needs them, and `readIdentity` takes them once for the whole
+ * promotion before the moment is stamped — see there for why the order
+ * matters.
  */
 const FACTS_NEEDED: Readonly<Record<AwardTier, { profile: boolean; interview: boolean; rounds: boolean }>> = {
   bronze: { profile: true, interview: false, rounds: false },
@@ -130,18 +129,57 @@ const FACTS_NEEDED: Readonly<Record<AwardTier, { profile: boolean; interview: bo
   diamond: { profile: false, interview: false, rounds: false },
 };
 
+/**
+ * Who the award is about and what role it is for, as Questor holds them.
+ *
+ * Read BEFORE `awardedAt` is stamped, and that order is the point rather than
+ * a detail. Stamping first and reading afterwards let a rename that landed in
+ * between put a title onto the certificate that was not yet true at the moment
+ * the certificate says it was struck. Reading first inverts that: the award can
+ * only ever name something Questor had already read, never something that
+ * changed after the fact.
+ *
+ * It does not make the window zero — a rename committing between this read and
+ * the stamp a moment later still leaves the two microseconds apart — and
+ * closing it completely would mean locking the role row inside the resume
+ * upload, which is the slowest transaction in the server and the one that
+ * times out first. The claim the document actually makes is that this is the
+ * name and title Questor held when it struck the award, and this ordering is
+ * what makes that sentence true.
+ *
+ * Read once for the whole promotion, not once per tier: a Gold → Diamond move
+ * strikes two awards and they are about the same person and the same role, so
+ * two reads could only ever disagree with each other.
+ *
+ * Tenant-filtered, like every read on the way to a document about a named
+ * person. Both ids reached here through a tenant-scoped read already, so this
+ * changes nothing today; it means a certificate can never come to carry
+ * another organisation's name because a caller was refactored.
+ */
+interface AwardIdentity {
+  readonly candidateName: string;
+  readonly roleTitle: string;
+  readonly candidateCreatedAt: Date | null;
+}
+
+async function readIdentity(tx: Prisma.TransactionClient, o: AwardTarget): Promise<AwardIdentity> {
+  const candidate = await tx.candidate.findFirst({
+    where: { id: o.candidateId, tenantId: o.tenantId }, select: { createdAt: true, fullName: true },
+  });
+  const role = await tx.role.findFirst({ where: { id: o.roleId, tenantId: o.tenantId }, select: { title: true } });
+  return {
+    candidateName: candidate?.fullName ?? '',
+    roleTitle: role?.title ?? '',
+    candidateCreatedAt: candidate?.createdAt ?? null,
+  };
+}
+
 async function gatherFacts(
   tx: Prisma.TransactionClient,
-  o: AwardTarget & { readonly tier: AwardTier; readonly awardedAt: Date; readonly stageKeyLeft: string; readonly promotedTo: string; readonly promotedByName: string; readonly recordedByName: string; readonly priorTier: AwardTier | null },
+  o: AwardTarget & { readonly tier: AwardTier; readonly awardedAt: Date; readonly identity: AwardIdentity; readonly stageKeyLeft: string; readonly promotedTo: string; readonly promotedByName: string; readonly recordedByName: string; readonly priorTier: AwardTier | null },
 ): Promise<AwardFacts> {
   const needs = FACTS_NEEDED[o.tier];
 
-  // Tenant-filtered, like every read on the way to a document about a named
-  // person. Both ids reached here through a tenant-scoped read already, so
-  // this changes nothing today; it means a certificate can never come to carry
-  // another organisation's name because a caller was refactored.
-  const candidate = await tx.candidate.findFirst({ where: { id: o.candidateId, tenantId: o.tenantId }, select: { createdAt: true, fullName: true } });
-  const role = await tx.role.findFirst({ where: { id: o.roleId, tenantId: o.tenantId }, select: { title: true } });
   const profileRow = needs.profile
     ? await tx.candidateProfileVersion.findFirst({
       where: { candidateId: o.candidateId }, orderBy: { version: 'desc' }, select: { createdAt: true, fitScoreJson: true },
@@ -187,9 +225,9 @@ async function gatherFacts(
 
   return {
     awardedAt: o.awardedAt,
-    candidateName: candidate?.fullName ?? '',
-    roleTitle: role?.title ?? '',
-    candidateCreatedAt: candidate?.createdAt ?? null,
+    candidateName: o.identity.candidateName,
+    roleTitle: o.identity.roleTitle,
+    candidateCreatedAt: o.identity.candidateCreatedAt,
     profile: profileRow && fit
       ? {
           readAt: profileRow.createdAt,
@@ -295,6 +333,9 @@ export async function awardOnPromotion(tx: Prisma.TransactionClient, o: Promotio
   if (tiers.length === 0) return [];
 
   const actor = await tx.user.findFirst({ where: { id: o.actorId, tenantId: o.tenantId }, select: { name: true } });
+  const identity = await readIdentity(tx, o);
+  // Stamped only now that everything the certificate names has been read, so
+  // the award cannot claim a title that became true after this instant.
   const awardedAt = new Date();
   const toLabel = o.stages.find((stage) => stage.key === o.toStageKey)?.label ?? o.toStageKey;
 
@@ -302,7 +343,7 @@ export async function awardOnPromotion(tx: Prisma.TransactionClient, o: Promotio
   for (const tier of tiers) {
     const facts = await gatherFacts(tx, {
       tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId,
-      tier, awardedAt, stageKeyLeft: tier === 'diamond' ? o.fromStageKey : tier,
+      tier, awardedAt, identity, stageKeyLeft: tier === 'diamond' ? o.fromStageKey : tier,
       promotedTo: toLabel, promotedByName: actor?.name ?? '',
       // The same person on a promotion: they moved the candidate, and moving
       // them is the act this award records.
@@ -358,10 +399,12 @@ export async function awardBronze(tx: Prisma.TransactionClient, o: BronzeAwardIn
   // having touched the user table.
   if (!approvedFit(o.fitScoreJson)) return [];
   const recorder = await tx.user.findFirst({ where: { id: o.recordedByUserId, tenantId: o.tenantId }, select: { name: true } });
+  const identity = await readIdentity(tx, o);
+  // Read first, stamped second, for the reason set out on `readIdentity`.
   const awardedAt = new Date();
   const facts = await gatherFacts(tx, {
     tenantId: o.tenantId, candidateId: o.candidateId, roleId: o.roleId,
-    tier: 'bronze', awardedAt, stageKeyLeft: 'bronze', promotedTo: '', promotedByName: '',
+    tier: 'bronze', awardedAt, identity, stageKeyLeft: 'bronze', promotedTo: '', promotedByName: '',
     recordedByName: recorder?.name ?? '', priorTier: null,
   });
   const award = await strike(tx, {

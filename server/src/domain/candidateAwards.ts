@@ -428,15 +428,24 @@ function recorderOf(facts: AwardFacts): AwardSignature {
 // ---------------------------------------------------------------------------
 
 /**
- * The stored shape. Versioned: a certificate struck under an older layout
- * still has to render.
+ * The stored shape, at version 2.
+ *
+ * Versioned so that a certificate struck under an older layout still renders,
+ * and the number is part of the contract rather than decoration. Version 1 —
+ * `{ version, rows }`, no name, no title, no signatures — is what every award
+ * in the database was written as before this shape existed, and
+ * `services/awardEvidenceUpgrade.ts` is what reaches those.
+ *
+ * The number goes up whenever a field is added or removed. Leaving it at 1
+ * while the required fields changed would mean the reader could not tell a
+ * valid old record from a corrupt new one, and would answer both the same
+ * way — which is what happened, and is why every existing award answered 500.
  *
  * This is the whole of what `services/awardEvidence.ts` reads back, and the
- * two must be changed together. They were not, once: the writer stored
- * `{ version, rows }` while the reader required a name, a role title and two
- * signatures nothing in the repository ever wrote, and every certificate
- * export answered 500 for as long as the only tests of the reader fed it JSON
- * a test author had typed out by hand.
+ * two must be changed together. They were not, once: the writer stored rows
+ * while the reader required a name, a role title and two signatures nothing in
+ * the repository ever wrote, and it went unnoticed for as long as the only
+ * tests of the reader fed it JSON a test author had typed out by hand.
  */
 export interface StoredEvidenceRow {
   readonly what: string;
@@ -445,11 +454,17 @@ export interface StoredEvidenceRow {
 }
 
 export interface StoredEvidence {
-  readonly version: 1;
+  readonly version: 2;
   readonly candidateName: string;
   readonly roleTitle: string;
   readonly rows: readonly StoredEvidenceRow[];
   readonly signatures: AwardSignatures;
+}
+
+/** Version 1, kept as a type because the upgrade has to read one. */
+export interface LegacyStoredEvidence {
+  readonly version: 1;
+  readonly rows: readonly StoredEvidenceRow[];
 }
 
 /**
@@ -506,7 +521,7 @@ function signaturesFor(tier: AwardTier, facts: AwardFacts): AwardSignatures {
  */
 export function buildEvidence(tier: AwardTier, facts: AwardFacts): StoredEvidence {
   return {
-    version: 1,
+    version: 2,
     candidateName: printable(facts.candidateName, MAX.person, NAME_ABSENT),
     roleTitle: printable(facts.roleTitle, MAX.person, ROLE_ABSENT),
     rows: awardEvidence(tier, facts).map((row) => ({
@@ -514,6 +529,51 @@ export function buildEvidence(tier: AwardTier, facts: AwardFacts): StoredEvidenc
       when: row.when ? row.when.toISOString() : null,
     })),
     signatures: signaturesFor(tier, facts),
+  };
+}
+
+/**
+ * What a version-1 record can honestly be turned into.
+ *
+ * It holds the five evidence rows — the substance of the certificate, and the
+ * only part that was ever frozen — and nothing that says whose record they
+ * are. Two different things are therefore done with the two gaps, and the
+ * difference is the whole argument:
+ *
+ * The name and the title are RESOLVED. `candidateId` and `roleId` have always
+ * been on the award, so the person and the role were never ambiguous; what was
+ * never written down is the spelling they had at the time. Following a pointer
+ * that was frozen is not re-deriving a claim. It does mean today's spelling is
+ * used, and the cost of that is bounded by the fact that no certificate for a
+ * version-1 award has ever been issued — every export of one answered 500 —
+ * so there is no earlier document for it to contradict.
+ *
+ * The signatures are NOT reconstructed. Who assessed a candidate is a claim
+ * about what happened, and reading it out of today's rows is exactly the
+ * history-rewriting `evidenceJson` exists to prevent: a review added or
+ * removed since would change what a certificate asserts about the past. The
+ * slots say so, in the same form used everywhere else a person is absent.
+ *
+ * The rows themselves are copied across untouched but for the cleaning every
+ * stored value gets, because the old writer did none.
+ */
+export function upgradeLegacyEvidence(o: {
+  readonly legacy: LegacyStoredEvidence;
+  readonly candidateName: string;
+  readonly roleTitle: string;
+}): StoredEvidence {
+  return {
+    version: 2,
+    candidateName: printable(o.candidateName, MAX.person, NAME_ABSENT),
+    roleTitle: printable(o.roleTitle, MAX.person, ROLE_ABSENT),
+    rows: o.legacy.rows.map((row) => ({
+      what: printable(row.what, MAX.row, 'Not on record'),
+      when: row.when,
+    })),
+    signatures: {
+      left: { name: UNATTRIBUTED, role: 'Assessed by · not recorded on this award' },
+      right: { name: UNATTRIBUTED, role: 'Recorded by · not named on this award' },
+    },
   };
 }
 
