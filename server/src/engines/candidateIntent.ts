@@ -124,11 +124,39 @@ const STOP_PHRASES: RegExp[] = [
 ];
 
 /**
- * Adverbs that can only be modifying the leaving: "I have to go soon" is still
- * a goodbye, and ENDS_HERE has no room for it. Kept short on purpose — anything
- * that could open a noun phrase would undo the guard it sits inside.
+ * When they are going. "now" is in here rather than left to ENDS_HERE's tail
+ * because somebody who says "I need to go now" says why in the same breath and
+ * puts no comma in front of it — the adverb has to be able to sit between the
+ * verb and the reason.
+ *
+ * Kept short on purpose: anything that could open a noun phrase would undo the
+ * guard it sits inside.
  */
-const LEAVING_SOON = String.raw`(?:\s+(?:soon|early|right away|in a (?:bit|minute|moment|sec|second)))?`;
+const LEAVING_SOON = String.raw`(?:\s+(?:right\s+)?now|\s+(?:soon|early|right away|straight away|in a (?:bit|minute|moment|sec|second)))?`;
+
+/**
+ * Where they are going — "to another meeting", "for a call", "to pick up my
+ * child".
+ *
+ * This is the commonest way an adult excuses themselves, commoner than the bare
+ * "I have to go", and a first pass at guarding the leaving verbs shut it out
+ * along with the false positives. That is the worse of the two trades: a false
+ * stop costs an interview the candidate can ask to resume, a missed one keeps
+ * them in a conversation they have asked to leave.
+ *
+ * The same distinction the guard already turns on separates them, so it is the
+ * one used here: a DESTINATION may follow the verb, an OBJECT may not. The
+ * preposition has to come straight after the verb, which is what keeps "go back
+ * to 2019", "go through the drug chart" and "go over the marking scheme" out —
+ * every work sense of "go" reaches its object through a particle first.
+ *
+ * The lookahead is for the other half of it. "I have to go to the office every
+ * day" is a destination by grammar and a description of the job by meaning, and
+ * a frequency word is what gives that away: nobody announces they are leaving
+ * twice a week.
+ */
+const LEAVING_HABIT = String.raw`(?:\w+\s+){0,3}(?:every|each|twice|daily|weekly|monthly|usually|often|always|normally)\b`;
+const LEAVING_FOR = String.raw`(?:\s+(?:to|for)\s+(?!${LEAVING_HABIT})(?:\w+\s+){0,3}\w+)?`;
 
 /**
  * The reason someone gives in the same breath as the request — "I have to go,
@@ -159,9 +187,10 @@ const MUST_GO = new RegExp(
   // "Go" and "run" are two of the busiest verbs in working English, and this
   // alternative ended on a bare word boundary: "I need to go back to 2019 to
   // explain how the schema ended up that way" and "I have to run the numbers
-  // first" were read as somebody leaving. The leaving has to be the whole of
-  // what is said — an object after the verb means it is a different verb.
-  + String.raw`(?:need|have|'?ve got|ve got|got|gotta|must)\s*(?:to\s+)?(?:go|leave|head off|jump off|run|log off|drop off|get going)${LEAVING_SOON}${ENDS_OR_EXPLAINS}`
+  // first" were read as somebody leaving. So what may follow the verb is named
+  // rather than left open — when they are going, where they are going, why —
+  // and an object of the verb is not on the list.
+  + String.raw`(?:need|have|'?ve got|ve got|got|gotta|must)\s*(?:to\s+)?(?:go|leave|head off|jump off|run|log off|drop off|get going)${LEAVING_SOON}${LEAVING_FOR}${ENDS_OR_EXPLAINS}`
   // Left on a word boundary deliberately: "I can't carry on like this" and "I
   // can't go on much longer" are real withdrawals that no ending guard would
   // keep, and none of these objects doubles as work talk the way "go" does.

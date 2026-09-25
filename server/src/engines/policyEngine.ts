@@ -236,6 +236,14 @@ export function detectWithdrawal(text: string): boolean {
     new RegExp(String.raw`\bi'?m\s+going\s+to\s+(?:end|stop|quit|leave)${ENDS_HERE}`).test(t) ||
     new RegExp(String.raw`${ASKED_OF_US}(?:end|stop)\s+(?:the\s+|this\s+)?(?:interview|call|session)\b`).test(t) ||
     new RegExp(String.raw`\bi\s+don'?t\s+want\s+to\s+(?:do|continue|carry on)${ENDS_HERE}`).test(t) ||
+    // Said without ever using the word. "I don't think I can continue" and "I'm
+    // not able to do this any more" reached neither this detector nor the
+    // intent engine, and hedged phrasing is exactly how somebody who is
+    // struggling asks to leave — they soften it, because they are worried what
+    // it looks like. The people most likely to need the exit were the least
+    // likely to be heard asking for it. ENDS_HERE keeps "I don't think I can
+    // continue to justify the licence cost" a sentence about a budget.
+    new RegExp(String.raw`\b(?:i\s+(?:don'?t|do not)\s+think\s+i\s+can|i\s+(?:don'?t|do not)\s+feel\s+able\s+to|i'?m\s+not\s+able\s+to|i\s+am\s+not\s+able\s+to)\s+(?:continue|carry on|go on|keep going|do this|finish this|go through with this)(?:\s+any\s?more)?${ENDS_HERE}`).test(t) ||
     new RegExp(String.raw`^(?:no,?\s+)?(?:i'?m\s+)?done(?:${ENDS_HERE}|${THEN_A_CLAUSE})`).test(t) ||
     new RegExp(String.raw`\b(?:can we|let'?s)\s+(?:stop|end|finish)${ENDS_HERE}`).test(t)
   );
