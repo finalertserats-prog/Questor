@@ -97,7 +97,7 @@ export const DEMO_BEATS: readonly DemoBeat[] = [
   },
   {
     id: 'B16', title: 'The decision', route: '/assessments/{assessmentId}', anchor: 'assessment-verdict', needsStory: true,
-    body: 'A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence.',
+    body: 'A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence. Moving her on is also what earns her Silver — a badge and a certificate for the round she has just finished, in her name, that anyone she shows it to can verify.',
   },
   {
     id: 'B18', title: 'Yours to explore', route: '/?tab=home', closing: 'explore',
