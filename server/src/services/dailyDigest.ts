@@ -8,6 +8,13 @@ import { startJob, type LeaseHandle } from './jobs.js';
 import { effectiveOrgTimeZone } from './tenantTimeZone.js';
 import { zonedWallClock } from './zonedTime.js';
 import { collectNeedsYou } from './needsYouRows.js';
+import type { NeedsYouAction } from '../domain/needsYou.js';
+
+/** A row's destination as a whole URL. Most are paths; a meeting is not. */
+function hrefFor(action: NeedsYouAction, origin: string): string | null {
+  if (!action.to) return null;
+  return action.external ? action.to : `${origin}${action.to}`;
+}
 
 /**
  * HR-Box daily summary (DIGEST_ENABLED, off by default).
@@ -99,7 +106,9 @@ async function sendOne(user: Recipient, now: Date): Promise<'sent' | 'empty' | '
     homeUrl: `${origin}/?tab=home`, settingsUrl: `${origin}/settings`,
     rows: rows.slice(0, DIGEST_ROW_LIMIT).map((r) => ({
       kind: r.kind, urgent: r.urgent, who: r.candidate?.name ?? r.subject ?? '', role: r.role?.title ?? null,
-      since: new Date(r.since), href: r.action.to ? `${origin}${r.action.to}` : null,
+      // An external destination is already a whole URL — the meeting the round
+      // is held in. Prefixing the origin would have produced a link to nothing.
+      since: new Date(r.since), href: hrefFor(r.action, origin),
     })),
   });
   try {

@@ -6,13 +6,15 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
-import { formatDate } from '../components/dateFormat';
-import { smeRecommendationLabel, SME_ADVISORY_NOTE } from '../components/smeModel';
+import { formatDate, formatScheduled } from '../components/dateFormat';
+import { roundZoneNote, smeRecommendationLabel, SME_ADVISORY_NOTE, type SeatedRound } from '../components/smeModel';
 
 interface Assignment {
   candidateId: string;
   name: string;
   role: { id: string; title: string; level: string | null } | null;
+  /** The round they are seated on: the next one, else the last one there was. */
+  round: SeatedRound | null;
   review: { recommendation: string; updatedAt: string } | null;
 }
 
@@ -30,6 +32,10 @@ interface Assignment {
  */
 export function SmeWorkbench() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  // The organisation's zone comes back with the worklist rather than from
+  // /interviews/time-zone, which this role is not allowed to call. Reading it
+  // through a refused request would have silently assumed IST.
+  const [orgTimeZone, setOrgTimeZone] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // A failed read is not an empty worklist.
@@ -37,8 +43,9 @@ export function SmeWorkbench() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api.get<{ assignments: Assignment[] }>('/sme/assignments');
+      const data = await api.get<{ assignments: Assignment[]; orgTimeZone: string | null }>('/sme/assignments');
       setAssignments(data.assignments ?? []);
+      setOrgTimeZone(data.orgTimeZone ?? null);
       setError('');
       setLoadFailed(false);
     } catch (err: unknown) {
@@ -92,7 +99,7 @@ export function SmeWorkbench() {
               <table>
                 <thead>
                   <tr>
-                    <th>Candidate</th><th>Role</th><th>Your recommendation</th><th><span className="visually-hidden">Open</span></th>
+                    <th>Candidate</th><th>Role</th><th>Interview</th><th>Your recommendation</th><th><span className="visually-hidden">Open</span></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -102,6 +109,16 @@ export function SmeWorkbench() {
                       <td>
                         {assignment.role ? assignment.role.title : <span className="muted small">No role yet</span>}
                         {assignment.role?.level && <div className="muted small">{assignment.role.level}</div>}
+                      </td>
+                      <td>
+                        {assignment.round ? (
+                          <>
+                            <div>{formatScheduled(assignment.round.scheduledAt, assignment.round.scheduledTimeZone, orgTimeZone)}</div>
+                            {roundZoneNote(assignment.round) && <div className="muted small">{roundZoneNote(assignment.round)}</div>}
+                          </>
+                        ) : (
+                          <span className="muted small">Not in the room</span>
+                        )}
                       </td>
                       <td>
                         {assignment.review ? (

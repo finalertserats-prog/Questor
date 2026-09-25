@@ -4,6 +4,7 @@ import { prisma, parseJsonOptional } from '../db.js';
 import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
 import { logAudit } from '../services/audit.js';
 import { assertSmeAssignment, smeAssignedCandidateIds } from '../services/smeAccess.js';
+import { tenantTimeZone } from '../services/tenantTimeZone.js';
 import { ownSmeReview, requireCandidateRole, saveSmeReview } from '../services/smeReview.js';
 import {
   SME_ADVISORY_NOTE, SME_FEEDBACK_MAX, SME_FEEDBACK_MIN, SME_RECOMMENDATIONS,
@@ -42,6 +43,55 @@ export const smeRouter = Router();
 smeRouter.use(authenticate);
 
 const MAY_READ = requireCapability('sme:assigned_read');
+
+/**
+ * The rounds an expert is seated on, for the candidates in front of them.
+ *
+ * /api/sme returned no scheduled time anywhere: not on the worklist, not on
+ * the candidate. An expert booked to conduct a Gold round could open Questor
+ * and still have no way to find out when it was — so an email that went astray
+ * left no second copy, and a lost email became an unrecoverable state.
+ *
+ * Scoped on the SEAT, the same way the rest of this file is scoped on the
+ * assignment: an expert sees the rounds they are in the room for and no others,
+ * even on a candidate they were handed.
+ *
+ * `scheduledTimeZone` travels as stored, null and all. A round booked through
+ * the older offset-only API has no zone of its own (routes/scheduleTime.ts),
+ * every reader then falls back to the organisation's — and for an expert in
+ * another country that fallback is wrong without saying so. Null is the signal
+ * the page needs to say which of the two it is showing; `orgTimeZone` rides
+ * along so the page can resolve it without calling a route this role is not
+ * allowed to call.
+ *
+ * No stage, no pipeline position: this file withholds both deliberately, and a
+ * time does not need them.
+ */
+async function seatedRounds(tenantId: string, userId: string, candidateIds: readonly string[]) {
+  if (candidateIds.length === 0) return [];
+  return prisma.interviewRound.findMany({
+    where: {
+      tenantId, status: 'SCHEDULED',
+      panel: { some: { userId } },
+      pipeline: { candidateId: { in: [...candidateIds] } },
+    },
+    orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true, scheduledAt: true, scheduledTimeZone: true, durationMinutes: true, meetingUrl: true,
+      pipeline: { select: { candidateId: true } },
+    },
+  });
+}
+
+type SeatedRound = Awaited<ReturnType<typeof seatedRounds>>[number];
+
+const presentSeatedRound = (round: SeatedRound) => ({
+  id: round.id,
+  scheduledAt: round.scheduledAt,
+  scheduledTimeZone: round.scheduledTimeZone,
+  durationMinutes: round.durationMinutes,
+  meetingUrl: round.meetingUrl,
+});
 
 /** The assessment stored on a session, or nothing rather than a half-read one. */
 function storedResult(assessment: { id: string; resultJson: string }): AssessmentResult | null {
@@ -163,11 +213,24 @@ smeRouter.get('/assignments', MAY_READ, asyncHandler(async (req, res) => {
     where: { id: { in: candidateIds }, tenantId: req.auth!.tenantId },
     select: { id: true, fullName: true, roleId: true, role: { select: { id: true, title: true, level: true } } },
   });
-  const blockedRounds = await blockedSeatedRounds(req.auth!.userId, req.auth!.tenantId, candidateIds);
-  const reviews = await prisma.smeReview.findMany({
-    where: { smeUserId: req.auth!.userId, candidateId: { in: candidates.map((c) => c.id) } },
-    select: { candidateId: true, roleId: true, recommendation: true, updatedAt: true },
-  });
+  const [reviews, rounds, orgTimeZone, blockedRounds] = await Promise.all([
+    prisma.smeReview.findMany({
+      where: { smeUserId: req.auth!.userId, candidateId: { in: candidates.map((c) => c.id) } },
+      select: { candidateId: true, roleId: true, recommendation: true, updatedAt: true },
+    }),
+    seatedRounds(req.auth!.tenantId, req.auth!.userId, candidates.map((c) => c.id)),
+    tenantTimeZone(req.auth!.tenantId),
+    blockedSeatedRounds(req.auth!.userId, req.auth!.tenantId, candidateIds),
+  ]);
+  // The one still ahead, else the last one there was. An expert brought in
+  // after the round to read the recording needs the date as much as one who is
+  // about to conduct it — "when was this?" and "when is this?" are the same
+  // column, and an empty cell answers neither.
+  const now = Date.now();
+  const roundFor = (candidateId: string) => {
+    const mine = rounds.filter((r) => r.pipeline.candidateId === candidateId);
+    return mine.find((r) => r.scheduledAt.getTime() >= now) ?? mine[mine.length - 1];
+  };
   // Keyed by candidate AND role, because that is what a review is unique on. A
   // candidate whose role changed after they were read once would otherwise show
   // as done on a role nobody has read them for — and the expert would take the
@@ -190,6 +253,7 @@ smeRouter.get('/assignments', MAY_READ, asyncHandler(async (req, res) => {
         // The expert sees who this is. See the file comment.
         name: candidate.fullName,
         role: candidate.role ? { id: candidate.role.id, title: candidate.role.title, level: candidate.role.level } : null,
+        round: roundFor(candidate.id) ? presentSeatedRound(roundFor(candidate.id)!) : null,
         review: reviewOf(candidate)
           ? { recommendation: reviewOf(candidate)!.recommendation, updatedAt: reviewOf(candidate)!.updatedAt }
           : null,
@@ -197,6 +261,7 @@ smeRouter.get('/assignments', MAY_READ, asyncHandler(async (req, res) => {
         // sentence and what can be done next. Empty for the ordinary case.
         blockedRounds: blockedRounds.get(candidate.id) ?? [],
       })),
+    orgTimeZone,
     note: SME_ADVISORY_NOTE,
   });
 }));
@@ -218,7 +283,7 @@ smeRouter.get('/candidates/:id', MAY_READ, asyncHandler(async (req, res) => {
   // and "there is nothing settled to assess against yet" is the true answer.
   const roleId = candidate.roleId;
 
-  const [role, scorecard, sessions, own] = await Promise.all([
+  const [role, scorecard, sessions, own, rounds, orgTimeZone] = await Promise.all([
     roleId ? prisma.role.findFirst({ where: { id: roleId, tenantId: req.auth!.tenantId }, select: { id: true, title: true, level: true } }) : null,
     roleId ? approvedScorecard(roleId) : null,
     roleId ? prisma.interviewSession.findMany({
@@ -227,6 +292,8 @@ smeRouter.get('/candidates/:id', MAY_READ, asyncHandler(async (req, res) => {
       select: { id: true, state: true, startedAt: true, completedAt: true, durationMinutes: true, personaJson: true },
     }) : [],
     roleId ? ownSmeReview(candidate.id, roleId, req.auth!.userId) : null,
+    seatedRounds(req.auth!.tenantId, req.auth!.userId, [candidate.id]),
+    tenantTimeZone(req.auth!.tenantId),
   ]);
 
   res.json({
@@ -241,6 +308,9 @@ smeRouter.get('/candidates/:id', MAY_READ, asyncHandler(async (req, res) => {
       completedAt: session.completedAt,
       durationMinutes: session.durationMinutes,
     })),
+    // Every round this expert is in the room for, soonest first.
+    rounds: rounds.map(presentSeatedRound),
+    orgTimeZone,
     review: own && {
       recommendation: own.recommendation, feedback: own.feedback, sessionId: own.sessionId, updatedAt: own.updatedAt,
     },

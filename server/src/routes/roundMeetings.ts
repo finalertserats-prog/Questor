@@ -6,6 +6,7 @@ import { asyncHandler, authenticate, requireCapability, HttpError } from '../mid
 import { logAudit } from '../services/audit.js';
 import { hasCapability } from '../services/access.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice, type RoundNoticeKind } from '../services/roundCandidateNotice.js';
+import { notifyRoundInterviewers, type InterviewerNotice, type InterviewerNoticeKind } from '../services/roundInterviewerNotice.js';
 import { parseStages } from '../domain/pipelineStages.js';
 import { roundMeetingStatus } from '../providers/meeting/roundMeetings.js';
 import {
@@ -74,6 +75,26 @@ async function tellCandidate(req: Request, pipeline: PipelineWithRounds, roundId
   return notifyCandidateOfHumanRound({ round, candidateId: pipeline.candidateId, roleId: pipeline.roleId, stageLabel, kind });
 }
 
+/**
+ * Tell the people seated on the round the same thing.
+ *
+ * Every change the candidate hears about, the interviewer hears about too. The
+ * two used to differ — the candidate was emailed on a move, the interviewer was
+ * emailed never — and an interviewer holding a time nobody has contradicted is
+ * the one person guaranteed to turn up at it.
+ */
+async function tellInterviewers(
+  req: Request, pipeline: PipelineWithRounds, round: InterviewRound, stageLabel: string,
+  kind: InterviewerNoticeKind, moved?: { readonly at: Date; readonly previous: InterviewRound },
+): Promise<InterviewerNotice[]> {
+  return notifyRoundInterviewers({
+    roundId: round.id, tenantId: req.auth!.tenantId, candidateId: pipeline.candidateId, stageLabel, kind,
+    expectScheduledAt: moved?.at ?? round.scheduledAt,
+    previousScheduledAt: moved?.previous.scheduledAt ?? null,
+    previousTimeZone: moved?.previous.scheduledTimeZone ?? null,
+  });
+}
+
 const NOT_SCHEDULED = 'This round has already been completed or cancelled.';
 // The AI interview's time and availability live on its interview session;
 // moving or cancelling only the round would leave the session usable at the old time.
@@ -112,7 +133,11 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/reschedule', authenticate, requir
   const updated = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id } });
   const meeting = await rescheduleMeeting(updated, ctx);
   const candidateNotice = await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'moved');
-  res.json({ ...await respond(req, pipeline, round.id, 'reschedule', meeting), candidateNotice });
+  // `round` is the row as it was before the move, which is the time the seats
+  // were last told and the only thing that makes the new letter contradict the
+  // old one by name.
+  const interviewerNotices = await tellInterviewers(req, pipeline, updated, ctx.stageLabel, 'moved', { at: booked.at, previous: round });
+  res.json({ ...await respond(req, pipeline, round.id, 'reschedule', meeting), candidateNotice, interviewerNotices });
 }));
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
@@ -134,7 +159,8 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/cancel', authenticate, requireCap
   // Booking and moving the round reached the candidate, so its cancellation
   // does too. A round already past sends nothing (notifyCandidateOfHumanRound).
   const candidateNotice = await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'cancelled');
-  res.json({ ...await respond(req, pipeline, round.id, 'cancel', meeting), candidateNotice });
+  const interviewerNotices = await tellInterviewers(req, pipeline, current, ctx.stageLabel, 'cancelled');
+  res.json({ ...await respond(req, pipeline, round.id, 'cancel', meeting), candidateNotice, interviewerNotices });
 }));
 
 roundMeetingsRouter.post('/:id/rounds/:roundId/meeting/retry', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
@@ -144,8 +170,14 @@ roundMeetingsRouter.post('/:id/rounds/:roundId/meeting/retry', authenticate, req
   if (result.kind === 'conflict') throw new HttpError(409, result.message);
   // A link that exists only now (the first creation failed) has not reached the candidate yet.
   const newLink = result.outcome?.ok && result.outcome.url && result.outcome.url !== round.meetingUrl && round.status === 'SCHEDULED';
+  // Only when the link actually changed, which is also what stops a retry that
+  // produced the same link from sending the seats a second identical letter.
   const candidateNotice = newLink ? await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'link') : undefined;
-  res.json({ ...await respond(req, pipeline, round.id, 'retry', result.outcome), ...(candidateNotice ? { candidateNotice } : {}) });
+  const interviewerNotices = newLink ? await tellInterviewers(req, pipeline, round, ctx.stageLabel, 'link') : undefined;
+  res.json({
+    ...await respond(req, pipeline, round.id, 'retry', result.outcome),
+    ...(candidateNotice ? { candidateNotice } : {}), ...(interviewerNotices ? { interviewerNotices } : {}),
+  });
 }));
 
 roundMeetingsRouter.put('/:id/rounds/:roundId/meeting-link', authenticate, requireCapability('interview:schedule'), asyncHandler(async (req, res) => {
@@ -158,6 +190,11 @@ roundMeetingsRouter.put('/:id/rounds/:roundId/meeting-link', authenticate, requi
   }
   if (!(await setManualLink(round, url))) throw new HttpError(409, BUSY);
   const meeting: MeetingOutcome = { ok: true, provider: 'manual', status: MEETING_STATUS.MANUAL, url, message: 'Meeting link saved.' };
-  const candidateNotice = url !== round.meetingUrl ? await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'link') : undefined;
-  res.json({ ...await respond(req, pipeline, round.id, 'manual_link', meeting), ...(candidateNotice ? { candidateNotice } : {}) });
+  const changed = url !== round.meetingUrl;
+  const candidateNotice = changed ? await tellCandidate(req, pipeline, round.id, ctx.stageLabel, 'link') : undefined;
+  const interviewerNotices = changed ? await tellInterviewers(req, pipeline, round, ctx.stageLabel, 'link') : undefined;
+  res.json({
+    ...await respond(req, pipeline, round.id, 'manual_link', meeting),
+    ...(candidateNotice ? { candidateNotice } : {}), ...(interviewerNotices ? { interviewerNotices } : {}),
+  });
 }));

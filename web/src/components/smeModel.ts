@@ -90,3 +90,30 @@ export function awaitingSummary(awaiting: readonly AwaitingSme[]): string {
   if (names.length === 2) return `${names[0]} and ${names[1]} have been asked and have not answered yet.`;
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} have been asked and have not answered yet.`;
 }
+
+/** A round the expert is in the room for, as /api/sme returns it. */
+export interface SeatedRound {
+  readonly id: string;
+  readonly scheduledAt: string;
+  /** The zone the round was booked in; null for a booking that carried none. */
+  readonly scheduledTimeZone: string | null;
+  readonly durationMinutes: number;
+  readonly meetingUrl: string | null;
+}
+
+/**
+ * Whether the clock on screen is the round's own or a stand-in.
+ *
+ * A round booked through the older offset-only API stores no zone, and every
+ * reader then falls back to the organisation's. For an expert in another
+ * country that is a wrong time presented as a right one, so the page says which
+ * of the two it is showing rather than leaving them to notice.
+ */
+export function roundZoneNote(round: SeatedRound): string {
+  return round.scheduledTimeZone ? '' : 'Booked without a time zone, so this is your organisation’s clock.';
+}
+
+/** Whether a round is still ahead: what the page is offering to do with it. */
+export function roundIsAhead(round: SeatedRound, now: number): boolean {
+  return Date.parse(round.scheduledAt) > now;
+}

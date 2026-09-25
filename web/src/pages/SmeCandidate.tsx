@@ -6,7 +6,8 @@ import { Icon } from '../components/Icon';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { PageSkeleton } from '../components/Skeleton';
-import { formatDateTime } from '../components/dateFormat';
+import { formatDateTime, formatScheduled } from '../components/dateFormat';
+import { roundZoneNote, roundIsAhead, type SeatedRound } from '../components/smeModel';
 import { SmeInterviewReader } from '../components/sme/SmeInterviewReader';
 import { SmeReviewForm, type ExistingReview } from '../components/sme/SmeReviewForm';
 
@@ -31,6 +32,10 @@ interface Detail {
     competencies: ScorecardCompetency[];
   } | null;
   interviews: Array<{ id: string; state: string; interviewer: string; completedAt: string | null; durationMinutes: number }>;
+  /** The rounds this expert is in the room for, soonest first. */
+  rounds: SeatedRound[];
+  /** The clock a round booked without a zone of its own is shown on. */
+  orgTimeZone: string | null;
   review: ExistingReview | null;
 }
 
@@ -147,6 +152,29 @@ export function SmeCandidate() {
           </>
         )}
       </div>
+
+      {/* When the expert is actually needed. /api/sme used to carry no
+          scheduled time at all, so an expert who lost the email had
+          nowhere in the product to look it up. */}
+      {detail.rounds.length > 0 && (
+        <div className="card">
+          <h2 className="card-title"><Icon name="interviews" />Your rounds</h2>
+          <ul className="plain">
+            {detail.rounds.map((round) => (
+              <li key={round.id}>
+                <div>{formatScheduled(round.scheduledAt, round.scheduledTimeZone, detail.orgTimeZone)}</div>
+                <div className="muted small">
+                  {round.durationMinutes} minutes
+                  {roundZoneNote(round) && ` · ${roundZoneNote(round)}`}
+                </div>
+                {round.meetingUrl && roundIsAhead(round, Date.now()) && (
+                  <a className="btn sm" href={round.meetingUrl} target="_blank" rel="noreferrer noopener">Join the meeting</a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {detail.interviews.length === 0 ? (
         <div className="card">

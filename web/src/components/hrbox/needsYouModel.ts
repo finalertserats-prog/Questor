@@ -6,8 +6,9 @@
  */
 
 export type NeedsYouKind =
-  | 'human_request' | 'accommodation' | 'review' | 'feedback_held'
-  | 'invitation_expiring' | 'stalled' | 'round_not_recordable' | 'catalog_proposals' | 'demo_request';
+  | 'round_starting' | 'human_request' | 'accommodation' | 'review' | 'feedback_held'
+  | 'invitation_expiring' | 'stalled' | 'identity_code_stuck' | 'round_not_recordable'
+  | 'catalog_proposals' | 'demo_request';
 
 export interface Looker { readonly userId: string; readonly name: string; readonly initials: string }
 
@@ -35,7 +36,13 @@ export interface NeedsYouRow {
    * every kind but `review` is for everyone shown it.
    */
   readonly canAct?: boolean;
-  readonly action: { readonly label: string; readonly to: string | null };
+  /**
+   * `external` marks the one destination that is not a Questor page: the
+   * meeting a round is held in. It is a whole URL rather than a path, so the
+   * row renders it as a plain link out — a router link would try to navigate
+   * inside the app and land nowhere.
+   */
+  readonly action: { readonly label: string; readonly to: string | null; readonly external?: boolean };
 }
 
 export interface ComingUpItem {
@@ -107,12 +114,14 @@ export interface NeedsYouFeed {
 export type RowTone = 'urgent' | 'review' | 'expire' | 'stall' | 'held' | 'operator';
 
 const KIND_COPY: Readonly<Record<NeedsYouKind, { readonly label: string; readonly tone: RowTone; readonly icon: 'handoff' | 'evidence-review' | 'hourglass' | 'pause' | 'mail' | 'list' | 'inbox' | 'mic' }>> = {
+  round_starting: { label: 'Your interview starts now', tone: 'urgent', icon: 'handoff' },
   human_request: { label: 'Asked for a person', tone: 'urgent', icon: 'handoff' },
   accommodation: { label: 'Asked for an adjustment', tone: 'urgent', icon: 'handoff' },
   review: { label: 'Review ready', tone: 'review', icon: 'evidence-review' },
   feedback_held: { label: 'Feedback email held', tone: 'held', icon: 'mail' },
   invitation_expiring: { label: 'Invitation closes soon', tone: 'expire', icon: 'hourglass' },
   stalled: { label: 'Stalled interview', tone: 'stall', icon: 'pause' },
+  identity_code_stuck: { label: 'Identity code stuck', tone: 'expire', icon: 'mail' },
   round_not_recordable: { label: 'Round cannot go ahead', tone: 'stall', icon: 'mic' },
   catalog_proposals: { label: 'Catalog proposals', tone: 'operator', icon: 'list' },
   demo_request: { label: 'Demo access requested', tone: 'operator', icon: 'inbox' },
@@ -137,6 +146,7 @@ export function waitLabel(since: string, now: number): string {
 
 /** The small caption over the wait: what the clock is counting from. */
 export function waitCaption(kind: NeedsYouKind): string {
+  if (kind === 'round_starting') return 'Starts';
   if (kind === 'invitation_expiring') return 'Sent';
   if (kind === 'stalled') return 'Quiet for';
   if (kind === 'feedback_held') return 'Held';
@@ -153,6 +163,24 @@ export function closesIn(expiresAt: string, now: number): string {
   return `in ${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
+/**
+ * The clock on the right of a row.
+ *
+ * Every other kind counts up from when a wait began. A round about to start
+ * counts DOWN to a time that has not arrived, and `waitLabel` clamps a future
+ * instant to zero — so it would have printed "1 min" for a round due in a
+ * quarter of an hour, which is the one thing on this row that must not be wrong.
+ */
+export function clockLabel(row: NeedsYouRow, now: number): string {
+  if (row.kind !== 'round_starting') return waitLabel(row.since, now);
+  const ms = Date.parse(row.since) - now;
+  if (!Number.isFinite(ms) || ms <= 0) return 'now';
+  // Minutes, not `closesIn`'s hours: this row's whole life is a quarter of an
+  // hour, and "in 1 h" for a round twelve minutes away is the one thing on it
+  // that must not be wrong.
+  return `in ${Math.max(1, Math.round(ms / MINUTE))} min`;
+}
+
 /** The kind line over the name, with what makes this one urgent or dated. */
 export function kindLine(row: NeedsYouRow, now: number): string {
   const { label } = kindCopy(row.kind);
@@ -164,6 +192,12 @@ export function kindLine(row: NeedsYouRow, now: number): string {
 export function whyLine(row: NeedsYouRow): string {
   const by = row.facts.interviewerName;
   switch (row.kind) {
+    case 'round_starting':
+      return row.action.external
+        ? 'You are conducting this. The meeting is open.'
+        : 'You are conducting this. No meeting link on the round yet — open the candidate.';
+    case 'identity_code_stuck':
+      return 'Their identity code could not be sent. Check the address on file.';
     case 'human_request':
       return 'Asked to talk to someone on the hiring team.';
     case 'accommodation':

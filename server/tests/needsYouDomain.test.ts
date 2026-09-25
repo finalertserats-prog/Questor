@@ -10,11 +10,11 @@ const kindsFor = (role: string, extra: { operator?: boolean; platformOperator?: 
 
 describe('needs-you gating', () => {
   it('gives a hiring manager reviews but not invitation chores it cannot do', () => {
-    expect(kindsFor('manager')).toEqual(['human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
+    expect(kindsFor('manager')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
   });
 
   it('gives a recruiter the invitation chores and the reviews that landed on their candidates', () => {
-    expect(kindsFor('recruiter')).toEqual(['human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
+    expect(kindsFor('recruiter')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
   });
 
   it('does not let the recruiter sign a review off, only see it', () => {
@@ -36,11 +36,15 @@ describe('needs-you gating', () => {
   });
 
   it('gives a reviewer only reviews and people asking for someone', () => {
-    expect(kindsFor('reviewer')).toEqual(['human_request', 'review', 'feedback_held']);
+    expect(kindsFor('reviewer')).toEqual(['round_starting', 'human_request', 'review', 'feedback_held']);
   });
 
   it('gives an auditor nothing', () => {
     expect(kindsFor('auditor')).toEqual([]);
+  });
+
+  it('gives an expert the round they are about to conduct, and nothing else', () => {
+    expect(kindsFor('sme')).toEqual(['round_starting']);
   });
 
   it('adds the catalog queue only for the platform owner', () => {
@@ -78,6 +82,23 @@ describe('needs-you ordering', () => {
   it('treats an accommodation request as urgent', () => {
     expect(isUrgent('accommodation')).toBe(true);
   });
+
+  it('treats a round about to start as urgent: someone is about to be sitting in a room', () => {
+    expect(isUrgent('round_starting')).toBe(true);
+  });
+
+  it('puts a round about to start above work that has merely been waiting', () => {
+    const rows = [
+      row('review', '2026-09-01T00:00:00.000Z', 'a'),
+      row('round_starting', '2026-09-25T09:00:00.000Z', 'r1'),
+    ];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.kind)).toEqual(['round_starting', 'review']);
+  });
+
+  it('puts the round that should already have begun ahead of the one still a few minutes off', () => {
+    const rows = [row('round_starting', '2026-09-25T09:10:00.000Z', 'next'), row('round_starting', '2026-09-25T09:00:00.000Z', 'now')];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.id)).toEqual(['now', 'next']);
+  });
 });
 
 describe('needs-you actions', () => {
@@ -99,6 +120,19 @@ describe('needs-you actions', () => {
 
   it('has no page for a demo request, which is decided from the email', () => {
     expect(actionFor('demo_request', {}).to).toBeNull();
+  });
+
+  it('offers the meeting itself when a round is about to start', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', meetingUrl: 'https://meet.example.com/abc' }))
+      .toEqual({ label: 'Join', to: 'https://meet.example.com/abc', external: true });
+  });
+
+  it('offers the candidate instead when the round has no meeting link yet', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1' })).toEqual({ label: 'Get ready', to: '/candidates/c1' });
+  });
+
+  it('sends an expert to the candidate on the surface their role can open', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', expertLane: true }).to).toBe('/sme/candidates/c1');
   });
 });
 

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../Icon';
-import { kindCopy, kindLine, lookedLine, waitCaption, waitLabel, whoOf, whyLine, type NeedsYouRow } from './needsYouModel';
+import { clockLabel, kindCopy, kindLine, lookedLine, waitCaption, whoOf, whyLine, type NeedsYouRow } from './needsYouModel';
 
 /**
  * The "Needs you" rows. Each is marked by a rule down its left edge in the
@@ -32,7 +32,7 @@ export function NeedsYouQueue({ rows, now }: { rows: readonly NeedsYouRow[]; now
             </div>
             <div className="hb-row-wait">
               <small>{waitCaption(row.kind)}</small>
-              <span>{waitLabel(row.since, now)}</span>
+              <span>{clockLabel(row, now)}</span>
             </div>
             <div className="hb-row-look">
               {row.openedBy.length > 0 && (
@@ -43,7 +43,19 @@ export function NeedsYouQueue({ rows, now }: { rows: readonly NeedsYouRow[]; now
               <span>{lookedLine(row.openedBy)}</span>
             </div>
             <div className="hb-row-act">
-              {row.action.to ? (
+              {row.action.to && row.action.external ? (
+                // The meeting provider's own URL, so a plain link out rather
+                // than a router link, which would navigate inside the app.
+                <a
+                  className={row.urgent ? 'btn sm' : 'btn sm secondary'}
+                  href={row.action.to}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  aria-label={`${row.action.label}: ${who}`}
+                >
+                  {row.action.label}
+                </a>
+              ) : row.action.to ? (
                 <Link className={row.urgent ? 'btn sm' : 'btn sm secondary'} to={row.action.to} aria-label={`${row.action.label}: ${who}`}>
                   {row.action.label}
                 </Link>

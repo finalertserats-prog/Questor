@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  bellBadge, bellLabel, closesIn, comingUpState, crewNote, crewSentence, doneLine, greetingFor, kindLine,
+  bellBadge, bellLabel, clockLabel, closesIn, comingUpState, crewNote, crewSentence, doneLine, greetingFor, kindLine,
   lookedLine, splitComingUp, waitCaption, waitLabel, whyLine,
   type ComingUpItem, type CrewMember, type NeedsYouRow,
 } from '../src/components/hrbox/needsYouModel';
@@ -19,6 +19,15 @@ function row(overrides: Partial<NeedsYouRow> = {}): NeedsYouRow {
     action: { label: 'Review', to: '/assessments/a1' },
     ...overrides,
   };
+}
+
+/** A round you are seated on, due at `at`. Its clock counts down, not up. */
+function startingRow(at: number): NeedsYouRow {
+  return row({
+    id: 'round_starting:r1', kind: 'round_starting', urgent: true, since: iso(at),
+    sessionId: null, assessmentId: null,
+    action: { label: 'Join', to: 'https://meet.example.com/room', external: true },
+  });
 }
 
 function member(overrides: Partial<CrewMember>): CrewMember {
@@ -49,6 +58,17 @@ describe('waits', () => {
   it('counts an invitation from when it was sent', () => {
     expect(waitCaption('invitation_expiring')).toBe('Sent');
   });
+
+  // Every other row counts up from a wait. This one counts down to a time that
+  // has not arrived, and waitLabel clamps a future instant to zero — which
+  // would have printed "1 min" for a round a quarter of an hour away.
+  it('counts down in minutes to a round that has not started', () => {
+    expect(clockLabel(startingRow(NOW + 12 * MIN), NOW)).toBe('in 12 min');
+  });
+
+  it('says a round already under way is on now', () => {
+    expect(clockLabel(startingRow(NOW - 5 * MIN), NOW)).toBe('now');
+  });
 });
 
 describe('row copy', () => {
@@ -62,6 +82,15 @@ describe('row copy', () => {
 
   it('closes in hours on the last day', () => {
     expect(closesIn(iso(NOW + 5 * HOUR), NOW)).toBe('in 5 h');
+  });
+
+  it('tells a seated interviewer the meeting is open', () => {
+    expect(whyLine(startingRow(NOW + 5 * MIN))).toBe('You are conducting this. The meeting is open.');
+  });
+
+  it('says so plainly when a round about to start has no meeting link', () => {
+    const noLink = startingRow(NOW + 5 * MIN);
+    expect(whyLine({ ...noLink, action: { label: 'Get ready', to: '/candidates/c1' } })).toContain('No meeting link');
   });
 
   it('names the interviewer whose assessment is in', () => {

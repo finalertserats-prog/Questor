@@ -8,6 +8,7 @@ import {
 } from '../services/access.js';
 import { aiConclusionVisible } from '../services/shadowMode.js';
 import { notifyCandidateOfHumanRound, type CandidateNotice } from '../services/roundCandidateNotice.js';
+import { notifyRoundInterviewers } from '../services/roundInterviewerNotice.js';
 import { sendInterviewSchedule, writeSessionSchedule } from './interviews.js';
 import { logAudit } from '../services/audit.js';
 import { OBSERVER_NOTICE, withObserverNotice } from '../services/observerPolicy.js';
@@ -763,10 +764,24 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   const link = aiRound
     ? `${config.webOrigin}/interviews/${round.sessionId}/observe`
     : `${config.webOrigin}/candidates/${pipeline.candidateId}`;
-  const notification = await notifyScheduler({
-    to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt,
-    timeZone: round.scheduledTimeZone ?? await tenantTimeZone(tenantId),
-    link, aiRound, meetingUrl: meeting?.url ?? null,
+  // A booker who seated themselves gets ONE letter, and it is the
+  // interviewer's. Both are true and they answer different questions, but the
+  // booker's is a receipt for a button they just pressed and watched respond,
+  // while the interviewer's is the one they will go looking for on the morning
+  // of the round — it carries the time, the zone and the meeting link. Two
+  // emails for one click reads as a bug, so the receipt is the one that yields.
+  const bookerIsSeated = panel.some((seat) => seat.userId === req.auth!.userId);
+  const notification = bookerIsSeated
+    ? { delivered: false, link, deliveryNote: 'You are conducting this round, so you have the interviewer\'s email instead.' }
+    : await notifyScheduler({
+      to: req.auth!.email, stageLabel: stage.label, scheduledAt: round.scheduledAt,
+      timeZone: round.scheduledTimeZone ?? await tenantTimeZone(tenantId),
+      link, aiRound, meetingUrl: meeting?.url ?? null,
+    });
+  // After the meeting, so the letter carries the link when there is one.
+  const interviewerNotices = await notifyRoundInterviewers({
+    roundId: round.id, tenantId, candidateId: pipeline.candidateId, stageLabel: stage.label,
+    kind: 'seated', expectScheduledAt: round.scheduledAt,
   });
 
   const saved = await prisma.interviewRound.findUniqueOrThrow({ where: { id: round.id }, include: roundInclude });
@@ -775,7 +790,7 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
   // just booked is part of what decides who may read what, and a viewer built
   // without it would answer the quarantine question about the wrong pipeline.
   const after = await reload(pipeline.id);
-  res.status(201).json({ round: presentRound(saved, await roundViewer(req, after)), notification, meeting, candidateNotice });
+  res.status(201).json({ round: presentRound(saved, await roundViewer(req, after)), notification, interviewerNotices, meeting, candidateNotice });
 }));
 
 const completeSchema = z.object({

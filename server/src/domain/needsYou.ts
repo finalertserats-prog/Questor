@@ -8,6 +8,14 @@ import type { Capability } from './capabilities.js';
  */
 
 export const NEEDS_YOU_KINDS = [
+  // First, because it is the only kind with a deadline measured in minutes.
+  // It appears when the round is nearly due and takes itself out again when
+  // the round is over (services/needsYouRows.ts) — deliberately NOT a row for
+  // every round the viewer is seated on. A round booked for next Tuesday is a
+  // commitment, not an action; putting one in the queue would make it a
+  // calendar, and a row nobody can clear for six days teaches people to stop
+  // reading the list it sits in.
+  'round_starting',
   'human_request',
   'accommodation',
   'review',
@@ -25,11 +33,12 @@ export type NeedsYouKind = (typeof NEEDS_YOU_KINDS)[number];
 export const NOT_STARTED_STATES: readonly string[] = ['INVITED', 'ACCEPTED'];
 
 /**
- * A candidate waiting on a person right now: they asked to talk to someone, or
- * their interview is paused on an adjustment they asked for. Everything else
- * waits on the team's own time.
+ * A candidate waiting on a person right now: they asked to talk to someone,
+ * their interview is paused on an adjustment they asked for, or they are about
+ * to be sitting in a room waiting for the interviewer this row belongs to.
+ * Everything else waits on the team's own time.
  */
-const URGENT_KINDS: ReadonlySet<NeedsYouKind> = new Set(['human_request', 'accommodation']);
+const URGENT_KINDS: ReadonlySet<NeedsYouKind> = new Set(['human_request', 'accommodation', 'round_starting']);
 
 export function isUrgent(kind: NeedsYouKind): boolean {
   return URGENT_KINDS.has(kind);
@@ -43,6 +52,14 @@ export function isUrgent(kind: NeedsYouKind): boolean {
  */
 export type NeedsYouGate =
   | { readonly capability: Capability }
+  /**
+   * Any one of these is enough. Needed where the same row reaches two lanes
+   * that share no capability by design: the hiring team works in
+   * `candidate:read`, the subject-matter expert in `sme:assigned_read`, and
+   * the whole point of keeping those apart (domain/capabilities.ts) is that
+   * neither implies the other.
+   */
+  | { readonly anyCapability: readonly Capability[] }
   | { readonly operator: 'operator' | 'platformOperator' };
 
 export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
@@ -69,6 +86,14 @@ export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
   round_not_recordable: { capability: 'interview:schedule' },
   catalog_proposals: { operator: 'platformOperator' },
   demo_request: { operator: 'operator' },
+  // Both lanes a seated interviewer can be in: a colleague who works in
+  // candidate scope, or an expert whose only surface is /api/sme. The
+  // capability decides whether this KIND of row can reach them at all; which
+  // rounds they see is object scope, and there it is their own seat
+  // (services/needsYouRows.ts) — never every round on a candidate they can
+  // read. A colleague who is not in the room has nothing to join, and the
+  // round is already on the candidate's page and in "Coming up".
+  round_starting: { anyCapability: ['candidate:read', 'sme:assigned_read'] },
 };
 
 /**
@@ -95,6 +120,7 @@ export interface GateContext {
 
 function passes(gate: NeedsYouGate, ctx: GateContext): boolean {
   if ('capability' in gate) return ctx.capabilities.includes(gate.capability);
+  if ('anyCapability' in gate) return gate.anyCapability.some((c) => ctx.capabilities.includes(c));
   return gate.operator === 'operator' ? ctx.operator : ctx.platformOperator;
 }
 
@@ -112,6 +138,15 @@ export interface ActionTarget {
   readonly sessionId?: string | null;
   readonly assessmentId?: string | null;
   readonly candidateId?: string | null;
+  /** The meeting a round about to start is held in, when it has one. */
+  readonly meetingUrl?: string | null;
+  /**
+   * The reader reaches candidates through /api/sme rather than the hiring
+   * team's pages. Their row has to point at the surface their role can open:
+   * an expert sent to /candidates/:id lands on a 404 they cannot read as
+   * anything but "the link is broken".
+   */
+  readonly expertLane?: boolean;
 }
 
 /**
@@ -122,8 +157,20 @@ export interface ActionTarget {
  * `canAct` is false for someone the row is shown to who cannot do its work
  * (KIND_ACTION_GATE). The label then says what they CAN do, so the queue never
  * offers a button the server would refuse.
+ *
+ * `external` marks the one destination that is not a Questor page: the meeting
+ * a round is held in, which belongs to Google or Microsoft. Every consumer
+ * treats `to` as a path and builds a URL from it (the digest email prefixes the
+ * origin, the queue renders a router link), so a provider URL has to be flagged
+ * rather than left to be recognised.
  */
-export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: boolean = true): { readonly label: string; readonly to: string | null } {
+export interface NeedsYouAction {
+  readonly label: string;
+  readonly to: string | null;
+  readonly external?: boolean;
+}
+
+export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: boolean = true): NeedsYouAction {
   const interview = target.sessionId ? `/interviews/${target.sessionId}` : null;
   const assessment = target.assessmentId ? `/assessments/${target.assessmentId}` : interview;
   switch (kind) {
@@ -150,7 +197,23 @@ export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: bool
       return { label: 'Review proposals', to: '/catalog-review' };
     case 'demo_request':
       return { label: 'Decide from the email', to: null };
+    // Joining, because this row exists only while joining is the thing to do.
+    //
+    // Not "Confirm": nothing in the product records an interviewer accepting a
+    // round, and a button whose press is not stored is worse than no button.
+    // When the round has no meeting link yet the honest offer is the candidate
+    // instead — the one page that answers "who am I seeing, and against what" —
+    // and the label says so rather than promising a room that does not exist.
+    case 'round_starting':
+      return target.meetingUrl
+        ? { label: 'Join', to: target.meetingUrl, external: true }
+        : { label: 'Get ready', to: candidatePage(target) };
   }
+}
+
+function candidatePage(target: ActionTarget): string | null {
+  if (!target.candidateId) return null;
+  return target.expertLane ? `/sme/candidates/${target.candidateId}` : `/candidates/${target.candidateId}`;
 }
 
 /** How a kind is named where the web's own copy is not available (the daily summary email). */
@@ -165,6 +228,7 @@ export const KIND_LABEL: Readonly<Record<NeedsYouKind, string>> = {
   round_not_recordable: 'Interview round cannot go ahead',
   catalog_proposals: 'Catalog proposals waiting',
   demo_request: 'Demo access requested again',
+  round_starting: 'An interview you are conducting starts now',
 };
 
 export interface Orderable {
@@ -176,6 +240,13 @@ export interface Orderable {
 /**
  * Urgent first, then whatever has waited longest. The id breaks ties so two
  * rows from the same instant always come out in the same order.
+ *
+ * `round_starting` needs no case of its own, and that is deliberate. Its
+ * `since` is when the round starts rather than when a wait began, which is the
+ * same shape: the round that should already have begun sorts above the one
+ * still a few minutes off, exactly as the longest wait sorts above a shorter
+ * one. A special case would have said this again in code that could later
+ * disagree with it.
  */
 export function compareNeedsYou(a: Orderable, b: Orderable): number {
   const urgency = Number(isUrgent(b.kind)) - Number(isUrgent(a.kind));
