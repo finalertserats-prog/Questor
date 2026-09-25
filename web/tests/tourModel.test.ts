@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   IDLE_TOUR,
   TOUR_STEPS,
+  finishTour,
   isFirstStep,
   isLastStep,
   keyAction,
@@ -173,6 +174,11 @@ describe('ending and restarting', () => {
     expect(skipTour({ status: 'running', index: 2 })).toEqual({ status: 'skipped', index: 2 });
   });
 
+  it('a choice on the card finishes the tour from any step, and only a running one', () => {
+    expect(finishTour({ status: 'running', index: 2 })).toEqual({ status: 'completed', index: 2 });
+    expect(finishTour(IDLE_TOUR)).toBe(IDLE_TOUR);
+  });
+
   it('reports skipped and completed tours as ended, and a running one as not', () => {
     expect([
       tourHasEnded(skipTour(startTour(STEPS, everyAnchorPresent))),
@@ -283,6 +289,11 @@ describe('placeTourCard', () => {
     const target = { top: 100, left: 1000, width: 190, height: 40 };
     const placed = placeTourCard(target, card, viewport);
     expect(placed.left + card.width).toBeLessThanOrEqual(viewport.width);
+  });
+
+  it('sits over the bottom-right corner of an element that fills the viewport, clear of its heading', () => {
+    const target = { top: -200, left: 40, width: 1100, height: 1400 };
+    expect(placeTourCard(target, card, viewport)).toEqual({ top: 588, left: 808, placement: 'corner' });
   });
 
   it('docks the card to the bottom on a phone', () => {

@@ -22,7 +22,6 @@ import './styles/interviewers.css';
 import './styles/interviewSetup.css';
 import './styles/polish.css';
 import './styles/tour.css';
-import './styles/demoTour.css';
 import './styles/observer.css';
 import './styles/catalogReview.css';
 import './styles/library.css';

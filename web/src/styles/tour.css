@@ -100,6 +100,44 @@
   color: var(--ink-3);
 }
 
+/* A card that offers real ways out (the demo's closing cards): its buttons
+   stack at full width, above the ordinary Back and Next. */
+.tour-choices {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.tour-choices .btn {
+  justify-content: center;
+}
+
+/* Smaller print, set off by a rule rather than a tint. */
+.tour-note {
+  margin: 0 0 12px;
+  padding-top: 8px;
+  border-top: var(--hair) solid var(--rule);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* The demo's way out, kept apart from the tour's own controls by a rule. */
+.tour-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: var(--hair) solid var(--rule);
+}
+.tour-end,
+.tour-end:hover {
+  color: var(--stop);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .tour-spotlight,
   .tour-card {

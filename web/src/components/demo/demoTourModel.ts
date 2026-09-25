@@ -1,13 +1,15 @@
+import type { TourChoice, TourStep } from '../tourModel';
 import type { DemoBeat } from './demoScript';
 
 /**
- * The guided demo's decisions, free of React and of the DOM so they can be
- * tested in the node environment (web/tests/demoTourModel.test.ts).
+ * What the sandbox decides about the demo's beats, free of React and of the
+ * DOM so it can be tested in the node environment (web/tests/demoTourModel.test.ts).
  *
- * The rule inherited from the product tour still holds: a beat plays only over
- * an element that is on the page. What is new is that the page is navigated
- * to first, and that a beat may also depend on the sandbox (the story's
- * records) or on what the demo offers (a way of sitting the interview).
+ * The tour itself — stepping, keys, placement — is the product tour's
+ * (tourModel.ts). What is the demo's own: a beat may depend on the sandbox
+ * (the story's records) or on what the demo offers (a way of sitting the
+ * interview), its screen carries the sandbox's ids, and the closing cards
+ * offer exactly what is on.
  */
 
 export interface DemoStory {
@@ -56,101 +58,55 @@ export function offeredBeats(beats: readonly DemoBeat[], status: DemoStatus): re
   return beats.filter((beat) => beatOffered(beat, status));
 }
 
-export type DemoPhase = 'loading' | 'ready' | 'playing' | 'paused' | 'ended';
+export type InterviewChoice = 'candidate' | 'observer';
 
-export interface DemoTourState {
-  readonly phase: DemoPhase;
-  /** Index into the offered beats; -1 outside a run. */
-  readonly index: number;
-  /** How the run ended, for the hand-over event. */
-  readonly ending: 'finished' | 'skipped' | null;
+/** The ways of sitting the interview: exactly what the server says is on, and nothing else. */
+export function interviewChoices(modes: DemoInterviewModes): readonly InterviewChoice[] {
+  const choices: InterviewChoice[] = [];
+  if (modes.candidate) choices.push('candidate');
+  if (modes.observer) choices.push('observer');
+  return choices;
 }
 
-export const LOADING_TOUR: DemoTourState = { phase: 'loading', index: -1, ending: null };
-export const READY_TOUR: DemoTourState = { phase: 'ready', index: -1, ending: null };
+const INTERVIEW_CHOICE: Record<InterviewChoice, TourChoice> = {
+  candidate: { id: 'candidate', label: 'Take the interview as the candidate — about 15 minutes', icon: 'ai-interview' },
+  observer: { id: 'observer', label: 'Watch an interview from the hiring team’s side', icon: 'eye', emphasis: 'secondary' },
+};
 
-export function startDemoTour(total: number): DemoTourState {
-  return total === 0 ? { phase: 'ended', index: -1, ending: 'finished' } : { phase: 'playing', index: 0, ending: null };
+const NEW_ROLE_CHOICE: TourChoice = { id: 'new-role', label: 'New role', icon: 'job-description' };
+
+/** The buttons on a closing card; an ordinary beat has none. */
+export function closingChoices(beat: DemoBeat, status: DemoStatus): readonly TourChoice[] | undefined {
+  if (beat.closing === 'explore') return [NEW_ROLE_CHOICE];
+  if (beat.closing === 'interview') return interviewChoices(status.modes).map((choice) => INTERVIEW_CHOICE[choice]);
+  return undefined;
 }
 
-/** Forward: past the last beat the tour has finished. A beat whose anchor is missing calls this too. */
-export function nextBeat(state: DemoTourState, total: number): DemoTourState {
-  if (state.phase !== 'playing' && state.phase !== 'paused') return state;
-  const index = state.index + 1;
-  return index >= total ? { phase: 'ended', index: state.index, ending: 'finished' } : { phase: 'playing', index, ending: null };
+/** The caps line on the explore card, from the server's numbers. */
+export function capsSentence(caps: DemoStatus['caps']): string {
+  return `In the demo you can add up to ${caps.roles} roles, ${caps.candidates} candidates and ${caps.interviews} interviews.`;
 }
-
-/** Back: on the first beat, it replays. */
-export function previousBeat(state: DemoTourState): DemoTourState {
-  if (state.phase !== 'playing' && state.phase !== 'paused') return state;
-  return { phase: 'playing', index: Math.max(0, state.index - 1), ending: null };
-}
-
-export function pauseDemoTour(state: DemoTourState): DemoTourState {
-  return state.phase === 'playing' ? { ...state, phase: 'paused' } : state;
-}
-
-export function resumeDemoTour(state: DemoTourState): DemoTourState {
-  return state.phase === 'paused' ? { ...state, phase: 'playing' } : state;
-}
-
-export function skipDemoTour(state: DemoTourState): DemoTourState {
-  return state.phase === 'playing' || state.phase === 'paused' ? { phase: 'ended', index: state.index, ending: 'skipped' } : state;
-}
-
-export function isRunning(state: DemoTourState): boolean {
-  return state.phase === 'playing' || state.phase === 'paused';
-}
-
-export type DemoKeyAction = 'toggle-pause' | 'replay' | 'next' | 'back' | 'skip-tour';
-
-/** Space pauses and resumes, R replays the line, the arrows step, Escape skips the tour. */
-export function demoKeyAction(key: string): DemoKeyAction | null {
-  switch (key) {
-    case ' ': case 'Spacebar': return 'toggle-pause';
-    case 'r': case 'R': return 'replay';
-    case 'ArrowRight': return 'next';
-    case 'ArrowLeft': return 'back';
-    case 'Escape': return 'skip-tour';
-    default: return null;
-  }
-}
-
-export interface DemoProgress { readonly current: number; readonly total: number; readonly percent: number }
-
-export function demoProgress(state: DemoTourState, total: number): DemoProgress {
-  const current = isRunning(state) ? state.index + 1 : state.phase === 'ended' ? total : 0;
-  return { current, total, percent: total === 0 ? 0 : Math.round((current / total) * 100) };
-}
-
-/** What a screen reader hears as a beat begins; the caption follows in the same region. */
-export function beatAnnouncement(beat: DemoBeat, progress: DemoProgress): string {
-  return `Beat ${progress.current} of ${progress.total}: ${beat.title}.`;
-}
-
-/** The narration manifest, as generated with the audio: durations by beat id. */
-export type NarrationManifest = Readonly<Record<string, { readonly durationMs: number }>>;
-
-export function hasNarration(manifest: NarrationManifest | null, beatId: string): boolean {
-  return manifest !== null && Object.prototype.hasOwnProperty.call(manifest, beatId);
-}
-
-/** How long a beat holds the screen when it runs on its caption alone. */
-export function captionDurationMs(beat: DemoBeat): number {
-  return beat.seconds * 1000;
-}
-
-/** The two closing cards ask the visitor to choose: the narration ends, the card stays until they do. */
-export function waitsForChoice(beat: DemoBeat): boolean {
-  return beat.card === 'explore' || beat.card === 'interview';
-}
-
-/** How long to wait for a page to produce the beat's element before giving the beat up. */
-export const ANCHOR_WAIT_MS = 6000;
 
 /**
- * The start card is shown once per browser session: a visitor who reloads
- * the page while exploring is not asked to start the story again.
+ * The beats this sandbox can show, as the tour's own steps: each on its
+ * screen, the welcome addressed to the visitor by name, the closing cards
+ * carrying what is on offer.
+ */
+export function demoSteps(beats: readonly DemoBeat[], status: DemoStatus): readonly TourStep[] {
+  return offeredBeats(beats, status).map((beat, index) => ({
+    id: beat.id,
+    title: index === 0 && status.visitor.firstName ? `Hello, ${status.visitor.firstName}.` : beat.title,
+    body: index === 0 && status.visitor.firstName ? `Welcome to Questor. ${beat.body}` : beat.body,
+    anchor: beat.anchor,
+    route: resolveRoute(beat, status),
+    choices: closingChoices(beat, status),
+    note: beat.closing === 'explore' ? `${capsSentence(status.caps)} Sample data only; the sandbox is deleted afterwards.` : undefined,
+  }));
+}
+
+/**
+ * The story begins by itself once per browser session: a visitor who reloads
+ * the page while exploring is not walked through it again.
  */
 export const DEMO_TOUR_SEEN_KEY = 'questor-demo-tour-seen';
 
@@ -161,28 +117,5 @@ export function tourAlreadySeen(store: SessionStore | null): boolean {
 }
 
 export function rememberTourSeen(store: SessionStore | null): void {
-  try { store?.setItem(DEMO_TOUR_SEEN_KEY, '1'); } catch { /* a private window; the card shows again next load */ }
-}
-
-export type InterviewChoice = 'candidate' | 'observer';
-
-/** The event the tour raises as it hands over, for the demo-interview lane and the demo bar. */
-export const DEMO_TOUR_FINISHED_EVENT = 'demo:tour-finished';
-
-export interface DemoTourFinishedDetail {
-  readonly ending: 'finished' | 'skipped';
-  readonly choice: InterviewChoice | 'explore' | 'new-role' | null;
-}
-
-/** The buttons the interview card offers: exactly what the server says is on, and nothing else. */
-export function interviewChoices(modes: DemoInterviewModes): readonly InterviewChoice[] {
-  const choices: InterviewChoice[] = [];
-  if (modes.candidate) choices.push('candidate');
-  if (modes.observer) choices.push('observer');
-  return choices;
-}
-
-/** The caps line on the explore card, from the server's numbers. */
-export function capsSentence(caps: DemoStatus['caps']): string {
-  return `In the demo you can add up to ${caps.roles} roles, ${caps.candidates} candidates and ${caps.interviews} interviews.`;
+  try { store?.setItem(DEMO_TOUR_SEEN_KEY, '1'); } catch { /* a private window; the story begins again next load */ }
 }

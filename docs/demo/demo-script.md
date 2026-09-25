@@ -219,13 +219,9 @@ Every anchor marked *new* is one `data-tour` attribute on an element that alread
 
 ## What is on screen at every beat
 
-The player is a bar docked to the bottom of the viewport (a sheet on a phone), not a coach-mark beside the element — captions are always in the same place, and the spotlight is free to be anywhere on the page. It carries, left to right:
+**Revised 2026-09-25 (owner's verdict on the built version):** the docked player and the self-advancing narration are gone. The demo is presented exactly as the product tour is — the spotlight ring and scrim, and a coach-mark card anchored beside the element (a sheet at phone width), carrying "Step 8 of 19", a title, the line, and **Skip tour / Back / Next** (Finish on the last). The visitor reads and presses Next; nothing advances on its own, and no audio is played or waited for. The two closing cards carry their buttons above Back and Next (B18: **New role**; B19: exactly the ways of sitting the interview that are on), and **End demo** sits under a rule at the foot of every card, with its own confirm, so the way out is there on the public pages where the demo bar is not. The lines above were written to be spoken; `demoScript.ts` carries them cut for reading on a card (the list of competencies in B08 is left to the screen, which is spotlighting it), with nothing they taught removed. The rest of this section is kept for the recording, should it ever be wanted.
 
-- the caption (the narration, verbatim, in the product's UI face; `aria-live="polite"`, one announcement per beat — "Beat 8 of 19: The scorecard", then the line);
-- progress as a hairline rule with an accent segment, and `8 / 19` in mono;
-- controls, all real buttons with visible labels: **Pause / Resume** (Space), **Replay this line** (R), **Skip this beat** (→), **Back** (←), **Skip the tour** (Esc), **End demo** (its own confirm, exactly the demo bar's).
-
-Focus stays in the player while the tour runs (the existing tour's focus trap); Tab wraps within it. With `prefers-reduced-motion`, the spotlight jumps instead of gliding and the page scrolls instantly (`tourMotion`). With no audio file for a beat, or audio blocked, the beat runs on its caption for the scripted duration; nothing else changes, and nothing says so. The spotlight is the existing `tour-spotlight` ring and scrim. Because B02 and B17 are public-shell pages, the overlay mounts above both shells, and End demo is on the player wherever the demo bar is not.
+Focus stays in the card while the tour runs (the product tour's focus trap); Tab wraps within it. With `prefers-reduced-motion`, the spotlight jumps instead of gliding and the page scrolls instantly (`tourMotion`). Because B02 and B17 are public-shell pages, the overlay mounts above both shells.
 
 ---
 

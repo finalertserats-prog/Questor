@@ -20,7 +20,7 @@ const redeem = await browser.newContext({ baseURL: base });
 const first = await redeem.newPage();
 await first.goto(`/demo/${token}`);
 await first.getByRole('button', { name: 'Start demo' }).click();
-await first.getByTestId('demo-start-card').waitFor();
+await first.getByTestId('tour-card').waitFor();
 const session = await redeem.storageState();
 await redeem.close();
 
@@ -30,19 +30,15 @@ for (const [name, width, height] of [['desktop', 1440, 900], ['phone', 375, 812]
     await ctx.addInitScript((t) => { localStorage.setItem('questor-theme', t); sessionStorage.removeItem('questor-demo-tour-seen'); }, theme);
     const page = await ctx.newPage();
     await page.goto('/', { waitUntil: 'networkidle' });
-    await page.getByTestId('demo-start-card').waitFor();
-    await page.screenshot({ path: resolve(out, `B00-start-${name}-${theme}.png`) });
-    await page.getByTestId('demo-start').click();
     for (let guard = 0; guard < 25; guard += 1) {
-      const tour = page.getByTestId('demo-tour');
+      const tour = page.getByTestId('tour');
       if (await tour.count() === 0) break;
-      const beat = await tour.getAttribute('data-beat');
-      await page.keyboard.press('Space');
-      await page.getByRole('button', { name: /Resume/ }).waitFor();
+      await page.getByTestId('tour-card').waitFor({ timeout: 15_000 });
+      const step = await tour.getAttribute('data-step');
       // The spotlight settles once the page has scrolled to its element.
       await page.waitForTimeout(600);
-      await page.screenshot({ path: resolve(out, `${beat}-${name}-${theme}.png`) });
-      await page.getByTestId('demo-next').click();
+      await page.screenshot({ path: resolve(out, `${step}-${name}-${theme}.png`) });
+      await page.getByTestId('tour-next').click();
       await page.waitForTimeout(300);
     }
     await ctx.close();

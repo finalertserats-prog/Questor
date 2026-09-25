@@ -391,7 +391,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       {/* Outside <main>, which is inert while the drawer is open: a tour step
           that opens the drawer to point into it must stay reachable itself. */}
-      {/* A demo visitor gets the narrated story (DemoTour) instead. */}
+      {/* A demo visitor gets the story of one hire (DemoTour) instead. */}
       {!tenant?.isDemo && <ProductTour isNarrow={isNarrow} setDrawerOpen={setNavOpen} />}
     </div>
   );
@@ -565,7 +565,7 @@ export function App() {
   return (
     <TourProvider>
     <RouteBoundary>
-    {/* The guided demo, above both shells: two of its beats play over the
+    {/* The guided demo, above both shells: two of its beats are shown over the
         public pages (the organisation's door, the account request). */}
     <DemoTour />
     <Routes>

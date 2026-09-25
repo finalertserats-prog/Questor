@@ -9,6 +9,8 @@
  * late (a chart after its data loads) is still found.
  */
 
+import type { IconName } from './Icon';
+
 export interface TourStep {
   readonly id: string;
   /** The `data-tour` value of the element pointed at. Absent: a centred card. */
@@ -17,6 +19,23 @@ export interface TourStep {
   readonly body: string;
   /** Lives in the sidebar, which on a phone is a drawer that must be opened first. */
   readonly inSidebar?: boolean;
+  /**
+   * The screen the step is shown over, as a path with its query. The overlay
+   * goes there first and waits for the element; a step without one plays
+   * wherever the reader already is.
+   */
+  readonly route?: string;
+  /** Smaller print under the body: the demo's limits, for one. */
+  readonly note?: string;
+  /** Ways out that mean something — each ends the tour and names what the reader chose. */
+  readonly choices?: readonly TourChoice[];
+}
+
+export interface TourChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly icon?: IconName;
+  readonly emphasis?: 'primary' | 'secondary';
 }
 
 export const TOUR_STEPS: readonly TourStep[] = [
@@ -162,6 +181,11 @@ export function skipTour(state: TourState): TourState {
   return { status: 'skipped', index: state.index };
 }
 
+/** Done here, whichever step this is: a choice on the card is taking the reader somewhere. */
+export function finishTour(state: TourState): TourState {
+  return state.status === 'running' ? { status: 'completed', index: state.index } : state;
+}
+
 export function tourHasEnded(state: TourState): boolean {
   return state.status === 'completed' || state.status === 'skipped';
 }
@@ -254,7 +278,7 @@ export interface Size {
   readonly height: number;
 }
 
-export type TourPlacement = 'right' | 'bottom' | 'top' | 'left' | 'center' | 'sheet';
+export type TourPlacement = 'right' | 'bottom' | 'top' | 'left' | 'corner' | 'center' | 'sheet';
 
 export interface CardPlacement {
   readonly top: number;
@@ -270,6 +294,8 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 /**
  * Where the card goes: beside a sidebar item, below or above a wide element,
  * centred when there is nothing to point at, and always inside the viewport.
+ * An element that fills the viewport leaves no room beside it; the card then
+ * sits over its bottom-right corner, where its heading and first rows are not.
  */
 export function placeTourCard(target: Rect | null, card: Size, viewport: Size, gap = 12): CardPlacement {
   if (target === null) {
@@ -296,5 +322,9 @@ export function placeTourCard(target: Rect | null, card: Size, viewport: Size, g
   if (left >= gap) {
     return { top: clamp(target.top, gap, maxTop), left, placement: 'left' };
   }
-  return { top: clamp(target.top, gap, maxTop), left: clamp(target.left, gap, maxLeft), placement: 'bottom' };
+  return {
+    top: clamp(target.top + target.height - card.height - gap, gap, maxTop),
+    left: clamp(target.left + target.width - card.width - gap, gap, maxLeft),
+    placement: 'corner',
+  };
 }

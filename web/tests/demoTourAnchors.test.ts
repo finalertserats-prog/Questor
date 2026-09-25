@@ -6,8 +6,8 @@ import { DEMO_BEATS } from '../src/components/demo/demoScript';
 /**
  * Every element the demo spotlights is named by a `data-tour` anchor in the
  * page markup. A page change that drops one would not break the demo loudly:
- * the beat would skip, and the narration would talk over nothing in front of
- * a prospect. So the build breaks instead. The e2e run then walks the whole
+ * the beat would be skipped in front of a prospect, and nobody would know
+ * why. So the build breaks instead. The e2e run then walks the whole
  * tour against the real pages; this is the fast check that the markup still
  * carries the names.
  */
@@ -43,7 +43,7 @@ describe('the demo\'s anchors', () => {
     expect(missing).toEqual([]);
   });
 
-  it('cover every beat that is not a centred card', () => {
-    for (const beat of DEMO_BEATS) expect(beat.anchor !== undefined || beat.card !== undefined, beat.id).toBe(true);
+  it('cover every beat but the welcome and the two closing cards', () => {
+    expect(DEMO_BEATS.filter((beat) => beat.anchor === undefined).map((beat) => beat.id)).toEqual(['B01', 'B18', 'B19']);
   });
 });
