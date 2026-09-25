@@ -38,14 +38,30 @@ export interface TourChoice {
   readonly emphasis?: 'primary' | 'secondary';
 }
 
+/**
+ * Each step names the screen it is about, and the overlay goes there before
+ * pointing at anything.
+ *
+ * Without that the tour highlighted "Home" in the sidebar while the reader was
+ * looking at Dashboard, and said "Dashboard, where this tour continues" from a
+ * page that was already Dashboard. The words were always right about the
+ * intended shape — explain the sidebar from Home, then walk the Dashboard —
+ * and only the navigation was missing.
+ *
+ * The sidebar steps stay on Home rather than opening each destination: they
+ * are a tour OF the navigation, and five page loads to point at five links the
+ * reader can already see would be slower and say less.
+ */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
     id: 'welcome',
+    route: '/?tab=home',
     title: 'Welcome to Questor',
     body: 'Questor runs the first interview round for you and keeps every later round on one evidence trail. This short tour shows where everything is. Use Next and Back, or the arrow keys; Escape skips it. You can take it again any time.',
   },
   {
     id: 'nav-dashboard',
+    route: '/?tab=home',
     anchor: 'nav-dashboard',
     inSidebar: true,
     title: 'Home',
@@ -53,6 +69,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     id: 'nav-candidates',
+    route: '/?tab=home',
     anchor: 'nav-candidates',
     inSidebar: true,
     title: 'Candidates',
@@ -60,6 +77,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     id: 'nav-roles',
+    route: '/?tab=home',
     anchor: 'nav-roles',
     inSidebar: true,
     title: 'Roles',
@@ -67,6 +85,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     id: 'nav-interviews',
+    route: '/?tab=home',
     anchor: 'nav-interviews',
     inSidebar: true,
     title: 'Interviews',
@@ -74,6 +93,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     id: 'nav-add-candidate',
+    route: '/?tab=home',
     anchor: 'nav-add-candidate',
     inSidebar: true,
     title: 'Add candidate',
@@ -81,6 +101,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     id: 'nav-new-role',
+    route: '/?tab=home',
     anchor: 'nav-new-role',
     inSidebar: true,
     title: 'New role',
@@ -88,30 +109,35 @@ export const TOUR_STEPS: readonly TourStep[] = [
   },
   {
     id: 'workflow',
+    route: '/?tab=dashboard',
     anchor: 'workflow',
     title: 'The hiring workflow',
     body: 'The four steps in order: create a role from its job description, onboard a candidate, schedule the interviews, then assess through evidence. Each step is a link to where it is done.',
   },
   {
     id: 'kpis',
+    route: '/?tab=dashboard',
     anchor: 'kpis',
     title: 'Key metrics',
     body: 'Open roles, candidates, who is in the pipeline, what is scheduled in the next week, what completed in the last month, and what is waiting for a person to review. Tiles with a link take you straight to the list behind the number.',
   },
   {
     id: 'trends',
+    route: '/?tab=dashboard',
     anchor: 'trends',
     title: 'Trends',
     body: 'Interviews per week, how many candidates sit at each pipeline stage, and where every AI interview is right now — so a slowdown shows up before someone complains about it.',
   },
   {
     id: 'pipeline-stages',
+    route: '/?tab=dashboard',
     anchor: 'pipeline-stages',
     title: 'The medallion pipeline',
     body: 'Every candidate moves through Participation (onboarding), Bronze (profile review), Silver — the AI interview, run by the AI interviewer chosen for it (Avery, Maya, Adrian, Elena or Theo) while HR may quietly observe — then Gold, the human rounds, where the AI only listens and transcribes, and Diamond, the finalised candidate. Onboarding, resume analysis, scheduling and assessment move a candidate forward on their own; a person finalises them and records the outcome, from the Hiring pipeline panel on the candidate’s page.',
   },
   {
     id: 'recent-interviews',
+    route: '/?tab=dashboard',
     anchor: 'recent-interviews',
     title: 'Recent interviews',
     body: 'The interviews that changed most recently, with their state and date. Open one directly, or view the full list.',
