@@ -379,8 +379,12 @@ async function stageDecisionDrafts(tenantId: string, candidate: Prisma.Candidate
     .sort((a, b) => a.since.getTime() - b.since.getTime() || a.pipelineId.localeCompare(b.pipelineId));
 
   const page = ready.slice(0, limit);
+  // Tenant-scoped again, although these ids came from a read that already was.
+  // Every other query in this file carries its own scope rather than inheriting
+  // one from a previous step, and a name is the single most sensitive thing a
+  // row carries — so the second read is narrowed the same way as the first.
   const named = page.length === 0 ? [] : await prisma.candidatePipeline.findMany({
-    where: { id: { in: page.map((r) => r.pipelineId) } },
+    where: { tenantId, id: { in: page.map((r) => r.pipelineId) } },
     select: { id: true, candidate: { select: { id: true, fullName: true } }, role: { select: { id: true, title: true } } },
   });
   const nameOf = new Map(named.map((row) => [row.id, row]));
