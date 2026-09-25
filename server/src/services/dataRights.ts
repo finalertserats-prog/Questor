@@ -7,6 +7,7 @@ import { eraseStagedImportRows } from './candidateImport.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredObservations } from './observerRetention.js';
+import { auditableEntityIds, clearAuditPayloads } from './auditPayloads.js';
 
 // Candidate data-rights operations.
 //
@@ -23,10 +24,17 @@ import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredO
 // AssessmentVersion.resultJson, HumanReview.comments and Artifact rows. A
 // per-artifact window can only ever delete a copy while the original stays.
 //
-// The audit trail deliberately survives both erasure and purge. It records THAT
-// data was deleted, when, and how much, but holds no personal data itself — you
-// cannot demonstrate compliance with a deletion obligation whose record you also
-// deleted.
+// The audit trail deliberately survives both erasure and purge: you cannot
+// demonstrate compliance with a deletion obligation whose record you also
+// deleted. What survives is the record — who did what to which entity, when.
+//
+// It used to say here that the trail "holds no personal data itself", and that
+// was false. `accommodation.requested` writes the candidate's own prose into
+// afterJson, which the code beside it refuses to put in an email because it can
+// describe a health condition; `identity.code_send_failed` writes an SMTP
+// rejection that quotes the address. So erasure now empties the payloads of a
+// candidate's own audit rows before deleting them (services/auditPayloads.ts)
+// and keeps the columns that make it an audit trail.
 
 /**
  * Default retention window for interview data, in days.
@@ -281,6 +289,17 @@ export async function eraseCandidate(o: {
 
   await prisma.$transaction(async (tx) => {
     vendorMeetings = await collectVendorMeetings(o.candidateId, o.tenantId, tx);
+    // First, while the rows that name these audit events still exist. The
+    // audit trail survives erasure on purpose — a deletion you cannot show
+    // you performed is not compliance — but it was surviving with the
+    // candidate still inside it, which the rule beside it wrongly assumed
+    // could not happen. The rows stay; what they said about the person goes.
+    await count('auditPayloads', async () => ({
+      count: await clearAuditPayloads(tx, {
+        tenantId: o.tenantId,
+        entityIds: await auditableEntityIds(tx, { tenantId: o.tenantId, candidateId: o.candidateId, sessionIds }),
+      }),
+    }));
     await deleteSessionCascade(tx, sessionIds, count);
     await deleteProfileCascade(tx, o.candidateId, count);
     // Artifacts attached to the candidate rather than to a session (résumé
@@ -603,8 +622,12 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
  * Legal hold, stated precisely: no path in the automatic sweep deletes anything
  * flagged `legalHold`, on either an `Artifact` or an `InterviewSession`, and a
  * hold on a single artifact spares the whole session it belongs to.
- * `eraseCandidate` is NOT part of that guarantee — it is an operator-driven
- * subject request and overrides holds by design (see its doc comment).
+ * `eraseCandidate` is a different path — an operator-driven subject request
+ * rather than the automatic sweep — but it does NOT override a hold. It
+ * refuses outright with a 409 (see its doc comment, and the check it makes
+ * before deleting anything). This once said the opposite, which would have
+ * told a reader that the strongest protection in the file could be walked
+ * past by asking nicely.
  */
 export async function purgeExpiredArtifacts(now = new Date()): Promise<number> {
   // retentionDays is per-artifact; SQLite cannot express "createdAt + n days"
