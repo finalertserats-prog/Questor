@@ -12,7 +12,8 @@ import { expireStalePendingQuotes, extractEvidenceQuotes } from '../services/obs
 import {
   OBSERVER_CAPTURE_NOTICE, appendSegment, assertCapturing, candidateConsents, candidateDeclines, candidateStops,
   candidateView, consentToEntry, declineEntry, endObservation, ensureObservation, enterRoom, entryGateFor,
-  captureWatch, findByCandidateToken, heardFrom, loadSeat, mayExtract, observationForRound, observerApplies, participantRow,
+  MAX_WITHDRAWAL_REASON, captureWatch, findByCandidateToken, heardFrom, loadSeat, mayExtract, observationForRound,
+  observerApplies, participantRow,
   participantStops, presentObservation,
   type RoundWithPipeline,
 } from '../services/roundObserver.js';
@@ -97,6 +98,13 @@ const textSegmentSchema = z.object({ ...timing, text: z.string().max(MAX_SEGMENT
 const audioSegmentSchema = z.object(timing);
 const gapSchema = z.object({ ...timing, reason: z.string().trim().max(80).regex(/^[a-z0-9_-]*$/i).default('') });
 
+/**
+ * Why somebody stopped, in their own words. Optional everywhere it appears: a
+ * person withdrawing consent must never have to justify themselves in order to
+ * be allowed to stop. Asked for, stored when given, never required.
+ */
+const withdrawalSchema = z.object({ reason: z.string().trim().max(MAX_WITHDRAWAL_REASON).default('') });
+
 async function view(req: Request, round: RoundWithPipeline, party: ObservedParty) {
   await expireStalePendingQuotes(round.id);
   const observation = await observationForRound(round.id);
@@ -146,9 +154,10 @@ observerRouter.post('/rounds/:roundId/consent', IN_THE_ROOM, asyncHandler(async 
 }));
 
 observerRouter.post('/rounds/:roundId/decline', IN_THE_ROOM, asyncHandler(async (req, res) => {
+  const { reason } = withdrawalSchema.parse(req.body ?? {});
   const { round, party } = await loadSeat(req.auth!, req.params.roundId);
   requireLiveRoom(round);
-  await declineEntry(await ensureObservation(round), party, req.auth!.userId, req.auth!.userId);
+  await declineEntry(await ensureObservation(round), party, req.auth!.userId, req.auth!.userId, reason);
   res.json(await view(req, round, party));
 }));
 
@@ -160,9 +169,10 @@ observerRouter.post('/rounds/:roundId/join', IN_THE_ROOM, asyncHandler(async (re
 }));
 
 observerRouter.post('/rounds/:roundId/stop', IN_THE_ROOM, asyncHandler(async (req, res) => {
+  const { reason } = withdrawalSchema.parse(req.body ?? {});
   const { round, party } = await loadSeat(req.auth!, req.params.roundId);
   requireLiveRoom(round);
-  await participantStops(await ensureObservation(round), party, req.auth!.userId);
+  await participantStops(await ensureObservation(round), party, req.auth!.userId, reason);
   res.json(await view(req, round, party));
 }));
 
@@ -260,9 +270,21 @@ observerRouter.post('/rounds/:roundId/segments', IN_THE_ROOM, receiveChunk, asyn
  */
 observerRouter.post('/rounds/:roundId/heartbeat', IN_THE_ROOM, asyncHandler(async (req, res) => {
   const { round, party } = await loadSeat(req.auth!, req.params.roundId);
-  const seat = await assertCapturing(req.auth!, round, party);
+  let seat: Awaited<ReturnType<typeof assertCapturing>>;
+  try {
+    seat = await assertCapturing(req.auth!, round, party);
+  } catch {
+    // ANY reason capture may no longer run is an instruction to stop, not an
+    // error to report. The server refusing to store what a device sends is not
+    // the same as the device stopping: until this answered, a withdrawn round
+    // left the microphone open until the next poll happened to notice. The
+    // beat is already running every few seconds, so it is the fastest thing
+    // this room has to tell every device at once. (Codex review, 2026-09-25.)
+    res.json({ capture: 'stop' });
+    return;
+  }
   await heardFrom(seat.observation.id);
-  res.status(204).end();
+  res.json({ capture: 'continue' });
 }));
 
 // The room's own microphone or recogniser failed for a stretch.
@@ -301,13 +323,15 @@ observerConsentRouter.post('/:token/consent', asyncHandler(async (req, res) => {
 }));
 
 observerConsentRouter.post('/:token/decline', asyncHandler(async (req, res) => {
+  const { reason } = withdrawalSchema.parse(req.body ?? {});
   const observation = await findByCandidateToken(req.params.token);
-  await candidateDeclines(observation);
+  await candidateDeclines(observation, reason);
   res.json(await candidateView(await findByCandidateToken(req.params.token)));
 }));
 
 observerConsentRouter.post('/:token/stop', asyncHandler(async (req, res) => {
+  const { reason } = withdrawalSchema.parse(req.body ?? {});
   const observation = await findByCandidateToken(req.params.token);
-  await candidateStops(observation);
+  await candidateStops(observation, reason);
   res.json(await candidateView(await findByCandidateToken(req.params.token)));
 }));

@@ -11,7 +11,7 @@ import {
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { leftByButton, LEAVE_SOURCE } from '../realtime/interviewEngine.js';
 import { personaNameOf } from '../domain/persona.js';
-import { roundBlock, type ObservationStatus, type ObservedParty } from '../domain/observedRound.js';
+import { blockOfRound } from '../domain/observedRound.js';
 import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
 
 /**
@@ -127,18 +127,25 @@ async function blockedSeatedRounds(userId: string, tenantId: string, candidateId
     orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }],
     select: {
       id: true, stageKey: true, scheduledAt: true, status: true,
+      panel: { select: { userId: true } },
       pipeline: { select: { candidateId: true } },
-      observation: { select: { status: true, participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true } } } },
+      observation: {
+        select: {
+          status: true, withdrawnReason: true, stoppedBy: true, declinedBy: true,
+          _count: { select: { segments: { where: { kind: 'SPEECH' } } } },
+          participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true, admittedAt: true } },
+        },
+      },
     },
   });
   const byCandidate = new Map<string, Array<{ roundId: string; stageKey: string; scheduledAt: Date; reason: string; nextSteps: readonly string[] }>>();
   for (const round of rounds) {
-    const block = roundBlock({
-      status: (round.observation?.status ?? 'AWAITING_CONSENT') as ObservationStatus,
-      participants: (round.observation?.participants ?? []).map((p) => ({
-        party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
-      })),
+    const block = blockOfRound({
       roundStatus: round.status,
+      seats: round.panel.map((seat) => seat.userId),
+      observation: round.observation
+        ? { ...round.observation, speechCount: round.observation._count.segments }
+        : null,
     });
     if (!block) continue;
     const list = byCandidate.get(round.pipeline.candidateId) ?? [];

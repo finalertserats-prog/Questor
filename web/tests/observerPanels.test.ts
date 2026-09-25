@@ -3,7 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   CandidateObserverConsent, EntryGateCard, ListeningIndicator, ObserverRoomControls, ObserverTranscript,
-  RoundBlockedCard,
+  RoundBlockedCard, WithdrawalReason,
 } from '../src/components/ObserverPanels';
 import type { CandidateConsentView, EntryGate, ObservationView } from '../src/components/observerModel';
 
@@ -100,7 +100,8 @@ describe('a round that cannot go ahead', () => {
 describe('the room controls', () => {
   const controls = (phase: Parameters<typeof ObserverRoomControls>[0]['phase'], extra: Partial<Parameters<typeof ObserverRoomControls>[0]> = {}) =>
     html(createElement(ObserverRoomControls, {
-      phase, awaiting: [], busy: false, stopSentence: '', onStop: noop, onEnd: noop, ...extra,
+      phase, awaiting: [], busy: false, stopSentence: '', reason: '', onReasonChange: noop,
+      onStop: noop, onEnd: noop, ...extra,
     }));
 
   it('puts a stop in front of whoever is in the room while it is recording', () => {
@@ -176,6 +177,47 @@ describe('the observed round', () => {
   it('labels the record read-only once the round has ended', () => {
     expect(view()).toContain('Read-only');
   });
+
+  /**
+   * The room must not be the one surface that still calls a one-sided
+   * recording a transcript while every rule behind it refuses to
+   * (`evidenceKindOf`, `mayExtract`). The words are still worth reading — they
+   * are just the interviewer's, and the heading has to say so.
+   */
+  it('does not call a one-sided recording a transcript', () => {
+    const out = view(observation({ oneSided: true }));
+
+    expect(out).toContain('What the recording caught');
+    expect(out).not.toMatch(/>Transcript/);
+  });
+
+  it('says why, above the words, so a reader knows what they are looking at', () => {
+    const out = view(observation({
+      oneSided: true,
+      captureReport: { coverage: 'one_sided', sentence: 'Only one voice was captured in this round.' },
+    }));
+
+    expect(out).toContain('Only one voice was captured in this round.');
+  });
+
+  it('still calls an ordinary recording a transcript', () => {
+    expect(view()).toContain('Transcript');
+  });
+});
+
+describe('saying why you are stopping', () => {
+  const box = () => html(createElement(WithdrawalReason, { value: '', onChange: noop, label: 'Why, if you like?' }));
+
+  it('asks, because the reason is what tells the hiring team how to proceed', () => {
+    expect(box()).toContain('Why, if you like?');
+  });
+
+  // Never required. A person exercising a right to stop being recorded must
+  // not have to argue for it first, and the page says so beside the box rather
+  // than only in a placeholder nobody reads.
+  it('says plainly that it is optional', () => {
+    expect(box()).toContain('You do not have to give a reason to stop');
+  });
 });
 
 describe('the candidate consent page', () => {
@@ -186,7 +228,10 @@ describe('the candidate consent page', () => {
     awaiting: ['candidate'], refusal: null,
   };
   const page = (v: Partial<CandidateConsentView> = {}) =>
-    html(createElement(CandidateObserverConsent, { view: { ...base, ...v }, busy: false, onConsent: noop, onDecline: noop, onStop: noop }));
+    html(createElement(CandidateObserverConsent, {
+      view: { ...base, ...v }, busy: false, reason: '', onReasonChange: noop,
+      onConsent: noop, onDecline: noop, onStop: noop,
+    }));
 
   it('shows the notice and asks for a decision', () => {
     expect(page()).toMatch(new RegExp(`${NOTICE}[\\s\\S]*I agree[\\s\\S]*I would rather not be recorded`));
@@ -207,6 +252,15 @@ describe('the candidate consent page', () => {
 
   it('offers nothing to press once declined', () => {
     expect(page({ status: 'DECLINED', decision: 'declined', canConsent: false, canDecline: false })).not.toContain('<button');
+  });
+
+  it('offers a place to say why, beside the decline', () => {
+    expect(page()).toContain('observer-withdrawal-reason');
+  });
+
+  it('does not put it in front of somebody who has already decided', () => {
+    expect(page({ status: 'DECLINED', decision: 'declined', canConsent: false, canDecline: false }))
+      .not.toContain('observer-withdrawal-reason');
   });
 
   // Declining to be recorded is a legitimate choice, and this is the last thing

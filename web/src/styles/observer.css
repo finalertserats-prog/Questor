@@ -119,3 +119,15 @@
   color: var(--ink-2);
   line-height: 1.6;
 }
+
+/* The optional "why" beside a stop. Set apart with space rather than a fill,
+   so it reads as part of the decision and not as a form to be completed. */
+.observer-reason {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.observer-reason p {
+  margin: 0;
+}

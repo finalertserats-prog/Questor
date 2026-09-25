@@ -65,6 +65,8 @@ export interface ObservationView {
   captureStatus: 'OK' | 'DEGRADED';
   captureReport?: CaptureReport;
   oneSided?: boolean;
+  /** Who stopped it and what they said; null while nobody has. */
+  withdrawal?: { by: string | null; reason: string } | null;
   legalHold: boolean;
   candidateLink: string | null;
   transcript: TranscriptSegment[];
@@ -212,6 +214,19 @@ export interface CandidateConsentView {
   listening: boolean;
   awaiting: ObservedParty[];
   refusal: RoomBlockView | null;
+}
+
+/**
+ * What the round's captured speech may be called on screen.
+ *
+ * A recording that heard one voice is not a transcript, and the room must not
+ * be the one surface that still calls it one while every rule behind it
+ * refuses to (`evidenceKindOf`, `mayExtract`). Naming it honestly is the whole
+ * of the fix — the words are still worth reading, they are just the
+ * interviewer's.
+ */
+export function transcriptHeading(observation: Pick<ObservationView, 'oneSided'>): string {
+  return observation.oneSided ? 'What the recording caught' : 'Transcript';
 }
 
 export function candidatePhase(view: CandidateConsentView): CandidatePhase {

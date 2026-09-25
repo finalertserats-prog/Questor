@@ -1,6 +1,6 @@
 import { Icon } from './Icon';
 import {
-  formatOffset, groupQuotesByCompetency, orderedTranscript, quotesStatusSentence, readQuotes,
+  formatOffset, groupQuotesByCompetency, orderedTranscript, quotesStatusSentence, readQuotes, transcriptHeading,
   type CandidateConsentView, type EntryGate, type ObservationView, type RoomBlockView, type RoomPhase,
 } from './observerModel';
 
@@ -70,6 +70,38 @@ export function EntryGateCard({ gate, party, busy, onConsent, onDecline }: {
   );
 }
 
+/** The server's own ceiling (routes/observer.ts), so the box cannot offer more than it keeps. */
+export const MAX_WITHDRAWAL_REASON = 500;
+
+/**
+ * Why somebody is stopping, in their own words.
+ *
+ * Asked for and never required. The reason is most of what makes a withdrawn
+ * round fair rather than merely blocked — it is what tells HR how to proceed —
+ * but a person exercising a right to stop being recorded must not have to argue
+ * for it first, so the box is optional and says so beside itself rather than
+ * only in a placeholder.
+ */
+export function WithdrawalReason({ value, onChange, label }: {
+  value: string;
+  onChange: (next: string) => void;
+  label: string;
+}) {
+  return (
+    <div className="observer-reason" data-testid="observer-withdrawal-reason">
+      <label htmlFor="observer-withdrawal-reason" className="small">{label}</label>
+      <textarea
+        id="observer-withdrawal-reason"
+        value={value}
+        maxLength={MAX_WITHDRAWAL_REASON}
+        onChange={(event) => onChange(event.target.value)}
+        style={{ minHeight: 64 }}
+      />
+      <p className="small muted">Optional. You do not have to give a reason to stop.</p>
+    </div>
+  );
+}
+
 /**
  * A round that cannot go ahead, with what may be done about it.
  *
@@ -120,13 +152,15 @@ export function CandidateLinkCard({ link, onCopy }: { link: string; onCopy?: () 
  * rests on, which is the honest consequence and is said in words above.
  */
 export function ObserverRoomControls({
-  phase, awaiting, busy, stopSentence, degradedMessage, onStop, onEnd,
+  phase, awaiting, busy, stopSentence, degradedMessage, reason, onReasonChange, onStop, onEnd,
 }: {
   phase: RoomPhase;
   awaiting: readonly string[];
   busy: boolean;
   stopSentence: string;
   degradedMessage?: string;
+  reason: string;
+  onReasonChange: (next: string) => void;
   onStop: () => void;
   onEnd: () => void;
 }) {
@@ -142,6 +176,13 @@ export function ObserverRoomControls({
             ? 'Waiting for the candidate to read what is captured and agree. The round starts by itself when they do.'
             : 'Waiting for the person conducting this round to join.'}
         </p>
+      )}
+      {(listening || phase === 'awaiting_others') && (
+        <WithdrawalReason
+          value={reason}
+          onChange={onReasonChange}
+          label="If you would like to say why you are stopping, it goes on the round so the hiring team knows how to proceed."
+        />
       )}
       <div className="row">
         {(listening || phase === 'awaiting_others') && (
@@ -209,12 +250,19 @@ export function ObserverTranscript({ observation }: { observation: ObservationVi
         <QuoteList observation={observation} />
       </section>
       <section className="card" aria-labelledby="observer-transcript-title">
-        <h2 id="observer-transcript-title">
-          Transcript{observation.readOnly && <span className="muted small"> · Read-only</span>}
+        <h2 id="observer-transcript-title" data-testid="observer-transcript-heading">
+          {transcriptHeading(observation)}
+          {observation.readOnly && <span className="muted small"> · Read-only</span>}
         </h2>
+        {/* Said above the words, because it changes what they are. The lines
+            below are still worth reading — they are just one person's. */}
+        {observation.captureReport?.sentence && (
+          <p className="small" data-testid="observer-capture-report">{observation.captureReport.sentence}</p>
+        )}
         <p className="muted small">
           Transcribed from the devices in the room. Speakers are not separated.
-          {observation.captureStatus === 'DEGRADED' && ' Some of the round could not be captured; the gaps are marked.'}
+          {observation.captureStatus === 'DEGRADED' && !observation.oneSided
+            && ' Some of the round could not be captured; the gaps are marked.'}
         </p>
         <TranscriptList observation={observation} />
       </section>
@@ -223,9 +271,11 @@ export function ObserverTranscript({ observation }: { observation: ObservationVi
 }
 
 /** The candidate's page: agree, decline, or stop. */
-export function CandidateObserverConsent({ view, busy, onConsent, onDecline, onStop }: {
+export function CandidateObserverConsent({ view, busy, reason, onReasonChange, onConsent, onDecline, onStop }: {
   view: CandidateConsentView;
   busy: boolean;
+  reason: string;
+  onReasonChange: (next: string) => void;
   onConsent: () => void;
   onDecline: () => void;
   onStop: () => void;
@@ -260,6 +310,13 @@ export function CandidateObserverConsent({ view, busy, onConsent, onDecline, onS
             ? 'Waiting for your interviewer to join. Recording starts when they do.'
             : 'Your interviewer is here. Recording has started.'}
         </p>
+      )}
+      {(view.canDecline || view.canStop) && (
+        <WithdrawalReason
+          value={reason}
+          onChange={onReasonChange}
+          label="If you would like to say why, the hiring team will see it and it will help them decide what happens next."
+        />
       )}
       <div className="row">
         {view.canConsent && (

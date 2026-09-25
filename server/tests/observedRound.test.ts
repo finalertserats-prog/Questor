@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   blockingDecline, captureConsented, captureLiveness, captureReport, consentOutstanding, ENTRY_NOTICE,
-  CAPTURE_SILENCE_MS, firstDecline, hearingCheck, mayEnterRoom, roundBlock, staffPartyFor,
-  type ObservationStatus, type ParticipantRef,
+  CAPTURE_SILENCE_MS, firstDecline, hearingCheck, mayEnterRoom, requiredOf, roundBlock, staffPartyFor,
+  type ObservationStatus, type ParticipantRef, type RoomRoster,
 } from '../src/domain/observedRound.js';
 
 /**
@@ -10,62 +10,137 @@ import {
  *
  * The property under test throughout is the one the whole design rests on:
  * there is no combination of inputs that admits somebody, or lets capture run,
- * without an affirmative consent for every required party. The refusals matter
- * as much as the single acceptance, so most of these are refusals.
+ * without an affirmative consent for every person the round requires. The
+ * refusals matter as much as the single acceptance, so most of these are
+ * refusals.
+ *
+ * "Requires" is computed from the round's SEATS as well as its rows, which is
+ * the correction a review of the rebased branch forced: seats and rows drift
+ * apart the moment HR swaps an expert or adds a panellist, and a rule that
+ * could only see rows could not see the person who had just been seated.
  */
 
 const AT = new Date('2026-09-25T09:00:00.000Z');
 
-function person(party: ParticipantRef['party'], consented: boolean, declined = false): ParticipantRef {
-  return { party, personId: `${party}-1`, consentAt: consented ? AT : null, declinedAt: declined ? AT : null };
+function person(
+  party: ParticipantRef['party'], consented: boolean, declined = false, over: Partial<ParticipantRef> = {},
+): ParticipantRef {
+  return {
+    party, personId: `${party}-1`,
+    consentAt: consented ? AT : null, declinedAt: declined ? AT : null, admittedAt: null, ...over,
+  };
 }
 
 const CANDIDATE = person('candidate', true);
 const INTERVIEWER = person('interviewer', true);
 const BOTH = [CANDIDATE, INTERVIEWER];
 
+/** The ordinary round: one seated interviewer, and both of them agreed. */
+const SEATED: RoomRoster = { participants: BOTH, seats: ['interviewer-1'] };
+
+const roster = (participants: readonly ParticipantRef[], seats: readonly string[] = []): RoomRoster =>
+  ({ participants, seats });
+
 function entry(over: Partial<Parameters<typeof mayEnterRoom>[0]> = {}) {
   return mayEnterRoom({
-    status: 'CONSENTED' as ObservationStatus, participants: BOTH, roundStatus: 'SCHEDULED', me: INTERVIEWER, ...over,
+    status: 'CONSENTED' as ObservationStatus, roster: SEATED, roundStatus: 'SCHEDULED', me: INTERVIEWER, ...over,
   });
 }
 
+describe('who the round requires', () => {
+  it('always requires the candidate', () => {
+    expect(requiredOf(SEATED).some((r) => r.party === 'candidate')).toBe(true);
+  });
+
+  /**
+   * The hole this rule exists to close.
+   *
+   * HR seats a second panellist, or swaps in a different expert, after the
+   * observation was made. That person has no participant row at all — so a rule
+   * reading rows could not see them, while the device in the room hears them
+   * perfectly well.
+   */
+  it('requires somebody seated after the observation was made, with no row of their own', () => {
+    const late = requiredOf(roster(BOTH, ['interviewer-1', 'interviewer-2']));
+
+    expect(late.find((r) => r.personId === 'interviewer-2')?.row).toBeNull();
+  });
+
+  it('holds the round closed until that late arrival has agreed', () => {
+    expect(consentOutstanding(roster(BOTH, ['interviewer-1', 'interviewer-2']))).toEqual(['interviewer']);
+  });
+
+  /**
+   * Un-seating before anybody joined means the person is not coming, so they
+   * stop being required — which is exactly what makes swapping a busy expert
+   * work rather than stranding the candidate.
+   */
+  it('stops requiring somebody whose seat was taken away before the round began', () => {
+    const swappedOut = person('interviewer', false, true, { personId: 'interviewer-2' });
+
+    expect(captureConsented(roster([...BOTH, swappedOut], ['interviewer-1']))).toBe(true);
+  });
+
+  /**
+   * After admission the door only opens one way. Their voice may already be in
+   * the recording, and un-requiring them would let a round that a withdrawal
+   * correctly blocked be unblocked by quietly dropping them from the panel.
+   */
+  it('goes on requiring somebody who was in the room, seat or no seat', () => {
+    const wasInside = person('interviewer', true, false, { personId: 'interviewer-2', admittedAt: AT });
+
+    expect(requiredOf(roster([...BOTH, wasInside], ['interviewer-1'])).map((r) => r.personId))
+      .toContain('interviewer-2');
+  });
+
+  it('will not let dropping a withdrawn panellist from the seat unblock the round', () => {
+    const withdrew: ParticipantRef = {
+      party: 'interviewer', personId: 'interviewer-2', consentAt: null, declinedAt: AT, admittedAt: AT,
+    };
+
+    expect(captureConsented(roster([...BOTH, withdrew], ['interviewer-1']))).toBe(false);
+  });
+
+  it('still needs an interviewer on a round booked with typed names and nobody seated', () => {
+    expect(consentOutstanding(roster([CANDIDATE]))).toEqual(['interviewer']);
+  });
+
+  it('accepts whoever took on a round nobody was seated for', () => {
+    expect(consentOutstanding(roster(BOTH))).toEqual([]);
+  });
+});
+
 describe('who has agreed', () => {
   it('names the candidate as outstanding until they have agreed', () => {
-    expect(consentOutstanding([INTERVIEWER])).toEqual(['candidate']);
+    expect(consentOutstanding(roster([INTERVIEWER]))).toEqual(['candidate']);
   });
 
   it('names the interviewer as outstanding until they have agreed', () => {
-    expect(consentOutstanding([CANDIDATE])).toEqual(['interviewer']);
+    expect(consentOutstanding(roster([CANDIDATE], ['interviewer-1']))).toEqual(['interviewer']);
   });
 
   it('does not hold the round open for HR, who was never required', () => {
-    expect(consentOutstanding(BOTH)).toEqual([]);
+    expect(consentOutstanding(SEATED)).toEqual([]);
   });
 
   // A Gold round may be booked with two people conducting it. Both are on the
   // same call, so the first one's device hears the second whether or not the
   // second ever opened Questor — one agreement between them is not consent.
   it('holds the round open until EVERY seated interviewer has agreed', () => {
-    const second = { ...person('interviewer', false), personId: 'interviewer-2' };
+    const second = person('interviewer', false, false, { personId: 'interviewer-2' });
 
-    expect(consentOutstanding([CANDIDATE, INTERVIEWER, second])).toEqual(['interviewer']);
+    expect(consentOutstanding(roster([...BOTH, second], ['interviewer-1', 'interviewer-2']))).toEqual(['interviewer']);
   });
 
   it('opens once both seated interviewers have agreed', () => {
-    const second = { ...person('interviewer', true), personId: 'interviewer-2' };
+    const second = person('interviewer', true, false, { personId: 'interviewer-2' });
 
-    expect(consentOutstanding([CANDIDATE, INTERVIEWER, second])).toEqual([]);
-  });
-
-  it('refuses capture while a second seated interviewer has not agreed', () => {
-    const second = { ...person('interviewer', false), personId: 'interviewer-2' };
-
-    expect(captureConsented([CANDIDATE, INTERVIEWER, second])).toBe(false);
+    expect(consentOutstanding(roster([...BOTH, second], ['interviewer-1', 'interviewer-2']))).toEqual([]);
   });
 
   it('counts a party who declined as not having agreed', () => {
-    expect(consentOutstanding([CANDIDATE, person('interviewer', false, true)])).toEqual(['interviewer']);
+    expect(consentOutstanding(roster([CANDIDATE, person('interviewer', false, true)], ['interviewer-1'])))
+      .toEqual(['interviewer']);
   });
 
   it('reports the person who said no', () => {
@@ -75,36 +150,46 @@ describe('who has agreed', () => {
 
 describe('whether capture may run at all', () => {
   it('allows it only once every required party has agreed', () => {
-    expect(captureConsented(BOTH)).toBe(true);
+    expect(captureConsented(SEATED)).toBe(true);
   });
 
   it('refuses it when nobody has agreed', () => {
-    expect(captureConsented([])).toBe(false);
+    expect(captureConsented(roster([]))).toBe(false);
   });
 
   it('refuses it when only the interviewer has agreed', () => {
-    expect(captureConsented([INTERVIEWER])).toBe(false);
+    expect(captureConsented(roster([INTERVIEWER], ['interviewer-1']))).toBe(false);
+  });
+
+  it('refuses it while a second seated interviewer has not agreed', () => {
+    const second = person('interviewer', false, false, { personId: 'interviewer-2' });
+
+    expect(captureConsented(roster([...BOTH, second], ['interviewer-1', 'interviewer-2']))).toBe(false);
   });
 
   // An HR colleague declining means they are not coming, not that the
   // candidate's interview is called off. They are still never captured: only
   // the entry gate admits anybody, and it admits nobody who has not agreed.
   it('still allows it when an HR colleague who was never required declined', () => {
-    expect(captureConsented([...BOTH, person('hr', false, true)])).toBe(true);
+    expect(captureConsented(roster([...BOTH, person('hr', false, true)], ['interviewer-1']))).toBe(true);
   });
 
   it('reports no blocking decline for an HR colleague who said no', () => {
-    expect(blockingDecline([...BOTH, person('hr', false, true)])).toBeNull();
+    expect(blockingDecline(roster([...BOTH, person('hr', false, true)], ['interviewer-1']))).toBeNull();
   });
 
   it('reports the candidate as the blocking decline when they said no', () => {
-    expect(blockingDecline([person('candidate', false, true), INTERVIEWER])?.party).toBe('candidate');
+    expect(blockingDecline(roster([person('candidate', false, true), INTERVIEWER], ['interviewer-1']))?.party)
+      .toBe('candidate');
   });
 });
 
 describe('a round that cannot go ahead', () => {
-  const blocked = (participants: readonly ParticipantRef[], status: ObservationStatus = 'AWAITING_CONSENT') =>
-    roundBlock({ status, participants, roundStatus: 'SCHEDULED' });
+  const blocked = (
+    participants: readonly ParticipantRef[],
+    status: ObservationStatus = 'AWAITING_CONSENT',
+    over: Partial<Parameters<typeof roundBlock>[0]> = {},
+  ) => roundBlock({ status, roster: roster(participants, ['interviewer-1']), roundStatus: 'SCHEDULED', ...over });
 
   it('says nothing is in the way while everyone is simply still to answer', () => {
     expect(blocked([person('candidate', false), person('interviewer', false)])).toBeNull();
@@ -137,8 +222,54 @@ describe('a round that cannot go ahead', () => {
     expect(blocked(BOTH, 'STOPPED')?.reason).toContain('stopped part-way');
   });
 
+  /**
+   * The owner's change (2026-09-25): a round that ran for twenty minutes and
+   * was then withdrawn from tells the hiring team a great deal about how to
+   * proceed. Burying the partial record would leave them deciding on nothing.
+   */
+  it('tells HR the partial record exists when something was captured first', () => {
+    expect(blocked(BOTH, 'STOPPED', { hasPartialRecord: true })?.reason)
+      .toContain('record of what was actually said up to then');
+  });
+
+  it('offers reading it as a next step, not only rebooking', () => {
+    expect(blocked(BOTH, 'STOPPED', { hasPartialRecord: true })?.nextSteps.join(' '))
+      .toContain('Read what was captured');
+  });
+
+  it('says plainly when stopping left nothing behind', () => {
+    expect(blocked(BOTH, 'STOPPED', { hasPartialRecord: false })?.reason)
+      .toContain('Nothing was captured before it stopped');
+  });
+
+  it('quotes the reason the person gave, in their own words', () => {
+    const block = blocked(BOTH, 'STOPPED', {
+      withdrawal: { by: 'candidate', reason: 'I did not know this would be recorded.' },
+    });
+
+    expect(block?.reason).toContain('I did not know this would be recorded.');
+  });
+
+  it('says who gave the reason, so HR knows who to talk to', () => {
+    expect(blocked(BOTH, 'STOPPED', { withdrawal: { by: 'candidate', reason: 'Not today.' } })?.reason)
+      .toContain('The candidate gave this reason');
+  });
+
+  it('says nothing extra when no reason was given, rather than implying one was withheld', () => {
+    expect(blocked(BOTH, 'STOPPED', { withdrawal: { by: 'candidate', reason: '' } })?.reason)
+      .not.toMatch(/reason/i);
+  });
+
+  it('carries the reason on a decline as well as on a stop', () => {
+    const block = blocked([person('candidate', false, true), INTERVIEWER], 'DECLINED', {
+      withdrawal: { by: 'candidate', reason: 'I would rather not be recorded.' },
+    });
+
+    expect(block?.reason).toContain('I would rather not be recorded.');
+  });
+
   it('stops asking about a round that already ran', () => {
-    expect(roundBlock({ status: 'DECLINED', participants: BOTH, roundStatus: 'CANCELLED' })).toBeNull();
+    expect(roundBlock({ status: 'DECLINED', roster: SEATED, roundStatus: 'CANCELLED' })).toBeNull();
   });
 });
 
@@ -156,22 +287,42 @@ describe('entering the room', () => {
   });
 
   it('refuses the interviewer while the candidate has still to agree', () => {
-    const decision = entry({ status: 'AWAITING_CONSENT', participants: [INTERVIEWER, person('candidate', false)] });
+    const decision = entry({
+      status: 'AWAITING_CONSENT',
+      roster: roster([INTERVIEWER, person('candidate', false)], ['interviewer-1']),
+    });
+    expect(decision.allowed).toBe(false);
+  });
+
+  it('refuses the first interviewer while a colleague seated beside them has not agreed', () => {
+    const decision = entry({
+      status: 'AWAITING_CONSENT',
+      roster: roster(BOTH, ['interviewer-1', 'interviewer-2']),
+    });
     expect(decision.allowed).toBe(false);
   });
 
   it('says the room opens by itself, so waiting is not a dead end either', () => {
-    const decision = entry({ status: 'AWAITING_CONSENT', participants: [INTERVIEWER, person('candidate', false)] });
+    const decision = entry({
+      status: 'AWAITING_CONSENT',
+      roster: roster([INTERVIEWER, person('candidate', false)], ['interviewer-1']),
+    });
     expect(decision.allowed === false && decision.nextSteps.length).toBeGreaterThan(0);
   });
 
   it('refuses everyone once the candidate has declined, the interviewer included', () => {
-    expect(entry({ status: 'DECLINED', participants: [INTERVIEWER, person('candidate', false, true)] }).allowed).toBe(false);
+    expect(entry({
+      status: 'DECLINED',
+      roster: roster([INTERVIEWER, person('candidate', false, true)], ['interviewer-1']),
+    }).allowed).toBe(false);
   });
 
   it('refuses a consented HR colleague while the candidate has still to agree', () => {
     const hr = person('hr', true);
-    expect(entry({ status: 'AWAITING_CONSENT', me: hr, participants: [INTERVIEWER, hr, person('candidate', false)] }).allowed).toBe(false);
+    expect(entry({
+      status: 'AWAITING_CONSENT', me: hr,
+      roster: roster([INTERVIEWER, hr, person('candidate', false)], ['interviewer-1']),
+    }).allowed).toBe(false);
   });
 
   it('refuses entry to a round the team already closed', () => {
@@ -190,6 +341,7 @@ describe('entering the room', () => {
     expect(entry({ status: 'LISTENING' }).allowed).toBe(true);
   });
 });
+
 
 describe('who a member of staff is in the room', () => {
   it('calls the person seated on the round the interviewer', () => {

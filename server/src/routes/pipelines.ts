@@ -30,7 +30,8 @@ import {
   MAX_ENTRY_CHARS, MAX_EVIDENCE_ENTRIES, type QuarantineInput,
 } from '../domain/roundEvidence.js';
 import {
-  ENTRY_NOTICE_VERSION, captureReport, roundBlock, type ObservationStatus, type ObservedParty,
+  ENTRY_NOTICE_VERSION, blockOfRound, captureReport,
+  type ObservationStatus, type RoundSnapshot,
 } from '../domain/observedRound.js';
 import { invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { scorecardForFit } from '../services/scorecards.js';
@@ -58,12 +59,13 @@ export const roundInclude = {
   observation: {
     select: {
       status: true, captureStatus: true, oneSided: true,
+      withdrawnReason: true, stoppedBy: true, declinedBy: true,
       // SPEECH only. A gap is a stretch the observer could NOT capture, so a
       // round whose every segment is a gap has captured nothing — counting
       // those would let it report as a transcript of a conversation none of
       // which was heard.
       _count: { select: { segments: { where: { kind: 'SPEECH' } } } },
-      participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true } },
+      participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true, admittedAt: true } },
     },
   },
 };
@@ -74,8 +76,14 @@ export type RoundRow = InterviewRound & {
     status: string;
     captureStatus: string;
     oneSided: boolean;
+    withdrawnReason: string;
+    stoppedBy: string | null;
+    declinedBy: string | null;
     _count: { segments: number };
-    participants: Array<{ party: string; personId: string; consentAt: Date | null; declinedAt: Date | null }>;
+    participants: Array<{
+      party: string; personId: string;
+      consentAt: Date | null; declinedAt: Date | null; admittedAt: Date | null;
+    }>;
   } | null;
 };
 
@@ -115,6 +123,15 @@ export async function roundViewer(req: Request, pipeline: PipelineWithRounds): P
       panelUserIds: r.panel.map((p) => p.userId), hasNotes: r.notes.trim().length > 0,
     })),
     names,
+  };
+}
+
+/** The round as the shared "why can this not go ahead" reader wants it. */
+function observedSnapshot(round: RoundRow): RoundSnapshot {
+  return {
+    roundStatus: round.status,
+    seats: round.panel.map((seat) => seat.userId),
+    observation: round.observation ? { ...round.observation, speechCount: round.observation._count.segments } : null,
   };
 }
 
@@ -176,15 +193,7 @@ export function presentRound(round: RoundRow, viewer: RoundViewer) {
     // `notesWithheld` above: a round nobody may enter must never read like a
     // round nobody got round to booking, so it carries a sentence and what can
     // be done next rather than a status the page would have to interpret.
-    observerBlocked: round.observation
-      ? roundBlock({
-        status: round.observation.status as ObservationStatus,
-        participants: round.observation.participants.map((p) => ({
-          party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
-        })),
-        roundStatus: round.status,
-      })
-      : null,
+    observerBlocked: blockOfRound(observedSnapshot(round)),
     // What the recording got, once the round is over: everything, some of it,
     // one voice, or nothing. A fact about the recording, said to HR in the same
     // register as a round that could not go ahead.

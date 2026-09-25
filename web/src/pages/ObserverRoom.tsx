@@ -54,6 +54,9 @@ export function ObserverRoom() {
   // the effect below re-runs when it changes, and so a failed join is not
   // retried on every poll.
   const [entered, setEntered] = useState(false);
+  // Optional, and kept here rather than in the control so a half-written reason
+  // survives a poll re-render while the person is still typing it.
+  const [reason, setReason] = useState('');
 
   const stopCapture = useCallback(async (flush: boolean) => {
     const capture = captureRef.current;
@@ -67,6 +70,28 @@ export function ObserverRoom() {
     let active = true;
     let timer: number | undefined;
     let delay = POLL_DELAY_MS;
+    /**
+     * Proof this tab is still capturing — and the round's chance to tell it to
+     * stop.
+     *
+     * OUTSIDE the successful-read branch on purpose. The beat is the authority
+     * and the read is a courtesy: a device whose polls are failing still holds
+     * an open microphone, and that is exactly the device that most needs to be
+     * told the round has been withdrawn from. Tying the beat to a successful
+     * GET meant a tab that could not read could not be stopped either.
+     */
+    const beat = async () => {
+      if (!captureRef.current) return;
+      try {
+        const answer = await api.post<{ capture?: string }>(`${base}/heartbeat`, {});
+        if (answer.capture === 'stop') await stopCapture(false);
+      } catch {
+        // A failed beat is not a reason to stop capturing: the round may be
+        // running perfectly and the network may be having a moment. The server
+        // notices the silence on its own (`captureLiveness`).
+      }
+    };
+
     const poll = async () => {
       const requestedAt = Date.now();
       try {
@@ -80,12 +105,6 @@ export function ObserverRoom() {
         // "listening" and would stop a capture that is entitled to run.
         const stale = requestedAt < captureStartedAt.current;
         if (captureRef.current && !stale && next.observation?.status !== 'LISTENING') void stopCapture(false);
-        // Proof this tab is still capturing, sent between one stretch of speech
-        // and the next. Without it a quiet meeting and a closed tab look the
-        // same to the server, and only one of them is a problem.
-        if (captureRef.current && next.observation?.status === 'LISTENING') {
-          void api.post(`${base}/heartbeat`, {}).catch(() => undefined);
-        }
         const phase = roomPhase(next);
         const quotesPending = next.observation?.quotes.status === 'PENDING' && phase === 'ended';
         if (!LIVE_PHASES.has(phase) && !quotesPending) return;
@@ -94,6 +113,7 @@ export function ObserverRoom() {
         setError(err instanceof Error ? err.message : 'Could not load the observer.');
         delay = nextPollDelay(delay);
       }
+      await beat();
       timer = window.setTimeout(() => { void poll(); }, delay);
     };
     void poll();
@@ -103,12 +123,14 @@ export function ObserverRoom() {
   // Leaving the page is a stop, never a silent background recording.
   useEffect(() => () => { void stopCapture(false); }, [stopCapture]);
 
-  const act = useCallback(async (path: string, before?: () => Promise<void>): Promise<boolean> => {
+  const act = useCallback(async (
+    path: string, before?: () => Promise<void>, body: Record<string, unknown> = {},
+  ): Promise<boolean> => {
     setBusy(true);
     setError('');
     try {
       await before?.();
-      setView(await api.post<ObserverRoundView>(`${base}/${path}`, {}));
+      setView(await api.post<ObserverRoundView>(`${base}/${path}`, body));
       return true;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'That did not work. Try again.');
@@ -229,7 +251,7 @@ export function ObserverRoom() {
           party={view.you.party}
           busy={busy}
           onConsent={() => void act('consent')}
-          onDecline={() => void act('decline')}
+          onDecline={() => void act('decline', undefined, { reason })}
         />
       )}
       {phase === 'awaiting_others' && observation?.candidateLink && observation.awaiting.includes('candidate') && (
@@ -242,7 +264,9 @@ export function ObserverRoom() {
           busy={busy}
           stopSentence={stopSentence(observation)}
           degradedMessage={degraded || (observation.captureStatus === 'DEGRADED' ? 'Part of the round could not be transcribed; the transcript marks the gaps.' : undefined)}
-          onStop={() => void act('stop', () => stopCapture(false))}
+          reason={reason}
+          onReasonChange={setReason}
+          onStop={() => void act('stop', () => stopCapture(false), { reason })}
           onEnd={() => void act('end', () => stopCapture(true))}
         />
       )}

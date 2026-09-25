@@ -1624,6 +1624,12 @@ model RoundObservation {
   startedAt            DateTime?
   stoppedBy            String?   // interviewer | candidate | hr
   stoppedAt            DateTime?
+  /// Why the person who withdrew said they were withdrawing, in their own
+  /// words. '' when they gave none, and giving one is never a condition of
+  /// stopping: a person withdrawing consent must not have to justify
+  /// themselves to be allowed to. Part of the round's record rather than a
+  /// support note — HR decides what happens next from it.
+  withdrawnReason      String    @default("")
   endedAt              DateTime?
   // OK | DEGRADED (some stretch of the round could not be captured)
   captureStatus        String    @default("OK")

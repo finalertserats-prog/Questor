@@ -8,7 +8,7 @@ import { isOperator } from '../middleware/operator.js';
 import { isPlatformOperator } from '../middleware/platformOperator.js';
 import type { AuthClaims } from './auth.js';
 import { identityCodeTroubleDrafts } from './identityCodeTrouble.js';
-import { roundBlock, type ObservationStatus, type ObservedParty } from '../domain/observedRound.js';
+import { blockOfRound } from '../domain/observedRound.js';
 import {
   actionFor, compareNeedsYou, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, NOT_STARTED_STATES,
   type GateContext, type NeedsYouKind,
@@ -174,19 +174,26 @@ async function blockedRoundDrafts(tenantId: string, candidate: Prisma.CandidateW
       where, orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }], take: limit,
       select: {
         id: true, scheduledAt: true, status: true,
-        observation: { select: { status: true, participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true } } } },
+        panel: { select: { userId: true } },
+        observation: {
+          select: {
+            status: true, withdrawnReason: true, stoppedBy: true, declinedBy: true,
+            _count: { select: { segments: { where: { kind: 'SPEECH' } } } },
+            participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true, admittedAt: true } },
+          },
+        },
         pipeline: { select: { candidate: { select: { id: true, fullName: true, role: { select: { id: true, title: true } } } } } },
       },
     }),
     prisma.interviewRound.count({ where }),
   ]);
   const drafts: Draft[] = rows.flatMap((round) => {
-    const block = roundBlock({
-      status: (round.observation?.status ?? 'AWAITING_CONSENT') as ObservationStatus,
-      participants: (round.observation?.participants ?? []).map((p) => ({
-        party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
-      })),
+    const block = blockOfRound({
       roundStatus: round.status,
+      seats: round.panel.map((seat) => seat.userId),
+      observation: round.observation
+        ? { ...round.observation, speechCount: round.observation._count.segments }
+        : null,
     });
     // The query and the rule are allowed to disagree — the query is a coarse
     // filter over indexed columns, the rule is the answer. When they do, the

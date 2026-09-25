@@ -8,7 +8,9 @@ import { peerQuarantine } from '../domain/roundEvidence.js';
 import {
   ENTRY_CONSEQUENCE, ENTRY_NOTICE, ENTRY_NOTICE_VERSION, REQUIRED_PARTIES, blockingDecline, captureConsented,
   captureLiveness, captureReport, consentOutstanding, hearingCheck, mayEnterRoom, roundBlock, staffPartyFor,
+  toParticipantRef,
   type CaptureAlarm, type HearingCheck, type ObservationStatus, type ObservedParty, type ParticipantRef,
+  type RoomRoster, type Withdrawal,
 } from '../domain/observedRound.js';
 import type { AuthClaims } from './auth.js';
 import { findInvitationByToken, invitationSecretColumns, mintInvitationToken, openInvitationToken } from './invitations.js';
@@ -40,6 +42,10 @@ export const OBSERVER_NOTICE_VERSION = ENTRY_NOTICE_VERSION;
 
 export const OBSERVER_CAPTURE_NOTICE = ENTRY_NOTICE;
 
+const ONE_SIDED_QUOTES_NOTE =
+  'No quotes were kept for this round. The recording heard only one side of the conversation, so anything taken '
+  + 'from it would be the interviewer\'s own words filed under the candidate\'s competencies.';
+
 export const QUOTES_FRAMING =
   'Verbatim quotes from the transcript, filed by competency. Quotes only, no AI judgement: the observer does not score, '
   + 'rate or recommend. The interviewers\' own notes and a person\'s decision are the assessment.';
@@ -58,13 +64,42 @@ export type RoundWithPipeline = InterviewRound & {
   panel: { userId: string }[];
 };
 
-export type ObservationWithParticipants = RoundObservation & { participants: ObservationParticipant[] };
+/**
+ * An observation with everything the consent rules need to be answered from
+ * it: the rows, AND the round's seats.
+ *
+ * Loaded together on purpose. The rules need both (domain/observedRound.ts,
+ * `RoomRoster`), and a shape that carried only the rows would let a caller
+ * answer "has everyone agreed?" without the seats — which is exactly the miss
+ * that let a late-seated panellist be captured with nothing on record.
+ */
+export type ObservationWithParticipants = RoundObservation & {
+  participants: ObservationParticipant[];
+  round: { status: string; panel: { userId: string }[] };
+};
+
+/** What a load of an observation must always fetch. See the type above. */
+const ROSTER_INCLUDE = {
+  participants: true,
+  round: { select: { status: true, panel: { select: { userId: true } } } },
+} as const;
 
 /** The participant rows in the shape the pure rules want. */
 export function refsOf(participants: readonly ObservationParticipant[]): ParticipantRef[] {
-  return participants.map((p) => ({
-    party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
-  }));
+  return participants.map(toParticipantRef);
+}
+
+/** The rows and the seats, which is what every gate in this file is decided on. */
+export function rosterOf(observation: ObservationWithParticipants): RoomRoster {
+  return { participants: refsOf(observation.participants), seats: observation.round.panel.map((seat) => seat.userId) };
+}
+
+/** Who withdrew and what they said, for the sentence HR reads. */
+function withdrawalOf(observation: RoundObservation): Withdrawal {
+  return {
+    by: (observation.stoppedBy ?? observation.declinedBy ?? null) as ObservedParty | null,
+    reason: observation.withdrawnReason,
+  };
 }
 
 /**
@@ -116,6 +151,17 @@ export async function loadSeat(auth: AuthClaims, roundId: string): Promise<Staff
   // 404, matching services/access.ts: telling a caller a round exists but is
   // not theirs confirms that a named person is being interviewed.
   if (!party) throw new HttpError(404, 'Round not found');
+  // THE SEAT IS THE OBJECT SCOPE, and skipping `assertCanAccessCandidate` for a
+  // seated person is deliberate rather than an oversight. It has been raised by
+  // a reviewer twice and confirmed both times, so it is written down here
+  // rather than re-argued: a `RoundInterviewer` row IS an object-scope grant —
+  // the hiring team put this named person in the room with this named
+  // candidate, which is a narrower and more explicit claim than
+  // `candidateScope` makes for anybody else. Routing an expert through
+  // `candidateScope` instead would mean widening it to admit the `sme`
+  // relation, which services/access.ts excludes on purpose, and that would hand
+  // every `candidateScope` route in the product a new way in.
+  //
   // Scoped on the SEAT, never on the party. A round booked with typed names has
   // nobody seated, so `staffPartyFor` calls whoever runs the process its
   // interviewer — and if that answer were allowed to skip the candidate scope,
@@ -167,8 +213,13 @@ export function candidateLinkFor(observation: Pick<RoundObservation, 'status' | 
  * AWAITING_CONSENT, so nothing is captured by the act of creating it.
  */
 export async function ensureObservation(round: RoundWithPipeline): Promise<ObservationWithParticipants> {
-  const existing = await prisma.roundObservation.findUnique({ where: { roundId: round.id }, include: { participants: true } });
-  if (existing) return existing;
+  const existing = await prisma.roundObservation.findUnique({ where: { roundId: round.id }, include: ROSTER_INCLUDE });
+  // Seats can change after the observation was made — HR swaps an expert who
+  // cannot make it, or adds a second panellist as the round comes together —
+  // so a row is made for anybody seated since. The rules do not depend on this
+  // having run (they read the seats directly), but without it a newly seated
+  // person would have nothing to agree against when they opened the room.
+  if (existing) return syncSeats(existing);
   if (!observerApplies(round)) throw new HttpError(409, 'This round does not have an AI observer.');
 
   const token = mintInvitationToken();
@@ -192,13 +243,13 @@ export async function ensureObservation(round: RoundWithPipeline): Promise<Obser
           ],
         },
       },
-      include: { participants: true },
+      include: ROSTER_INCLUDE,
     });
   } catch (err) {
     // Two people opening the round at the same moment is ordinary, not an
     // error: whichever insert lost the race reads the winner's row.
     if ((err as { code?: string }).code === 'P2002') {
-      return prisma.roundObservation.findUniqueOrThrow({ where: { roundId: round.id }, include: { participants: true } });
+      return prisma.roundObservation.findUniqueOrThrow({ where: { roundId: round.id }, include: ROSTER_INCLUDE });
     }
     throw err;
   }
@@ -225,7 +276,33 @@ export async function participantRow(
 }
 
 async function reload(observationId: string): Promise<ObservationWithParticipants> {
-  return prisma.roundObservation.findUniqueOrThrow({ where: { id: observationId }, include: { participants: true } });
+  return prisma.roundObservation.findUniqueOrThrow({ where: { id: observationId }, include: ROSTER_INCLUDE });
+}
+
+/**
+ * A row for everybody seated on the round who has not got one.
+ *
+ * Only ever adds. A seat taken away leaves its row behind, because the row is
+ * the record that the person was asked and what they said — and if they had
+ * already been let into the room, `requiredOf` still counts them
+ * (domain/observedRound.ts explains why that door only opens one way).
+ */
+async function syncSeats(observation: ObservationWithParticipants): Promise<ObservationWithParticipants> {
+  const known = new Set(observation.participants.map((p) => p.personId));
+  const unasked = observation.round.panel.filter((seat) => !known.has(seat.userId));
+  if (unasked.length === 0) return observation;
+  // Upserts rather than a bulk insert: two people opening the round at the same
+  // moment would otherwise race each other into a unique-constraint failure on
+  // a read path, which is a 500 in front of somebody who did nothing wrong.
+  await Promise.all(unasked.map((seat) => prisma.observationParticipant.upsert({
+    where: { observationId_personId: { observationId: observation.id, personId: seat.userId } },
+    create: {
+      tenantId: observation.tenantId, observationId: observation.id,
+      party: 'interviewer', personId: seat.userId, noticeVersion: ENTRY_NOTICE_VERSION,
+    },
+    update: {},
+  })));
+  return reload(observation.id);
 }
 
 /**
@@ -239,20 +316,20 @@ async function reload(observationId: string): Promise<ObservationWithParticipant
  */
 async function settleStatus(observation: ObservationWithParticipants): Promise<ObservationWithParticipants> {
   const fresh = await reload(observation.id);
-  const refs = refsOf(fresh.participants);
+  const roster = rosterOf(fresh);
   // Asked of a live round deliberately: this only ever moves an observation out
   // of AWAITING_CONSENT, and a round that is over is left exactly as it was
   // rather than being rewritten by somebody's late answer.
-  const blocked = roundBlock({ status: fresh.status as ObservationStatus, participants: refs, roundStatus: 'SCHEDULED' });
+  const blocked = roundBlock({ status: fresh.status as ObservationStatus, roster, roundStatus: 'SCHEDULED' });
   const want: ObservationStatus | null =
     blocked && fresh.status === 'AWAITING_CONSENT' ? 'DECLINED'
-      : captureConsented(refs) && fresh.status === 'AWAITING_CONSENT' ? 'CONSENTED'
+      : captureConsented(roster) && fresh.status === 'AWAITING_CONSENT' ? 'CONSENTED'
         : null;
   if (!want) return fresh;
   const moved = await prisma.roundObservation.updateMany({
     where: { id: fresh.id, status: 'AWAITING_CONSENT' },
     data: want === 'DECLINED'
-      ? { status: 'DECLINED', declinedAt: new Date(), declinedBy: declinerOf(refs) }
+      ? { status: 'DECLINED', declinedAt: new Date(), declinedBy: declinerOf(roster) }
       : { status: 'CONSENTED' },
   });
   return moved.count === 1 ? reload(fresh.id) : fresh;
@@ -265,8 +342,8 @@ async function settleStatus(observation: ObservationWithParticipants): Promise<O
  * would rather not be recorded simply does not join; naming them here would
  * record a round as stopped by somebody who had no say in whether it ran.
  */
-function declinerOf(refs: readonly ParticipantRef[]): string {
-  return blockingDecline(refs)?.party ?? 'candidate';
+function declinerOf(roster: RoomRoster): string {
+  return blockingDecline(roster)?.party ?? 'candidate';
 }
 
 async function audit(tenantId: string, actorId: string, action: string, observationId: string, after?: unknown) {
@@ -280,18 +357,21 @@ async function audit(tenantId: string, actorId: string, action: string, observat
 // The gate
 
 /** What the entry gate shows a person before they decide, and after. */
-export function entryGateFor(observation: ObservationWithParticipants, round: { status: string }, personId: string) {
-  const refs = refsOf(observation.participants);
-  const me = refs.find((p) => p.personId === personId) ?? null;
+export function entryGateFor(
+  observation: ObservationWithParticipants, round: { status: string }, personId: string, hasPartialRecord = false,
+) {
+  const roster = rosterOf(observation);
+  const me = roster.participants.find((p) => p.personId === personId) ?? null;
   const decision = mayEnterRoom({
-    status: observation.status as ObservationStatus, participants: refs, roundStatus: round.status, me,
+    status: observation.status as ObservationStatus, roster, roundStatus: round.status, me,
+    withdrawal: withdrawalOf(observation), hasPartialRecord,
   });
   return {
     notice: ENTRY_NOTICE,
     noticeVersion: ENTRY_NOTICE_VERSION,
     consequence: ENTRY_CONSEQUENCE,
     decided: me ? (me.declinedAt ? 'declined' : me.consentAt ? 'consented' : 'pending') : 'pending',
-    awaiting: consentOutstanding(refs),
+    awaiting: consentOutstanding(roster),
     mayEnter: decision.allowed,
     refusal: decision.allowed ? null : { reason: decision.reason, nextSteps: decision.nextSteps },
   };
@@ -327,7 +407,7 @@ export async function consentToEntry(
  * change, 2026-09-25.)
  */
 export async function declineEntry(
-  observation: ObservationWithParticipants, party: ObservedParty, personId: string, actorId: string,
+  observation: ObservationWithParticipants, party: ObservedParty, personId: string, actorId: string, reason = '',
 ): Promise<ObservationWithParticipants> {
   const row = await participantRow(observation, party, personId);
   // CLOSING THE ROOM COMES FIRST, and the order is the whole of the fix.
@@ -348,16 +428,33 @@ export async function declineEntry(
   // started rather than one that was stopped.
   const stopped = await prisma.roundObservation.updateMany({
     where: { id: observation.id, status: { in: ['CONSENTED', 'LISTENING'] } },
-    data: { status: 'STOPPED', stoppedBy: party, stoppedAt: new Date() },
+    data: { status: 'STOPPED', stoppedBy: party, stoppedAt: new Date(), withdrawnReason: trimReason(reason) },
   });
   const moved = await prisma.observationParticipant.updateMany({
     where: { id: row.id, declinedAt: null },
     // The consent is cleared as well as the decline recorded. A row holding
     // both would read as agreed to `hasConsented`, and that is the one mistake
     // in this file that would start capture on somebody who said no.
-    data: { declinedAt: new Date(), consentAt: null, admittedAt: null },
+    //
+    // `admittedAt` is deliberately NOT cleared. It is the record that this
+    // person was once in the room and so may be in the recording, and
+    // `requiredOf` reads it to keep them in the consent set even if their seat
+    // is taken away afterwards. Wiping it would let a round that a withdrawal
+    // correctly blocked be unblocked by removing them from the panel.
+    data: { declinedAt: new Date(), consentAt: null },
   });
-  if (moved.count === 1) await audit(observation.tenantId, actorId, `observer.${party}_declined`, observation.id, { roundId: observation.roundId });
+  // The reason is recorded on the DECLINE too, for a round nobody had entered:
+  // the status move above only fires once the room was open.
+  if (moved.count === 1 && stopped.count === 0) {
+    await prisma.roundObservation.updateMany({
+      where: { id: observation.id, withdrawnReason: '' }, data: { withdrawnReason: trimReason(reason) },
+    });
+  }
+  if (moved.count === 1) {
+    await audit(observation.tenantId, actorId, `observer.${party}_declined`, observation.id, {
+      roundId: observation.roundId, gaveReason: trimReason(reason).length > 0,
+    });
+  }
   if (stopped.count === 1) await audit(observation.tenantId, actorId, 'observer.stopped', observation.id, { stoppedBy: party, withdrawn: true });
   return settleStatus(observation);
 }
@@ -372,10 +469,11 @@ export async function declineEntry(
 export async function enterRoom(
   observation: ObservationWithParticipants, round: RoundWithPipeline, party: ObservedParty, personId: string, actorId: string,
 ): Promise<ObservationWithParticipants> {
-  const refs = refsOf(observation.participants);
-  const me = refs.find((p) => p.personId === personId) ?? null;
+  const roster = rosterOf(observation);
+  const me = roster.participants.find((p) => p.personId === personId) ?? null;
   const decision = mayEnterRoom({
-    status: observation.status as ObservationStatus, participants: refs, roundStatus: round.status, me,
+    status: observation.status as ObservationStatus, roster, roundStatus: round.status, me,
+    withdrawal: withdrawalOf(observation),
   });
   if (!decision.allowed) throw new HttpError(409, decision.reason);
 
@@ -393,13 +491,29 @@ export async function enterRoom(
   return reload(observation.id);
 }
 
-async function stop(observation: RoundObservation, by: ObservedParty, actorId: string) {
+/**
+ * What somebody wrote when they stopped it, bounded and trimmed.
+ *
+ * Optional, always. Asking is right — the reason is what tells HR how to
+ * proceed and is a large part of what makes a withdrawn round fair rather than
+ * merely blocked — but requiring it would make a person justify themselves in
+ * order to exercise a right, which is not a right.
+ */
+export const MAX_WITHDRAWAL_REASON = 500;
+
+function trimReason(reason: string): string {
+  return reason.trim().slice(0, MAX_WITHDRAWAL_REASON);
+}
+
+async function stop(observation: RoundObservation, by: ObservedParty, actorId: string, reason: string) {
   const moved = await prisma.roundObservation.updateMany({
     where: { id: observation.id, status: { in: STOPPABLE } },
-    data: { status: 'STOPPED', stoppedBy: by, stoppedAt: new Date() },
+    data: { status: 'STOPPED', stoppedBy: by, stoppedAt: new Date(), withdrawnReason: trimReason(reason) },
   });
   if (moved.count !== 1) throw new HttpError(409, 'The observer is not running.');
-  await audit(observation.tenantId, actorId, 'observer.stopped', observation.id, { stoppedBy: by });
+  await audit(observation.tenantId, actorId, 'observer.stopped', observation.id, {
+    stoppedBy: by, gaveReason: trimReason(reason).length > 0,
+  });
 }
 
 /**
@@ -411,8 +525,10 @@ async function stop(observation: RoundObservation, by: ObservedParty, actorId: s
  * an assessment rests on. Removing it altogether would leave a person captured
  * with no way to stop, which is the thing GDPR is least willing to overlook.
  */
-export async function participantStops(observation: RoundObservation, by: ObservedParty, actorId: string) {
-  await stop(observation, by, actorId);
+export async function participantStops(
+  observation: RoundObservation, by: ObservedParty, actorId: string, reason = '',
+) {
+  await stop(observation, by, actorId, reason);
 }
 
 export interface EndedObservation {
@@ -453,6 +569,13 @@ export async function endObservation(roundId: string, actorId: string): Promise<
       // Marked degraded as well, so every surface that already knows how to say
       // "this recording is incomplete" says it without being taught a new word.
       ...(oneSided ? { captureStatus: 'DEGRADED' } : {}),
+      // And any quotes already taken out are dropped. Extraction can run
+      // mid-round, so a round can hold quotes from before we decided the
+      // recording was one-sided — and those quotes are lines of the
+      // interviewer's own speech filed under the candidate's competencies,
+      // which is the worst thing this observer could leave behind. Refusing to
+      // extract any more would not remove them. (Codex review, 2026-09-25.)
+      ...(oneSided ? { quotesJson: '[]', quotesStatus: 'NONE', quotesNote: ONE_SIDED_QUOTES_NOTE } : {}),
     },
   });
   if (moved.count !== 1) {
@@ -493,8 +616,15 @@ export function presentObservation(
   viewerId: string,
   round: { status: string },
 ) {
-  const refs = refsOf(observation.participants);
-  const blocked = roundBlock({ status: observation.status as ObservationStatus, participants: refs, roundStatus: round.status });
+  const roster = rosterOf(observation);
+  const speech = observation.segments.filter((segment) => segment.kind === 'SPEECH');
+  const blocked = roundBlock({
+    status: observation.status as ObservationStatus, roster, roundStatus: round.status,
+    withdrawal: withdrawalOf(observation),
+    // So the sentence HR reads says the partial record exists rather than
+    // leaving them to guess whether stopping left anything behind.
+    hasPartialRecord: speech.length > 0,
+  });
   const byId = new Map(observation.participants.map((p) => [p.id, p.party]));
   return {
     id: observation.id,
@@ -510,8 +640,12 @@ export function presentObservation(
       party: p.party, isYou: p.personId === viewerId,
       consentedAt: p.consentAt, declinedAt: p.declinedAt, admittedAt: p.admittedAt,
     })),
-    awaiting: consentOutstanding(refs),
+    awaiting: consentOutstanding(roster),
     blocked,
+    /** Who stopped it and what they said, '' when they gave no reason. */
+    withdrawal: observation.stoppedAt || observation.declinedAt
+      ? { by: observation.stoppedBy ?? observation.declinedBy, reason: observation.withdrawnReason }
+      : null,
     declinedBy: observation.declinedBy,
     declinedAt: observation.declinedAt,
     startedAt: observation.startedAt,
@@ -523,7 +657,7 @@ export function presentObservation(
     // What the recording actually got, said plainly once the round is over.
     captureReport: captureReport({
       status: observation.status as ObservationStatus,
-      speechCount: observation.segments.filter((segment) => segment.kind === 'SPEECH').length,
+      speechCount: speech.length,
       captureStatus: observation.captureStatus,
       oneSided: observation.oneSided,
     }),
@@ -551,7 +685,7 @@ export function presentObservation(
 }
 
 export async function observationForRound(roundId: string) {
-  return prisma.roundObservation.findUnique({ where: { roundId }, include: { segments: true, participants: true } });
+  return prisma.roundObservation.findUnique({ where: { roundId }, include: { ...ROSTER_INCLUDE, segments: true } });
 }
 
 /** Speech captured so far, and how long the round has been running. */
@@ -620,14 +754,14 @@ export interface CapturingSeat {
  * migration — still captures nothing once somebody's row says no.
  */
 export async function assertCapturing(auth: AuthClaims, round: RoundWithPipeline, party: ObservedParty): Promise<CapturingSeat> {
-  const observation = await prisma.roundObservation.findUnique({ where: { roundId: round.id }, include: { participants: true } });
+  const observation = await prisma.roundObservation.findUnique({ where: { roundId: round.id }, include: ROSTER_INCLUDE });
   if (!observation) throw new HttpError(409, 'The observer is not listening, so nothing was captured.');
   const participant = observation.participants.find((p) => p.personId === auth.userId);
   if (!participant || !participant.consentAt || participant.declinedAt || !participant.admittedAt) {
     throw new HttpError(403, 'You have not joined this round, so nothing you send is captured.');
   }
   if (participant.party !== party) throw new HttpError(403, 'You are not in this round in that capacity.');
-  if (!captureConsented(refsOf(observation.participants))) {
+  if (!captureConsented(rosterOf(observation))) {
     throw new HttpError(409, 'Not everyone in this round has agreed to be recorded, so nothing was captured.');
   }
   if (observation.status !== 'LISTENING' || round.status !== 'SCHEDULED') {
@@ -708,7 +842,7 @@ export async function appendSegment(seat: CapturingSeat, roundId: string, input:
 
 export async function findByCandidateToken(token: string): Promise<ObservationWithParticipants> {
   const observation = await findInvitationByToken(token, (tokenHash) =>
-    prisma.roundObservation.findUnique({ where: { candidateTokenHash: tokenHash }, include: { participants: true } })
+    prisma.roundObservation.findUnique({ where: { candidateTokenHash: tokenHash }, include: ROSTER_INCLUDE })
       .then((row) => (row ? { ...row, tokenHash: row.candidateTokenHash } : null)));
   if (!observation) throw new HttpError(404, 'This link does not work.');
   return observation;
@@ -723,7 +857,8 @@ export async function candidateView(observation: ObservationWithParticipants) {
   const stages = parseJson<Array<{ key?: unknown; label?: unknown }>>(round.pipeline.stagesJson, []);
   const label = stages.find((s) => s.key === round.stageKey)?.label;
   const status = observation.status as ObservationStatus;
-  const gate = entryGateFor(observation, round, observation.candidateId);
+  const speech = await prisma.observationSegment.count({ where: { observationId: observation.id, kind: 'SPEECH' } });
+  const gate = entryGateFor(observation, round, observation.candidateId, speech > 0);
   return {
     status,
     organisation: tenant?.name ?? '',
@@ -746,10 +881,10 @@ export async function candidateConsents(observation: ObservationWithParticipants
   await consentToEntry(observation, 'candidate', observation.candidateId, 'candidate');
 }
 
-export async function candidateDeclines(observation: ObservationWithParticipants) {
-  await declineEntry(observation, 'candidate', observation.candidateId, 'candidate');
+export async function candidateDeclines(observation: ObservationWithParticipants, reason = '') {
+  await declineEntry(observation, 'candidate', observation.candidateId, 'candidate', reason);
 }
 
-export async function candidateStops(observation: ObservationWithParticipants) {
-  await participantStops(observation, 'candidate', 'candidate');
+export async function candidateStops(observation: ObservationWithParticipants, reason = '') {
+  await participantStops(observation, 'candidate', 'candidate', reason);
 }

@@ -32,6 +32,8 @@ export function ObserverConsent() {
   const [view, setView] = useState<CandidateConsentView | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Optional, and theirs: kept while they type, sent only if they wrote one.
+  const [reason, setReason] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -55,12 +57,12 @@ export function ObserverConsent() {
     };
     void load();
     return () => { active = false; window.clearTimeout(timer); };
-  }, [base]);
+  }, [base, reason]);
 
   const act = useCallback(async (path: 'consent' | 'decline' | 'stop') => {
     setBusy(true);
     try {
-      setView(await api.post<CandidateConsentView>(`${base}/${path}`, {}));
+      setView(await api.post<CandidateConsentView>(`${base}/${path}`, path === 'consent' ? {} : { reason }));
       setError('');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'That did not work. Please try again.');
@@ -78,6 +80,8 @@ export function ObserverConsent() {
         <CandidateObserverConsent
           view={view}
           busy={busy}
+          reason={reason}
+          onReasonChange={setReason}
           onConsent={() => void act('consent')}
           onDecline={() => void act('decline')}
           onStop={() => void act('stop')}

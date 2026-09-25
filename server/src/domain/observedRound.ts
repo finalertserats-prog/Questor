@@ -75,36 +75,134 @@ export interface ParticipantRef {
   readonly personId: string;
   readonly consentAt: Date | null;
   readonly declinedAt: Date | null;
+  /**
+   * Whether they have EVER been let into the room. Never cleared, including by
+   * a withdrawal: it is the fact that their voice may be in the recording, and
+   * `requiredOf` below leans on it to stop somebody who has already been heard
+   * being dropped from the consent set.
+   */
+  readonly admittedAt: Date | null;
+}
+
+/**
+ * Everyone this round involves — the rows that exist, and the seats the round
+ * actually has.
+ *
+ * BOTH, and that is the correction. The first version of this file computed
+ * "who must agree" from the participant rows alone, which is only true while
+ * the rows and the seats cannot drift apart. They can: HR swaps an expert who
+ * cannot make it, or adds a second panellist as the round comes together, and
+ * a person seated after the observation was created has no row at all — so a
+ * rule that reads rows could not see them, and their voice would be captured
+ * with nothing on record. (Codex review of the rebased branch, 2026-09-25.)
+ *
+ * Seats are therefore the authority for who conducts the round, and rows are
+ * the authority for what each person has said. Neither alone answers the
+ * question.
+ */
+export interface RoomRoster {
+  readonly participants: readonly ParticipantRef[];
+  /** The Questor users seated on the round RIGHT NOW (RoundInterviewer). */
+  readonly seats: readonly string[];
+}
+
+/**
+ * A stored participant row as the rules want it.
+ *
+ * The ONE place a `party` string becomes an `ObservedParty`. A cast repeated
+ * per caller is a cast that will one day be repeated wrongly, and a wrong
+ * `party` does not throw — it silently drops somebody out of the required set,
+ * which is capture without consent arriving as a typo. The database refuses
+ * anything outside the three values (a CHECK on ObservationParticipant), so
+ * this cast is checked rather than hoped.
+ */
+export function toParticipantRef(row: {
+  readonly party: string;
+  readonly personId: string;
+  readonly consentAt: Date | null;
+  readonly declinedAt: Date | null;
+  readonly admittedAt: Date | null;
+}): ParticipantRef {
+  return {
+    party: row.party as ObservedParty, personId: row.personId,
+    consentAt: row.consentAt, declinedAt: row.declinedAt, admittedAt: row.admittedAt,
+  };
 }
 
 export function hasConsented(p: ParticipantRef | null | undefined): boolean {
   return !!p && p.consentAt !== null && p.declinedAt === null;
 }
 
+/** Somebody whose agreement this round needs, and what they have said so far. */
+export interface RequiredPerson {
+  readonly party: Extract<ObservedParty, 'candidate' | 'interviewer'>;
+  /** '' when the round needs an interviewer but nobody has been named yet. */
+  readonly personId: string;
+  /** Their row, or null when they are seated and have not been asked yet. */
+  readonly row: ParticipantRef | null;
+}
+
+/**
+ * Everyone whose agreement this round needs.
+ *
+ * The candidate, always. And on the conducting side, the union of two sets:
+ *
+ *   SEATED NOW — because a seat is a booking to be in the room, and the device
+ *     in the room will hear them whether or not they ever opened Questor.
+ *   EVER ADMITTED — because once somebody has been let in, their voice may
+ *     already be in the recording, and nothing HR does afterwards can take it
+ *     back out.
+ *
+ * WHY THE UNION RATHER THAN THE SEATS ALONE. Removing a seat has to mean
+ * something different before and after capture begins, and this is the line the
+ * owner asked to be reasoned out rather than guessed. Before: the person was
+ * booked and un-booked, they are not coming, and holding the round open for
+ * them would punish the candidate for HR's change of plan — so they stop being
+ * required, which is exactly what makes swapping a busy expert work. After:
+ * they have been in the room, so un-requiring them would leave a recording
+ * containing a person the consent model no longer accounts for — and, worse,
+ * would let a round correctly blocked by their withdrawal be unblocked by
+ * quietly dropping them from the panel. Admission is therefore a one-way door.
+ *
+ * A round nobody is seated on still needs an interviewer: it is a round booked
+ * with typed names, and whoever runs the process conducts it (`staffPartyFor`).
+ */
+export function requiredOf(roster: RoomRoster): readonly RequiredPerson[] {
+  const candidate = roster.participants.find((p) => p.party === 'candidate') ?? null;
+  const required: RequiredPerson[] = [
+    { party: 'candidate', personId: candidate?.personId ?? '', row: candidate },
+  ];
+
+  const rows = new Map(roster.participants.map((p) => [p.personId, p]));
+  const conducting = new Set<string>(roster.seats);
+  for (const p of roster.participants) {
+    if (p.party === 'interviewer' && p.admittedAt !== null) conducting.add(p.personId);
+  }
+
+  if (conducting.size > 0) {
+    for (const personId of conducting) {
+      required.push({ party: 'interviewer', personId, row: rows.get(personId) ?? null });
+    }
+    return required;
+  }
+  // Nobody seated and nobody has conducted it yet. Every interviewer row there
+  // is still counts — a round could hold more than one — and a round with none
+  // is waiting for somebody to take it on.
+  const unseated = roster.participants.filter((p) => p.party === 'interviewer');
+  if (unseated.length === 0) return [...required, { party: 'interviewer', personId: '', row: null }];
+  return [...required, ...unseated.map((row) => ({ party: 'interviewer' as const, personId: row.personId, row }))];
+}
+
 /**
  * The required parties who have not yet agreed. Empty means the gate can open.
  *
- * EVERY required ROW, not one row per party. A Gold round may be booked with
- * two people conducting it, and both are given a row when it is booked. Asking
- * only whether SOME interviewer has agreed would let the first of them open the
- * room while the second's row was still blank — and the first one's device
- * hears the second, who is on the same call whether or not they ever opened
- * Questor. That is capture without consent, in the ordinary case rather than a
- * race. (Found by a Codex review of this change, 2026-09-25.)
- *
- * The cost is deliberate: a colleague who was booked onto the round and never
- * answers holds it up. The room says which party it is waiting for, so that is
- * a thing somebody can act on rather than a silence — and the alternative is
- * recording a person who did not agree.
- *
- * A party with no row at all is outstanding too: a round nobody is seated on
- * has no interviewer until whoever runs it agrees to conduct it.
+ * Parties rather than people, because that is what the room says out loud
+ * ("waiting for the candidate"). Naming the colleague who has not answered yet
+ * would put one person's hesitation in front of everybody else on the round.
  */
-export function consentOutstanding(participants: readonly ParticipantRef[]): readonly ObservedParty[] {
-  return REQUIRED_PARTIES.filter((party) => {
-    const rows = participants.filter((p) => p.party === party);
-    return rows.length === 0 || rows.some((row) => !hasConsented(row));
-  });
+export function consentOutstanding(roster: RoomRoster): readonly ObservedParty[] {
+  const required = requiredOf(roster);
+  return REQUIRED_PARTIES.filter((party) => required.some((r) => r.party === party && !hasConsented(r.row)));
 }
 
 /** The first person who said no, in the order the parties are listed. */
@@ -120,24 +218,31 @@ export function firstDecline(participants: readonly ParticipantRef[]): Participa
  * The decline that stops the round happening, as opposed to one that merely
  * means somebody is not coming.
  *
- * Only a required party can stop it. An HR colleague who reads the notice and
- * would rather not be recorded is not a blocker — they stay out of the room and
- * the interview goes ahead without them, which is the honest consequence of
- * their choice rather than a veto over somebody else's interview. They are
- * still not captured, because nothing admits a person who has not agreed.
+ * Only somebody the round requires can stop it. An HR colleague who reads the
+ * notice and would rather not be recorded is not a blocker — they stay out of
+ * the room and the interview goes ahead without them, which is the honest
+ * consequence of their choice rather than a veto over somebody else's
+ * interview. Nor is an expert who declined and was then swapped out: they are
+ * no longer seated and were never in the room, so nothing they said binds a
+ * round they are not on. Both are still never captured, because nothing admits
+ * a person who has not agreed.
  */
-export function blockingDecline(participants: readonly ParticipantRef[]): ParticipantRef | null {
-  return participants.find((p) => p.declinedAt !== null && REQUIRED_PARTIES.includes(p.party)) ?? null;
+export function blockingDecline(roster: RoomRoster): ParticipantRef | null {
+  for (const party of REQUIRED_PARTIES) {
+    const declined = requiredOf(roster).find((r) => r.party === party && r.row?.declinedAt);
+    if (declined?.row) return declined.row;
+  }
+  return null;
 }
 
 /**
- * Whether capture may run at all. Never true while a required party is
- * outstanding, whatever the observation's status column happens to say: the
- * status is a cache of this answer and the rows are the answer itself, so a
+ * Whether capture may run at all. Never true while somebody the round requires
+ * is outstanding, whatever the observation's status column happens to say: the
+ * status is a cache of this answer and the roster is the answer itself, so a
  * status written by an older version of this code cannot open the gate.
  */
-export function captureConsented(participants: readonly ParticipantRef[]): boolean {
-  return blockingDecline(participants) === null && consentOutstanding(participants).length === 0;
+export function captureConsented(roster: RoomRoster): boolean {
+  return blockingDecline(roster) === null && consentOutstanding(roster).length === 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,35 +268,125 @@ const WHY_RECORDED =
   'Every human round is recorded, because the assessment has to be able to show the words behind it, so this '
   + 'round cannot go ahead as booked.';
 
+/** What somebody said when they withdrew, and who they were. */
+export interface Withdrawal {
+  readonly by: ObservedParty | null;
+  /** Their own words, '' when they gave none. Never required of them. */
+  readonly reason: string;
+}
+
+const READ_PARTIAL =
+  'Read what was captured before it stopped — it is on the round, and it is a record of what was actually said up '
+  + 'to that point.';
+
+/** Their words, quoted, or nothing. Never paraphrased: a reason is theirs, not ours. */
+function gaveReason(withdrawal: Withdrawal | undefined): string {
+  const said = withdrawal?.reason.trim() ?? '';
+  if (!said) return '';
+  const who = withdrawal?.by === 'candidate' ? 'The candidate' : withdrawal?.by === 'hr' ? 'The colleague' : 'The interviewer';
+  return ` ${who} gave this reason: “${said}”.`;
+}
+
 /**
  * Why a round cannot go ahead, or null when nothing is standing in its way.
  *
- * Read from the participant rows rather than from the status column wherever
- * the two could differ, for the reason given on `captureConsented`.
+ * Read from the roster rather than from the status column wherever the two
+ * could differ, for the reason given on `captureConsented`.
  */
 export function roundBlock(input: {
   readonly status: ObservationStatus;
-  readonly participants: readonly ParticipantRef[];
+  readonly roster: RoomRoster;
   readonly roundStatus: string;
+  readonly withdrawal?: Withdrawal;
+  /** Whether anything was captured before it stopped, so HR is told it exists. */
+  readonly hasPartialRecord?: boolean;
 }): RoundBlock | null {
   // A round that already ran, or that the team cancelled, is not blocked; it is
   // over. Saying otherwise would put a live blocker in the queue for something
   // nobody can act on any more.
   if (input.roundStatus !== 'SCHEDULED') return null;
 
-  const declined = blockingDecline(input.participants);
-  if (declined || input.status === 'DECLINED') {
-    const opening = declined ? DECLINED_BY[declined.party] : DECLINED_BY.candidate;
-    return { reason: `${opening} ${WHY_RECORDED}`, nextSteps: [REBOOK, MOVE_ON] };
-  }
+  // STOPPED is asked FIRST, ahead of the decline, and the order carries the
+  // meaning. Somebody who withdraws part-way leaves both marks — a declined row
+  // and a stopped observation — but the two say different things: DECLINED is a
+  // round nobody ever entered, STOPPED is a round that ran and was cut short.
+  // Reading the decline first would tell HR the candidate never agreed, when in
+  // fact they did, sat the first twenty minutes, and then stopped — and it
+  // would bury the partial record that is the most useful thing they have.
   if (input.status === 'STOPPED') {
+    // What was captured before the withdrawal is EVIDENCE, and saying so is the
+    // point of this sentence (owner, 2026-09-25): a round that ran for twenty
+    // minutes and then stopped tells the hiring team a great deal about how to
+    // proceed, and burying it would leave them deciding on nothing. It is
+    // honest about what it is — a record of part of a round, not of the round.
+    const partial = input.hasPartialRecord
+      ? ' What was captured before that point is kept, and it is a record of what was actually said up to then.'
+      : ' Nothing was captured before it stopped.';
     return {
-      reason: 'Recording stopped part-way through this round, so it cannot produce the transcript the assessment '
-        + 'rests on. The part that was captured is kept, but it is not a record of the round.',
-      nextSteps: [REBOOK, MOVE_ON],
+      reason: 'Recording was stopped part-way through this round, so it did not produce a full record of it.'
+        + `${partial}${gaveReason(input.withdrawal)}`,
+      nextSteps: input.hasPartialRecord ? [READ_PARTIAL, REBOOK, MOVE_ON] : [REBOOK, MOVE_ON],
     };
   }
+  const declined = blockingDecline(input.roster);
+  if (declined || input.status === 'DECLINED') {
+    const opening = declined ? DECLINED_BY[declined.party] : DECLINED_BY.candidate;
+    return { reason: `${opening} ${WHY_RECORDED}${gaveReason(input.withdrawal)}`, nextSteps: [REBOOK, MOVE_ON] };
+  }
   return null;
+}
+
+/**
+ * A round and its observation, in the shape every surface that has to say "this
+ * cannot go ahead" already holds them.
+ *
+ * One reader for four callers — the room, the pipeline, the needs-you queue and
+ * the expert's workbench — because four inlined copies of "map the rows, guess
+ * the seats, cast the party" is four places for one of them to be a version
+ * behind, and the version that is behind would be the one that says a blocked
+ * round is fine.
+ *
+ * The `party` string becomes an `ObservedParty` in exactly one place, which is
+ * `toParticipantRef` above.
+ */
+export interface RoundSnapshot {
+  readonly roundStatus: string;
+  /** Users seated on the round NOW — RoundInterviewer, not the observation. */
+  readonly seats: readonly string[];
+  readonly observation: {
+    readonly status: string;
+    readonly withdrawnReason: string;
+    readonly stoppedBy: string | null;
+    readonly declinedBy: string | null;
+    /** Stretches of SPEECH captured; gaps are the opposite and do not count. */
+    readonly speechCount: number;
+    readonly participants: readonly {
+      readonly party: string;
+      readonly personId: string;
+      readonly consentAt: Date | null;
+      readonly declinedAt: Date | null;
+      readonly admittedAt: Date | null;
+    }[];
+  } | null;
+}
+
+/** Why this round cannot go ahead, from what a caller already has loaded. */
+export function blockOfRound(snapshot: RoundSnapshot): RoundBlock | null {
+  const o = snapshot.observation;
+  // No observer on the round at all: nothing about recording is standing in its
+  // way. A human round always has one, so this is a round from before the
+  // observer, or one the stage does not observe.
+  if (!o) return null;
+  return roundBlock({
+    status: o.status as ObservationStatus,
+    roster: {
+      seats: snapshot.seats,
+      participants: o.participants.map(toParticipantRef),
+    },
+    roundStatus: snapshot.roundStatus,
+    withdrawal: { by: (o.stoppedBy ?? o.declinedBy ?? null) as ObservedParty | null, reason: o.withdrawnReason },
+    hasPartialRecord: o.speechCount > 0,
+  });
 }
 
 export type EntryDecision =
@@ -216,8 +411,10 @@ const OVER = 'This round is over, so there is nothing to join.';
  */
 export function mayEnterRoom(input: {
   readonly status: ObservationStatus;
-  readonly participants: readonly ParticipantRef[];
+  readonly roster: RoomRoster;
   readonly roundStatus: string;
+  readonly withdrawal?: Withdrawal;
+  readonly hasPartialRecord?: boolean;
   /** The person asking, or null when they are not in this round at all. */
   readonly me: ParticipantRef | null;
 }): EntryDecision {
@@ -232,7 +429,7 @@ export function mayEnterRoom(input: {
   // Their own consent is not enough. Capture starts the moment the room is
   // entered, and it hears everyone — so a candidate who has not agreed must
   // keep the interviewer out too, not merely stay away themselves.
-  const outstanding = consentOutstanding(input.participants);
+  const outstanding = consentOutstanding(input.roster);
   if (outstanding.length > 0) {
     return {
       allowed: false,
