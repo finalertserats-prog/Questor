@@ -2453,6 +2453,64 @@ model DemoSpendDay {
 // Nothing is shown before it is earned: a candidate whose Silver interview is
 // finished but who has not been progressed has no row here, and therefore no
 // badge, no certificate and no export — only the reason it is not there yet.
+/// One recipient's copy of one interview's calendar entry, and whether their
+/// copy is up to date.
+///
+/// WHY A ROW AT ALL. The sequence number a calendar update goes out under is
+/// INSIDE the .ics attachment, so it has to be spent before the send — which
+/// means a send that fails has already burned it, and until now nothing
+/// recorded that the recipient's calendar was left describing an older time.
+/// The recruiter was told "tell them yourself"; the calendar entry was not
+/// mentioned, because nothing knew about it.
+///
+/// The third instance of the outbox shape this codebase already uses twice —
+/// WebhookDelivery and CandidateFeedbackEmail. Claim, attempt, back off,
+/// reap a claim whose worker died.
+///
+/// WHAT IT DELIBERATELY DOES NOT STORE: the message. A retry rebuilds from the
+/// row as it stands at that moment, because the round may have moved again
+/// while the send was failing and replaying a frozen payload would deliver a
+/// time nobody holds any more. Only what was SENT is recorded, and only so the
+/// gap between it and the truth can be seen.
+model CalendarDelivery {
+  id              String   @id @default(cuid())
+  tenantId        String
+  /// "round" | "interview": which kind of calendar object this is a copy of.
+  /// With targetId it is the UID the recipient's calendar keys on, so the pair
+  /// is the identity — there is one entry per person per interview, updated,
+  /// never a second one.
+  ///
+  /// Not a foreign key, because it points at one of two tables. Erasure
+  /// therefore has to reach these rows by hand; services/dataRights.ts does,
+  /// and a test holds it to that — this row carries an email address.
+  targetType      String
+  targetId        String
+  recipientEmail  String
+  recipientName   String
+  /// The latest intent: booked | moved | link | cancelled | invited. Used for
+  /// the words, never for the method — whether the entry is a request or a
+  /// withdrawal is read from the round's own status at send time.
+  kind            String
+  /// QUEUED | SENDING | SENT | FAILED
+  status          String   @default("QUEUED")
+  attempts        Int      @default(0)
+  nextAttemptAt   DateTime?
+  claimedAt       DateTime?
+  lastError       String   @default("")
+  /// What this person's calendar was actually last told. `scheduledAtSent`
+  /// differing from the interview's time now IS the divergence: it is the
+  /// queryable form of "their calendar is wrong and we know it".
+  sequenceSent    Int?
+  scheduledAtSent DateTime?
+  sentAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([targetType, targetId, recipientEmail])
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, status])
+}
+
 model CandidateAward {
   id              String   @id @default(cuid())
   tenantId        String

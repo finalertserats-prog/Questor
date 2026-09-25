@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
-import { candidateOwnZone, orgZone, timeZoneField } from '../src/services/scheduleZone.js';
+import { candidateOwnZone, isNamedTimeZone, orgZone, timeZoneField } from '../src/services/scheduleZone.js';
+import { formatScheduledTime } from '../src/services/zonedTime.js';
 
 /**
  * A zone on a screen is one of four facts, and they are not interchangeable:
@@ -43,6 +44,33 @@ describe('a time zone from a client', () => {
 
   it('refuses an offset pretending to be a zone', () => {
     expect(timeZoneField.safeParse('+05:30').success).toBe(false);
+  });
+});
+
+/**
+ * Tightening the check guards what is written from now on. It does not reach
+ * a row that already holds an offset, and no migration cleans them — so the
+ * question that matters is whether such a row still reads.
+ *
+ * It does, and that is deliberate: the read path stays permissive. A round
+ * booked long ago under "+05:30" renders at the right offset, just with no
+ * daylight-saving rules behind it, which is the wrong-by-an-hour-in-summer
+ * case the write check now prevents from ever being created again. Refusing to
+ * render it would turn a subtly wrong time into a blank one.
+ */
+describe('a zone stored before the check was tightened', () => {
+  const at = new Date('2026-10-01T09:00:00.000Z');
+
+  it('is no longer writable', () => {
+    expect(isNamedTimeZone('+05:30')).toBe(false);
+  });
+
+  it('still renders, rather than a row becoming unreadable', () => {
+    expect(formatScheduledTime(at, '+05:30')).toContain('14:30');
+  });
+
+  it('still names what it was stored as, so nobody mistakes it for a real zone', () => {
+    expect(formatScheduledTime(at, '+05:30')).toContain('+05:30');
   });
 });
 

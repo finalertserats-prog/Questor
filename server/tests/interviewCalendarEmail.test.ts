@@ -353,6 +353,31 @@ describe('the calendar attachment on an AI interview invitation', () => {
     expect(icsProperty(calendarOf(lastToCandidate())!.content, 'UID')).not.toBe(round);
   });
 
+  // The body used to be written from the session this request read earlier
+  // while the attachment was written from the row the sequence claim returned,
+  // so one message could name one time in words and another in its calendar
+  // entry. Whatever a person is told, the .ics beside it has to agree.
+  it('puts the same instant in its words as in its calendar entry', async () => {
+    await invite();
+
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: demo.sessionId } });
+    const stamp = `${session.scheduledAt!.toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`;
+    expect(icsProperty(calendarOf(lastToCandidate())!.content, 'DTSTART')).toBe(`DTSTART:${stamp}`);
+  });
+
+  it('states that instant in the body too, in the zone it was booked in', async () => {
+    await invite();
+
+    expect(lastToCandidate()?.text ?? '').toMatch(/14:30.*Asia\/Kolkata/);
+  });
+
+  it('spends no sequence on an invitation with no time to describe', async () => {
+    await request(app).post(`/api/interviews/${demo.sessionId}/resend`).set(auth()).send({});
+
+    const session = await prisma.interviewSession.findUniqueOrThrow({ where: { id: demo.sessionId } });
+    expect(session.calendarSequence).toBe(0);
+  });
+
   it('snapshots the candidate zone onto the interview it schedules', async () => {
     await prisma.candidate.update({ where: { id: demo.candidateId }, data: { timeZone: 'Europe/Berlin' } });
 

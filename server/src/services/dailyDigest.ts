@@ -164,14 +164,22 @@ async function sendOne(user: Recipient, now: Date): Promise<'sent' | 'empty' | '
   // They may have switched it off since the list was read.
   const still = await prisma.user.findFirst({ where: { id: user.id, digestOptOut: false }, select: { id: true } });
   if (!still) return 'taken';
-  const id = await claim(user, now);
-  if (!id) return 'taken';
+  // Asked BEFORE the claim is taken, and this order is the whole point.
+  //
+  // The claim is what makes the summary at most once a day. Taking it first
+  // meant a reader whose queue happened to be empty when the job first looked
+  // had that day's token written as "empty" — so when work arrived an hour
+  // later, still inside their morning, the claim they needed was already
+  // spent and they heard nothing. A quiet morning now writes no row at all,
+  // which costs nothing: there was nothing to be idempotent about.
+  //
+  // Nothing else weakens. A second instance computing the same non-empty queue
+  // still loses the claim below, exactly as it does today.
   const auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
   const { total, rows } = await collectNeedsYou(auth, now, DIGEST_ROW_LIMIT);
-  if (total === 0) {
-    await prisma.digestDelivery.update({ where: { id }, data: { status: 'empty' } });
-    return 'empty';
-  }
+  if (total === 0) return 'empty';
+  const id = await claim(user, now);
+  if (!id) return 'taken';
   const origin = config.webOrigin.replace(/\/+$/, '');
   const message = buildDigestEmail({
     userName: user.name, total, now,

@@ -149,6 +149,27 @@ function makeCounter(into: Record<string, number>): Counter {
  * a table added to one ordering but not the other is exactly how personal data
  * survives a deletion that reports success.
  */
+/**
+ * Whose calendar holds this person's interview rounds.
+ *
+ * CalendarDelivery identifies its target by a type and an id rather than a
+ * foreign key, because the target is one of two tables. Nothing in the database
+ * therefore stops these rows outliving the round — and each one carries a
+ * recipient's name and email address. Deleted explicitly, in both erasure
+ * paths, and held there by a test rather than by a constraint.
+ */
+async function deleteRoundCalendarDeliveries(
+  tx: Prisma.TransactionClient,
+  candidateId: string,
+  count: Counter,
+): Promise<void> {
+  const rounds = await tx.interviewRound.findMany({ where: { pipeline: { candidateId } }, select: { id: true } });
+  if (!rounds.length) return;
+  await count('calendarDeliveries', () => tx.calendarDelivery.deleteMany({
+    where: { targetType: 'round', targetId: { in: rounds.map((r) => r.id) } },
+  }));
+}
+
 async function deleteSessionCascade(
   tx: Prisma.TransactionClient,
   sessionIds: string[],
@@ -159,6 +180,14 @@ async function deleteSessionCascade(
   // The feedback email quotes the candidate and holds foreign keys onto the
   // session and the assessment, so it goes before either.
   await count('feedbackEmails', () => tx.candidateFeedbackEmail.deleteMany({ where: { sessionId: { in: sessionIds } } }));
+
+  // Whose calendar holds this interview. CalendarDelivery points at one of two
+  // tables so it carries no foreign key, which means nothing fails loudly if
+  // this line is ever lost — and the row holds an email address. A test pins
+  // it (tests/calendarDeliveryErasure.test.ts) because the database will not.
+  await count('calendarDeliveries', () => tx.calendarDelivery.deleteMany({
+    where: { targetType: 'interview', targetId: { in: sessionIds } },
+  }));
 
   const assessments = await tx.assessmentVersion.findMany({
     where: { sessionId: { in: sessionIds } },
@@ -338,6 +367,7 @@ export async function eraseCandidate(o: {
     // The interviewers seated on those rounds key onto InterviewRound, so they
     // go before it for the same reason as the observations above.
     await count('roundInterviewers', () => tx.roundInterviewer.deleteMany({ where: { round: { pipeline: { candidateId: o.candidateId } } } }));
+    await deleteRoundCalendarDeliveries(tx, o.candidateId, count);
     await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId: o.candidateId } } }));
     await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId: o.candidateId } }));
     await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId: o.candidateId } }));
@@ -594,6 +624,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         // candidate and must go first.
         await deleteCandidateObservations(tx, candidateId, count);
         await count('roundInterviewers', () => tx.roundInterviewer.deleteMany({ where: { round: { pipeline: { candidateId } } } }));
+        await deleteRoundCalendarDeliveries(tx, candidateId, count);
         await count('pipelineRounds', () => tx.interviewRound.deleteMany({ where: { pipeline: { candidateId } } }));
         await count('pipelines', () => tx.candidatePipeline.deleteMany({ where: { candidateId } }));
         await count('assignments', () => tx.candidateAssignment.deleteMany({ where: { candidateId } }));

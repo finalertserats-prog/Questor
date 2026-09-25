@@ -40,7 +40,7 @@ const KOLKATA_MORNING = new Date('2026-09-23T03:30:00.000Z');
 /** 09:30 in London, 14:00 in Kolkata: past the organisation's window, inside London's. */
 const LONDON_MORNING = new Date('2026-09-23T08:30:00.000Z');
 
-async function setup(opts: { orgZone?: string; userZone?: string | null } = {}) {
+async function setup(opts: { orgZone?: string; userZone?: string | null; withWork?: boolean } = {}) {
   const tenant = await prisma.tenant.create({
     data: { name: 'Acme', policyJson: JSON.stringify(opts.orgZone ? { timeZone: opts.orgZone } : {}) },
   });
@@ -54,13 +54,16 @@ async function setup(opts: { orgZone?: string; userZone?: string | null } = {}) 
   await prisma.roleAssignment.create({ data: { roleId: role.id, userId: user.id } });
   const scorecard = await prisma.roleScorecardVersion.create({ data: { roleId: role.id, status: 'approved', profileJson: '{}' } });
   const candidate = await prisma.candidate.create({ data: { tenantId: tenant.id, roleId: role.id, fullName: 'Daniel Okafor', email: 'd@m.local' } });
-  await prisma.interviewSession.create({
-    data: {
-      tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
-      state: 'INCOMPLETE', interruptedAt: new Date(KOLKATA_MORNING.getTime() - DAY),
-    },
-  });
-  return { tenant, user };
+  const work = async () => {
+    await prisma.interviewSession.create({
+      data: {
+        tenantId: tenant.id, candidateId: candidate.id, roleId: role.id, scorecardId: scorecard.id,
+        state: 'INCOMPLETE', interruptedAt: new Date(KOLKATA_MORNING.getTime() - DAY),
+      },
+    });
+  };
+  if (opts.withWork ?? true) await work();
+  return { tenant, user, work };
 }
 
 beforeEach(async () => {
@@ -199,6 +202,50 @@ describe('the tightest legitimate pair of mornings', () => {
     await runDailyDigest(null, EARLIEST_NEXT_DAY);
 
     expect(mail.messages).toHaveLength(2);
+  });
+});
+
+/**
+ * A morning with nothing waiting must not spend the day's one summary.
+ *
+ * The claim is what makes the summary at-most-once, and it was taken BEFORE
+ * anyone asked whether there was anything to say. So a reader whose queue was
+ * empty at the moment the job first looked had that day's token written as
+ * "empty" — and when work arrived an hour later, still inside their morning
+ * window, the claim they needed was already spent. They heard nothing, and
+ * nothing recorded that they should have.
+ */
+describe('a morning that starts quiet', () => {
+  /** An hour later, still inside the six-hour window. */
+  const AN_HOUR_ON = new Date(KOLKATA_MORNING.getTime() + 3_600_000);
+
+  it('writes no claim when there is nothing to say', async () => {
+    await setup({ orgZone: 'Asia/Kolkata', userZone: 'Asia/Kolkata', withWork: false });
+
+    await runDailyDigest(null, KOLKATA_MORNING);
+
+    expect(await prisma.digestDelivery.count()).toBe(0);
+  });
+
+  it('still sends when work arrives later the same morning', async () => {
+    const { work } = await setup({ orgZone: 'Asia/Kolkata', userZone: 'Asia/Kolkata', withWork: false });
+    await runDailyDigest(null, KOLKATA_MORNING);
+
+    await work();
+    await runDailyDigest(null, AN_HOUR_ON);
+
+    expect(mail.messages).toHaveLength(1);
+  });
+
+  it('is still at most one summary once the day has spoken', async () => {
+    const { work } = await setup({ orgZone: 'Asia/Kolkata', userZone: 'Asia/Kolkata', withWork: false });
+    await runDailyDigest(null, KOLKATA_MORNING);
+    await work();
+    await runDailyDigest(null, AN_HOUR_ON);
+
+    await runDailyDigest(null, new Date(KOLKATA_MORNING.getTime() + 2 * 3_600_000));
+
+    expect(mail.messages).toHaveLength(1);
   });
 });
 

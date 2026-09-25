@@ -8,6 +8,7 @@ import { demoRecipientBlocked } from './demoPolicy.js';
 import { tenantTimeZone } from './tenantTimeZone.js';
 import { candidateClockSentence, formatScheduledTime } from './zonedTime.js';
 import { claimRoundCalendar, roundInviteAttachment } from './interviewCalendar.js';
+import { calendarDeliveryFor, calendarStateNote, recordCalendarFailure, recordCalendarSent, type CalendarTarget } from './calendarDelivery.js';
 
 /**
  * Telling the candidate about an interview round a person runs.
@@ -157,11 +158,26 @@ export async function notifyCandidateOfHumanRound(o: {
     method: o.kind === 'cancelled' ? 'CANCEL' : 'REQUEST',
     organizerName: `${companyName} hiring team`,
   });
+  const target: CalendarTarget = { type: 'round', id: round.id, tenantId: round.tenantId };
+  const recipient = { email: candidate.email, name: candidate.fullName };
   try {
     await email.send({ ...message, to: candidate.email, attachments: [invite] });
+    // Recorded AFTER the provider accepted it, so the row says what their
+    // calendar actually holds rather than what we hoped it would.
+    await recordCalendarSent({
+      target, recipient, kind: o.kind, sequence: claimed.sequence, scheduledAt: current.scheduledAt,
+    });
     return { sent: true, note: `The candidate was emailed at ${candidate.email}.` };
   } catch (err) {
-    logger.error({ err: err instanceof Error ? err.message : String(err), roundId: round.id }, 'Round email to the candidate failed');
-    return { sent: false, note: 'The email to the candidate could not be sent. Tell them yourself.' };
+    const message_ = err instanceof Error ? err.message : String(err);
+    logger.error({ err: message_, roundId: round.id }, 'Round email to the candidate failed');
+    // The sequence is already spent — it travelled inside the attachment — so
+    // their calendar is now behind by a number nobody can reuse. Queued for a
+    // rebuild rather than a replay: by the time it runs, the round may have
+    // moved again, and the entry that goes out must describe wherever it is
+    // then, not wherever it was when this attempt failed.
+    await recordCalendarFailure({ target, recipient, kind: o.kind, error: message_ });
+    const behind = calendarStateNote(await calendarDeliveryFor(target, candidate.email));
+    return { sent: false, note: `The email to the candidate could not be sent. Tell them yourself.${behind}` };
   }
 }

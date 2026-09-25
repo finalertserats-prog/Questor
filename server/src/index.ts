@@ -14,6 +14,7 @@ import { startImportPurge } from './services/candidateImportPurgeJob.js';
 import { startIncompleteSweep } from './services/incompleteInterviews.js';
 import { startWebhookDelivery } from './services/webhooks.js';
 import { rescheduleLegacyFeedbackEmails, startFeedbackEmailDelivery } from './services/autoFeedback.js';
+import { startCalendarDelivery } from './services/calendarRetry.js';
 import { killInFlightSmtpSenders } from './providers/email/smtpChild.js';
 import { backfillInvitationSecrets } from './services/invitations.js';
 import { seedCatalogWithRetry } from './services/catalogSeed.js';
@@ -63,6 +64,10 @@ await rescheduleLegacyFeedbackEmails().catch((err: unknown) => {
   logger.error({ err: err instanceof Error ? err.message : String(err) }, 'Could not reschedule feedback emails queued before the review window');
 });
 startFeedbackEmailDelivery();
+// Calendar entries a failed send left describing an older time. Rebuilt from
+// the interview each attempt, never replayed, because the time may have moved
+// again while the send was failing.
+startCalendarDelivery();
 // Ended rate-limit windows, when counters are shared through the database.
 startRateLimitPurge();
 // Spent reset links, spent sign-in codes and ended device grants.
