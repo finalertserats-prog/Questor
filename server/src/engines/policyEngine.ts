@@ -195,15 +195,48 @@ export function detectDistress(text: string): boolean {
  */
 export const ENDS_HERE = String.raw`(?:\s+(?:it|this|that|here|now|already|please|everything|for (?:now|today)|with (?:this|it|the interview|this interview)|the (?:interview|call|session|chat)|this (?:interview|call|session)))*\s*(?:[.,;!?]|$)`;
 
+/**
+ * "I'm done" is also said with the reason attached, and a clause of one's own
+ * is not something {@link ENDS_HERE} can express: "no I'm done I don't wanna do
+ * this to you anymore" is a real candidate's words, and every one of them came
+ * after "done" with no punctuation in between.
+ *
+ * A clause is not an object, which is the whole distinction this is here to
+ * draw — "I'm done, I'll wait" still ends the interview, "I'm done with the
+ * backfill" is somebody telling us what they built.
+ */
+const THEN_A_CLAUSE = String.raw`\s+(?:i|sorry|thanks|thank you|that'?s (?:it|all)|goodbye|bye)\b`;
+
+/**
+ * What has to come before "stop the interview" for it to be addressed to us.
+ *
+ * Naming the interview looks like proof that the interview is what is being
+ * stopped — but "call" and "session" are also two of the most ordinary nouns in
+ * working English, and the bare verb has no subject to disagree with. So "we
+ * had to end the call with the vendor and pick it up the next morning" and "I
+ * had to cancel the session with the client because the data was late" both
+ * ended a real interview, unscored, for describing a day's work.
+ *
+ * This is the anchor the rest of this detector already documents and this one
+ * alternative never had: the request opens the utterance, or opens a clause of
+ * its own, or carries an explicit first-person frame.
+ */
+export const ASKED_OF_US = String.raw`(?:^|[.,;:!?—-]\s*|\b(?:please|just|can we|can you|could we|could you|shall we|will you|let'?s|i want to|i wanna|i need to|i'?d like to|i would like to|i'?m going to|i am going to|going to|gonna|you can|you should|you must)\s+)`;
+
 export function detectWithdrawal(text: string): boolean {
   const t = text.trim().toLowerCase();
   return (
-    /\b(i|i'?m|im)\s+(am\s+)?(done|finished)\b/.test(t) ||
+    // "Done" and "finished" are what a competency interview asks people to
+    // describe. Unguarded, this alternative read "I finished the migration in
+    // March", "I finished my degree in 2019" and "I finished the rollout ahead
+    // of schedule" as requests to leave, and ended those interviews with no
+    // assessment. It is the only alternative here that never had ENDS_HERE.
+    new RegExp(String.raw`\b(?:i|i'?m|im)\s+(?:am\s+)?(?:done|finished)(?:${ENDS_HERE}|${THEN_A_CLAUSE})`).test(t) ||
     new RegExp(String.raw`\bi\s+(?:want|wanna|would like)\s+to\s+(?:stop|end|quit|leave|finish)${ENDS_HERE}`).test(t) ||
     new RegExp(String.raw`\bi'?m\s+going\s+to\s+(?:end|stop|quit|leave)${ENDS_HERE}`).test(t) ||
-    /\b(end|stop)\s+(the\s+)?(interview|call|session)\b/.test(t) ||
+    new RegExp(String.raw`${ASKED_OF_US}(?:end|stop)\s+(?:the\s+|this\s+)?(?:interview|call|session)\b`).test(t) ||
     new RegExp(String.raw`\bi\s+don'?t\s+want\s+to\s+(?:do|continue|carry on)${ENDS_HERE}`).test(t) ||
-    /^(no,?\s+)?(i'?m\s+)?done\b/.test(t) ||
+    new RegExp(String.raw`^(?:no,?\s+)?(?:i'?m\s+)?done(?:${ENDS_HERE}|${THEN_A_CLAUSE})`).test(t) ||
     new RegExp(String.raw`\b(?:can we|let'?s)\s+(?:stop|end|finish)${ENDS_HERE}`).test(t)
   );
 }

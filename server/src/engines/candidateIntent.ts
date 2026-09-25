@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import {
-  ENDS_HERE, detectAiIdentityQuestion, detectDistress, detectHumanRequest, detectInjection,
-  detectRepeatRequest, detectWithdrawal,
+  ASKED_OF_US, ENDS_HERE, detectAiIdentityQuestion, detectDistress, detectHumanRequest,
+  detectInjection, detectRepeatRequest, detectWithdrawal,
 } from './policyEngine.js';
 
 /**
@@ -65,6 +65,15 @@ export const ENDING_INTENTS: ReadonlySet<CandidateIntent> = new Set(['stop', 'po
  * Lowercased, curly apostrophes straightened, punctuation that speech-to-text
  * and typing add inconsistently removed, whitespace collapsed. Apostrophes are
  * KEPT and matched optionally, because "dont" and "don't" both arrive.
+ *
+ * Note what this costs the patterns below: sentence-ending punctuation is gone
+ * by the time any of them runs, so a window written as `[^.?!]{0,N}` is a
+ * LENGTH bound and nothing more — it cannot hold a match inside one sentence,
+ * because there is no sentence left to be inside. Speech-to-text supplies no
+ * punctuation for half the turns anyway, so a pattern that needs to stay inside
+ * a clause has to say so structurally — by naming what may follow the cue, the
+ * way {@link ENDS_HERE} and RESUME_OBJECT do — rather than by leaning on a
+ * boundary that is not there.
  */
 export function normalise(text: string): string {
   return (text ?? '')
@@ -100,7 +109,10 @@ const STOP_PHRASES: RegExp[] = [
   // using Excel for tracker delivery" is a candidate describing their work.
   new RegExp(String.raw`\bi\s+(?:(?:want|would like|need)\s+to|wanna)\s+(?:stop|end|quit|leave|finish|cancel)${ENDS_HERE}`),
   /\b(?:can|could|shall)\s+(?:we|you|i)\s+(?:please\s+)?(?:cancel|stop|end|quit)\b(?:\s+(?:this|it|the interview|the call|here|now|please))*\s*$/,
-  /\b(?:please\s+)?(?:cancel|stop|end)\s+(?:the|this)\s+(?:interview|call|session)\b/,
+  // "I had to cancel the session with the client because the data was late" is
+  // a project, not a request: naming the interview is not enough on its own
+  // when "call" and "session" are also ordinary nouns. See ASKED_OF_US.
+  new RegExp(String.raw`${ASKED_OF_US}(?:cancel|stop|end)\s+(?:the|this)\s+(?:interview|call|session)\b`),
   /\blet'?s\s+(?:stop|end|finish|quit)\s+(?:this|it|here|now|the interview)\b/,
   /\bi\s+(?:don'?t|do not)\s+(?:want|wanna)\s+to\s+(?:continue|carry on|go on|do this|do the interview|do this interview|do it any ?more)\b(?!\s+(?:with|using|working|to)\b(?!\s+(?:this|the interview)))/,
   /\bi'?m\s+not\s+doing\s+this\b/,
@@ -112,6 +124,30 @@ const STOP_PHRASES: RegExp[] = [
 ];
 
 /**
+ * Adverbs that can only be modifying the leaving: "I have to go soon" is still
+ * a goodbye, and ENDS_HERE has no room for it. Kept short on purpose — anything
+ * that could open a noun phrase would undo the guard it sits inside.
+ */
+const LEAVING_SOON = String.raw`(?:\s+(?:soon|early|right away|in a (?:bit|minute|moment|sec|second)))?`;
+
+/**
+ * The reason someone gives in the same breath as the request — "I have to go,
+ * my manager is calling", "can we reschedule, something's come up".
+ *
+ * ENDS_HERE can close on a comma, but by the time these patterns run the comma
+ * is gone (see {@link normalise}), so a reason has to be recognised by its own
+ * shape rather than by the punctuation that introduced it. A reason is a clause
+ * with a subject and a verb of its own; an object is a noun phrase with no verb
+ * at all. That difference is the whole guard: it admits "my manager is calling"
+ * and keeps out "the numbers", "the route plan past the transport manager" and
+ * every other thing a candidate has to run before Friday.
+ */
+const A_REASON_FOLLOWS = String.raw`(?:\s+(?:because|since|sorry|i|we|something|someone|there'?s|it'?s)\b|\s+(?:my|our|the)\s+\w+(?:'?s)?\s+(?:is|was|are|were|has|have|just|needs?|starts?|started|calls?|called|calling|wants?|arrived|woke)\b)`;
+
+/** The request is all that is being asked: it closes the utterance, or its reason follows. */
+const ENDS_OR_EXPLAINS = String.raw`(?:${ENDS_HERE}|${A_REASON_FOLLOWS})`;
+
+/**
  * "I need to go." Said plainly, at the start of the turn, this is as clear an
  * ending as "stop" — and it was reaching only the model, which production
  * cannot call. Anchored to the opening of the utterance, so "the client can't
@@ -120,9 +156,17 @@ const STOP_PHRASES: RegExp[] = [
 const MUST_GO = new RegExp(
   String.raw`^(?:(?:${FILLER}|really|honestly|unfortunately|i'?m afraid)\s+)*`
   + String.raw`(?:i\s+(?:really\s+)?|i'?ve\s+)(?:`
-  + String.raw`(?:need|have|'?ve got|ve got|got|gotta|must)\s*(?:to\s+)?(?:go|leave|head off|jump off|run|log off|drop off|get going)`
-  + String.raw`|(?:can'?t|cannot|can not)\s+(?:continue|carry on|go on|stay|keep going|do this)`
-  + String.raw`)\b`,
+  // "Go" and "run" are two of the busiest verbs in working English, and this
+  // alternative ended on a bare word boundary: "I need to go back to 2019 to
+  // explain how the schema ended up that way" and "I have to run the numbers
+  // first" were read as somebody leaving. The leaving has to be the whole of
+  // what is said — an object after the verb means it is a different verb.
+  + String.raw`(?:need|have|'?ve got|ve got|got|gotta|must)\s*(?:to\s+)?(?:go|leave|head off|jump off|run|log off|drop off|get going)${LEAVING_SOON}${ENDS_OR_EXPLAINS}`
+  // Left on a word boundary deliberately: "I can't carry on like this" and "I
+  // can't go on much longer" are real withdrawals that no ending guard would
+  // keep, and none of these objects doubles as work talk the way "go" does.
+  + String.raw`|(?:can'?t|cannot|can not)\s+(?:continue|carry on|go on|stay|keep going|do this)\b`
+  + String.raw`)`,
 );
 
 // --- Postpone ---------------------------------------------------------------
@@ -145,6 +189,18 @@ const TIME_LATER = String.raw`(?:${LATER}|${LATER_EVENT})`;
 
 /** Verbs for taking the interview up again — "come back", "pick this up", "do it". */
 const RESUME_VERB = String.raw`(?:come back(?!\s+to\s+(?:that|the|those|it\b))|pick (?:this|it) (?:up|back up)|get back to (?:this|it)|continue|carry on|finish (?:this|it)|do (?:it|this|the interview)|have (?:it|this|the interview)|take (?:it|this|the interview)|try (?:this|it) again)`;
+
+/**
+ * What may sit between the resume verb and the time: this interview, or
+ * nothing.
+ *
+ * It used to be fifty characters of anything, which is how "on the migration
+ * I'll continue the backfill tomorrow, my colleague covers the weekend" became
+ * a request to reschedule and ended the interview. "Continue" and "carry on"
+ * take a bare object, so without this the pattern reads any object at all as
+ * the interview — and a competency answer is made of objects.
+ */
+const RESUME_OBJECT = String.raw`(?:\s+(?:with\s+)?(?:this|it|that|the interview|this interview|the call|the session))?`;
 
 const POSTPONE_WHOLE = whole(String.raw`(?:(?:maybe|perhaps|can we|could we|let'?s)?\s*(?:do (?:it|this) )?${LATER}|not (?:right )?now|not today|not at the moment|reschedule|postpone|some other day|i'?m not ready|i am not ready)`);
 
@@ -191,13 +247,17 @@ const POSTPONE_PHRASES: RegExp[] = [
   new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|should|may)\s+(?:we|i|you)\b[^.?!]{0,50}\b${TIME_LATER}${REQUEST_TAIL}`),
   // "let's do it tomorrow", "I'll do it later", "I can come back after exams",
   // "honestly I'd prefer we pick this up once my exams are over".
-  new RegExp(String.raw`${REQUEST_LEAD}${REQUEST_OPENER}\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${REQUEST_TAIL}`),
+  new RegExp(String.raw`${REQUEST_LEAD}${REQUEST_OPENER}\s+${RESUME_VERB}${RESUME_OBJECT}\s+${TIME_LATER}${REQUEST_TAIL}`),
   // "could we pick this up once my exams are over" — the request verb carries
   // it even when the time marker is the only thing after it.
-  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}\b[^.?!]{0,25}\b${TIME_LATER}${REQUEST_TAIL}`),
-  // "can we reschedule", "I need to reschedule", "please postpone"
-  /\b(?:can|could|shall|should)\s+(?:we|you|i)\s+(?:please\s+)?(?:reschedule|postpone|move\s+(?:it|this|the interview))\b/,
-  /\b(?:i\s+(?:need|want|would like|'?d like)\s+to|please|let'?s)\s+(?:reschedule|postpone)\b/,
+  new RegExp(String.raw`${REQUEST_LEAD}(?:can|could|shall|may)\s+(?:we|i)\s+${RESUME_VERB}${RESUME_OBJECT}\s+${TIME_LATER}${REQUEST_TAIL}`),
+  // "can we reschedule", "I need to reschedule", "please postpone".
+  // Rescheduling is also half of every delivery job there is, so the verb has
+  // to end the request: "could we reschedule the workshop, I asked them" and "I
+  // need to reschedule the client demo whenever a release slips" are answers.
+  // A time said out loud ("can we reschedule for tomorrow") is caught above.
+  new RegExp(String.raw`\b(?:can|could|shall|should)\s+(?:we|you|i)\s+(?:please\s+)?(?:reschedule|postpone|move\s+(?:it|this|the interview))${ENDS_OR_EXPLAINS}`),
+  new RegExp(String.raw`\b(?:i\s+(?:need|want|would like|'?d like)\s+to|please|let'?s)\s+(?:reschedule|postpone)${ENDS_OR_EXPLAINS}`),
   // "I don't want to take the interview right now", "I can't do this right now"
   /\bi\s+(?:don'?t|do not|can'?t|cannot|can not)\s+(?:want to\s+)?(?:do|take|have|continue|give)\s+(?:this|it|the interview|this interview|an interview)\b[^.?!]{0,20}\b(?:now|today|right now|at the moment|at this time|this time)\b/,
   // "I'm not ready (for this)", but not "the data wasn't ready"
