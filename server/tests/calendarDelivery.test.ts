@@ -477,6 +477,31 @@ describe('an entry that keeps failing', () => {
     expect({ status: row.status, error: row.lastError }).toEqual({ status: 'FAILED', error: 'the relay refused it' });
   });
 
+  /**
+   * A round whose time passes during the backoff must TERMINATE, not spin.
+   *
+   * The concern: the notice returns before claiming the calendar sequence, so
+   * the delivery row is never moved out of QUEUED, nextAttemptAt stays in the
+   * past, and every drain for the life of the database re-selects it without
+   * ever incrementing attempts. This asserts the row is closed and that a
+   * second drain does not pick it up again.
+   */
+  it('is not re-selected by a later drain once its time has passed', async () => {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    mail.failNext = true;
+    await move(pipelineId, roundId, '15:00');
+    mail.failNext = false;
+    await prisma.interviewRound.update({ where: { id: roundId }, data: { scheduledAt: new Date(Date.now() - 86_400_000) } });
+
+    const first = await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+    const second = await deliverDueCalendarEntries(new Date(Date.now() + 7_200_000));
+
+    // "0 due" on the second pass is the whole point: a spinning row would be
+    // due for ever, because nothing would have moved its status or its time.
+    expect({ first: /^1 due/.test(first), second: /^0 due/.test(second) }).toEqual({ first: true, second: true });
+  });
+
   it('stops chasing a round whose time has passed', async () => {
     const pipelineId = await goldPipeline();
     const roundId = (await bookGold(pipelineId)).body.round.id as string;

@@ -165,15 +165,13 @@ export async function notifyCandidateOfHumanRound(o: {
   readonly deliverTo?: { readonly email: string; readonly name: string };
 }): Promise<CandidateNotice> {
   const { round } = o;
-  // The only pre-claim reading of a changeable field, and it decides nothing:
-  // it is a cheap early-out, and the authoritative version of the same check
-  // runs against the claimed round below. Getting it wrong in either direction
-  // is safe — a round that has since moved into the future returns early here,
-  // the delivery row stays queued, and the next attempt reads the new time.
-  // Everything the message is built from comes from `current`.
-  if (round.scheduledAt.getTime() <= Date.now()) {
-    return { sent: false, note: 'The round time has passed, so the candidate was not emailed.' };
-  }
+  // There is deliberately no "has this round already happened?" check here.
+  // The authoritative one runs below, against the round the claim re-read, and
+  // a second copy above it would be a pre-claim reading of a field that can
+  // change — the exact shape that produced two bugs in this file already. It
+  // saved one query; it cost an invariant that has to be stated with an
+  // exception attached. `o.round` is now used for this round's identity and
+  // nothing else.
   const [candidate, role, tenant] = await Promise.all([
     prisma.candidate.findFirst({ where: { id: o.candidateId, tenantId: round.tenantId }, select: { fullName: true, email: true } }),
     prisma.role.findFirst({ where: { id: o.roleId, tenantId: round.tenantId }, select: { title: true } }),
