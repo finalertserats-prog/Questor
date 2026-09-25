@@ -81,14 +81,20 @@ export interface IdentityHandles {
  * The strings the content net looks for.
  *
  * CASE USED TO BE A REAL LIMIT HERE. Prisma's `contains` is case-sensitive on
- * Postgres, and `mode: 'insensitive'` is unavailable to us because the client
- * is generated for a `sqlite` datasource — so an address stored lower-cased
- * would not match the mixed-case spelling a person actually typed at signup,
- * which is the exact false negative this net exists to prevent. Emitting case
- * variants covered some of it and not the ordinary mixed-case form.
+ * Postgres, so an address stored lower-cased would not match the mixed-case
+ * spelling a person actually typed at signup — the exact false negative this
+ * net exists to prevent. Emitting case variants covered the two ends and
+ * missed the ordinary mixed-case form in between.
  *
- * The match is therefore done in SQL with `lower()`, which both engines have
- * and which services/userEmail.ts already uses for the same problem. See
+ * `mode: 'insensitive'` is not the way out. The client this code compiles
+ * against is generated from prisma/schema.prisma, whose datasource is
+ * `sqlite`, so the option is not in the generated types at all — and writing
+ * against an option that exists only when someone generates from the Postgres
+ * schema would be a filter that compiles in one deployment and not another.
+ *
+ * The match is therefore done in SQL with `lower()`, which both engines have,
+ * which is portable whichever schema generated the client, and which
+ * services/userEmail.ts already uses for the same problem. See
  * `auditIdsMatchingHandles`.
  */
 function contentNeedles(handles: IdentityHandles): readonly string[] {
