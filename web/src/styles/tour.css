@@ -1,0 +1,146 @@
+/* ==========================================================================
+   Guided tour — a spotlight cut out of a scrim, with a coach-mark card beside
+   the element it explains. Sits above the drawer (60) and the profile menu
+   (70) so a step can point into either. Colours are the shell's own tokens,
+   so dark mode needs nothing extra.
+   ========================================================================== */
+
+
+/* Blocks the page behind, so the tour is modal to a pointer as well as to
+   the keyboard. Transparent: the darkening is the spotlight's shadow. */
+.tour-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+/* The hole in the scrim: an outline ring plus a shadow the size of the
+   viewport, which is what darkens everything except the element inside. */
+.tour-spotlight {
+  position: fixed;
+  z-index: 101;
+  border-radius: var(--radius-sheet);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 200vmax var(--scrim);
+  pointer-events: none;
+}
+.tour.is-animated .tour-spotlight {
+  transition: top 0.2s ease, left 0.2s ease, width 0.2s ease, height 0.2s ease;
+}
+
+/* Centred steps have no spotlight; the scrim itself carries the darkening. */
+.tour-card.is-center {
+  box-shadow: var(--shadow-pop), 0 0 0 200vmax var(--scrim);
+}
+
+.tour-card {
+  position: fixed;
+  z-index: 102;
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 32px));
+  padding: 16px 18px 14px;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius-sheet);
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+}
+.tour-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.tour.is-animated .tour-card {
+  transition: top 0.2s ease, left 0.2s ease;
+}
+
+/* On a phone the card is a sheet docked to the bottom, whatever it points at. */
+.tour-card.is-sheet {
+  inset: auto 12px 12px 12px;
+  width: auto;
+}
+
+.tour-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.tour-title {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.tour-body {
+  margin: 0 0 14px;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tour-steps {
+  gap: 6px;
+  margin-left: auto;
+}
+.tour-skip {
+  color: var(--ink-3);
+}
+
+/* A card that offers real ways out (the demo's closing cards): its buttons
+   stack at full width, above the ordinary Back and Next. */
+.tour-choices {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.tour-choices .btn {
+  justify-content: center;
+}
+
+/* Smaller print, set off by a rule rather than a tint. */
+.tour-note {
+  margin: 0 0 12px;
+  padding-top: 8px;
+  border-top: var(--hair) solid var(--rule);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+/* The demo's way out, kept apart from the tour's own controls by a rule. */
+.tour-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: var(--hair) solid var(--rule);
+}
+.tour-end,
+.tour-end:hover {
+  color: var(--stop);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tour-spotlight,
+  .tour-card {
+    transition: none !important;
+  }
+}

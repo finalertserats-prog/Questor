@@ -1,0 +1,215 @@
+/* ==========================================================================
+   Reports — outcome statistics
+   ==========================================================================
+
+   The page's one visual job is to keep a percentage from ever travelling
+   alone. So a rate is drawn as a small stack — the figure, its counts under
+   it, and, when the sample is too small, the sentence saying so — and the
+   marking of "too few to read" is carried by RULE and TEXT, never by a tinted
+   fill: a wash behind a number is exactly the thing that reads as decoration
+   and gets ignored, and it does not survive greyscale or a printout.
+   ========================================================================== */
+
+/* The panel's own title line, since it sits inside the Admin console rather
+   than on a page of its own. */
+.report-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.report-head h2 {
+  margin: 0;
+}
+.report-head p {
+  margin: 2px 0 0;
+}
+
+.report-scope {
+  border-left: 3px solid var(--rule-strong);
+}
+.report-scope p + p {
+  margin-bottom: 0;
+}
+
+.report-filters {
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin: var(--space-3) 0;
+}
+
+.report-section + .report-section {
+  margin-top: var(--space-3);
+}
+
+.report-chart {
+  margin-top: var(--space-2);
+}
+
+/* One hue per chart: these charts compare magnitudes, which is a sequential
+   job. Nothing here puts --chart-a and --chart-b side by side, so the one
+   colour pair the palette does not separate in dark mode never appears. */
+/* `:not(--unreadable)` rather than a plain `.report-bar`: a CSS fill beats the
+   presentation attribute that points a bar at the ruled pattern, so declaring
+   the hue here unconditionally silently un-marked every small sample — the one
+   thing on the page that must never be silent. */
+.report-bar:not(.report-bar--unreadable) {
+  fill: var(--chart-b);
+}
+/* The median column of a distribution: the same hue, ringed, so the middle is
+   visible without a second colour entering the chart. */
+.report-bar--median {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  paint-order: stroke;
+}
+/* Ruled rather than solid: a sample too small to read is marked by line, which
+   survives greyscale, colour blindness and print. The edge keeps the shape
+   legible at one or two units. The fill itself is a per-chart <pattern>, set as
+   a presentation attribute, which is why no `fill` is declared here. */
+.report-bar--unreadable {
+  stroke: var(--chart-muted);
+  stroke-width: 1;
+}
+/* The figure beside such a bar, bracketed and set back, exactly as in the tables. */
+.report-value--unreadable {
+  fill: var(--ink-3);
+  font-weight: 500;
+}
+
+/* --- A rate, said in full ------------------------------------------------- */
+
+.report-rate {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+}
+.report-rate-value {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink);
+}
+.report-rate-counts {
+  font-size: 11.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.report-rate-note {
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+/* Bracketed, not tinted. The brackets say "hold this loosely" in a way that
+   reads the same on paper and to a screen reader that announces punctuation. */
+.report-rate--unreadable .report-rate-value {
+  color: var(--ink-3);
+  font-weight: 500;
+}
+.report-rate--unreadable .report-rate-value::before {
+  content: '[';
+}
+.report-rate--unreadable .report-rate-value::after {
+  content: ']';
+}
+/* A cell that carries the brackets in its own text rather than in a child. */
+td.report-rate--unreadable {
+  color: var(--ink-3);
+}
+
+/* --- Tables --------------------------------------------------------------- */
+
+.report-table {
+  width: 100%;
+}
+/* A row header here is a person's or a month's name, not a column label. */
+.report-table tbody th {
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* Every table on this page scrolls inside its own box. A chart's table view is
+   the accessible equal of the drawing, so it is as wide as the drawing's data —
+   which on a phone is wider than the phone. Without this the whole document
+   scrolled sideways, and the page's own copy went with it. */
+.report-chart .chart-data {
+  overflow-x: auto;
+}
+.report-table .num {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+/* A whole row whose group is too small: a left rule, not a fill. */
+.report-row--unreadable > th {
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 8px;
+}
+
+.table-wrap {
+  position: relative;
+  overflow-x: auto;
+  margin-top: var(--space-2);
+}
+
+/* --- Plain-words readings -------------------------------------------------- */
+
+.report-reading {
+  margin: var(--space-2) 0 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--rule);
+  color: var(--ink-2);
+  max-width: 78ch;
+}
+
+/* --- Panels and tabs ------------------------------------------------------- */
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+.report-panel-title {
+  font-size: var(--type-card-title-size);
+  font-weight: var(--type-card-title-weight);
+  margin: 0 0 4px;
+}
+
+.report-tabs {
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-2);
+}
+/* The selected cut is marked by weight and an underline rule, so it is still
+   the selected one in high-contrast mode and on paper.
+
+   Both markers used to be drawn as though the tab sat on the page: body ink on
+   the accent fill these buttons actually carry measured 2.03:1, the worst
+   contrast anywhere in the product, and an accent rule on an accent fill was
+   invisible. Both now use the token for ink on an accent surface, which is the
+   pairing the button itself is built from. */
+.report-tabs .is-current {
+  font-weight: 650;
+  color: var(--accent-on);
+  box-shadow: inset 0 -2px 0 0 var(--accent-on);
+}
+
+.report-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-2);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+@media (max-width: 560px) {
+  .report-filters .field,
+  .report-filters select {
+    width: 100%;
+  }
+  .report-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

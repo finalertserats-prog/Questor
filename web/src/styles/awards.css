@@ -1,0 +1,116 @@
+/* ==========================================================================
+   Badges and certificates — the candidate's journey, one row per tier.
+
+   Class names are prefixed award-/tier- rather than reusing .stage-* or
+   .journey-*: those belong to pipeline.css and journey.css, and a shared name
+   pulls one panel's layout into the other's card.
+   ========================================================================== */
+
+.award-panel .award-rows {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.award-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 2px;
+}
+.award-row + .award-row {
+  border-top: var(--hair) solid var(--rule);
+}
+
+.tier-badge {
+  display: block;
+  flex: none;
+}
+
+/* The shape of the thing that is not there yet. Dashed and empty, never a
+   faded badge: a dimmed medallion still reads as a medallion, and this tier
+   has not been earned. */
+.award-placeholder {
+  display: block;
+  width: 36px;
+  height: 36px;
+  border: var(--hair) dashed var(--rule-strong);
+  border-radius: var(--radius);
+}
+
+.award-what {
+  color: var(--ink);
+  line-height: 1.45;
+}
+.award-row-pending .award-what {
+  color: var(--ink-3);
+}
+
+.award-mark {
+  color: var(--ink-3);
+  font-size: 0.92em;
+}
+
+.award-when {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: 0.92rem;
+}
+
+.award-actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.award-action {
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 5px 11px;
+  color: var(--ink-3);
+  background: transparent;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.award-action:hover:not(:disabled) {
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+.award-action:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+/* Not a button: there is nothing to press. It is the reason the metal is
+   missing, in the place a button would otherwise sit. */
+.award-reason {
+  color: var(--ink-3);
+  font-size: 0.8rem;
+  border: var(--hair) dashed var(--rule);
+  border-radius: var(--radius);
+  padding: 5px 11px;
+}
+
+.award-failure {
+  color: var(--stop);
+  font-size: 0.9rem;
+  margin: 8px 0 0;
+}
+
+@media (max-width: 760px) {
+  .award-row {
+    grid-template-columns: auto 1fr;
+    gap: 8px 12px;
+  }
+  .award-when,
+  .award-actions {
+    grid-column: 2;
+  }
+}

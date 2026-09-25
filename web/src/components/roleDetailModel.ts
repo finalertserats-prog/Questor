@@ -1,0 +1,50 @@
+/**
+ * The role page's decisions, kept free of React so they can be unit tested
+ * (see web/tests/roleDetailModel.test.ts).
+ */
+
+/**
+ * The approve request names exactly what the person looked at. Without it the
+ * server approved whatever version was newest when the request landed, which
+ * after a colleague's save is not the one on this screen.
+ */
+export function approvePayload(scorecard: { readonly id: string; readonly version: number }): { scorecardId: string; version: number } {
+  return { scorecardId: scorecard.id, version: scorecard.version };
+}
+
+/**
+ * What PATCH /api/roles/:id/status accepts. Restoring sends 'draft'; the server
+ * decides the real status from the latest scorecard (approved stays approved).
+ */
+export type RoleStatusTarget = 'archived' | 'draft';
+
+/** What the archive control offers for a role in `status`. */
+export function archiveAction(status: string): { label: string; next: RoleStatusTarget } {
+  return status === 'archived'
+    ? { label: 'Unarchive role', next: 'draft' }
+    : { label: 'Archive role', next: 'archived' };
+}
+
+/** Which load a response belongs to: the role id asked for, and the order it was asked in. */
+export interface LoadTicket {
+  readonly id: string | undefined;
+  readonly seq: number;
+}
+
+/**
+ * Whether a response may write to the page: only the newest request, and only
+ * for the id still on screen. A slow response for the previous role, or an
+ * older reload of this one, is dropped.
+ */
+export function isCurrentResponse(response: LoadTicket, latest: LoadTicket): boolean {
+  return response.id === latest.id && response.seq === latest.seq;
+}
+
+/**
+ * Whether new candidates, interviews and scorecard changes may attach to a
+ * role. The server refuses them for an archived role (409 role_archived); the
+ * UI stops offering them so nobody meets that refusal by following a link.
+ */
+export function isRoleOpen(status: string | undefined): boolean {
+  return status !== 'archived';
+}

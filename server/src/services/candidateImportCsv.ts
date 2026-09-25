@@ -1,0 +1,118 @@
+/**
+ * Reads a spreadsheet export of people into one row per person for bulk
+ * import. Only text comes out: a cell is never evaluated, and a leading
+ * formula trigger (= + - @) is dropped from names so the value stays inert if
+ * it is ever opened in a spreadsheet again.
+ *
+ * Validation of the values themselves (is this an email?) is the preview's
+ * job, so a bad row is shown with its reason instead of sinking the file.
+ */
+
+export const MAX_IMPORT_ROWS = 200;
+// Generous for any real cell; stops one pathological cell being stored whole.
+const MAX_CELL_CHARS = 1000;
+
+export interface CsvPerson {
+  readonly fullName: string;
+  readonly email: string;
+  readonly phone: string;
+  readonly linkedinUrl: string;
+}
+
+export type CsvParse =
+  | { readonly ok: true; readonly rows: readonly CsvPerson[] }
+  | { readonly ok: false; readonly error: string };
+
+type Field = 'name' | 'first' | 'last' | 'email' | 'phone' | 'linkedin';
+
+// Headers compared with case, spaces and punctuation removed.
+const HEADER_FIELDS: Readonly<Record<string, Field>> = {
+  name: 'name', fullname: 'name', candidatename: 'name', candidate: 'name', applicantname: 'name',
+  firstname: 'first', givenname: 'first', forename: 'first',
+  lastname: 'last', surname: 'last', familyname: 'last',
+  email: 'email', emailaddress: 'email', mail: 'email', candidateemail: 'email', emailid: 'email',
+  phone: 'phone', phonenumber: 'phone', mobile: 'phone', mobilenumber: 'phone', telephone: 'phone',
+  contactnumber: 'phone', tel: 'phone', cell: 'phone',
+  linkedin: 'linkedin', linkedinurl: 'linkedin', linkedinprofile: 'linkedin', linkedinprofileurl: 'linkedin', linkedinlink: 'linkedin',
+};
+
+const headerKey = (cell: string): string => cell.toLowerCase().replace(/[^a-z]/g, '');
+
+/** The separator the header line uses most, counting only outside quotes. */
+function detectSeparator(text: string): string {
+  const firstLine = text.split(/\r?\n/, 1)[0] ?? '';
+  const counts = [',', ';', '\t'].map((sep) => {
+    let inQuotes = false;
+    let count = 0;
+    for (const ch of firstLine) {
+      if (ch === '"') inQuotes = !inQuotes;
+      else if (ch === sep && !inQuotes) count += 1;
+    }
+    return { sep, count };
+  });
+  return counts.reduce((best, c) => (c.count > best.count ? c : best)).sep;
+}
+
+/** RFC 4180 records: quoted fields may hold the separator, "" and line breaks. */
+function splitRecords(text: string, sep: string): string[][] | null {
+  const records: string[][] = [];
+  let record: string[] = [];
+  let cell = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i += 1; }
+      else if (ch === '"') inQuotes = false;
+      else cell += ch;
+      continue;
+    }
+    if (ch === '"' && cell.trim() === '') { cell = ''; inQuotes = true; }
+    else if (ch === sep) { record = [...record, cell]; cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i += 1;
+      records.push([...record, cell]);
+      record = [];
+      cell = '';
+    } else cell += ch;
+  }
+  if (inQuotes) return null;
+  if (cell !== '' || record.length) records.push([...record, cell]);
+  return records;
+}
+
+const clean = (value: string | undefined): string => (value ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_CELL_CHARS);
+const inertName = (value: string): string => value.replace(/^[=+\-@]+/, '').trim();
+
+export function parseCandidateCsv(input: string): CsvParse {
+  const text = input.replace(/^﻿/, '');
+  if (!text.trim()) return { ok: false, error: 'The file is empty.' };
+  // A NUL byte never appears in a text export; this is a binary file renamed.
+  if (text.includes('\u0000')) return { ok: false, error: 'This is not a CSV file. Save the spreadsheet as CSV and try again.' };
+  const records = splitRecords(text, detectSeparator(text));
+  if (!records) return { ok: false, error: 'A quote in the file is never closed, so it cannot be read. Check the row it starts on.' };
+
+  const columns = new Map<Field, number>();
+  (records[0] ?? []).forEach((cell, index) => {
+    const field = HEADER_FIELDS[headerKey(cell)];
+    if (field && !columns.has(field)) columns.set(field, index);
+  });
+  if (!columns.has('email')) return { ok: false, error: 'The file needs an email column (a header such as "email").' };
+  if (!columns.has('name') && !columns.has('first')) return { ok: false, error: 'The file needs a name column (a header such as "name" or "first name").' };
+
+  const at = (record: readonly string[], field: Field): string => {
+    const index = columns.get(field);
+    return index === undefined ? '' : clean(record[index]);
+  };
+  const rows = records.slice(1)
+    .filter((record) => record.some((cell) => cell.trim() !== ''))
+    .map((record) => ({
+      fullName: inertName(at(record, 'name') || [at(record, 'first'), at(record, 'last')].filter(Boolean).join(' ')),
+      email: at(record, 'email'),
+      phone: at(record, 'phone'),
+      linkedinUrl: at(record, 'linkedin'),
+    }));
+  if (rows.length === 0) return { ok: false, error: 'The file has a header but no people under it.' };
+  if (rows.length > MAX_IMPORT_ROWS) return { ok: false, error: `A file can hold at most ${MAX_IMPORT_ROWS} people; this one has ${rows.length}. Split it and import each part.` };
+  return { ok: true, rows };
+}

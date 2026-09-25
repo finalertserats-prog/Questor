@@ -1,0 +1,292 @@
+/* ==========================================================================
+   The CV-versus-role reading (components/fit/*)
+
+   Two panels. FitPanel says what the CV evidences about this role and where on
+   the CV it says it; FitVsInterview puts that next to what the interview
+   actually found.
+
+   Same rule as the assessment page: state is marked by a rule down the left
+   edge, by the weight of the type and by the word itself — never by a tinted
+   fill. A reading that is only a colour is a reading some people cannot see,
+   and a panel washed in green is a panel that looks like it has decided
+   something. This one has not decided anything.
+
+   Every colour here is a token. Nothing below names one.
+   ========================================================================== */
+
+.fit,
+.fvi {
+  display: grid;
+  gap: var(--space-4);
+  /* Both: `min-width` so a long CV quote cannot push the grid wider than its
+     card, `width` so the grid fills the card rather than shrink-wrapping to its
+     widest row — which left the comparison floating in a third of its card. */
+  min-width: 0;
+  width: 100%;
+}
+
+/* --- the reading ---------------------------------------------------------- */
+
+.fit-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  padding: var(--space-4) var(--space-5);
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid var(--rule-strong);
+  border-radius: 0 var(--radius-sheet) var(--radius-sheet) 0;
+  background: var(--sheet);
+}
+.fit-head.is-pass { border-color: var(--pass-edge); border-left-color: var(--pass); }
+.fit-head.is-hold { border-color: var(--hold-edge); border-left-color: var(--hold); }
+.fit-head.is-stop { border-color: var(--stop-edge); border-left-color: var(--stop); }
+.fit-head.is-neutral { border-color: var(--rule); border-left-color: var(--rule-strong); }
+
+.fit-read { display: grid; gap: var(--space-2); min-width: 0; }
+
+.fit-word {
+  font-family: var(--font-display);
+  font-size: var(--type-section-size);
+  line-height: var(--type-section-line);
+  font-weight: 650;
+  color: var(--ink);
+}
+.fit-head.is-pass .fit-word { color: var(--pass); }
+.fit-head.is-hold .fit-word { color: var(--hold); }
+.fit-head.is-stop .fit-word { color: var(--stop); }
+
+.fit-meaning { margin: 0; color: var(--ink-2); }
+
+.fit-figures {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  min-width: 0;
+}
+.fit-figure { display: grid; gap: 2px; min-width: 0; }
+.fit-figure dt {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.fit-figure dd {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.fit-internal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ink-3);
+}
+
+/* --- blocks --------------------------------------------------------------- */
+
+.fit-block {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid var(--rule-strong);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--sheet);
+  min-width: 0;
+}
+.fit-block.is-pass { border-left-color: var(--pass); }
+.fit-block.is-hold { border-left-color: var(--hold); }
+.fit-block.is-stop { border-left-color: var(--stop); }
+
+.fit-h {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--type-card-title-size);
+  line-height: var(--type-card-title-line);
+  font-weight: 620;
+  color: var(--ink);
+}
+.fit-h4 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.fit-note { margin: 0; font-size: 0.88rem; line-height: 1.5; color: var(--ink-2); }
+.fit-rule { margin-top: 2px; color: var(--ink-3); font-style: italic; }
+
+.fit-list { margin: 0; padding-left: var(--space-5); color: var(--ink-2); }
+.fit-list li { margin-bottom: 2px; }
+
+/* --- a competency or technology, with its lines ---------------------------- */
+
+.fit-reads { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.fit-read-row {
+  display: grid;
+  gap: var(--space-1);
+  padding-left: var(--space-3);
+  border-left: var(--hair) solid var(--rule);
+  min-width: 0;
+}
+.fit-read-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A label in brackets: the state is the word, the brackets are the frame. */
+.fit-tag,
+.fit-strength {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.fit-tag::before { content: '['; }
+.fit-tag::after { content: ']'; }
+.fit-strength { font-weight: 600; }
+
+.fit-quotes { display: grid; gap: var(--space-2); margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+.fit-quotes li { display: grid; gap: 2px; min-width: 0; }
+.fit-quotes q {
+  font-size: 0.88rem;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.fit-where {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  color: var(--ink-3);
+}
+
+/* --- the advert's own words, quoted back -----------------------------------
+   Set off by a rule rather than a tinted fill, like every other piece of state
+   in this product: a quotation has to survive being read without colour. */
+
+.fit-quote-jd {
+  margin: var(--space-1) 0 var(--space-2);
+  padding-left: var(--space-3);
+  border-left: var(--hair) solid var(--rule-strong);
+}
+.fit-quote-jd q { font-size: 0.88rem; line-height: 1.5; color: var(--ink); overflow-wrap: anywhere; }
+
+/* --- probes ---------------------------------------------------------------- */
+
+.fit-probes { display: grid; gap: var(--space-2); margin: 0; padding-left: var(--space-5); }
+.fit-probes li { min-width: 0; }
+.fit-probe-text { display: block; color: var(--ink); font-size: 0.9rem; line-height: 1.5; }
+.fit-probe-why {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  color: var(--ink-3);
+}
+
+/* --- chips ----------------------------------------------------------------- */
+
+.fit-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.fit-chip {
+  padding: 2px var(--space-2);
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  font-size: 0.8rem;
+  color: var(--ink-2);
+}
+.fit-chip.is-muted { color: var(--ink-3); border-style: dashed; }
+
+/* --- the how-it-was-reached fold -------------------------------------------- */
+
+.fit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+}
+.fit-toggle:hover { color: var(--ink); }
+.fit-toggle:focus-visible { outline: var(--rail) solid var(--focus); outline-offset: 2px; }
+.fit-num { font-family: var(--font-data); white-space: nowrap; }
+
+/* --- CV against interview ---------------------------------------------------- */
+
+.fvi-headline { margin: 0; font-weight: 600; color: var(--ink); }
+.fvi-rows { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+
+.fvi-row {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid var(--rule-strong);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--sheet);
+  min-width: 0;
+}
+.fvi-row.is-pass { border-left-color: var(--pass); }
+.fvi-row.is-hold { border-left-color: var(--hold); }
+.fvi-row.is-stop { border-left-color: var(--stop); }
+
+.fvi-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+.fvi-kind {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.fvi-sides {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-4);
+}
+.fvi-side {
+  display: grid;
+  gap: var(--space-1);
+  align-content: start;
+  padding-left: var(--space-3);
+  border-left: var(--hair) solid var(--rule);
+  min-width: 0;
+}
+
+/* --- narrow ------------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+  .fit-head { grid-template-columns: minmax(0, 1fr); }
+  .fvi-sides { grid-template-columns: minmax(0, 1fr); }
+  .fit-block,
+  .fvi-row { padding: var(--space-3); }
+  .fvi-row-head { justify-content: flex-start; }
+}

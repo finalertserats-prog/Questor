@@ -1,0 +1,21 @@
+-- Whether the AI's reading was visible to the reviewer before they recorded
+-- their verdict.
+--
+-- The same verdict, by the same reviewer, at the same minute, means two
+-- different things depending on that ordering: written first it is an
+-- independent second opinion, written after it may be a countersignature. The
+-- two are identical on the page, so the ordering is what makes the record
+-- evidence of human oversight rather than a timestamp.
+--
+-- It is a column rather than something derived on read because the evidence it
+-- would be derived from — the audit trail — can be pruned, and the policy it
+-- would be derived from can change. A fact about what happened must not depend
+-- on the state of the system that reads it back.
+--
+-- Nullable, and deliberately NOT backfilled. Every review recorded before this
+-- column existed keeps NULL, which the product reads as "ordering not
+-- recorded" and says so. Guessing an ordering for those rows would be
+-- inventing the very evidence this column exists to hold.
+
+-- AlterTable
+ALTER TABLE "HumanReview" ADD COLUMN     "aiVisibleBefore" BOOLEAN;

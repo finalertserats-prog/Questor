@@ -1,0 +1,985 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Link, useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { api, ApiError } from '../api/client';
+import { stateBadge, Banner, Meter, Stat } from '../components/ui';
+import { VerdictCell } from '../components/VerdictCell';
+import { can, onlyWhoCan } from '../components/capabilityModel';
+import { isAwaitingCandidate, isInFlight, isUnderway } from './CandidatesList';
+import { PipelinePanel } from '../components/PipelinePanel';
+import { SmeReviewPanel } from '../components/sme/SmeReviewPanel';
+import { CandidateAtsLink } from '../components/CandidateAtsLink';
+import { useAuth } from '../auth';
+import { CandidateJourneyBoard } from '../components/CandidateJourneyBoard';
+import { CandidateAwards } from '../components/CandidateAwards';
+import type { AwardResponseRow } from '../components/candidateAwardsModel';
+import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
+import { Icon } from '../components/Icon';
+import { PageHeader } from '../components/PageHeader';
+import { EmptyState } from '../components/EmptyState';
+import { ResumeUploadCard } from '../components/ResumeFields';
+import { PageSkeleton } from '../components/Skeleton';
+import { formatPercent, formatScoreOutOf100, roundScore } from '../components/scoreFormat';
+import {
+  DEFAULT_DURATION_MINUTES, DEFAULT_TONE, INTERVIEW_MODULES, MAX_DURATION_MINUTES, MIN_DURATION_MINUTES, TONE_CHOICES,
+  clampDuration, coveredCompetencyNames, interviewSetupProblem,
+  type InterviewTone, type SetupScorecard,
+} from '../components/interviewSetupModel';
+import { formatDateTime, formatScheduled } from '../components/dateFormat';
+import { useOrgTimeZone } from '../components/useOrgTimeZone';
+import { InterviewerSelector } from '../components/InterviewerSelector';
+import { DEFAULT_INTERVIEWER_CHOICE } from '../components/interviewerModel';
+import { SetUpForAnotherRole } from '../components/SetUpForAnotherRole';
+import { EraseCandidateCard } from '../components/EraseCandidateCard';
+import { useToast } from '../components/Toast';
+import { FitPanel } from '../components/fit/FitPanel';
+import { FitVsInterview } from '../components/fit/FitVsInterview';
+import type { Fit as FitShape, InterviewCompetency } from '../components/fit/fitModel';
+
+interface Employment { title: string; company: string; start?: string; end?: string; bullets: string[]; }
+interface Education { degree: string; institution: string; year?: string; }
+interface Project { name: string; summary: string; }
+interface Profile {
+  employment: Employment[]; education: Education[]; projects: Project[];
+  certifications: string[]; skills: string[]; totalYears?: number;
+}
+/**
+ * The fit shapes live with the panel that reads them
+ * (components/fit/fitModel.ts), so the page and the panel cannot disagree about
+ * what a fit is.
+ */
+type Fit = FitShape;
+type FitComponent = FitShape['components'][number];
+interface Interview { id: string; state: string; scheduledAt: string | null; scheduledTimeZone?: string | null; createdAt: string; }
+interface CandidateResp {
+  // A candidate can exist before anyone has put them against a role.
+  candidate: { id: string; fullName: string; email: string; phone: string; linkedinUrl?: string; roleId: string | null };
+  profile: Profile | null; fit: Fit | null; rawText: string; interviews: Interview[];
+  /** Other applications for the same address; sent only to someone who may erase. */
+  otherApplications?: number;
+  // What the candidate asked for at the end of their interview. Structurally
+  // the journey's JourneyCandidateFeedback; spelled out here so this response
+  // type stays a description of the endpoint rather than of the board.
+  candidateFeedback?: {
+    optIn: { choice: string; decidedAt: string | null } | null;
+    draft: { status: string | null; candidateRequested: boolean; assessmentId: string | null } | null;
+    humanRequest: { requested: boolean; requestedAt: string | null } | null;
+  } | null;
+}
+
+/**
+ * /candidates/:id lists a candidate's interviews but not whether any of them
+ * produced an assessment, so on its own this page can only offer "open the
+ * interview and look". /interviews carries assessmentId and invited, so we join
+ * the two and put the assessment — the thing the recruiter actually wants — one
+ * click away instead of two.
+ */
+interface SessionSummary {
+  id: string; assessmentId: string | null; invited: boolean;
+  /** Left out, with blindReviewPending set, while your independent review comes first. */
+  recommendation?: string | null; blindReviewPending?: boolean;
+  /** The reviewer's verdict once there is one; absent on an older server or while blind review is pending. */
+  humanRecommendation?: string | null;
+  /** The AI interviewer's name for that session; absent on an older server. */
+  personaName?: string | null;
+}
+
+/** The role and its latest scorecard: between them, the job description. */
+interface RoleResp {
+  role: { id: string; title: string; level: string | null };
+  scorecards: Array<SetupScorecard & {
+    profile: {
+      roleContext?: string; outcomes?: string[]; responsibilities?: string[];
+      competencies?: Array<{ name: string; classification?: string; retired?: boolean }>;
+    } | null;
+  }>;
+}
+
+type PipelineResp = JourneyPipeline & { candidateId: string };
+
+interface AssessmentResp {
+  id: string;
+  result: {
+    recommendation?: string;
+    summary?: string;
+    competencies?: JourneyAssessment['competencies'];
+  } | null;
+  /**
+   * The verdict the team acts on: a reviewer's once they have recorded one,
+   * the AI's until then. Absent on an older server, which is why the AI's own
+   * recommendation stays the fallback.
+   */
+  outcome?: { source: 'human' | 'ai'; recommendation: string } | null;
+}
+
+
+export type CandidateDetailTabKey = 'profile' | 'journey';
+export const candidateDetailTabs: ReadonlyArray<{ key: CandidateDetailTabKey; label: string }> = [
+  { key: 'profile', label: 'Candidate profile' },
+  { key: 'journey', label: 'Candidate journey' },
+];
+
+/** The tab a link opens on: `?tab=journey` (where interviews are set up), else the profile. */
+export function candidateDetailTabFromParam(value: string | null): CandidateDetailTabKey {
+  return candidateDetailTabs.find((t) => t.key === value)?.key ?? 'profile';
+}
+
+export function candidateDetailTabId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-tab`; }
+export function candidateDetailPanelId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-panel`; }
+
+export function nextCandidateDetailTab(current: CandidateDetailTabKey, key: string): CandidateDetailTabKey {
+  const index = candidateDetailTabs.findIndex((t) => t.key === current);
+  if (key === 'Home') return candidateDetailTabs[0].key;
+  if (key === 'End') return candidateDetailTabs[candidateDetailTabs.length - 1].key;
+  if (key !== 'ArrowRight' && key !== 'ArrowLeft') return current;
+  const delta = key === 'ArrowRight' ? 1 : -1;
+  return candidateDetailTabs[(index + delta + candidateDetailTabs.length) % candidateDetailTabs.length].key;
+}
+
+interface ProfileAnalysisResp {
+  candidate: CandidateResp['candidate'] & { createdAt?: string };
+  currentRole: { id: string; title: string; level: string | null } | null;
+  profileVersion: { id: string; version: number; createdAt: string } | null;
+  profile: Profile | null;
+  currentFit: Fit | null;
+  alternativeRoles: Array<{
+    roleId: string; title: string; level: string | null; score: number; confidence: number;
+    components: FitComponent[]; why: string;
+  }>;
+  consideredRoleCount: number;
+  betterFitMessage: string;
+  caveat: string;
+  /**
+   * Set when the role changed under the stored reading and the panel is showing
+   * a fresh one. Null when the stored reading is still current, and absent on an
+   * older server.
+   */
+  rescored?: { stale: boolean; reason: string } | null;
+}
+
+
+/** What each enrichment read is called when it fails. */
+const DETAIL_LABELS: Readonly<Record<string, string>> = {
+  role: 'Role',
+  interviews: 'Interviews',
+  pipeline: 'Pipeline',
+  awards: 'Badges',
+};
+
+const SESSIONS_PAGE_SIZE = 100;
+
+/** Every interview session for one candidate, a page at a time (rarely more than one page). */
+async function fetchCandidateSessions(candidateId: string): Promise<SessionSummary[]> {
+  const pageOf = (page: number) => api.get<{ sessions: SessionSummary[]; meta?: { total: number } }>(
+    `/interviews?candidateId=${encodeURIComponent(candidateId)}&pageSize=${SESSIONS_PAGE_SIZE}&page=${page}`,
+  );
+  const first = await pageOf(1);
+  const pages = Math.ceil((first.meta?.total ?? 0) / SESSIONS_PAGE_SIZE);
+  const rest = pages > 1 ? await Promise.all(Array.from({ length: pages - 1 }, (_, i) => pageOf(i + 2))) : [];
+  return [first, ...rest].flatMap((d) => d.sessions ?? []);
+}
+
+export function CandidateDetail() {
+  const { id } = useParams();
+  const nav = useNavigate();
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const { user } = useAuth();
+  const [reuseOpen, setReuseOpen] = useState(false);
+  // Set once this application has been erased: the page says so instead.
+  const [erasedNotice, setErasedNotice] = useState<string | null>(null);
+  const toast = useToast();
+  const [data, setData] = useState<CandidateResp | null>(null);
+  // Scheduled times are shown on the clock they were booked on (see formatScheduled).
+  const orgZone = useOrgTimeZone();
+  const [profileAnalysis, setProfileAnalysis] = useState<ProfileAnalysisResp | null>(null);
+  const [profileAnalysisError, setProfileAnalysisError] = useState('');
+  const [activeTab, setActiveTab] = useState<CandidateDetailTabKey>('profile');
+  const [sessions, setSessions] = useState<Record<string, SessionSummary>>({});
+  const [role, setRole] = useState<JourneyRole | null>(null);
+  const [pipeline, setPipeline] = useState<PipelineResp | null>(null);
+  const [awards, setAwards] = useState<readonly AwardResponseRow[]>([]);
+  const [missingEvidence, setMissingEvidence] = useState<string[]>([]);
+  const [assessment, setAssessment] = useState<JourneyAssessment | null>(null);
+  const [assessmentBlockedReason, setAssessmentBlockedReason] = useState<string | null>(null);
+  // The graded competencies with their ids, kept apart from the journey's copy
+  // because the CV comparison joins on id and the journey board does not carry one.
+  const [interviewCompetencies, setInterviewCompetencies] = useState<InterviewCompetency[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  // The reads that only enrich the journey fail on their own, without costing
+  // the profile — but they are said, not swallowed: an empty column with no
+  // reason reads as "nothing happened" when the truth is "we could not ask".
+  const [detailErrors, setDetailErrors] = useState<Readonly<Record<string, string>>>({});
+  const noteDetail = useCallback((key: string, err: unknown) => {
+    const message = err instanceof Error ? err.message : 'Could not load.';
+    setDetailErrors((prev) => ({ ...prev, [key]: message }));
+  }, []);
+  const clearDetail = useCallback((key: string) => {
+    setDetailErrors((prev) => (key in prev ? Object.fromEntries(Object.entries(prev).filter(([k]) => k !== key)) : prev));
+  }, []);
+  // Bumped by the pipeline panel after any action it completes, so the journey
+  // board beside it re-reads rather than showing the state before the click.
+  const [version, setVersion] = useState(0);
+  const refresh = useCallback(() => setVersion((v) => v + 1), []);
+
+  // The pipeline and journey move on their own — a review completed in
+  // another tab decides them — so coming back to this tab re-reads both
+  // rather than showing the stage the candidate had when the tab was left.
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [refresh]);
+
+  // interview setup form
+  const [durationMinutes, setDurationMinutes] = useState<number>(DEFAULT_DURATION_MINUTES);
+  // Random is the recommended default. Tone below is a separate setting and is
+  // never set or changed by the interviewer choice.
+  const [interviewer, setInterviewer] = useState(DEFAULT_INTERVIEWER_CHOICE);
+  const [tone, setTone] = useState<InterviewTone>(DEFAULT_TONE);
+  /**
+   * What this interview will ask about, named on the form rather than left to
+   * be discovered afterwards. Null until the role's scorecards have loaded —
+   * which is not the same as a role with none approved yet, and the form says
+   * something different for each.
+   */
+  const [covers, setCovers] = useState<readonly string[] | null>(null);
+
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+
+  // Only a change of candidate blanks the page. A refresh bump re-reads in
+  // place: swapping the whole page for a skeleton unmounted the pipeline panel,
+  // and with it the scheduling notice holding the meeting link someone had just
+  // created — gone before they could copy it.
+  const loadedId = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (loadedId.current !== id) {
+      loadedId.current = id;
+      // A different candidate: nothing of the previous one may be drawn
+      // against this person while their own reads are in flight.
+      setData(null);
+      setError('');
+      setRole(null);
+      setCovers(null);
+      setProfileAnalysis(null);
+      setProfileAnalysisError('');
+      setSessions({});
+      setPipeline(null);
+      setMissingEvidence([]);
+      setAssessment(null);
+      setAssessmentBlockedReason(null);
+      setDetailErrors({});
+      setActiveTab('profile');
+      setErasedNotice(null);
+      setLoading(true);
+    }
+
+    api.get<CandidateResp>(`/candidates/${id}`)
+      .then((candidateResp) => {
+        if (cancelled) return;
+        setData(candidateResp);
+
+        // Everything below only enriches the journey. Each failure is kept on
+        // its own: losing the role, the pipeline or the assessment must not
+        // cost the operator the candidate's profile, and it is reported inline.
+        if (!candidateResp.candidate.roleId) { setRole(null); setCovers(null); }
+        if (candidateResp.candidate.roleId) {
+          api.get<RoleResp>(`/roles/${candidateResp.candidate.roleId}`)
+            .then((r) => {
+              if (cancelled) return;
+              const scorecard = r.scorecards?.[0];
+              // The journey shows the newest scorecard; the setup form has to
+              // show the newest APPROVED one, because that is the version the
+              // interview will be planned from.
+              setCovers(coveredCompetencyNames(r.scorecards ?? []));
+              setRole({
+                title: r.role.title,
+                level: r.role.level,
+                context: scorecard?.profile?.roleContext ?? '',
+                outcomes: scorecard?.profile?.outcomes ?? [],
+                responsibilities: scorecard?.profile?.responsibilities ?? [],
+                scorecardVersion: scorecard?.version ?? null,
+                scorecardStatus: scorecard?.status ?? null,
+              });
+              clearDetail('role');
+            })
+            .catch((err: unknown) => { if (!cancelled) noteDetail('role', err); });
+        }
+      })
+      .catch((err: unknown) => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load this candidate.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    api.get<ProfileAnalysisResp>(`/candidates/${id}/profile-analysis`)
+      .then((resp) => { if (!cancelled) { setProfileAnalysis(resp); setProfileAnalysisError(''); } })
+      .catch((err: unknown) => { if (!cancelled) setProfileAnalysisError(err instanceof Error ? err.message : 'Could not load candidate profile analysis.'); });
+
+    // Only this candidate's sessions, and all of them: the list is paged now.
+    fetchCandidateSessions(id ?? '')
+      .then((all) => {
+        if (cancelled) return;
+        setSessions(Object.fromEntries(all.map((s) => [s.id, s])));
+        clearDetail('interviews');
+      })
+      .catch((err: unknown) => { if (!cancelled) noteDetail('interviews', err); });
+
+    // The pipeline panel below loads this too. Two reads of the same scoped
+    // endpoint is the cost of leaving that panel — which owns every action —
+    // exactly as it was rather than rewiring it around this page's state.
+    api.get<{ pipelines: PipelineResp[] }>(`/pipelines?candidateId=${encodeURIComponent(id ?? '')}`)
+      .then(async (d) => {
+        const current = d.pipelines?.[0] ?? null;
+        if (cancelled) return;
+        setPipeline(current);
+        if (!current) { setMissingEvidence([]); clearDetail('pipeline'); return; }
+        const { summary } = await api.get<{ summary: { missingEvidence: string[] } }>(`/pipelines/${current.id}/summary`);
+        if (cancelled) return;
+        setMissingEvidence(summary?.missingEvidence ?? []);
+        clearDetail('pipeline');
+      })
+      .catch((err: unknown) => { if (!cancelled) noteDetail('pipeline', err); });
+
+    // The badges struck so far, and the reason the next one is not there yet.
+    // Read from the server rather than worked out here: whether a tier is
+    // earned is the one rule this feature exists to keep, and a second copy of
+    // it in the browser is where it would drift.
+    api.get<{ awards: AwardResponseRow[] }>(`/candidates/${encodeURIComponent(id ?? '')}/awards`)
+      .then((d) => { if (!cancelled) { setAwards(d.awards ?? []); clearDetail('awards'); } })
+      .catch((err: unknown) => { if (!cancelled) noteDetail('awards', err); });
+
+    return () => { cancelled = true; };
+  }, [id, version, noteDetail, clearDetail]);
+
+  // Runs after the load above, which resets the tab for a new candidate: a
+  // link from "Set up interview now" lands on the journey tab instead.
+  useEffect(() => {
+    setActiveTab(candidateDetailTabFromParam(tabParam));
+    setReuseOpen(false);
+  }, [id, tabParam]);
+
+  // The assessment the decision column reads: the newest interview that produced
+  // one. Its id only becomes known once /interviews has landed, so it is fetched
+  // separately rather than folded into the load above.
+  const assessmentId = useMemo(() => {
+    for (const interview of data?.interviews ?? []) {
+      const meta = sessions[interview.id];
+      if (meta?.assessmentId) return meta.assessmentId;
+    }
+    return null;
+  }, [data, sessions]);
+
+  useEffect(() => {
+    if (!assessmentId) {
+      setAssessment(null);
+      setAssessmentBlockedReason(null);
+      setInterviewCompetencies([]);
+      return;
+    }
+    let cancelled = false;
+    api.get<AssessmentResp>(`/assessments/${assessmentId}`)
+      .then((resp) => {
+        if (cancelled) return;
+        setAssessment({
+          id: resp.id,
+          // The reviewed verdict wins here, so the candidate's page does not
+          // still show the AI's call after a person has overruled it.
+          recommendation: resp.outcome?.recommendation ?? resp.result?.recommendation ?? null,
+          summary: resp.result?.summary ?? '',
+          competencies: resp.result?.competencies ?? [],
+        });
+        setInterviewCompetencies((resp.result?.competencies ?? []) as unknown as InterviewCompetency[]);
+        setAssessmentBlockedReason(null);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setAssessment(null);
+        setInterviewCompetencies([]);
+        // 409 is the blind-review gate: this reviewer has not recorded their own
+        // verdict yet. The server's sentence is carried through verbatim, so the
+        // board cannot describe that gate more softly than the gate does.
+        setAssessmentBlockedReason(err instanceof ApiError && err.status === 409 ? err.message : null);
+      });
+    return () => { cancelled = true; };
+  }, [assessmentId, version]);
+
+  const journey = useMemo(() => {
+    if (!data) return null;
+    return buildJourney({
+      candidate: data.candidate,
+      role,
+      profile: data.profile,
+      fit: data.fit,
+      resumeText: data.rawText ?? '',
+      sessions: data.interviews ?? [],
+      sessionMeta: sessions,
+      // A pipeline for a different candidate can only be a stale response; it
+      // must never be drawn against this person.
+      pipeline: pipeline && pipeline.candidateId === data.candidate.id ? pipeline : null,
+      assessment,
+      assessmentBlockedReason,
+      missingEvidence,
+      candidateFeedback: data.candidateFeedback ?? null,
+    });
+  }, [data, role, sessions, pipeline, assessment, assessmentBlockedReason, missingEvidence]);
+
+  if (erasedNotice) {
+    return (
+      <EmptyState
+        heading="page"
+        icon="user-x"
+        title="Candidate erased"
+        message={erasedNotice}
+        action={<Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>}
+      />
+    );
+  }
+  if (loading) return <PageSkeleton label="Loading candidate…" cards={3} />;
+  // The page still says what it is when its data could not be read: a screen
+  // with an error and no heading announces nothing at all, and a person who
+  // arrived by a link has no way to tell which record failed.
+  if (error) return <><PageHeader icon="candidate-profile" title="Candidate" /><Banner kind="error">{error}</Banner></>;
+  if (!data) {
+    return (
+      <EmptyState
+        icon="user-x"
+        title="Candidate not found"
+        message="They may have been removed, or the link is out of date."
+        action={<Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>}
+      />
+    );
+  }
+
+  const { candidate, profile, fit, interviews } = data;
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, current: CandidateDetailTabKey) => {
+    const next = nextCandidateDetailTab(current, event.key);
+    if (next === current) return;
+    event.preventDefault();
+    setActiveTab(next);
+    window.requestAnimationFrame(() => document.getElementById(candidateDetailTabId(next))?.focus());
+  };
+
+  const createInterview = async (event: React.FormEvent) => {
+    event.preventDefault();
+    // Checked here as well as on the button: Enter in a field submits too.
+    if (creating || setupProblem) return;
+    setCreating(true);
+    setCreateError('');
+    try {
+      const resp = await api.post<{ session: { id: string; state: string; provider: string } }>('/interviews', {
+        candidateId: candidate.id,
+        durationMinutes,
+        language: 'en',
+        modules: INTERVIEW_MODULES,
+        interviewer,
+        persona: { tone },
+        // The AI interview always runs in Questor's own browser room; meeting
+        // providers only create links for human rounds (PipelinePanel).
+        provider: 'hosted',
+        // Always false: no audio artefact is produced, so requesting one would
+        // only set a flag that misleads whoever reads it back.
+        recordingRequested: false,
+        humanReviewRequired: true,
+        approve: true,
+      });
+      toast.show('Interview set up.');
+      nav(`/interviews/${resp.session.id}`);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Could not create this interview.');
+      setCreating(false);
+    }
+  };
+
+  const setupProblem = interviewSetupProblem({ durationMinutes, interviewer });
+
+  return (
+    <div>
+      <PageHeader
+        icon="candidate-profile"
+        title={candidate.fullName}
+        subtitle={`${candidate.email}${candidate.phone ? ` · ${candidate.phone}` : ''}`}
+        actions={
+          <>
+            <Link className="btn secondary" to="/candidates"><Icon name="arrow-left" size={16} />All candidates</Link>
+            {/* Without a role there is nothing to view; the link used to lead
+                to /roles/null. */}
+            {candidate.roleId && (
+              <Link className="btn secondary" to={`/roles/${candidate.roleId}`}><Icon name="role" size={16} />View role</Link>
+            )}
+            {can(user, 'candidate:create') && (
+              <button type="button" className="btn secondary" onClick={() => setReuseOpen(true)} disabled={reuseOpen}>
+                <Icon name="add-candidate" size={16} />Set up for another role
+              </button>
+            )}
+          </>
+        }
+      />
+
+      {reuseOpen && (
+        <SetUpForAnotherRole
+          candidateId={candidate.id}
+          fullName={candidate.fullName}
+          email={candidate.email}
+          onClose={() => setReuseOpen(false)}
+        />
+      )}
+
+      <div className="candidate-detail-tabs" role="tablist" aria-label="Candidate detail sections">
+        {candidateDetailTabs.map((tab) => (
+          <button
+            key={tab.key}
+            id={candidateDetailTabId(tab.key)}
+            type="button"
+            role="tab"
+            className={activeTab === tab.key ? 'candidate-detail-tab active' : 'candidate-detail-tab'}
+            aria-selected={activeTab === tab.key}
+            aria-controls={candidateDetailPanelId(tab.key)}
+            tabIndex={activeTab === tab.key ? 0 : -1}
+            onClick={() => setActiveTab(tab.key)}
+            onKeyDown={(event) => handleTabKeyDown(event, tab.key)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <section
+        id={candidateDetailPanelId('profile')}
+        role="tabpanel"
+        aria-labelledby={candidateDetailTabId('profile')}
+        hidden={activeTab !== 'profile'}
+        tabIndex={0}
+      >
+        <CandidateProfileTab
+          fallbackCandidate={candidate}
+          analysis={profileAnalysis}
+          error={profileAnalysisError}
+          fallbackProfile={profile}
+          fallbackFit={fit}
+          onResumeUploaded={refresh}
+          interviewCompetencies={interviewCompetencies}
+          assessmentBlockedReason={assessmentBlockedReason}
+          hasAssessment={Boolean(assessmentId)}
+        />
+      </section>
+
+      <section
+        id={candidateDetailPanelId('journey')}
+        role="tabpanel"
+        aria-labelledby={candidateDetailTabId('journey')}
+        hidden={activeTab !== 'journey'}
+        tabIndex={0}
+      >
+        {Object.keys(detailErrors).length > 0 && (
+          <Banner kind="error">
+            Part of this candidate&rsquo;s journey could not be loaded, so some columns may be incomplete.{' '}
+            {Object.entries(detailErrors).map(([key, message]) => `${DETAIL_LABELS[key] ?? key}: ${message}`).join(' ')}
+          </Banner>
+        )}
+        {journey && <CandidateJourneyBoard journey={journey} />}
+
+        <CandidateAwards awards={awards} candidateName={candidate.fullName} />
+
+        <PipelinePanel
+          candidateId={candidate.id}
+          candidateName={candidate.fullName}
+          // The interviewer's name lives on the /interviews summary, not on the
+          // candidate's own record, so it is joined on here.
+          interviews={(interviews ?? []).map((iv) => ({ ...iv, personaName: sessions[iv.id]?.personaName ?? null }))}
+          onChanged={refresh}
+          // A resume upload or any other change on this page may have moved the
+          // candidate on its own; the panel re-reads with the rest of the page.
+          refreshKey={version}
+        />
+
+        {/* What the subject-matter experts made of this candidate, above the
+            interview setup and below the journey: it is evidence for the next
+            decision, and it has to be read before one is taken rather than
+            found afterwards. The panel renders nothing for a reader the server
+            refuses, so it is safe to mount for everyone who reaches this page. */}
+        <SmeReviewPanel candidateId={candidate.id} />
+
+        {/* Where exports for this candidate land; the server allows admins only. */}
+        {user?.role === 'admin' && <CandidateAtsLink candidateId={candidate.id} />}
+
+      <div className="card" data-tour="candidate-setup-interview">
+        <h2 className="card-title"><Icon name="schedule" />Set up interview</h2>
+        {createError && <Banner kind="error">{createError}</Banner>}
+        {/* A form, so Enter works and the browser checks the field bounds it is
+            given — the button used to be a plain onClick, which meant neither. */}
+        <form onSubmit={createInterview}>
+        {/* The settings that decide what the conversation is, grouped and
+            explained, and placed above the one that decides a name.
+
+            The name picker used to lead this form. It is the least consequential
+            choice on it: the five interviewers differ in name and voice and in
+            nothing else. Meanwhile length, what gets asked, tone and language
+            shape the whole interview, and three of the four were either an
+            unexplained field or not on the page at all. */}
+        <fieldset className="setup-shape">
+          <legend className="setup-shape-legend">What shapes this interview</legend>
+          <div className="setup-fields">
+            <div className="setup-field">
+              <label htmlFor="interview-duration">Length</label>
+              <div className="setup-control">
+                <input
+                  id="interview-duration"
+                  type="number"
+                  min={MIN_DURATION_MINUTES}
+                  max={MAX_DURATION_MINUTES}
+                  value={durationMinutes}
+                  onChange={(e) => setDurationMinutes(Number(e.target.value))}
+                  onBlur={() => setDurationMinutes(clampDuration(durationMinutes))}
+                  aria-describedby="interview-duration-help"
+                  required
+                />
+                <span className="setup-unit">minutes</span>
+              </div>
+              <p id="interview-duration-help" className="setup-help">
+                How much time the conversation has. A longer interview gives more of the competencies below their
+                own question &mdash; it does not make the questions harder.
+                Default {DEFAULT_DURATION_MINUTES}, anywhere from {MIN_DURATION_MINUTES} to {MAX_DURATION_MINUTES}.
+              </p>
+            </div>
+
+            <div className="setup-field">
+              <label htmlFor="interview-tone">Tone</label>
+              <select
+                id="interview-tone"
+                value={tone}
+                onChange={(e) => setTone(e.target.value as InterviewTone)}
+                aria-describedby="interview-tone-help"
+              >
+                {TONE_CHOICES.map((choice) => (
+                  <option key={choice.value} value={choice.value}>{choice.label}</option>
+                ))}
+              </select>
+              {/* The chosen tone describes itself, rather than all three
+                  describing themselves at once: three descriptions run together
+                  are a paragraph, and nobody reads a paragraph under a select. */}
+              <p id="interview-tone-help" className="setup-help">
+                How the interviewer speaks &mdash; {TONE_CHOICES.find((c) => c.value === tone)?.help}{' '}
+                It never changes which questions are asked, or how the answers are judged. Default Warm.
+              </p>
+            </div>
+
+            <div className="setup-field">
+              {/* A caption, not a form label: there is one language, so there
+                  is no control here to name. Stated rather than hidden, because
+                  "which language is this in" is a fair thing to want to know. */}
+              <div className="field-label">Language</div>
+              <p className="setup-value">English</p>
+              <p className="setup-help">
+                The language the interview is held in. English is the only one whose wording has been reviewed
+                end to end, so it is the only one offered.
+              </p>
+            </div>
+
+            <div className="setup-field setup-field-wide">
+              {/* A caption, not a form label: the competencies are chosen on
+                  the role, so there is no control here to name. Naming them is
+                  still the highest-signal thing on this form. */}
+              <div className="field-label" id="interview-covers-label">What it asks about</div>
+              {covers === null ? (
+                // Said, not drawn as a bare ellipsis: "…" is nothing at all to
+                // a screen reader, and the difference between "still reading"
+                // and "there is nothing" is the whole point of this field.
+                <p className="setup-value">Loading&hellip;</p>
+              ) : covers.length > 0 ? (
+                <ul className="setup-covers" aria-labelledby="interview-covers-label">
+                  {covers.map((name) => <li key={name}>{name}</li>)}
+                </ul>
+              ) : (
+                <p className="setup-value">Not set yet</p>
+              )}
+              <p className="setup-help">
+                {covers !== null && covers.length === 0
+                  ? 'This role has no approved scorecard, so there is nothing to ask about yet. Approve one on the role first.'
+                  : 'The competencies on this role’s approved scorecard, in its own order, plus a warm-up, '
+                    + 'one check on a claim from the CV, and time at the end for the candidate’s questions. '
+                    + 'Change what is asked on the role, not here.'}
+              </p>
+            </div>
+          </div>
+        </fieldset>
+
+        <div className="setup-standing">
+          <div className="setup-field">
+            {/* A caption, not a form label: there is no choice to make. The
+                old provider picker stored a label and changed nothing — every
+                AI interview ran in the hosted room whatever was picked. */}
+            <div className="field-label">Where it happens</div>
+            <p className="setup-help">
+              In Questor&rsquo;s own browser room. Teams, Zoom or Meet links are for human rounds, set up in the pipeline.
+            </p>
+          </div>
+          {/* The "Request recording" checkbox is gone. It set a flag that
+              produced no audio anywhere in the system, so a recruiter ticking it
+              believed they were commissioning a recording they would never
+              receive — and the candidate was shown a consent notice implying the
+              same. Stating what the product actually does is the honest control
+              here; a toggle for a capability that does not exist is not. */}
+          <div className="setup-field">
+            {/* A caption, not a form label: there is no control here to name. */}
+            <div className="field-label">Record of the interview</div>
+            <p className="setup-help">
+              A written transcript, kept and reviewed by a person. No audio is stored.
+            </p>
+          </div>
+        </div>
+
+        <div className="setup-interviewer">
+          <InterviewerSelector
+            value={interviewer}
+            onChange={setInterviewer}
+            compact
+            // Never a hint that one of them is warmer, tougher or better at
+            // anything: they are the same interview in a different voice, and
+            // implying otherwise would have HR picking a name to pick a style.
+            note="Who the candidate is introduced to. The five differ in name and voice only — the questions, the tone and the marking are set above and are the same whoever asks them."
+          />
+        </div>
+        {setupProblem &&<p className="muted small" style={{ marginTop: 10 }}>{setupProblem}</p>}
+        <div className="row" style={{ marginTop: 16 }}>
+          {can(user, 'interview:create') ? (
+            <button className="btn" type="submit" disabled={creating || setupProblem !== null}>
+              <Icon name={creating ? 'hourglass' : 'check-circle'} size={16} />
+              {creating ? 'Creating…' : 'Approve & create interview'}
+            </button>
+          ) : (
+            <span className="muted small">{onlyWhoCan('interview:create', 'set up an interview')}</span>
+          )}
+        </div>
+        </form>
+      </div>
+
+      <div className="card">
+        <h2 className="card-title"><Icon name="interviews" />Interviews</h2>
+        {(interviews ?? []).length === 0 ? (
+          <EmptyState
+            compact
+            icon="interviews"
+            illustration="/brand/empty-interviews.webp"
+            illustrationWidth={360}
+            illustrationHeight={331}
+            title="No interviews yet"
+            message="Use “Set up interview” above to create one for this candidate."
+          />
+        ) : (
+          <div className="table-scroll" tabIndex={0} role="region" aria-label="Interviews for this candidate">
+          <table>
+            <thead>
+              <tr>
+                <th>State</th><th>Recommendation</th><th>Scheduled</th><th>Created</th><th>Open</th>
+              </tr>
+            </thead>
+            <tbody>
+              {interviews.map((iv) => {
+                const s = sessions[iv.id];
+                return (
+                  <tr key={iv.id} className={isInFlight(iv.state) ? 'in-flight' : undefined}>
+                    <td>
+                      <span className="row" style={{ gap: 6 }}>
+                        {stateBadge(iv.state)}
+                        {/* An invited candidate who has not turned up is not
+                            "in progress"; the candidates list already makes
+                            that distinction, and this row now makes the same one. */}
+                        {isAwaitingCandidate(iv.state) && <span className="inflight-note">not started yet</span>}
+                        {isUnderway(iv.state) && <span className="inflight-note">in progress</span>}
+                      </span>
+                    </td>
+                    <td><VerdictCell row={s} /></td>
+                    <td>{iv.scheduledAt ? formatScheduled(iv.scheduledAt, iv.scheduledTimeZone, orgZone) : <span className="muted">—</span>}</td>
+                    <td>{formatDateTime(iv.createdAt)}</td>
+                    <td>
+                      {/* Both routes are always offered. The assessment is what the
+                          recruiter came for when it exists; the interview page is
+                          where the invitation lives — resend, portal link, schedule —
+                          and that is the only thing that helps when it does not. */}
+                      <span className="row" style={{ gap: 10 }}>
+                        <Link to={`/interviews/${iv.id}`}><Icon name="interviews" size={15} />Interview</Link>
+                        {s?.assessmentId
+                          ? <Link to={`/assessments/${s.assessmentId}`}><Icon name="evidence" size={15} />Assessment</Link>
+                          : <Link
+                              className="muted"
+                              to={`/interviews/${iv.id}`}
+                              title={s && !s.invited
+                                ? 'No invitation has been sent yet — send one from the interview page.'
+                                : 'Resend the invitation email or copy the portal link from the interview page.'}
+                            >
+                              {s && !s.invited ? 'Invitation (not sent)' : 'Invitation'}
+                            </Link>}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          </div>
+        )}
+      </div>
+      </section>
+
+      {/* Erasure is an admin action on the server (candidate:erase). */}
+      {user?.role === 'admin' && (
+        <EraseCandidateCard
+          candidateId={candidate.id}
+          fullName={candidate.fullName}
+          otherApplications={data.otherApplications}
+          onErased={setErasedNotice}
+        />
+      )}
+    </div>
+  );
+}
+
+
+function CandidateProfileTab({
+  fallbackCandidate, analysis, error, fallbackProfile, fallbackFit, onResumeUploaded,
+  interviewCompetencies, assessmentBlockedReason, hasAssessment,
+}: {
+  fallbackCandidate: CandidateResp['candidate'];
+  analysis: ProfileAnalysisResp | null;
+  error: string;
+  fallbackProfile: Profile | null;
+  fallbackFit: Fit | null;
+  onResumeUploaded: () => void;
+  interviewCompetencies: readonly InterviewCompetency[];
+  assessmentBlockedReason: string | null;
+  hasAssessment: boolean;
+}) {
+  const candidate = analysis?.candidate ?? fallbackCandidate;
+  const profile = analysis?.profile ?? fallbackProfile;
+  const fit = analysis?.currentFit ?? fallbackFit;
+  const role = analysis?.currentRole;
+
+  return (
+    <div className="candidate-profile-tab">
+      {error && <Banner kind="error">{error}</Banner>}
+
+      <div className="card">
+        <h2 className="card-title"><Icon name="candidate-profile" />Candidate profile</h2>
+        <div className="grid cols-3">
+          <Stat label="Email" value={candidate.email} />
+          <Stat label="Phone" value={candidate.phone || '—'} />
+          {candidate.linkedinUrl && (
+            // Stored only as an https linkedin.com address (server/src/engines/resumeContact.ts).
+            <Stat label="LinkedIn" value={<a className="link-action" href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer">Profile<Icon name="arrow-right" size={14} /></a>} />
+          )}
+          <Stat label="Applied role" value={role ? `${role.title}${role.level ? ` · ${role.level}` : ''}` : 'Role not available'} />
+        </div>
+        {analysis?.profileVersion && (
+          <p className="muted small" style={{ marginTop: 12 }}>Parsed profile version {analysis.profileVersion.version}.</p>
+        )}
+      </div>
+
+      {!profile ? (
+        <>
+          <EmptyState
+            compact
+            icon="evidence"
+            title="No parsed resume profile yet"
+            message="Upload or paste a resume before Questor can show experience, skills, employment history, role fit, or alternatives."
+          />
+          <ResumeUploadCard candidateId={candidate.id} onUploaded={onResumeUploaded} />
+        </>
+      ) : (
+        <div className="card">
+          <h2 className="card-title"><Icon name="job" />Parsed resume{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>
+          {(profile.skills ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Skills</h3>
+              <div>{profile.skills.map((s, i) => <span key={i} className="chip">{s}</span>)}</div>
+            </div>
+          )}
+          {(profile.employment ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Employment history</h3>
+              {profile.employment.map((e, i) => (
+                <div key={i} className="profile-entry">
+                  <div><b>{e.title}</b>{e.company ? <> · {e.company}</> : null} <span className="muted small">{e.start ?? ''}{e.end ? ` — ${e.end}` : ''}</span></div>
+                  {(e.bullets ?? []).length > 0 && <ul style={{ margin: '4px 0 0' }}>{e.bullets.map((b, j) => <li key={j} className="small">{b}</li>)}</ul>}
+                </div>
+              ))}
+            </div>
+          )}
+          {(profile.education ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Education</h3>
+              <ul>{profile.education.map((e, i) => <li key={i}>{e.degree}{e.institution ? ` · ${e.institution}` : ''}{e.year ? ` (${e.year})` : ''}</li>)}</ul>
+            </div>
+          )}
+          {(profile.projects ?? []).length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <h3>Projects</h3>
+              <ul>{profile.projects.map((p, i) => <li key={i}><b>{p.name}</b>{p.summary ? ` — ${p.summary}` : ''}</li>)}</ul>
+            </div>
+          )}
+          {(profile.certifications ?? []).length > 0 && (
+            <div>
+              <h3>Certifications</h3>
+              <div>{profile.certifications.map((c, i) => <span key={i} className="chip">{c}</span>)}</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="card" data-tour="candidate-fit">
+        <h2 className="card-title"><Icon name="role-match" />What the CV says about this role</h2>
+        <p className="muted small">
+          Read from the resume against {role ? `the approved scorecard for ${role.title}` : "the role's approved scorecard"}, line by line.
+          It says nothing about the interview, which is assessed separately from what the candidate actually said.
+        </p>
+        <FitPanel fit={fit} rescoredNote={analysis?.rescored?.reason ?? null} />
+      </div>
+
+      {/* After an interview, the two readings side by side. This is the claim the
+          product is actually making, so it is on the candidate's own page rather
+          than buried in the assessment. */}
+      {hasAssessment && (
+        <div className="card">
+          <h2 className="card-title"><Icon name="evidence-review" />The CV against the interview</h2>
+          <p className="muted small">
+            Where the resume pointed at something the conversation did not reach, and where the conversation
+            found something the resume never mentioned.
+          </p>
+          <FitVsInterview fit={fit} interview={interviewCompetencies} blockedReason={assessmentBlockedReason} />
+        </div>
+      )}
+
+      <div className="card">
+        <h2 className="card-title"><Icon name="role-match" />Other visible roles that may fit</h2>
+        <p className="muted small">Compared server-side against approved scorecards for roles in your permitted scope only.</p>
+        {analysis ? (
+          <>
+            <p>{analysis.betterFitMessage}</p>
+            {(analysis.alternativeRoles ?? []).length === 0 ? (
+              <EmptyState compact icon="role" title="No alternatives to show" message="No other visible approved role scored above or near this comparison set." />
+            ) : (
+              <div className="alternative-role-list">
+                {analysis.alternativeRoles.map((alt) => (
+                  <div className="alternative-role-card" key={alt.roleId}>
+                    <div className="row spread">
+                      <div>
+                        <h3 style={{ margin: 0 }}>{alt.title}</h3>
+                        {alt.level && <div className="muted small">{alt.level}</div>}
+                      </div>
+                      <b>{formatScoreOutOf100(alt.score)}</b>
+                    </div>
+                    <Meter value={roundScore(alt.score) ?? 0} />
+                    <p className="small">{alt.why}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="muted">Loading role comparisons…</p>
+        )}
+      </div>
+    </div>
+  );
+}

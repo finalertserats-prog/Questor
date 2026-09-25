@@ -1,0 +1,157 @@
+import { describe, it, expect } from 'vitest';
+import { actionFor, compareNeedsYou, initialsOf, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, type NeedsYouKind } from '../src/domain/needsYou.js';
+import { capabilitiesOf } from '../src/domain/capabilities.js';
+
+const ctxFor = (role: string, extra: { operator?: boolean; platformOperator?: boolean } = {}) => ({
+  capabilities: capabilitiesOf(role), operator: extra.operator ?? false, platformOperator: extra.platformOperator ?? false,
+});
+const kindsFor = (role: string, extra: { operator?: boolean; platformOperator?: boolean } = {}) =>
+  NEEDS_YOU_KINDS.filter((kind) => maySee(kind, ctxFor(role, extra)));
+
+describe('needs-you gating', () => {
+  it('gives a hiring manager reviews but not invitation chores it cannot do', () => {
+    expect(kindsFor('manager')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
+  });
+
+  it('gives a recruiter the invitation chores and the reviews that landed on their candidates', () => {
+    expect(kindsFor('recruiter')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
+  });
+
+  it('does not let the recruiter sign a review off, only see it', () => {
+    const recruiter = ctxFor('recruiter');
+    expect([maySee('review', recruiter), mayActOn('review', recruiter)]).toEqual([true, false]);
+  });
+
+  it('lets a hiring manager both see and sign off a review', () => {
+    const manager = ctxFor('manager');
+    expect([maySee('review', manager), mayActOn('review', manager)]).toEqual([true, true]);
+  });
+
+  it('keeps a review from an auditor, who may not read assessments at all', () => {
+    expect(maySee('review', ctxFor('auditor'))).toBe(false);
+  });
+
+  it('keeps the held feedback letter to whoever may sign it off', () => {
+    expect([maySee('feedback_held', ctxFor('recruiter')), maySee('feedback_held', ctxFor('manager'))]).toEqual([false, true]);
+  });
+
+  it('gives a reviewer only reviews and people asking for someone', () => {
+    expect(kindsFor('reviewer')).toEqual(['round_starting', 'human_request', 'review', 'feedback_held']);
+  });
+
+  it('gives an auditor nothing', () => {
+    expect(kindsFor('auditor')).toEqual([]);
+  });
+
+  it('gives an expert the round they are about to conduct, and nothing else', () => {
+    expect(kindsFor('sme')).toEqual(['round_starting']);
+  });
+
+  it('adds the catalog queue only for the platform owner', () => {
+    expect(kindsFor('admin', { platformOperator: true })).toContain('catalog_proposals');
+  });
+
+  it('keeps the catalog queue from an organisation admin', () => {
+    expect(kindsFor('admin')).not.toContain('catalog_proposals');
+  });
+
+  it('adds demo requests only for the deployment operator', () => {
+    expect(kindsFor('admin', { operator: true })).toContain('demo_request');
+  });
+});
+
+describe('needs-you ordering', () => {
+  const row = (kind: NeedsYouKind, since: string, id = kind) => ({ kind, since, id });
+
+  it('puts a person asking for someone ahead of an older review', () => {
+    const rows = [row('review', '2026-09-01T00:00:00.000Z'), row('human_request', '2026-09-20T00:00:00.000Z')];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.kind)).toEqual(['human_request', 'review']);
+  });
+
+  it('puts the longest wait first among equals', () => {
+    const rows = [row('review', '2026-09-20T00:00:00.000Z', 'b'), row('stalled', '2026-09-10T00:00:00.000Z', 'a')];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.kind)).toEqual(['stalled', 'review']);
+  });
+
+  it('breaks a tie on the id so the order is stable', () => {
+    const at = '2026-09-20T00:00:00.000Z';
+    const rows = [row('review', at, 'z'), row('review', at, 'a')];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.id)).toEqual(['a', 'z']);
+  });
+
+  it('treats an accommodation request as urgent', () => {
+    expect(isUrgent('accommodation')).toBe(true);
+  });
+
+  it('treats a round about to start as urgent: someone is about to be sitting in a room', () => {
+    expect(isUrgent('round_starting')).toBe(true);
+  });
+
+  it('puts a round about to start above work that has merely been waiting', () => {
+    const rows = [
+      row('review', '2026-09-01T00:00:00.000Z', 'a'),
+      row('round_starting', '2026-09-25T09:00:00.000Z', 'r1'),
+    ];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.kind)).toEqual(['round_starting', 'review']);
+  });
+
+  it('puts the round that should already have begun ahead of the one still a few minutes off', () => {
+    const rows = [row('round_starting', '2026-09-25T09:10:00.000Z', 'next'), row('round_starting', '2026-09-25T09:00:00.000Z', 'now')];
+    expect([...rows].sort(compareNeedsYou).map((r) => r.id)).toEqual(['now', 'next']);
+  });
+});
+
+describe('needs-you actions', () => {
+  it('sends a review to its assessment', () => {
+    expect(actionFor('review', { sessionId: 's1', assessmentId: 'a1' })).toEqual({ label: 'Review', to: '/assessments/a1' });
+  });
+
+  it('offers the assessment to read, not a verdict to record, to someone who cannot sign it off', () => {
+    expect(actionFor('review', { sessionId: 's1', assessmentId: 'a1' }, false)).toEqual({ label: 'Open the assessment', to: '/assessments/a1' });
+  });
+
+  it('falls back to the interview when a review has no assessment id', () => {
+    expect(actionFor('review', { sessionId: 's1', assessmentId: null }).to).toBe('/interviews/s1');
+  });
+
+  it('sends an expiring invitation to its interview, where it can be resent', () => {
+    expect(actionFor('invitation_expiring', { sessionId: 's1' })).toEqual({ label: 'Resend invitation', to: '/interviews/s1' });
+  });
+
+  it('has no page for a demo request, which is decided from the email', () => {
+    expect(actionFor('demo_request', {}).to).toBeNull();
+  });
+
+  it('offers the meeting itself when a round is about to start', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', meetingUrl: 'https://meet.example.com/abc' }))
+      .toEqual({ label: 'Join', to: 'https://meet.example.com/abc', external: true });
+  });
+
+  it('offers the page the reader may open when the round has no meeting link yet', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', candidatePath: '/candidates/c1' }))
+      .toEqual({ label: 'Get ready', to: '/candidates/c1' });
+  });
+
+  // The path is resolved by the caller (domain/candidateSurface.ts), never
+  // built here from the id: an id alone cannot say whether this reader is
+  // entitled to that candidate, and guessing is how the queue came to point an
+  // unassigned expert at a page their assignment would refuse.
+  it('offers nothing rather than guessing a page when the caller resolved none', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1' }).to).toBeNull();
+  });
+
+  it('still offers the meeting when there is one, whatever page the reader may open', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', candidatePath: null, meetingUrl: 'https://meet.example.com/abc' }).to)
+      .toBe('https://meet.example.com/abc');
+  });
+});
+
+describe('initialsOf', () => {
+  it('takes the first and last word', () => {
+    expect(initialsOf('Rahul Kumar Verma')).toBe('RV');
+  });
+
+  it('answers "?" for a blank name', () => {
+    expect(initialsOf('  ')).toBe('?');
+  });
+});

@@ -1,0 +1,161 @@
+/* ==========================================================================
+   Bulk import (pages/CandidateImport.tsx)
+   --------------------------------------------------------------------------
+   State is ink, a bracketed word and an icon; a row that needs a fix carries
+   a rule down its edge. No tinted fills: nothing here is highlighted, it is
+   marked.
+   ========================================================================== */
+
+.import-summary {
+  margin: 0 0 6px;
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+}
+
+.import-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 8px 0;
+  border-top: var(--hair) solid var(--rule);
+  border-bottom: var(--hair) solid var(--rule);
+  font-family: var(--font-data);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.import-skipped {
+  margin: 0 0 12px;
+  padding-left: 10px;
+  border-left: 3px solid var(--hold);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.import-source {
+  border: 0;
+  padding: 0;
+  margin: 12px 0 4px;
+  gap: 16px;
+}
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* --- the mark: [ ready ], [ needs an email ] ------------------------------ */
+
+.import-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.import-mark.is-ok {
+  color: var(--pass);
+}
+.import-mark.is-info {
+  color: var(--ink-2);
+}
+.import-mark.is-fix {
+  color: var(--stop);
+}
+div.import-mark {
+  display: flex;
+  white-space: normal;
+  margin-top: 4px;
+  font-family: var(--font-ui);
+  font-weight: 600;
+}
+
+.import-note {
+  margin-top: 2px;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.import-field {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+/* --- desktop table ------------------------------------------------------ */
+
+.import-table {
+  table-layout: fixed;
+  margin-top: 12px;
+}
+.import-table th:first-child,
+.import-table td:first-child {
+  width: 40px;
+}
+.import-table td {
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.import-row.needs-fix td:first-child {
+  box-shadow: inset 3px 0 0 var(--stop);
+}
+.import-row.left-out td,
+.import-row.left-out .import-field {
+  color: var(--ink-3);
+}
+.import-row.left-out .import-mark {
+  text-decoration: line-through;
+}
+
+/* --- phone cards -------------------------------------------------------- */
+
+.import-cards {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.import-cards .import-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: var(--hair) solid var(--rule);
+  border-left: 3px solid var(--rule);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  min-width: 0;
+}
+.import-cards .import-row.needs-fix {
+  border-left-color: var(--stop);
+}
+.import-card-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.import-card-top .import-mark {
+  margin-left: auto;
+}
+.import-card-person {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Fields are full width app-wide; a tick box in a row must not be. */
+.import-row input[type='checkbox'] {
+  flex: none;
+  width: auto;
+  margin: 0;
+}

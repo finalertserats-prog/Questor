@@ -1,0 +1,618 @@
+/* ==========================================================================
+   HR-Box: the landing page's Home and Dashboard tabs, the "Needs you" queue,
+   the five interviewers, and the bell. Personality option B from the approved
+   mockup: a serif greeting, a live voice ring, rows that settle in, and the
+   urgent row's rule breathing. State is marked with rules, weight and icons,
+   never with tinted fills. Colour comes only from the tokens in app.css, so
+   the dark theme follows on its own. All motion stops under reduced motion.
+   ========================================================================== */
+
+/* --- the two sub-tabs ---------------------------------------------------- */
+
+/* The track is named, not left to `auto`.
+   An implicit `auto` track takes its minimum from the content, so the tab
+   panel could not be narrower than the widest thing inside it: at 375px the
+   dashboard's min-content came out at 477 and the whole column -- the tabs,
+   the page title bar, every card -- was stretched to 477 with it, which is the
+   118px of sideways scroll the sweep found on this one screen of 46. A zero
+   minimum lets the column be the width of the viewport and leaves anything
+   inside it to wrap, which everything here already knows how to do. */
+.hb-landing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.hb-tabs {
+  display: flex;
+  gap: var(--space-5);
+  border-bottom: var(--hair) solid var(--rule);
+}
+
+.hb-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  border-bottom: var(--rail) solid transparent;
+  margin-bottom: calc(-1 * var(--hair));
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14.5px;
+  padding: 10px 2px;
+}
+.hb-tab:hover {
+  color: var(--ink);
+  border-bottom-color: var(--rule-strong);
+}
+.hb-tab[aria-selected='true'] {
+  color: var(--ink);
+  font-weight: 650;
+  border-bottom-color: var(--accent);
+}
+
+/* --- Home ------------------------------------------------------------------ */
+
+.hb-home {
+  display: grid;
+  gap: var(--section-gap-tight);
+  min-width: 0;
+}
+
+.hb-greet {
+  display: grid;
+  gap: 6px;
+}
+.hb-micro {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+  color: var(--spark);
+}
+.hb-greeting {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+}
+.hb-sentence {
+  margin: 0;
+  max-width: 60ch;
+  font-family: var(--font-display);
+  font-style: italic;
+  font-size: 16.5px;
+  color: var(--ink-2);
+}
+.hb-sentence--pending {
+  min-height: 1.55em;
+}
+
+/* The five interviewers: a small signature, the live one ringed. */
+.hb-crew {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hb-crew-member {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  min-width: 52px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hb-crew-member small {
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
+.hb-crew-member.is-live small {
+  color: var(--accent);
+  font-weight: 650;
+}
+.hb-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+}
+.hb-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: 50%;
+  background: var(--sheet);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 650;
+  font-size: 14px;
+}
+.hb-avatar--sm {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  margin-right: 6px;
+  font-size: 11px;
+  vertical-align: middle;
+}
+.hb-crew-member.is-live .hb-avatar {
+  border: 1.5px solid var(--accent);
+}
+.hb-crew-member.is-live .hb-ring::before,
+.hb-crew-member.is-live .hb-ring::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  animation: hb-ring 2.4s var(--ease-out) infinite;
+}
+.hb-crew-member.is-live .hb-ring::after {
+  animation-delay: 1.2s;
+}
+@keyframes hb-ring {
+  from { transform: scale(0.9); opacity: 0.9; }
+  to { transform: scale(1.7); opacity: 0; }
+}
+
+/* --- blocks ---------------------------------------------------------------- */
+
+.hb-block {
+  min-width: 0;
+}
+.hb-block-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 10px;
+  margin-bottom: var(--space-2);
+}
+.hb-block-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+}
+.hb-block-head small {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.hb-count {
+  margin-left: 6px;
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
+.hb-sub {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+/* --- the queue --------------------------------------------------------------
+   Each row is drawn by a rule down its left edge in its kind's colour. */
+
+/* Rows are table-like, not prose: they take the block's width (app.css caps
+   every .main li at a reading measure). */
+.hb-queue > li,
+.hb-today > li,
+.hb-done > li,
+.hb-crew > li {
+  max-width: none;
+}
+
+.hb-queue {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: var(--hair) solid var(--rule);
+}
+.hb-row {
+  --hb-k: var(--accent);
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) 104px minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  align-items: center;
+  padding: 12px 12px 12px 14px;
+  border-bottom: var(--hair) solid var(--rule);
+  border-left: 3px solid var(--hb-k);
+  background: var(--sheet);
+  transition: transform var(--dur-base) var(--ease-standard), border-left-width var(--dur-base) var(--ease-standard);
+}
+/* Only where there is a pointer: a tap would leave a phone's row nudged sideways. */
+@media (hover: hover) {
+  .hb-row:hover {
+    transform: translateX(3px);
+    border-left-width: 5px;
+  }
+}
+.hb-row--urgent { --hb-k: var(--stop); }
+.hb-row--review { --hb-k: var(--accent); }
+.hb-row--expire { --hb-k: var(--hold); }
+.hb-row--stall { --hb-k: var(--rule-strong); }
+.hb-row--held { --hb-k: var(--spark); }
+.hb-row--operator { --hb-k: var(--ink-3); }
+.hb-row--pending { --hb-k: var(--rule); }
+
+.hb-row-main {
+  min-width: 0;
+}
+.hb-row-kind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--hb-k);
+}
+.hb-row--stall .hb-row-kind,
+.hb-row--operator .hb-row-kind {
+  color: var(--ink-3);
+}
+.hb-row-who {
+  margin-top: 3px;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.hb-row-who a {
+  color: var(--ink);
+}
+.hb-row-role {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-2);
+}
+.hb-row-why {
+  margin-top: 1px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+.hb-row-wait {
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.hb-row-wait small {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.hb-row-look {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+.hb-peek {
+  display: inline-flex;
+  flex: none;
+}
+.hb-peek i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-left: -6px;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 50%;
+  background: var(--sheet);
+  color: var(--ink-2);
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+}
+.hb-peek i:first-child {
+  margin-left: 0;
+}
+.hb-row-act {
+  justify-self: end;
+}
+
+/* Settling in, one row after another, and the urgent rule breathing. */
+.hb-motion .hb-greet,
+.hb-motion .hb-crew,
+.hb-motion .hb-row {
+  animation: hb-rise 0.6s var(--ease-out) both;
+}
+.hb-motion .hb-crew {
+  animation-delay: 0.08s;
+}
+.hb-motion .hb-row {
+  animation-delay: calc(0.18s + var(--hb-i, 0) * 0.08s);
+}
+.hb-motion .hb-row--urgent {
+  animation: hb-rise 0.6s var(--ease-out) both, hb-breathe 2.8s ease-in-out 0.8s infinite;
+}
+.hb-motion .hb-row--pending {
+  animation: none;
+}
+@keyframes hb-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes hb-breathe {
+  50% { border-left-color: var(--stop-edge); }
+}
+
+/* --- loading, failure ------------------------------------------------------ */
+
+.hb-sk {
+  display: block;
+  height: 10px;
+  border-radius: var(--radius-xs);
+  background: linear-gradient(90deg, var(--sheet-sunk) 0%, var(--rule) 50%, var(--sheet-sunk) 100%);
+  background-size: 200% 100%;
+  animation: hb-sheen 1.5s ease-in-out infinite;
+}
+.hb-sk-lines {
+  display: grid;
+  gap: 7px;
+}
+@keyframes hb-sheen {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+.hb-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: var(--hair) solid var(--rule);
+  border-left: 3px solid var(--stop);
+  background: var(--sheet);
+  color: var(--ink);
+}
+.hb-inline-error {
+  margin-top: 6px;
+  color: var(--stop);
+}
+
+/* --- coming up, done ------------------------------------------------------- */
+
+.hb-today,
+.hb-done {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: var(--hair) solid var(--rule);
+}
+.hb-today li {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr) minmax(0, 160px) 150px;
+  gap: 4px 14px;
+  align-items: center;
+  padding: 10px 4px;
+  border-bottom: var(--hair) solid var(--rule);
+  font-size: 14px;
+}
+.hb-today-t {
+  font-family: var(--font-data);
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hb-today-n {
+  min-width: 0;
+}
+.hb-today-n a {
+  font-weight: 650;
+  color: var(--ink);
+}
+.hb-today-n span {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.hb-today-who {
+  min-width: 0;
+  color: var(--ink-2);
+}
+.hb-today-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.hb-today-state.is-live {
+  color: var(--pass);
+  font-weight: 650;
+}
+.hb-today-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: hb-pulse 1.6s ease-in-out infinite;
+}
+@keyframes hb-pulse {
+  50% { opacity: 0.3; }
+}
+.hb-done li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 9px 4px;
+  border-bottom: var(--hair) solid var(--rule);
+  font-size: 14px;
+  color: var(--pass);
+}
+.hb-done-what {
+  min-width: 0;
+  color: var(--ink);
+}
+.hb-done-what a {
+  font-weight: 650;
+  color: var(--ink);
+}
+.hb-done-line {
+  display: block;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.hb-done-at {
+  font-family: var(--font-data);
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* --- the bell -------------------------------------------------------------- */
+
+.hb-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.hb-bell {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px;
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.hb-bell:hover {
+  color: var(--ink);
+  background: var(--sheet-sunk);
+  text-decoration: none;
+}
+.hb-bell-count {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--stop);
+}
+/* On a phone the bell rides at the right of the top bar (styles/sidebar.css
+   .nav-bar), which reserves the height for it. It used to be fixed on top of
+   the page, with the same problem the Menu button had. */
+.hb-bell--top {
+  flex: none;
+  margin-left: auto;
+  padding: 6px 9px;
+  border: var(--hair) solid var(--rule);
+  background: var(--sheet);
+}
+@media (min-width: 821px) {
+  .hb-bell--top {
+    display: none;
+  }
+}
+@media (max-width: 820.98px) {
+  .hb-bell--side {
+    display: none;
+  }
+}
+
+/* --- the Settings switch ------------------------------------------------------ */
+
+.hb-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.hb-check input {
+  margin-top: 4px;
+}
+.hb-check-title {
+  display: block;
+  font-weight: 600;
+}
+
+/* --- phones: rows become cards, nothing scrolls sideways ------------------- */
+
+@media (max-width: 820.98px) {
+  .hb-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .hb-row-wait,
+  .hb-row-look {
+    grid-column: 1;
+  }
+  .hb-row-wait {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .hb-row-wait small {
+    display: inline;
+  }
+  .hb-row-act {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    align-self: center;
+  }
+  .hb-today li {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .hb-today li > :nth-child(3),
+  .hb-today li > :nth-child(4) {
+    grid-column: 2;
+  }
+}
+@media (max-width: 520px) {
+  .hb-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hb-row-act {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
+  }
+  .hb-greeting {
+    font-size: 26px;
+  }
+  .hb-tabs {
+    gap: var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hb-motion .hb-greet,
+  .hb-motion .hb-crew,
+  .hb-motion .hb-row,
+  .hb-motion .hb-row--urgent,
+  .hb-crew-member.is-live .hb-ring::before,
+  .hb-crew-member.is-live .hb-ring::after,
+  .hb-sk,
+  .hb-today-state i {
+    animation: none;
+  }
+  .hb-crew-member.is-live .hb-ring::after {
+    display: none;
+  }
+  .hb-row {
+    transition: none;
+  }
+  .hb-row:hover {
+    transform: none;
+  }
+}

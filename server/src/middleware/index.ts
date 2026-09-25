@@ -1,0 +1,361 @@
+import type { NextFunction, Request, Response } from 'express';
+import { timingSafeEqual } from 'node:crypto';
+import { ZodError } from 'zod';
+import { nanoid } from 'nanoid';
+import { capabilitiesOf, type Capability } from '../domain/capabilities.js';
+import {
+  verifyToken,
+  parseCookies,
+  AUTH_COOKIE,
+  CSRF_COOKIE,
+  CSRF_HEADER,
+  type AuthClaims,
+} from '../services/auth.js';
+import { logger } from '../logger.js';
+import { CorruptRecordError, prisma } from '../db.js';
+import { runAsDemo } from '../services/demoPolicy.js';
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      auth?: AuthClaims;
+      requestId?: string;
+    }
+  }
+}
+
+export function requestId(req: Request, _res: Response, next: NextFunction) {
+  req.requestId = (req.headers['x-request-id'] as string) || nanoid(12);
+  next();
+}
+
+export function authenticate(req: Request, res: Response, next: NextFunction) {
+  // Two credential sources, never the query string. Accepting a token from the
+  // query string leaked valid sessions into access logs, proxy logs, browser
+  // history and Referer headers — on a shared machine, browser history alone
+  // handed over a live session.
+  const header = req.headers.authorization;
+  let token: string | undefined;
+
+  if (header !== undefined) {
+    // If an Authorization header is present it is the ONLY credential
+    // considered — we never fall back to the cookie when it is malformed.
+    // csrfProtection exempts header-bearing requests (a browser will not attach
+    // this header cross-site), so a fallback would let an attacker send a junk
+    // Bearer header on a forged request to skip the CSRF check and still be
+    // authenticated by the victim's cookie. This condition and the exemption in
+    // csrfProtection must stay exactly in agreement.
+    token = header.startsWith('Bearer ') ? header.slice(7) : undefined;
+  } else {
+    // Browser sessions: httpOnly cookie, unreadable by any XSS on this origin.
+    token = parseCookies(req.headers.cookie)[AUTH_COOKIE];
+  }
+
+  if (!token) return res.status(401).json({ error: 'Missing authentication token' });
+  const claims = verifyToken(token);
+  if (!claims) return res.status(401).json({ error: 'Invalid or expired token' });
+  // A ticket for some other errand is not a session. The half-signed-in token
+  // handed out between a correct password and a correct code is signed with the
+  // same secret, so without this it would authenticate every route in the app —
+  // which would make the code step a formality anyone could walk past.
+  if (claims.purpose !== undefined) return res.status(401).json({ error: 'Invalid or expired token' });
+  // The token proves who signed in; the database says what they are now. Role
+  // used to be read from the token alone, so a demoted or deleted user kept
+  // their old authority until the hour ran out. One indexed lookup per request
+  // is the price of revocation taking effect immediately.
+  prisma.user.findUnique({ where: { id: claims.userId }, select: { id: true, tenantId: true, role: true, email: true, sessionsEpoch: true } })
+    .then((user) => {
+      if (!user || user.tenantId !== claims.tenantId) {
+        res.status(401).json({ error: 'Invalid or expired token' });
+        return;
+      }
+      // Setting a password ends every session the account had. Sessions are
+      // stateless JWTs with no revocation list, so this comparison IS the
+      // revocation: a token carries the generation it was minted under, setting
+      // a password increments the account's generation, and everything from an
+      // earlier one is refused from its next request onwards. That is what
+      // makes "signed out everywhere else" true rather than a sentence in an
+      // email.
+      //
+      // Absent reads as 0, which is what an account that has never had a
+      // password change still holds — so no existing session is broken by this
+      // arriving, and the first change is what starts enforcing it.
+      if ((claims.pv ?? 0) !== user.sessionsEpoch) {
+        res.status(401).json({ error: 'Invalid or expired token' });
+        return;
+      }
+      if (claims.demo === true) {
+        prisma.demoGrant.findUnique({ where: { id: claims.demoGrantId ?? '' }, select: { sessionEndsAt: true, userId: true, tenantId: true } })
+          .then((grant) => {
+            if (!grant || grant.userId !== user.id || grant.tenantId !== user.tenantId || !grant.sessionEndsAt || grant.sessionEndsAt.getTime() <= Date.now()) {
+              res.status(401).json({ error: 'Invalid or expired token' });
+              return;
+            }
+            req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, demo: true, demoGrantId: claims.demoGrantId, pv: user.sessionsEpoch };
+            runAsDemo(() => next());
+          })
+          .catch(next);
+        return;
+      }
+      req.auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email, pv: user.sessionsEpoch };
+      next();
+    })
+    .catch(next);
+}
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+const CSRF_EXEMPT_PATHS = [
+  // The candidate portal is unauthenticated: there is no session to forge, and
+  // candidates arrive with no cookies of ours at all.
+  /^\/api\/portal(?:\/|$)/,
+  // Session *establishment*, not action on an existing session. These must keep
+  // working when a stale session cookie is present but the paired CSRF cookie
+  // is gone (user cleared one cookie, or it expired first) — otherwise a user
+  // is locked out of their own login page with a 403 they cannot clear.
+  // SameSite=Strict already blocks the forged-login variant in any current browser.
+  /^\/api\/auth\/(?:login|register)\/?$/,
+  // The second half of the same session establishment. The ticket it carries
+  // is not a cookie, so a cross-site page cannot obtain one to forge with.
+  /^\/api\/auth\/code\/?$/,
+  // Password recovery, for exactly the reason above and more sharply: these are
+  // the routes a locked-out person reaches, often on a browser still holding a
+  // stale session cookie whose paired CSRF cookie has already gone. Refusing
+  // them with a 403 would lock someone out of the page that exists to let them
+  // back in. Forging either is worthless anyway — a forged "forgot" only mails
+  // the victim's own address a link the attacker cannot read, and a forged
+  // "reset" needs the token, which is the whole secret. SameSite=Strict on our
+  // cookies blocks the cross-site variant in any current browser.
+  //
+  // /password/change is deliberately NOT here: it acts on a live session, which
+  // is precisely what CSRF abuses.
+  /^\/api\/auth\/password\/(?:forgot|reset|reset\/check)\/?$/,
+  // "Would you like to speak to a person?" — followed from a candidate's email,
+  // with no account and no cookies of ours. Exempt for the same reason as the
+  // portal, and explicitly rather than by falling through the no-session-cookie
+  // branch below: a recruiter signed in on the same browser would otherwise be
+  // the one person unable to test their own candidate's link.
+  /^\/api\/feedback-request(?:\/|$)/,
+  // Account requests and operator email decisions are public links, not
+  // cookie-authenticated recruiter actions.
+  /^\/api\/signup(?:\/|$)/,
+  // Only the demo routes that run without a session. /api/demo/end and
+  // /api/demo/interview are cookie-authenticated and keep CSRF protection.
+  /^\/api\/demo\/(?:request|redeem|reaccess|decision)(?:\/|$)/,
+  // A candidate agreeing to (or stopping) the AI observer on a human round,
+  // from a link the interviewer shared. No account, no cookies of ours.
+  /^\/api\/observer-consent(?:\/|$)/,
+];
+
+/** Constant-time compare; lengths are compared first because timingSafeEqual throws on a mismatch. */
+function tokensMatch(sent: string, expected: string): boolean {
+  const a = Buffer.from(sent);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Double-submit CSRF protection for cookie-authenticated writes.
+ *
+ * Cookie auth is ambient: the browser attaches it to cross-site requests too,
+ * so without this every state-changing route would be forgeable by any page the
+ * recruiter visits while logged in. The readable CSRF cookie can be *sent* by
+ * an attacker but never *read*, so only same-origin JS can produce the matching
+ * header.
+ *
+ * Mounted app-wide, so it runs before `authenticate` and cannot consult
+ * req.auth — it decides from the credentials on the wire instead.
+ */
+export function csrfProtection(req: Request, res: Response, next: NextFunction) {
+  if (SAFE_METHODS.has(req.method)) return next();
+  if (CSRF_EXEMPT_PATHS.some((re) => re.test(req.path))) return next();
+
+  // Header-authenticated callers (test suite, E2E script, server-to-server
+  // clients) are not CSRF-able: a browser never attaches an Authorization
+  // header to a cross-site request on the attacker's behalf. Mirrors the
+  // header-exclusive branch in authenticate().
+  if (req.headers.authorization !== undefined) return next();
+
+  const cookies = parseCookies(req.headers.cookie);
+  // No session cookie means there is no ambient authority to abuse.
+  if (!cookies[AUTH_COOKIE]) return next();
+
+  const sent = req.headers[CSRF_HEADER];
+  const expected = cookies[CSRF_COOKIE];
+  if (!expected || typeof sent !== 'string' || !tokensMatch(sent, expected)) {
+    logger.warn({ requestId: req.requestId, path: req.path, method: req.method }, 'CSRF check failed');
+    return res.status(403).json({ error: 'Invalid or missing CSRF token' });
+  }
+  next();
+}
+
+export function requireRole(...roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.auth) return res.status(401).json({ error: 'Not authenticated' });
+    if (roles.length && !roles.includes(req.auth.role) && req.auth.role !== 'admin') {
+      return res.status(403).json({ error: `Requires role: ${roles.join(' or ')}` });
+    }
+    next();
+  };
+}
+
+/**
+ * Gate a route on a capability rather than a role name.
+ *
+ * Unlike `requireRole` this has no implicit admin pass-through — admin holds
+ * every capability explicitly in the role map, so the grant is visible in one
+ * place instead of being an invisible override on every check.
+ *
+ * This answers only "may this user perform this KIND of action?". It does NOT
+ * answer "may they touch THIS object" — routes must still scope the object via
+ * services/access.ts. Both are required; either alone leaves a hole.
+ */
+export function requireCapability(cap: Capability) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.auth) return res.status(401).json({ error: 'Not authenticated' });
+    if (!capabilitiesOf(req.auth.role).includes(cap)) {
+      return res.status(403).json({ error: 'Your account does not have permission to do that.' });
+    }
+    next();
+  };
+}
+
+/**
+ * Any one of several capabilities is enough.
+ *
+ * For a route two different kinds of account reach for different reasons — a
+ * recruiter running the process, and a subject-matter expert who was asked to
+ * conduct one round. Listing both is honest about that; widening either role's
+ * grant so a single name covers them would give the expert a capability the
+ * rest of the product is gated on, which is exactly what their narrow role
+ * exists to avoid (domain/capabilities.ts).
+ *
+ * Still only half the question. The object scope check is as required here as
+ * anywhere else, and is what stops "an expert somewhere" meaning "this
+ * candidate".
+ */
+export function requireAnyCapability(...caps: readonly Capability[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.auth) return res.status(401).json({ error: 'Not authenticated' });
+    const held = capabilitiesOf(req.auth.role);
+    if (!caps.some((cap) => held.includes(cap))) {
+      return res.status(403).json({ error: 'Your account does not have permission to do that.' });
+    }
+    next();
+  };
+}
+
+/** Wrap async route handlers to funnel errors to the error middleware. */
+export function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+  };
+}
+
+/** How deep a body is walked looking for a NUL. Deeper than any shape we accept. */
+const NUL_SCAN_MAX_DEPTH = 12;
+
+function holdsNul(value: unknown, depth = 0): boolean {
+  if (typeof value === 'string') return value.includes('\u0000');
+  if (depth >= NUL_SCAN_MAX_DEPTH || typeof value !== 'object' || value === null) return false;
+  if (Array.isArray(value)) return value.some((v) => holdsNul(v, depth + 1));
+  // Keys as well as values: a NUL in a key reaches the database just as easily.
+  return Object.entries(value).some(([k, v]) => k.includes('\u0000') || holdsNul(v, depth + 1));
+}
+
+/**
+ * Refuse a parsed body carrying a NUL byte, before anything tries to store it.
+ * See the mount in app.ts for why this runs after parsing rather than on the
+ * raw bytes.
+ */
+export function rejectNulBytes(req: Request, _res: Response, next: NextFunction): void {
+  if (req.body !== undefined && holdsNul(req.body)) {
+    next(new HttpError(400, 'That text contains a character we cannot store. Please retype it and try again.', 'nul_byte'));
+    return;
+  }
+  next();
+}
+
+/**
+ * A refusal the client caused, with the status that says so.
+ *
+ * `type` is body-parser's own classification, which is stable and does not
+ * depend on matching an error message. Returns null for everything else, so
+ * nothing that is genuinely a server error is quietly downgraded.
+ */
+function clientBodyError(err: unknown): { status: number; message: string } | null {
+  if (typeof err !== 'object' || err === null) return null;
+  switch ((err as { type?: unknown }).type) {
+    case 'entity.parse.failed':
+      return { status: 400, message: 'The request body was not valid JSON.' };
+    case 'entity.too.large':
+      return { status: 413, message: 'That request is too large. Please shorten it and try again.' };
+    case 'encoding.unsupported':
+      return { status: 415, message: 'That character encoding is not supported.' };
+    case 'request.aborted':
+      return { status: 400, message: 'The request ended before it was complete.' };
+    default:
+      return null;
+  }
+}
+
+export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
+  const status = err.status ?? err.statusCode ?? 500;
+  logger.error({ err: err?.message ?? String(err), stack: err?.stack, requestId: req.requestId, path: req.path }, 'Request error');
+
+  // Only messages we authored are safe to return. Everything else (upstream API
+  // bodies, Prisma errors, stack-bearing runtime errors) previously reached the
+  // client verbatim, including on unauthenticated portal routes.
+  if (err instanceof ZodError) {
+    return res.status(400).json({
+      error: 'Invalid request',
+      fields: err.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      requestId: req.requestId,
+    });
+  }
+  if (err instanceof CorruptRecordError) {
+    logger.error({ ...err.record, requestId: req.requestId, path: req.path }, 'Corrupt stored JSON');
+    return res.status(500).json({ error: 'Stored data is corrupted. Contact support with this request ID.', requestId: req.requestId });
+  }
+  // A client's mistake is not a server error. body-parser already decided
+  // these and set a status; forcing 500 told a candidate who wrote a long
+  // answer that Questor had broken, and filed every one of them in the log
+  // where a real incident has to be spotted
+  // (docs/qa/resilience-2026-09-23.md, S5). The BODY is unchanged — still a
+  // message we authored, never the parser's.
+  const client = clientBodyError(err);
+  if (client) {
+    return res.status(client.status).json({ error: client.message, requestId: req.requestId });
+  }
+  if (err instanceof HttpError && err.retryAfterSeconds !== undefined) {
+    res.setHeader('Retry-After', String(err.retryAfterSeconds));
+  }
+  const safe = err instanceof HttpError ? err.message : 'Internal server error';
+  // A code is ours too, and lets a client react to one specific refusal (no
+  // ATS connected, say) without matching on the wording.
+  const code = err instanceof HttpError && err.code ? { code: err.code } : {};
+  res.status(err instanceof HttpError ? status : 500).json({ error: safe, ...code, requestId: req.requestId });
+}
+
+export interface HttpErrorOptions {
+  readonly code?: string;
+  readonly retryAfterSeconds?: number;
+}
+
+export class HttpError extends Error {
+  status: number;
+  code?: string;
+  /** Sent as Retry-After, for refusals the client should simply try again. */
+  retryAfterSeconds?: number;
+  /** The third argument is a machine-readable code, or options carrying one. */
+  constructor(status: number, message: string, detail?: string | HttpErrorOptions) {
+    super(message);
+    this.status = status;
+    const options = typeof detail === 'string' ? { code: detail } : detail ?? {};
+    this.code = options.code;
+    this.retryAfterSeconds = options.retryAfterSeconds;
+  }
+}
+
