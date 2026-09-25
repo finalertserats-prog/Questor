@@ -140,11 +140,12 @@ describe('which profile is the current one', () => {
     });
     await prisma.candidateAssignment.create({ data: { candidateId: c.id, userId: userAId, relation: 'owner' } });
 
-    const cv = 'Experience
-Data Engineer at Example
-- Built Python Spark Airflow pipelines and cut latency by 40%.
-'
-      + '- Owned the on-call rota and improved reliability across three services for four years.';
+    const cv = [
+      'Experience',
+      'Data Engineer at Example',
+      '- Built Python Spark Airflow pipelines and cut latency by 40%.',
+      '- Owned the on-call rota and improved reliability across three services for four years.',
+    ].join('\n');
     for (let i = 0; i < 3; i++) {
       await request(app).post(`/api/candidates/${c.id}/resume`).set(auth(recruiterAToken)).field('text', cv);
     }
@@ -180,7 +181,7 @@ Data Engineer at Example
 
     const res = await request(app).get(`/api/candidates/${c.id}`).set(auth(recruiterAToken));
 
-    expect([res.status, res.body.resume?.totalYears]).toEqual([200, 8]);
+    expect([res.status, res.body.profile?.totalYears]).toEqual([200, 8]);
   });
 });
 
