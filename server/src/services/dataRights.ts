@@ -81,6 +81,32 @@ export function retentionDays(): number {
 
 const DAY_MS = 86_400_000;
 
+/**
+ * How long an erasure or a purge may hold its transaction open.
+ *
+ * Prisma's default is five seconds, and nothing here was overriding it. One
+ * erasure walks about forty tables for a single person, and on an idle
+ * database that finishes well inside the default — which is exactly why it
+ * survived every green suite. Under load it does not: the transaction is
+ * rolled back with P2028 and the route answers 500, leaving the candidate
+ * still there and the caller told only that something failed.
+ *
+ * That matters more here than almost anywhere else in the product. Erasure is
+ * a legal obligation with a deadline, and the person who asked for it has no
+ * way to tell a refusal from a system that is merely busy. A deletion must
+ * fail because it is not allowed — a hold, a tenant mismatch — never because
+ * the database was having a bad minute.
+ *
+ * `maxWait` is raised for the same reason one step earlier: under the load
+ * that makes the work slow, waiting for a free connection is also slow, and
+ * the two-second default would refuse before any work began.
+ *
+ * Generous rather than tuned, deliberately. These run rarely, and the cost of
+ * a long-held transaction is far smaller than the cost of an erasure that
+ * reports failure to somebody exercising a right.
+ */
+const ERASURE_TX = { timeout: 120_000, maxWait: 30_000 } as const;
+
 /** The fields needed to decide whether a session is past its window. */
 interface RetentionFields {
   retainUntil: Date | null;
@@ -347,7 +373,7 @@ export async function eraseCandidate(o: {
     // Staged bulk-import rows (name, address, CV text) for the same person.
     await count('importRows', () => eraseStagedImportRows(tx, { tenantId: o.tenantId, candidateId: o.candidateId, emailNormalized: candidate.emailNormalized }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
-  });
+  }, ERASURE_TX);
 
   // After the commit, and best effort: a vendor outage must not block erasure.
   // Booked meetings for an erased candidate have no purpose left.
@@ -479,7 +505,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
     try {
       await prisma.$transaction(async (tx) => {
         await deleteSessionCascade(tx, [s.sessionId], count);
-      });
+      }, ERASURE_TX);
     } catch (err) {
       logger.error({ err: String(err), sessionId: s.sessionId }, 'Failed to purge expired session');
       failures.push(s.sessionId);
@@ -577,7 +603,7 @@ async function purgeExpiredSessions(now: Date): Promise<PurgeResult> {
         await count('humanRequests', () => tx.candidateHumanRequest.deleteMany({ where: { candidateId } }));
         await count('feedbackOptInRequests', () => tx.candidateFeedbackOptInRequest.deleteMany({ where: { candidateId } }));
         await count('candidates', () => tx.candidate.deleteMany({ where: { id: candidateId } }));
-      });
+      }, ERASURE_TX);
     } catch (err) {
       logger.error({ err: String(err), candidateId }, 'Failed to purge orphaned candidate');
       failures.push(candidateId);
