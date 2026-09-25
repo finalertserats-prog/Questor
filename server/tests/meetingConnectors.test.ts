@@ -51,9 +51,15 @@ beforeAll(async () => {
   await wipe();
   // The meeting apps are the deployment's, so only the operator (the signup
   // approver) may test them. Admin A is the operator here; admin B is not.
-  config.signupApproverEmail = 'admin@conn-a.local';
+  //
+  // The approver address is RESERVED — self-registration cannot claim it, or a
+  // tenant admin could mint the operator account inside their own organisation
+  // and read every other one's signup queue. So A registers first and the
+  // setting names them afterwards, which is the order a real deployment uses
+  // too: the owner's account exists before it is pointed at.
   const a = await request(app).post('/api/auth/register').send({ email: 'admin@conn-a.local', password: PASS_A, name: 'Admin A', tenantName: 'Conn A' });
   expect(a.status).toBe(201);
+  config.signupApproverEmail = 'admin@conn-a.local';
   adminA = a.body.token;
   const b = await request(app).post('/api/auth/register').send({ email: 'admin@conn-b.local', password: PASS_B, name: 'Admin B', tenantName: 'Conn B' });
   expect(b.status).toBe(201);
