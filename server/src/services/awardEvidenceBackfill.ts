@@ -50,6 +50,26 @@ import { CERTIFICATE_TIERS, parseAwardEvidence, parseStoredEvidence } from './aw
 /** Read in pages so a large tenant is never loaded at once. */
 const PAGE = 200;
 
+/**
+ * Two small writes, and still not left on Prisma's five-second default.
+ *
+ * `dataRights.ts` was bitten by exactly that: work that finishes comfortably
+ * on an idle database — the reason it survived every green suite — and does
+ * not under load, rolling back with P2028. The failure here is far gentler
+ * than an erasure reporting failure to somebody exercising a right: the record
+ * stays version 1, it is counted as failed rather than done, and the next run
+ * picks it up. But "gentler" still means a certificate refused for another
+ * hour because the database was busy for a moment, and there is nothing to be
+ * gained by giving up that early.
+ *
+ * `maxWait` is raised for the same reason one step earlier: under the load
+ * that makes the work slow, waiting for a free connection is also slow, and
+ * the two-second default would give up before any work began. Modest rather
+ * than generous, because unlike an erasure this genuinely is two statements
+ * and a long wait here would mean something else is wrong.
+ */
+const UPGRADE_TX = { timeout: 30_000, maxWait: 15_000 } as const;
+
 /** Hourly, and it stops itself once there is nothing left — see `startAwardEvidenceBackfill`. */
 export const AWARD_EVIDENCE_BACKFILL_EVERY_MS = 60 * 60_000;
 
@@ -213,7 +233,7 @@ async function settle(
         after: { tier: award.tier, reference: award.reference, from: 1, to: 2 },
       });
       return 'upgraded';
-    });
+    }, UPGRADE_TX);
   } catch (err) {
     // One award that cannot be migrated must not stop the sweep reaching the
     // rest. It stays version 1, so the export goes on refusing it and the next

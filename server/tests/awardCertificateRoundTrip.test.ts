@@ -108,13 +108,17 @@ function refuseTheWrite(): () => void {
 /** A transaction whose audit write refuses, with the award update still working. */
 function breakTheAuditTrail(): () => void {
   const original = prisma.$transaction;
-  prisma.$transaction = ((run: (tx: unknown) => unknown) =>
-    (original as (fn: (tx: unknown) => unknown) => Promise<unknown>).call(prisma, (tx: unknown) =>
+  // The options are forwarded, not dropped. A wrapper that quietly swallowed
+  // them would run the real transaction under different settings from the one
+  // being tested, which is the sort of help that hides the thing it is
+  // standing in for.
+  prisma.$transaction = ((run: (tx: unknown) => unknown, options?: unknown) =>
+    (original as (fn: (tx: unknown) => unknown, options?: unknown) => Promise<unknown>).call(prisma, (tx: unknown) =>
       run(new Proxy(tx as object, {
         get: (target, property) => property === 'auditEvent'
           ? { create: () => Promise.reject(new Error('the audit trail is not accepting writes')) }
           : Reflect.get(target, property),
-      })))) as Transaction;
+      })), options)) as Transaction;
   return () => { prisma.$transaction = original; };
 }
 
@@ -129,12 +133,12 @@ function breakTheAuditTrail(): () => void {
 function letAnotherInstanceWinFirst(awardId: string, winning: string): () => void {
   const original = prisma.$transaction;
   let taken = false;
-  prisma.$transaction = (async (run: (tx: unknown) => unknown) => {
+  prisma.$transaction = (async (run: (tx: unknown) => unknown, options?: unknown) => {
     if (!taken) {
       taken = true;
       await prisma.candidateAward.update({ where: { id: awardId }, data: { evidenceJson: winning } });
     }
-    return (original as (fn: (tx: unknown) => unknown) => Promise<unknown>).call(prisma, run);
+    return (original as (fn: (tx: unknown) => unknown, options?: unknown) => Promise<unknown>).call(prisma, run, options);
   }) as Transaction;
   return () => { prisma.$transaction = original; };
 }
