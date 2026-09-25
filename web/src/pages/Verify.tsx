@@ -111,7 +111,7 @@ export function Verify() {
             on a person's name has been told nothing yet. */}
         <h1 className="verify-title verify-verdict">
           <Icon name="check" size={22} />
-          <span>{VERIFY_COPY.verified.title}</span>
+          {VERIFY_COPY.verified.title}
         </h1>
 
         <p className="verify-name">{record.candidateName}</p>

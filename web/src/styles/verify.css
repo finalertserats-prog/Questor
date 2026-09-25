@@ -48,15 +48,16 @@
   color: var(--ink);
 }
 
-/* The verdict, which is the heading: the tick sits on the text baseline
-   rather than above it, so the two read as one sentence. */
-.verify-verdict {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-}
+/* The verdict, which is the heading.
+
+   Deliberately NOT a flex row. As one, a heading that wrapped to two lines on
+   a phone left the tick floating in the margin beside neither of them, which
+   read as a stray mark rather than as part of the sentence. Inline, the tick
+   sits where the first word does and wraps with it. */
 .verify-verdict .icon {
+  display: inline-block;
+  vertical-align: -3px;
+  margin-right: 9px;
   color: var(--pass);
 }
 
@@ -86,6 +87,10 @@
   font-size: 1.02rem;
   line-height: 1.5;
   color: var(--ink-2);
+  /* The role is set in one weight and must not be broken across lines by a
+     ragged edge: "Senior Marketing / Manager" reads as two different things
+     when the reader is comparing it to the paper. */
+  text-wrap: balance;
 }
 .verify-claim-line strong {
   color: var(--ink);
