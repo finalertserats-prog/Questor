@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { redactIdentity, redactHandlesOnly, NAME_PLACEHOLDER, EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, LINK_PLACEHOLDER } from '../src/services/identityRedaction.js';
+import { redactIdentity, redactUniqueHandles, NAME_PLACEHOLDER, EMAIL_PLACEHOLDER, PHONE_PLACEHOLDER, LINK_PLACEHOLDER } from '../src/services/identityRedaction.js';
 
 /**
  * Removing the identifiers Questor actually holds from free text.
@@ -123,18 +123,58 @@ describe('redacting the identifiers we hold', () => {
   });
 });
 
-describe('redacting only the handles, for text that is not one candidate’s to rewrite', () => {
-  it('takes out the address, the phone and the profile', () => {
-    const shared = `write to ${KAJAL.email} or call 9876543210, profile ${KAJAL.linkedinUrl}`;
-    expect(redactHandlesOnly(shared, KAJAL))
-      .toBe(`write to ${EMAIL_PLACEHOLDER} or call ${PHONE_PLACEHOLDER}, profile ${LINK_PLACEHOLDER}`);
+describe('redacting only the unique handles, for text that is not one candidate’s to rewrite', () => {
+  it('takes out the address and the profile', () => {
+    const shared = `write to ${KAJAL.email}, profile ${KAJAL.linkedinUrl}`;
+    expect(redactUniqueHandles(shared, KAJAL))
+      .toBe(`write to ${EMAIL_PLACEHOLDER}, profile ${LINK_PLACEHOLDER}`);
+  });
+
+  it('leaves the phone, because a number is not always one person’s', () => {
+    // This is the correction a review forced. The justification for touching an
+    // unowned row at all is that a handle identifies exactly one person — true
+    // of an address, not always true of a number. Households share one,
+    // agencies put their switchboard on every candidate they submit. Rewriting
+    // another candidate's "call 9876543210" damages their record to satisfy
+    // this one's timer, which is the harm the rule exists to prevent.
+    expect(redactUniqueHandles('call 9876543210 to arrange it', KAJAL))
+      .toBe('call 9876543210 to arrange it');
   });
 
   it('leaves the name, because a row shared with other candidates is not this one’s to edit', () => {
-    // A handle belongs to exactly one person, so removing it takes nothing from
-    // anybody else in the row. A name does not: matching name parts in shared
-    // text would mangle everyone else's record to satisfy one person's timer.
-    expect(redactHandlesOnly('Kajal Vishwakarma explained the trade-off well', KAJAL))
+    expect(redactUniqueHandles('Kajal Vishwakarma explained the trade-off well', KAJAL))
       .toBe('Kajal Vishwakarma explained the trade-off well');
+  });
+
+  it('still takes the phone out of the candidate’s OWN record, where over-redaction costs only them', () => {
+    expect(redactIdentity('call 9876543210 to arrange it', KAJAL))
+      .toBe(`call ${PHONE_PLACEHOLDER} to arrange it`);
+  });
+});
+
+describe('spellings that mean the same thing', () => {
+  it('matches a percent-encoded profile against the one a browser shows', () => {
+    const encoded = { ...KAJAL, linkedinUrl: 'https://www.linkedin.com/in/kajal%2Dvishwakarma-8821' };
+    expect(redactIdentity('see linkedin.com/in/kajal-vishwakarma-8821', encoded))
+      .toBe(`see ${LINK_PLACEHOLDER}`);
+  });
+
+  it('matches the browser-visible profile against a percent-encoded transcript', () => {
+    expect(redactIdentity('see linkedin.com/in/kajal%2Dvishwakarma-8821', KAJAL))
+      .toBe(`see ${LINK_PLACEHOLDER}`);
+  });
+
+  it('matches a name whichever way Unicode encoded the accent', () => {
+    // "José" is one code point or two depending on what produced the text, and
+    // a regex built from one does not match the other. A speech-to-text engine
+    // emits one, a copy-paste from a CV the other.
+    const jose = { fullName: 'José Álvarez', email: '', emailNormalized: '', phone: '', linkedinUrl: '' };
+    const decomposed = 'I asked José about it.';
+    expect(redactIdentity(decomposed, jose)).toBe(`I asked ${NAME_PLACEHOLDER} about it.`);
+  });
+
+  it('matches the accent-stripped spelling an English transcript produces', () => {
+    const jose = { fullName: 'José Álvarez', email: '', emailNormalized: '', phone: '', linkedinUrl: '' };
+    expect(redactIdentity('I asked Jose about it.', jose)).toBe(`I asked ${NAME_PLACEHOLDER} about it.`);
   });
 });

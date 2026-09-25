@@ -36,58 +36,67 @@ async function candidateWhoAskedForAnAccommodation() {
 const erase = (ids: { tenantId: string; candidateId: string; userId: string }) =>
   eraseCandidate({ tenantId: ids.tenantId, candidateId: ids.candidateId, actorId: ids.userId, reason: 'candidate asked' });
 
-describe('the content backstop under erasure', () => {
+describe('a row matched only by its content', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('reaches a row filed against an entity the id pass cannot enumerate', async () => {
-    // The id pass finds rows by the id of the thing they are about. A row filed
-    // under something we never listed is invisible to it, and this is the only
-    // thing that catches one.
-    const ids = await candidateWhoAskedForAnAccommodation();
-    const stray = await prisma.auditEvent.create({
+  /** A row belonging to somebody else, whose payload happens to mention Priya. */
+  async function anotherCandidatesRow(tenantId: string, afterJson: string) {
+    return prisma.auditEvent.create({
       data: {
-        tenantId: ids.tenantId, actorId: 'system', actorType: 'system',
-        action: 'integration.pushed', entityType: 'SomethingWeNeverListed', entityId: 'external-42',
-        afterJson: JSON.stringify({ to: 'priya.sharma@example.com' }),
+        tenantId, actorId: 'reviewer', actorType: 'user',
+        action: 'review.completed', entityType: 'AssessmentVersion',
+        entityId: 'another-candidates-assessment', afterJson,
       },
     });
+  }
+
+  it('keeps what it says about the candidate it actually belongs to', async () => {
+    // THE DEFECT THIS TEST EXISTS FOR, and it shipped. A content match is not
+    // proof of ownership: candidate B's own review row, whose payload compares
+    // their answer to Priya's, was having its entire payload emptied when Priya
+    // was erased - a record destroyed for somebody who asked for nothing.
+    const ids = await candidateWhoAskedForAnAccommodation();
+    const theirs = await anotherCandidatesRow(ids.tenantId, JSON.stringify({
+      reason: 'Compared with priya.sharma@example.com, this answer was stronger on indexing',
+    }));
 
     await erase(ids);
 
-    const after = await prisma.auditEvent.findUniqueOrThrow({ where: { id: stray.id } });
-    expect(after.afterJson).toBe(PAYLOAD_REMOVED);
+    const after = (await prisma.auditEvent.findUniqueOrThrow({ where: { id: theirs.id } })).afterJson;
+    expect(after).not.toBe(PAYLOAD_REMOVED);
+    expect(after).toMatch(/this answer was stronger on indexing/);
+  });
+
+  it('loses the erased candidate address from it, because nobody else has that', async () => {
+    const ids = await candidateWhoAskedForAnAccommodation();
+    const theirs = await anotherCandidatesRow(ids.tenantId, JSON.stringify({
+      reason: 'Compared with priya.sharma@example.com, this answer was stronger on indexing',
+    }));
+
+    await erase(ids);
+
+    expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: theirs.id } })).afterJson)
+      .toBe(JSON.stringify({ reason: 'Compared with [email], this answer was stronger on indexing' }));
   });
 
   it.each([
     ['all caps', 'PRIYA.SHARMA@EXAMPLE.COM'],
     ['the mixed case a person actually types', 'Priya.Sharma@Example.com'],
     ['as stored', 'priya.sharma@example.com'],
-  ])('matches the address written in %s', async (_label, written) => {
-    // Prisma's `contains` is case-sensitive on Postgres and `mode:
-    // "insensitive"` is unavailable to a client generated for sqlite, so the
-    // match is done in SQL with lower() on both sides. Emitting case variants
-    // covered the two ends and missed the middle — which is the spelling a
-    // person actually types at signup, and the exact false negative this net
-    // exists to prevent.
+  ])('finds the address written in %s', async (_label, written) => {
+    // Prisma contains is case-sensitive on Postgres, so the match is done in
+    // SQL with lower() on both sides. Case variants covered the two ends and
+    // missed the middle, which is the spelling a person types at signup.
     const ids = await candidateWhoAskedForAnAccommodation();
-    const row = await prisma.auditEvent.create({
-      data: {
-        tenantId: ids.tenantId, actorId: 'system', actorType: 'system',
-        action: 'integration.pushed', entityType: 'SomethingWeNeverListed', entityId: 'external-43',
-        afterJson: JSON.stringify({ to: written }),
-      },
-    });
+    const theirs = await anotherCandidatesRow(ids.tenantId, JSON.stringify({ to: written }));
 
     await erase(ids);
 
-    expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } })).afterJson).toBe(PAYLOAD_REMOVED);
+    expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: theirs.id } })).afterJson)
+      .toBe(JSON.stringify({ to: '[email]' }));
   });
 
-  it('leaves another candidate’s history alone, even one with the same name', async () => {
-    // The net matches on the ADDRESS, never the name — which is why
-    // `IdentityHandles` cannot carry one. Two people called Priya Sharma in one
-    // organisation is ordinary, and gutting the history of the one still in a
-    // live process would be harm done to the wrong person.
+  it('leaves another candidate history alone when it never mentioned this one', async () => {
     const ids = await candidateWhoAskedForAnAccommodation();
     const namesake = await prisma.candidate.create({
       data: {
@@ -109,7 +118,7 @@ describe('the content backstop under erasure', () => {
     expect(theirs.afterJson).toMatch(/still in process/);
   });
 
-  it('leaves the rest of the organisation’s audit log alone', async () => {
+  it('leaves the rest of the organisation audit log alone', async () => {
     const ids = await candidateWhoAskedForAnAccommodation();
     const unrelated = await prisma.auditEvent.create({
       data: {
@@ -174,7 +183,11 @@ describe('audit rows that belong to many candidates at once', () => {
     });
   }
 
-  it('loses this candidate’s address, phone and profile', async () => {
+  it('loses this candidate address and profile, and keeps the phone', async () => {
+    // The phone stays because a number is not always one person's - a
+    // household's, an agency switchboard, a reception desk. Removing it from a
+    // row that covers other candidates would damage their record to satisfy
+    // this one's timer, which is what the unowned-row rule exists to prevent.
     const ids = await candidateWhoAskedForAnAccommodation();
     await prisma.candidate.update({
       where: { id: ids.candidateId },
@@ -187,7 +200,7 @@ describe('audit rows that belong to many candidates at once', () => {
     await erase(ids);
 
     const after = (await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } })).afterJson;
-    expect(after).toBe(JSON.stringify({ reason: 'declining: chased [email] on [phone], see [link]' }));
+    expect(after).toBe(JSON.stringify({ reason: 'declining: chased [email] on 9876543210, see [link]' }));
   });
 
   it('keeps the row, and keeps what it says about everybody else', async () => {
@@ -215,12 +228,12 @@ describe('audit rows that belong to many candidates at once', () => {
     expect((await prisma.auditEvent.findUniqueOrThrow({ where: { id: row.id } })).afterJson).toBe(row.afterJson);
   });
 
-  it('reports how many shared rows it touched, separately from the ones it cleared', async () => {
+  it('reports how many unowned rows it touched, separately from the ones it cleared', async () => {
     const ids = await candidateWhoAskedForAnAccommodation();
     await sharedRow(ids.tenantId, JSON.stringify({ reason: 'chased priya.sharma@example.com' }));
 
     const result = await erase(ids);
 
-    expect(result.deleted.sharedAuditHandles).toBe(1);
+    expect(result.deleted.unownedAuditHandles).toBe(1);
   });
 });

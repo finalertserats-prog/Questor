@@ -7,7 +7,7 @@ import { eraseStagedImportRows } from './candidateImport.js';
 import { HttpError } from '../middleware/index.js';
 import { logAudit } from './audit.js';
 import { candidateHasHeldObservation, deleteCandidateObservations, purgeExpiredObservations } from './observerRetention.js';
-import { auditableEntityIds, clearAuditPayloads, redactHandlesFromSharedAuditPayloads } from './auditPayloads.js';
+import { auditableEntityIds, clearAuditPayloads, redactHandlesFromUnownedAuditPayloads } from './auditPayloads.js';
 import { anonymisationEnabled, retentionPostureMessage } from './anonymise.js';
 
 // Candidate data-rights operations.
@@ -365,14 +365,11 @@ export async function eraseCandidate(o: {
     // whole file is written against: it looks done and it isn't. If this
     // cannot complete, the erasure rolls back and is retried rather than being
     // recorded as satisfied.
+    const auditableIds = await auditableEntityIds(tx, { tenantId: o.tenantId, candidateId: o.candidateId, sessionIds });
     await count('auditPayloads', async () => ({
       count: await clearAuditPayloads(tx, {
         tenantId: o.tenantId,
-        entityIds: await auditableEntityIds(tx, { tenantId: o.tenantId, candidateId: o.candidateId, sessionIds }),
-        // The second net, for a row filed against something we could not
-        // enumerate. `IdentityHandles` is what stops it ever matching on a
-        // name — see auditPayloads.ts.
-        handles: candidate,
+        entityIds: auditableIds,
         removedBy: 'erasure',
       }),
     }));
@@ -425,10 +422,11 @@ export async function eraseCandidate(o: {
     await count('importRows', () => eraseStagedImportRows(tx, { tenantId: o.tenantId, candidateId: o.candidateId, emailNormalized: candidate.emailNormalized }));
     await count('candidates', () => tx.candidate.deleteMany({ where: { id: o.candidateId, tenantId: o.tenantId } }));
 
-    // Rows shared with other candidates are not cleared — that would destroy
-    // their record too — but this person's unique handles come out of them,
-    // which costs nobody anything. See auditPayloads.ts for why the name does
-    // not follow.
+    // Rows we cannot prove are this candidate's — shared with other people, or
+    // matched only because their payload mentions them — are not cleared; that
+    // would destroy somebody else's record. Their unique handles come out
+    // instead, which costs nobody anything. See auditPayloads.ts for why
+    // neither the name nor the phone follows.
     //
     // LAST, and that is about locks rather than correctness. These are the only
     // rows this transaction writes that belong to anybody else, so they are the
@@ -439,8 +437,8 @@ export async function eraseCandidate(o: {
     // possible. If contention ever does show up, narrow this pass rather than
     // shortening the timeout: a slow erasure is survivable, a refused one is
     // the thing ERASURE_TX exists to prevent.
-    await count('sharedAuditHandles', async () => ({
-      count: await redactHandlesFromSharedAuditPayloads(tx, { tenantId: o.tenantId, contact: candidate }),
+    await count('unownedAuditHandles', async () => ({
+      count: await redactHandlesFromUnownedAuditPayloads(tx, { tenantId: o.tenantId, handles: candidate, ownedEntityIds: auditableIds }),
     }));
   }, ERASURE_TX);
 

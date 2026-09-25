@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { linkedinSlug, redactHandlesOnly, type ContactIdentity } from './identityRedaction.js';
+import { linkedinSlug, redactUniqueHandles, type UniqueHandles } from './identityRedaction.js';
 
 /**
  * Clearing what an audit row SAID about a person, while keeping the fact that
@@ -55,25 +55,7 @@ export const payloadRemoved = (by: PayloadRemovedBy): string => `{"removed":"${b
  */
 export const PAYLOAD_REMOVED = payloadRemoved('erasure');
 
-/**
- * The identifiers the content net is allowed to match on.
- *
- * A deliberately narrow type, and the narrowness is the point: it CANNOT carry
- * the name. A name is not unique — two people called Priya Sharma in one
- * organisation is ordinary — and clearing the audit history of a namesake who
- * is still here, still in a live process, would be real harm done to the wrong
- * person. The address is this system's own key for "the same human being", and
- * the LinkedIn URL is a handle only one person has.
- *
- * Expressed as a type rather than as a comment because the rule has to survive
- * the next person to call this. Passing a `Candidate` row wholesale, and
- * quietly widening the net to the name with it, will not compile.
- */
-export interface IdentityHandles {
-  readonly email: string;
-  readonly emailNormalized: string;
-  readonly linkedinUrl: string;
-}
+
 
 
 
@@ -97,7 +79,7 @@ export interface IdentityHandles {
  * services/userEmail.ts already uses for the same problem. See
  * `auditIdsMatchingHandles`.
  */
-function contentNeedles(handles: IdentityHandles): readonly string[] {
+function contentNeedles(handles: UniqueHandles): readonly string[] {
   return [...new Set(
     [handles.email, handles.emailNormalized, linkedinSlug(handles.linkedinUrl)]
       .map((h) => h.trim())
@@ -186,9 +168,11 @@ const SHARED_ENTITY_TYPES = ['CandidateImportBatch', 'CalibrationAdjustment', 'C
  *     types, unvalidated.
  *
  * WHAT THIS SWEEP DOES AND DOES NOT DO ABOUT THAT. The unique handles ARE
- * removed from these rows — see `redactHandlesFromSharedAuditPayloads`. An
- * address, a phone number or a profile slug belongs to exactly one person, so
- * taking it out of a shared row costs nobody anything. An earlier version of
+ * removed from these rows — see `redactHandlesFromUnownedAuditPayloads`. An
+ * address or a profile slug belongs to exactly one person, so taking it out of
+ * a shared row costs nobody anything. The PHONE is not in that set — a number
+ * can be a household's or an agency switchboard, so removing it would damage
+ * another candidate's row; see `UniqueHandles`. An earlier version of
  * this comment said nothing could be done here, and that was too strong.
  *
  * The NAME is not removed, and that is a judgement rather than an omission.
@@ -264,32 +248,31 @@ export async function clearAuditPayloads(
   o: {
     readonly tenantId: string;
     readonly entityIds: readonly string[];
-    /** The second net. Omit it to run the id pass alone. */
-    readonly handles?: IdentityHandles;
     readonly removedBy?: PayloadRemovedBy;
   },
 ): Promise<number> {
-  // A second net under the first. The id pass is exhaustive for rows filed
-  // against something of this candidate's; this catches a row filed against
-  // something we could not enumerate whose payload nonetheless holds the
-  // person. `IdentityHandles` is what makes the name impossible to pass.
-  const matched = o.handles
-    ? await auditIdsMatchingHandles(tx, o.tenantId, contentNeedles(o.handles))
-    : [];
-  if (o.entityIds.length === 0 && matched.length === 0) return 0;
-
+  if (o.entityIds.length === 0) return 0;
   const marker = payloadRemoved(o.removedBy ?? 'erasure');
+
+  // ONLY rows whose entity is this candidate's. A content match is NOT proof
+  // of ownership, and clearing on one was a live defect: candidate B's own
+  // HumanReview audit row, whose payload happened to read "compared with
+  // priya.sharma@example.com, this answer was stronger", had its whole payload
+  // emptied when Priya was erased. That is the same harm as gutting a shared
+  // row — a record destroyed for somebody who asked for nothing — one entity
+  // type outside the list that was guarding against it.
+  //
+  // So the rule is ownership, not resemblance. A row is this candidate's when
+  // an id says so, and then the payload goes. When only the CONTENT matches,
+  // the honest operation is to take out the handle and leave the rest, which
+  // is `redactHandlesFromUnownedAuditPayloads`.
   const mine: Prisma.AuditEventWhereInput = {
     tenantId: o.tenantId,
-    // Shared rows are never CLEARED, however they were found. The content net
-    // matches a payload that mentions this person, and a calibration theme or
-    // an import batch that mentions them is still a record of everybody else
-    // in it — emptying it to remove one person is the precise harm the
-    // exclusion above exists to prevent, and without this line the second net
-    // would walk straight past it and do exactly that. Their handles are taken
-    // out instead, by `redactHandlesFromSharedAuditPayloads`.
+    entityId: { in: [...o.entityIds] },
+    // Belt and braces. `auditableEntityIds` never returns a shared entity's id,
+    // so this cannot match today; it is here so that a future edit which widens
+    // that function cannot quietly start clearing rows belonging to many people.
     NOT: { entityType: { in: [...SHARED_ENTITY_TYPES] } },
-    OR: [{ entityId: { in: [...o.entityIds] } }, { id: { in: [...matched] } }],
   };
 
   // Two statements rather than one: a row that never carried a `before` is not
@@ -311,46 +294,56 @@ export async function clearAuditPayloads(
 }
 
 
+
 /**
- * Take this candidate's unique handles out of the audit payloads on rows that
- * are not theirs alone.
+ * Take this candidate's unique handles out of every audit payload that mentions
+ * them but is NOT provably theirs.
  *
- * WHY THIS IS NOT THE SAME AS CLEARING. A review made the point and it was
- * right: "leave shared rows alone entirely" was too strong. Clearing a row
- * shared by many candidates destroys everybody's record to satisfy one
- * person's timer — that part stands. But removing an address, a phone number
- * or a profile slug takes nothing from anyone else, because a handle belongs
- * to exactly one person. A calibration theme that mentioned somebody's email
- * was defective before this ran and is only improved by losing it.
+ * Two kinds of row land here, and they get the same treatment because the same
+ * thing is true of both — we cannot say the row belongs to this candidate:
  *
- * HANDLES ONLY, AND NOT THE NAME. A name is not unique and the form it takes
- * in these fields is usually a fragment — "the Sharma interview", "Priya's
- * answers" — so catching it means matching name parts, and matching name parts
- * in shared text mangles everyone else's record ("grace under pressure" is not
- * a candidate called Grace). The residual is stated on `auditableEntityIds`,
- * and it now reads "handles are removed, names are not", which is true, rather
- * than "nothing can be done here", which was not.
+ *   - rows on a SHARED entity (a calibration adjustment, an import batch), which
+ *     are about many people by construction;
+ *   - rows matched only because their payload mentions this person, which may
+ *     as easily be somebody else's record referring to them.
+ *
+ * Clearing either would destroy a record belonging to someone who asked for
+ * nothing. Taking out an address or a profile slug does not: nobody else has
+ * one. That is the whole justification, and it is why `UniqueHandles` excludes
+ * the phone — a number can be a household's or an agency's switchboard, and
+ * removing it from another candidate's row is the very harm this rule prevents.
+ *
+ * The name is not removed either. See the argument beside `auditableEntityIds`.
  */
-export async function redactHandlesFromSharedAuditPayloads(
+export async function redactHandlesFromUnownedAuditPayloads(
   tx: Prisma.TransactionClient,
-  o: { readonly tenantId: string; readonly contact: ContactIdentity },
+  o: {
+    readonly tenantId: string;
+    readonly handles: UniqueHandles;
+    /** Rows already cleared by ownership, which must not be redacted on top. */
+    readonly ownedEntityIds: readonly string[];
+  },
 ): Promise<number> {
-  // Every shared row in the tenant, not the ones the SQL net matched. That net
-  // looks for an address or a profile slug; a payload holding only a phone
-  // number, whose formatting the stored spelling rarely matches, would be
-  // missed by it and is exactly what the redaction below can handle. These rows
-  // are few — a calibration adjustment exists per role, competency and band,
-  // and import batches expire — so reading them is cheaper than the coverage
-  // it would cost to narrow.
+  const matched = await auditIdsMatchingHandles(tx, o.tenantId, contentNeedles(o.handles));
+  if (matched.length === 0) return 0;
+
+  // Only rows the content net found. With the phone out of `UniqueHandles`
+  // there is nothing this pass can remove that the net cannot find, so it no
+  // longer reads every shared row in the tenant — which also takes a full scan
+  // out of a transaction that has had timeout trouble before.
   const rows = await tx.auditEvent.findMany({
-    where: { tenantId: o.tenantId, entityType: { in: [...SHARED_ENTITY_TYPES] } },
+    where: {
+      tenantId: o.tenantId,
+      id: { in: [...matched] },
+      NOT: { entityId: { in: [...o.ownedEntityIds] } },
+    },
     select: { id: true, beforeJson: true, afterJson: true },
   });
 
   let changed = 0;
   for (const row of rows) {
-    const beforeJson = redactHandlesOnly(row.beforeJson, o.contact);
-    const afterJson = redactHandlesOnly(row.afterJson, o.contact);
+    const beforeJson = redactUniqueHandles(row.beforeJson, o.handles);
+    const afterJson = redactUniqueHandles(row.afterJson, o.handles);
     if (beforeJson === row.beforeJson && afterJson === row.afterJson) continue;
     await tx.auditEvent.update({ where: { id: row.id }, data: { beforeJson, afterJson } });
     changed += 1;

@@ -22,7 +22,7 @@
  * record of the person being anonymised: their transcript, their reviews, and
  * the scores and competency reads the interview is kept for are untouched. On
  * text SHARED with other candidates the same over-redaction would land on
- * people who asked for nothing, which is why `redactHandlesOnly` exists and
+ * people who asked for nothing, which is why `redactUniqueHandles` exists and
  * why services/auditPayloads.ts refuses to match names there. Same technique,
  * different victim; see the argument written out in full beside
  * `auditableEntityIds`.
@@ -40,18 +40,40 @@ export const PHONE_PLACEHOLDER = '[phone]';
 export const LINK_PLACEHOLDER = '[link]';
 
 /**
- * The identifiers that belong to exactly one person. No name.
+ * The identifiers that belong to EXACTLY ONE PERSON. No name, and no phone.
  *
- * Split from `KnownIdentity` so that a function which must not touch names
- * cannot be handed one. `redactHandlesOnly` takes this, so passing a whole
- * candidate to it — and quietly reintroducing name matching into text shared
- * with other people — will not compile.
+ * This is the set that may be removed from text we cannot prove belongs to the
+ * candidate — a row shared with other people, or one matched only because its
+ * payload mentions them. Removing an address or a profile slug from such a row
+ * costs nobody anything, because nobody else has one.
+ *
+ * PHONE IS DELIBERATELY ABSENT, and it was in here until a review pointed out
+ * that it should not be. The justification for touching an unowned row at all
+ * is that a handle identifies one person; a phone number does not always.
+ * Households share one, agencies put their switchboard on every candidate they
+ * submit, reception desks get reused. Rewriting another candidate's "call
+ * 5551234567" to "[phone]" damages their record to satisfy this candidate's
+ * timer, which is the exact harm the unowned-row rule exists to prevent — and
+ * it would have arrived through the argument used to justify the exception.
+ *
+ * The phone is still removed from the candidate's OWN record, where the cost
+ * of over-redaction lands on them; see `ContactIdentity` and `redactIdentity`.
  */
-export interface ContactIdentity {
+export interface UniqueHandles {
   readonly email: string;
   readonly emailNormalized: string;
-  readonly phone: string;
   readonly linkedinUrl: string;
+}
+
+/**
+ * Everything unique plus the phone: the handles removable from a record that
+ * IS the candidate's, where over-redaction costs only them.
+ *
+ * Split from `KnownIdentity` so a function which must not touch names cannot
+ * be handed one.
+ */
+export interface ContactIdentity extends UniqueHandles {
+  readonly phone: string;
 }
 
 /** The identifiers we hold for one candidate, exactly as the Candidate row stores them. */
@@ -106,11 +128,59 @@ export function linkedinSlug(url: string): string {
   return slug.length >= MIN_SLUG ? slug : '';
 }
 
+/**
+ * The spellings of a slug that mean the same profile.
+ *
+ * A stored `alice%2Dnguyen-83xq7z` and a transcript's browser-visible
+ * `alice-nguyen-83xq7z` are the same person, and matching one does not match
+ * the other. Percent-encoding is the same family as the scheme and the
+ * trailing slash — variants of one link — and was the one left out.
+ *
+ * It matters more than it looks. When a slug is name-like and the link needle
+ * misses, the name pass chews it into "[name]-[name]-83xq7z", and that suffix
+ * is still enough to find the profile.
+ *
+ * A malformed escape is not decodable and is simply left as stored.
+ */
+function slugSpellings(slug: string): readonly string[] {
+  const decoded = (() => {
+    try {
+      return decodeURIComponent(slug);
+    } catch {
+      return slug;
+    }
+  })();
+  return [...new Set([slug, decoded, encodeURIComponent(decoded)].filter((v) => v.length >= MIN_SLUG))];
+}
+
 const escape = (literal: string): string => literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
 interface Needle {
   readonly pattern: RegExp;
   readonly replacement: string;
+}
+
+/**
+ * The spellings of a string that a reader would call the same word.
+ *
+ * Unicode gives "José" two encodings — one code point for the accented letter,
+ * or a plain letter followed by a combining accent — and a regex built from one
+ * does not match the other. Nothing normalises either the stored name or the
+ * transcript, and both forms reach us: a speech-to-text engine emits one, a
+ * copy-paste from a CV the other. Left alone, the severance is weakest for
+ * exactly the candidates whose names are least common.
+ *
+ * The accent-stripped form is included too, because "Jose" for "José" is
+ * ordinary in an English-language transcript. That over-redacts a genuine
+ * "Jose" — accepted for the same reason the rest of the name matching
+ * over-redacts, and only where the cost lands inside this person's own record.
+ * It is not used on text shared with other candidates; see `UniqueHandles`.
+ */
+function spellings(value: string): readonly string[] {
+  const nfc = value.normalize('NFC');
+  const nfd = value.normalize('NFD');
+  const stripped = nfd.replace(/\p{M}+/gu, '');
+  return [...new Set([nfc, nfd, stripped].filter((v) => v.trim().length > 0))];
 }
 
 /** The parts of a name worth matching on their own: no titles, nothing shorter than two letters. */
@@ -129,15 +199,13 @@ function nameNeedles(fullName: string): readonly Needle[] {
   // than two — a sentence full of "[name] [name]" reads as though the system is
   // broken, and a reader cannot tell one redaction from two.
   const whole: readonly Needle[] = parts.length > 1
-    ? [{
-      pattern: new RegExp(`${BEFORE}${parts.map(escape).join(String.raw`[\s.\-]+`)}${AFTER}`, 'giu'),
-      replacement: NAME_PLACEHOLDER,
-    }]
+    ? [...new Set(spellings(parts.join(' ')).map((joined) => joined.split(' ').map(escape).join(String.raw`[\s.\-]+`)))]
+      .map((pattern) => ({ pattern: new RegExp(`${BEFORE}${pattern}${AFTER}`, 'giu'), replacement: NAME_PLACEHOLDER }))
     : [];
 
   // Then each part alone, longest first, so a surname is not half-eaten by a
   // shorter part that happens to be a prefix of it.
-  const singles = [...parts]
+  const singles = [...new Set(parts.flatMap(spellings))]
     .sort((a, b) => b.length - a.length)
     .map((part) => ({ pattern: new RegExp(`${BEFORE}${escape(part)}${AFTER}`, 'giu'), replacement: NAME_PLACEHOLDER }));
 
@@ -180,21 +248,24 @@ function linkedinNeedles(linkedinUrl: string): readonly Needle[] {
   if (!url) return [];
   const slug = linkedinSlug(url);
   if (!slug) return [{ pattern: new RegExp(escape(url), 'giu'), replacement: LINK_PLACEHOLDER }];
-  return [
+
+  return slugSpellings(slug).flatMap((spelling) => [
     // The full URL first, so a link becomes one placeholder rather than a
     // scheme followed by one.
     {
-      pattern: new RegExp(String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${escape(slug)}[^\s"'<>)\]]*`, 'giu'),
+      pattern: new RegExp(String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${escape(spelling)}[^\s"'<>)\]]*`, 'giu'),
       replacement: LINK_PLACEHOLDER,
     },
-    // Then the slug alone. Hyphens count as part of the token, so a slug is
+    // Then the slug alone, because "my LinkedIn is priya-sharma-4417" is a
+    // sentence people say. Hyphens count as part of the token, so a slug is
     // never matched inside a longer hyphenated string.
     {
-      pattern: new RegExp(`(?<![\p{L}\p{N}_-])${escape(slug)}(?![\p{L}\p{N}_-])`, 'giu'),
+      pattern: new RegExp(`(?<![\p{L}\p{N}_-])${escape(spelling)}(?![\p{L}\p{N}_-])`, 'giu'),
       replacement: LINK_PLACEHOLDER,
     },
-  ];
+  ]);
 }
+
 
 /**
  * Every pattern that removes this candidate, in the order it must be applied.
@@ -219,10 +290,31 @@ export function identityNeedles(identity: KnownIdentity): readonly Needle[] {
  * under pressure" is not a candidate called Grace). A handle has no such
  * problem: it is unique, so removing it takes nothing from anyone else.
  */
+export function uniqueHandleNeedles(handles: UniqueHandles): readonly Needle[] {
+  const emails = [...new Set([handles.email, handles.emailNormalized].map((e) => e.trim()).filter(Boolean))]
+    .sort((a, b) => b.length - a.length);
+  return [
+    ...linkedinNeedles(handles.linkedinUrl),
+    ...emails.map((email) => ({ pattern: new RegExp(escape(email), 'giu'), replacement: EMAIL_PLACEHOLDER })),
+  ];
+}
+
+/**
+ * Remove only the handles nobody else can have, leaving the name AND the phone.
+ *
+ * For text that is not this candidate's to rewrite: a row shared with other
+ * candidates, or one matched only because its payload mentions them. See
+ * `UniqueHandles` for why the phone is not in that set.
+ */
+export function redactUniqueHandles(text: string, handles: UniqueHandles): string {
+  if (!text) return text;
+  return uniqueHandleNeedles(handles).reduce((redacted, n) => redacted.replace(n.pattern, n.replacement), text);
+}
+
 export function handleNeedles(identity: ContactIdentity): readonly Needle[] {
   // Both spellings of the address: the stored one and the normalised one may
   // differ in case, and either may be the form that ended up in the text.
-  const emails = [...new Set([identity.email, identity.emailNormalized].map((e) => e.trim()).filter(Boolean))]
+  const emails = [...new Set([identity.email, identity.emailNormalized].flatMap((e) => spellings(e.trim())))]
     .sort((a, b) => b.length - a.length);
 
   return [
@@ -232,17 +324,7 @@ export function handleNeedles(identity: ContactIdentity): readonly Needle[] {
   ];
 }
 
-/**
- * Remove only the unique handles, leaving the name in place.
- *
- * For text that is not this candidate's to rewrite — a calibration theme, an
- * import batch's record — where taking out an address harms nobody and taking
- * out a name would.
- */
-export function redactHandlesOnly(text: string, identity: ContactIdentity): string {
-  if (!text) return text;
-  return handleNeedles(identity).reduce((redacted, n) => redacted.replace(n.pattern, n.replacement), text);
-}
+
 
 /**
  * Remove every identifier we hold for this candidate from `text`.
