@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import request from 'supertest';
 import { Prisma } from '@prisma/client';
+import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import {
@@ -7,6 +9,7 @@ import {
   findCandidatesDueForAnonymisation,
   runAnonymisationSweep,
 } from '../src/services/anonymise.js';
+import { claimCandidateForAnonymisation } from '../src/services/anonymiseCascade.js';
 
 /**
  * Anonymisation: keep the interview, sever the person.
@@ -30,6 +33,12 @@ const NAME = 'Priya Sharma';
 const EMAIL = 'priya.sharma@example.com';
 const PHONE = '+91 98765 43210';
 const LINKEDIN = 'https://www.linkedin.com/in/priya-sharma-4417';
+/** The id this person has in the customer's own ATS — a handle straight back to a named record. */
+const ATS_ID = 'gh-88213';
+/** Free text the candidate typed about themselves. No pattern we hold can find it. */
+const REQUEST = 'I have a hearing impairment and will need captions throughout the interview, please.';
+
+const app = createApp();
 
 const longAgo = () => new Date(Date.now() - (anonymiseAfterDays() + 1) * DAY_MS);
 const recently = () => new Date(Date.now() - DAY_MS);
@@ -46,6 +55,23 @@ async function interviewedCandidate(completedAt: Date) {
     where: { id: ids.candidateId },
     data: { phone: PHONE, linkedinUrl: LINKEDIN },
   });
+
+  // Through the real endpoint, so the audit row and the consent record are the
+  // ones production writes. A candidate accumulates history before their
+  // interview, and that history is where the identity hides.
+  await request(app).post(`/api/portal/${ids.token}/consent`).send({
+    accepted: true, recordingConsent: true, accommodationRequest: REQUEST,
+  });
+
+  // The link into the customer's ATS: the clearest single route from an
+  // anonymised row back to a named person.
+  const connection = await prisma.atsConnection.create({
+    data: { tenantId: ids.tenantId, provider: 'greenhouse', baseUrl: 'https://example.test', atsKey: 'ats-anonymise-fixture', status: 'ok' },
+  });
+  await prisma.candidateAtsLink.create({
+    data: { tenantId: ids.tenantId, candidateId: ids.candidateId, connectionId: connection.id, externalCandidateId: ATS_ID },
+  });
+
   await prisma.interviewSession.update({
     where: { id: ids.sessionId },
     data: { state: 'COMPLETED', completedAt, legalHold: false },
@@ -152,12 +178,7 @@ describe('what anonymisation removes', () => {
 
   it('deletes the link to the customer ATS, which is a mapping straight back to a named record', async () => {
     const ids = await interviewedCandidate(longAgo());
-    const connection = await prisma.atsConnection.create({
-      data: { tenantId: ids.tenantId, provider: 'greenhouse', baseUrl: 'https://example.test', atsKey: 'ats-anonymise-test', status: 'ok' },
-    });
-    await prisma.candidateAtsLink.create({
-      data: { tenantId: ids.tenantId, candidateId: ids.candidateId, connectionId: connection.id, externalCandidateId: 'gh-88213' },
-    });
+    expect(await prisma.candidateAtsLink.count({ where: { candidateId: ids.candidateId } })).toBe(1);
 
     await runAnonymisationSweep(new Date());
 
@@ -285,10 +306,29 @@ describe('the record of an anonymisation', () => {
 describe('irreversibility', () => {
   beforeEach(async () => { await wipe(); });
 
+  /**
+   * Everything that is a handle back to this person, not just their name.
+   *
+   * A name is the obvious one and the least dangerous. The address is this
+   * system's own key for "the same human being"; the ATS id is a foreign key
+   * into a system that still holds the name; and the accommodation request is
+   * prose the candidate wrote about themselves that no pattern built from what
+   * we hold could ever match — it has to be removed rather than scrubbed, and
+   * this is what proves it was.
+   */
+  const HANDLES = [
+    /priya|sharma/i,
+    /priya\.sharma@example\.com/i,
+    /9876543210|98765[\s-]?43210/,
+    /linkedin\.com\/in\/priya/i,
+    new RegExp(ATS_ID, 'i'),
+    /hearing impairment|captions throughout/i,
+  ];
+
   /** Every string in every row of every model, and where it was found. */
   async function tracesOfTheCandidate(): Promise<string[]> {
     const client = prisma as unknown as Record<string, { findMany: () => Promise<Record<string, unknown>[]> }>;
-    const traces = /priya|sharma|9876543210|98765[\s-]?43210|linkedin\.com\/in\/priya/i;
+    const traces = { test: (value: string) => HANDLES.some((h) => h.test(value)) };
     const found: string[] = [];
     for (const model of Prisma.dmmf.datamodel.models) {
       const accessor = model.name.charAt(0).toLowerCase() + model.name.slice(1);
@@ -302,15 +342,82 @@ describe('irreversibility', () => {
     return [...new Set(found)].sort();
   }
 
-  it('leaves no spelling of the candidate anywhere in the database', async () => {
+  it('leaves no trace of the candidate anywhere in the database', async () => {
     await interviewedCandidate(longAgo());
     // The scan is only worth anything if it can fail. Before the sweep the same
     // walk must find the person in several places, or a green result below
     // would mean the scan is broken rather than the data clean.
-    expect((await tracesOfTheCandidate()).length).toBeGreaterThan(3);
+    const before = await tracesOfTheCandidate();
+    expect(before.length).toBeGreaterThan(3);
 
     await runAnonymisationSweep(new Date());
 
     expect(await tracesOfTheCandidate()).toEqual([]);
+  });
+
+  it('finds the candidate in the audit log before the sweep, which is the leak this scan exists to catch', async () => {
+    // Named separately because a scan that quietly stopped covering AuditEvent
+    // would still pass the test above on the strength of the other tables. The
+    // audit log is the table deliberately exempt from erasure and from the
+    // retention sweep, which is exactly why identity survives there unnoticed.
+    await interviewedCandidate(longAgo());
+
+    expect(await tracesOfTheCandidate()).toContain('AuditEvent.afterJson');
+  });
+});
+
+/**
+ * The guard on the destructive work.
+ *
+ * Re-reading the hold inside the transaction narrows the window between check
+ * and delete; it does not close it, because the read still happens before the
+ * writes and nothing stops an administrator committing a hold in between. The
+ * predicate therefore rides on a WRITE — the claim — so the database decides,
+ * and the sweep runs Serializable so a hold committed after the claim aborts
+ * the transaction rather than losing to it.
+ */
+describe('claiming a candidate', () => {
+  beforeEach(async () => { await wipe(); });
+
+  const eligible = (now: Date) => ({
+    anonymisedAt: null,
+    interviews: { none: { OR: [{ legalHold: true }, { artifacts: { some: { legalHold: true } } }] } },
+    artifacts: { none: { legalHold: true } },
+    pipelines: { none: { OR: [{ status: 'ACTIVE' }, { decidedAt: { gt: now } }] } },
+  });
+
+  it('refuses when a hold is in place, and changes nothing while refusing', async () => {
+    const ids = await interviewedCandidate(longAgo());
+    await prisma.interviewSession.update({ where: { id: ids.sessionId }, data: { legalHold: true } });
+
+    const claim = await prisma.$transaction((tx) =>
+      claimCandidateForAnonymisation(tx, { candidateId: ids.candidateId, now: new Date(), eligible: eligible(new Date()) }));
+
+    expect(claim).toBeNull();
+    expect((await candidateRow(ids.candidateId)).anonymisedAt).toBeNull();
+  });
+
+  it('can only be taken once, so two runs racing cannot both do the work', async () => {
+    const ids = await interviewedCandidate(longAgo());
+    const now = new Date();
+
+    const first = await prisma.$transaction((tx) =>
+      claimCandidateForAnonymisation(tx, { candidateId: ids.candidateId, now, eligible: eligible(now) }));
+    const second = await prisma.$transaction((tx) =>
+      claimCandidateForAnonymisation(tx, { candidateId: ids.candidateId, now, eligible: eligible(now) }));
+
+    expect([first === null, second === null]).toEqual([false, true]);
+  });
+
+  it('hands back the identity it just took, so the work cannot be done without having claimed', async () => {
+    const ids = await interviewedCandidate(longAgo());
+    const now = new Date();
+
+    const claim = await prisma.$transaction((tx) =>
+      claimCandidateForAnonymisation(tx, { candidateId: ids.candidateId, now, eligible: eligible(now) }));
+
+    expect(claim?.identity).toEqual({
+      fullName: NAME, email: EMAIL, emailNormalized: EMAIL, phone: PHONE, linkedinUrl: LINKEDIN,
+    });
   });
 });

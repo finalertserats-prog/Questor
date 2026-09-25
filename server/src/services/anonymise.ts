@@ -1,10 +1,9 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
 import { startJob } from './jobs.js';
-import { anonymiseCandidateData, type AnonymiseCounter } from './anonymiseCascade.js';
-import type { KnownIdentity } from './identityRedaction.js';
+import { anonymiseCandidateData, claimCandidateForAnonymisation, type AnonymiseCounter } from './anonymiseCascade.js';
 
 /**
  * Anonymisation: keep the interview, sever the person.
@@ -41,6 +40,26 @@ import type { KnownIdentity } from './identityRedaction.js';
  */
 
 const DAY_MS = 86_400_000;
+
+/**
+ * Above Prisma's five-second default. One candidate's cascade is a long chain
+ * of statements — every turn of a long interview is read, redacted and written
+ * back — and a timeout part-way is a rollback, not a half-done job, so the
+ * cost of setting this too low is a candidate that never gets anonymised
+ * rather than one that half does.
+ */
+const ANONYMISE_TIMEOUT_MS = 60_000;
+
+/** Run `body`, retrying once if the database refused to serialise it. */
+async function withRetry<T>(body: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await body();
+    } catch (err) {
+      if (!isSerializationFailure(err) || attempt >= ANONYMISE_ATTEMPTS) throw err;
+    }
+  }
+}
 
 /**
  * How long a candidate's identity stays attached to their interview.
@@ -245,11 +264,40 @@ export interface AnonymiseResult {
 }
 
 /**
+ * One candidate's transaction lost a serialisation conflict. Same shape as the
+ * check in candidateReuse.ts, kept local rather than exported from there so
+ * this file does not reach across lanes for two lines.
+ */
+const isSerializationFailure = (err: unknown): boolean =>
+  err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2034';
+
+/**
+ * One retry. A conflict here means somebody wrote to this candidate's
+ * interviews or files while the sweep was reading them — very often the
+ * administrator placing the hold. On the retry the claim below sees the hold
+ * and the candidate is skipped, which is the outcome we want.
+ */
+const ANONYMISE_ATTEMPTS = 2;
+
+/** Why one candidate was not anonymised on this pass. */
+type Outcome = 'anonymised' | 'skipped';
+
+/**
  * Anonymise every candidate past the window.
  *
  * Each candidate is done in its own transaction, so one stuck row cannot block
  * the rest of the sweep, and so no candidate can ever be left half-severed:
  * within a transaction it is all or none.
+ *
+ * SERIALIZABLE, and this is not belt-and-braces. Every check in here reads
+ * rows an administrator can write at the same moment — `InterviewSession
+ * .legalHold`, `Artifact.legalHold`, `RoundObservation.legalHold`. Under a
+ * weaker level the sweep can read "no hold", the administrator can commit the
+ * hold, and the sweep can then destroy the evidence the hold exists to
+ * preserve; re-reading inside the transaction does not fix that, because the
+ * re-read is still a read and the destructive statements still come after it.
+ * At Serializable the database refuses to let both commit, and the loser is
+ * retried — by which time the claim below sees the hold.
  */
 export async function runAnonymisationSweep(now = new Date()): Promise<AnonymiseResult> {
   const due = await findCandidatesDueForAnonymisation({ now });
@@ -260,69 +308,69 @@ export async function runAnonymisationSweep(now = new Date()): Promise<Anonymise
   let skipped = 0;
 
   for (const candidate of due) {
-    const changed: Record<string, number> = {};
-    const count: AnonymiseCounter = (label, value) => { changed[label] = (changed[label] ?? 0) + value; };
-    let done = false;
+    // Reset per attempt: a retried transaction runs the whole body again, and
+    // counts accumulated by the attempt that rolled back describe work that
+    // never happened.
+    let changed: Record<string, number> = {};
+
+    let outcome: Outcome;
     try {
-      await prisma.$transaction(async (tx) => {
-        // The same predicate the selection used, re-evaluated against `now`
-        // inside the transaction. A hold placed in the seconds since the
-        // selection must still win: that is the whole reason the retention
-        // code re-checks rather than trusting the ids it collected, and the
-        // cost of being wrong here is higher, because an anonymisation cannot
-        // be undone by anything short of a restore.
-        const still = await tx.candidate.findFirst({
-          where: { AND: [{ id: candidate.candidateId }, anonymisableWhere(now)] },
-          select: {
-            id: true, tenantId: true, fullName: true, email: true, emailNormalized: true,
-            phone: true, linkedinUrl: true, createdAt: true,
-            interviews: { select: { id: true, completedAt: true, createdAt: true } },
-          },
+      outcome = await withRetry(() => prisma.$transaction(async (tx): Promise<Outcome> => {
+        changed = {};
+        const count: AnonymiseCounter = (label, value) => { changed[label] = (changed[label] ?? 0) + value; };
+
+        // Re-read the window from what the row says NOW. A candidate can start
+        // a new interview between the selection and here, which restarts their
+        // clock, and severing them at that moment would anonymise an interview
+        // happening today under a rule about interviews from a year ago. This
+        // one cannot ride on the write below: no portable Prisma filter can
+        // express "anchor + n days", which is why Serializable is doing the
+        // real work for it.
+        const row = await tx.candidate.findUnique({
+          where: { id: candidate.candidateId },
+          select: { id: true, createdAt: true, interviews: { select: { id: true, completedAt: true, createdAt: true } } },
         });
-        if (!still) { skipped += 1; return; }
+        if (!row) return 'skipped';
+        if (anonymiseAnchor(row).getTime() + days * DAY_MS > now.getTime()) return 'skipped';
 
-        // And the window itself, re-derived from what the row says now. A
-        // candidate can start a new interview between the read and the write —
-        // which restarts their clock — and severing them at that moment would
-        // anonymise an interview happening today under a rule about interviews
-        // from a year ago.
-        if (anonymiseAnchor(still).getTime() + days * DAY_MS > now.getTime()) { skipped += 1; return; }
+        // A hold on an AI-observed human round. RoundObservation has no
+        // relation back to Candidate, so this cannot be part of the claim's
+        // predicate either, and is a read that Serializable protects.
+        if (await tx.roundObservation.count({ where: { candidateId: row.id, legalHold: true } }) > 0) return 'skipped';
 
-        // The observation hold, re-read for the same reason and inside the same
-        // transaction, since it could not be part of the predicate above.
-        const heldRound = await tx.roundObservation.count({ where: { candidateId: still.id, legalHold: true } });
-        if (heldRound > 0) { skipped += 1; return; }
-
-        const identity: KnownIdentity = {
-          fullName: still.fullName,
-          email: still.email,
-          emailNormalized: still.emailNormalized,
-          phone: still.phone,
-          linkedinUrl: still.linkedinUrl,
-        };
-        await anonymiseCandidateData(tx, {
-          candidateId: still.id,
-          tenantId: still.tenantId,
-          identity,
-          sessionIds: still.interviews.map((s) => s.id),
+        // THE GUARD. Everything that can disqualify this candidate and CAN be
+        // expressed as a filter rides on this statement, so the database — not
+        // the order of the lines below — decides whether the destructive work
+        // may happen. A hold placed since the selection makes the predicate
+        // stop matching, the update changes nothing, and we leave without
+        // having touched a row.
+        const claim = await claimCandidateForAnonymisation(tx, {
+          candidateId: candidate.candidateId,
           now,
-        }, count);
-        done = true;
-      });
+          eligible: anonymisableWhere(now),
+        });
+        if (!claim) return 'skipped';
+
+        // Unreachable without a claim: `anonymiseCandidateData` takes one, and
+        // a claim can only be minted by the conditional write above.
+        await anonymiseCandidateData(tx, claim, count);
+        return 'anonymised';
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: ANONYMISE_TIMEOUT_MS }));
     } catch (err) {
       logger.error({ err: String(err), candidateId: candidate.candidateId }, 'Failed to anonymise candidate');
       failures.push(candidate.candidateId);
       continue;
     }
-    if (!done) continue;
+    if (outcome === 'skipped') { skipped += 1; continue; }
     anonymised += 1;
     for (const [k, v] of Object.entries(changed)) totals[k] = (totals[k] ?? 0) + v;
 
     // Written after the commit, so the record can never claim an anonymisation
     // that rolled back. Counts and dates only. The audit trail outlives the
     // data it describes, and an audit row naming the person we just removed
-    // would BE the mapping table this whole design exists to avoid — that is a
-    // stronger constraint here than it is for erasure, where the row is gone.
+    // would BE the mapping table this whole design exists to avoid — which is
+    // also why the sweep clears the payloads of the candidate's OWN history
+    // (see anonymiseCascade.ts `clearAuditPayloads`).
     await logAudit({
       tenantId: candidate.tenantId,
       actorType: 'system',

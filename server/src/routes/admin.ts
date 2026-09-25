@@ -584,8 +584,12 @@ adminRouter.get('/anonymisation/preview', requireCapability('retention:configure
     }), { sessions: 0, turns: 0 }),
     // Stated in the response, not only in the docs: whoever turns this on
     // should read what it does and does not promise at the moment they do it.
-    removes: 'name, email, phone and LinkedIn URL, wherever Questor holds them — including in the transcript',
-    keeps: 'the transcript, scores, competency reads, evidence spans and timings',
+    removes: 'name, email, phone and LinkedIn URL, wherever Questor holds them — including in the transcript. '
+      + 'Files, the CV, the ATS link, certificates and invitations are deleted outright: they identify the person whatever is overwritten. '
+      + 'Any accommodation request the candidate typed is removed rather than redacted, because there is no pattern for it.',
+    keeps: 'the transcript, scores, competency reads, evidence spans and timings. '
+      + 'The audit trail keeps every row — who did what, to which record, when — but the candidate’s own rows lose their before/after detail, '
+      + 'which is the only way to be sure nothing they wrote about themselves survives there.',
     caveat: 'Third parties a candidate names in passing — a former employer, a manager — cannot be found this way and may remain.',
     candidates: due.map((d) => ({
       candidateId: d.candidateId,
