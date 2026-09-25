@@ -32,7 +32,7 @@ export function boundaryCopy(scope: BoundaryScope): BoundaryCopy {
  * /privacy are here because a candidate reads both without an account, and
  * offering them "go to the dashboard" sends them to a sign-in page.
  */
-const PUBLIC_PREFIXES = ['/portal/', '/room/', '/talk-to-a-person/', '/observer-consent/', '/feedback-consent/', '/signup', '/demo', '/login', '/o/', '/forgot-password', '/reset-password', '/about', '/privacy'];
+const PUBLIC_PREFIXES = ['/portal/', '/room/', '/talk-to-a-person/', '/observer-consent/', '/feedback-consent/', '/v/', '/signup', '/demo', '/login', '/o/', '/forgot-password', '/reset-password', '/about', '/privacy'];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));

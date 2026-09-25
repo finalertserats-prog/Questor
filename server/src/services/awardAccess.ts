@@ -87,6 +87,46 @@ export function verifyDisplayUrl(verifyToken: string): string {
 }
 
 /**
+ * The shape a minted token has: `randomBytes(32).toString('base64url')`, which
+ * is 43 characters of the URL-safe alphabet.
+ *
+ * Bounded rather than pinned at 43 so that a token minted by an older or a
+ * later build still resolves — a certificate is a document people keep, and a
+ * page that stopped verifying last year's paper because the mint changed width
+ * would be worse than useless. The bound is there so that a kilobyte of path
+ * is never turned into a database query.
+ */
+const VERIFY_TOKEN_SHAPE = /^[A-Za-z0-9_-]{20,64}$/;
+
+/**
+ * What the public verification page is allowed to read: one award, by its
+ * token, or nothing.
+ *
+ * The token is the ONLY key. There is deliberately no lookup here by
+ * reference, by candidate, by tenant or by anything else a reader of one
+ * certificate could guess at — `verifyToken` is independent randomness for
+ * exactly that reason (see the comment on the column), and a second way in
+ * would be the thing that undoes it.
+ *
+ * Returns null for every way this can fail to resolve: a token that is not a
+ * token, a token that was never minted, and a token whose award has since been
+ * deleted because the candidate was erased. The caller cannot tell them apart,
+ * and must not — the difference between "never existed" and "no longer exists"
+ * is the sentence that says a person was once here.
+ *
+ * The columns are listed rather than taken wholesale. This row travels to an
+ * unauthenticated reader, and a field added to the model later has to be let
+ * out on purpose rather than by default.
+ */
+export async function findAwardByVerifyToken(verifyToken: string) {
+  if (!VERIFY_TOKEN_SHAPE.test(verifyToken)) return null;
+  return prisma.candidateAward.findUnique({
+    where: { verifyToken },
+    select: { id: true, tier: true, awardedAt: true, reference: true, evidenceJson: true },
+  });
+}
+
+/**
  * The download's name.
  *
  * The reference and nothing else. A candidate's name in a filename travels

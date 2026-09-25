@@ -68,6 +68,7 @@ import { TalkToAPerson } from './pages/TalkToAPerson';
 import { ObserverRoom } from './pages/ObserverRoom';
 import { ObserverConsent } from './pages/ObserverConsent';
 import { FeedbackConsent } from './pages/FeedbackConsent';
+import { Verify } from './pages/Verify';
 import { CatalogReview } from './pages/CatalogReview';
 import { LibraryAdmin } from './pages/LibraryAdmin';
 import { can, onlyWhoCan } from './components/capabilityModel';
@@ -610,6 +611,13 @@ export function App() {
       {/* Followed from a recruiter's "would you like feedback?" email; answering
           must not require an account. */}
       <Route path="/feedback-consent/:token" element={<CandidatePage><FeedbackConsent /></CandidatePage>} />
+      {/* The address printed on the face of every certificate Questor issues.
+          For a month this fell through to the catch-all below and redirected an
+          employer holding a certificate to the sign-in page — which reads as
+          the certificate being a forgery. It brings its own `main`, because the
+          page sets `noindex` on itself and is not a candidate page like the
+          rest of these. */}
+      <Route path="/v/:token" element={<Verify />} />
       {/* Home (HR-Box) and Dashboard, as sub-tabs: ?tab=home|dashboard. */}
       <Route path="/" element={<Protected><Home /></Protected>} />
       {/* The subject-matter expert's surface. Declared before /sme/:id would

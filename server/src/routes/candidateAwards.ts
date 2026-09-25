@@ -337,13 +337,37 @@ candidateAwardsRouter.post(
     });
 
     const verifyUrl = verifyDisplayUrl(award.verifyToken);
+
+    /**
+     * Built BEFORE the row is claimed below.
+     *
+     * The claim is what makes the send one-shot: a certificate marked sent
+     * refuses every later attempt. A render that throws after the claim would
+     * therefore burn the only send this award has, and the candidate — who was
+     * never told anything — would never receive it. Rendering first means a
+     * fault in the document leaves the button working.
+     *
+     * The same call the export route makes, so the file in the mailbox, the
+     * file behind the verification page and the file the hiring team exports
+     * are one document.
+     */
+    const pdf = await certificatePdf({
+      tier,
+      reference: award.reference,
+      verifyUrl,
+      issuedAt: award.awardedAt,
+      evidence,
+    });
+
     const subject = `Your Questor record of assessment — ${evidence.roleTitle}`;
     const text = [
       `Dear ${evidence.candidateName},`,
       '',
-      `Your Questor ${tier} record of assessment for ${evidence.roleTitle} is available to view and download here:`,
+      `Your Questor ${tier} record of assessment for ${evidence.roleTitle} is attached, and is available to view and download here:`,
       '',
       `https://${verifyUrl}`,
+      '',
+      'That link needs no account and no password. Anyone you share it with can check the record against the certificate.',
       '',
       `Reference ${award.reference}, issued ${issuedOn(award.awardedAt)}.`,
       '',
@@ -376,7 +400,21 @@ candidateAwardsRouter.post(
 
     const provider = getEmail();
     try {
-      await provider.send({ to: candidate.email, subject, text, html: `<pre>${escapeHtml(text)}</pre>` });
+      await provider.send({
+        to: candidate.email,
+        subject,
+        text,
+        html: `<pre>${escapeHtml(text)}</pre>`,
+        // A second copy, never the only one. Mail systems strip attachments
+        // and most people never open them, so the letter keeps the link to
+        // the same document rather than leaning on this.
+        attachments: [{
+          filename: certificateFilename(award.reference, tier),
+          content: pdf.toString('base64'),
+          contentType: 'application/pdf',
+          encoding: 'base64',
+        }],
+      });
     } catch (err) {
       // Released, so that a provider that was down for a minute does not mark
       // the certificate sent for ever with no way to try again: the admin

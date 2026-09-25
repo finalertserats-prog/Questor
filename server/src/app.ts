@@ -47,6 +47,7 @@ import { connectorsRouter } from './routes/connectors.js';
 import { atsConnectionRouter } from './routes/atsConnection.js';
 import { candidateAtsRouter } from './routes/candidateAts.js';
 import { candidateAwardsRouter } from './routes/candidateAwards.js';
+import { awardVerifyRouter } from './routes/awardVerify.js';
 import { observerConsentRouter, observerRouter } from './routes/observer.js';
 import { libraryRouter, libraryStatusRouter } from './routes/library.js';
 import { libraryAdminRouter } from './routes/libraryAdmin.js';
@@ -329,6 +330,31 @@ export function createApp() {
   // one can be a billed transcription, so the ceiling is a few hours of rounds
   // per hour per address: slack for real use, a bound on a runaway client.
   app.use('/api/observer/rounds/:roundId/segments', rateLimit({ name: 'observer-segments', windowMs: 60 * 60_000, max: 600 }));
+
+  // The public certificate check behind questor.app/v/<token>. Unauthenticated,
+  // and it reads the database on every request, so without a ceiling one
+  // address is a way to make the server unavailable to everybody else.
+  //
+  // Keyed on IP and NOT on the token, for the reason the feedback link gives
+  // above: a per-token bucket hands every guess in a scanning run its own
+  // fresh allowance, which is no limit at all. The token is 256 bits, so this
+  // is a bound on the flood rather than the thing standing in the way of a
+  // guess.
+  //
+  // The render gets its own tighter ceiling on top, mounted first so it is the
+  // one that answers. A certificate lays out a page of vector text and strikes
+  // a seal into it on the event loop; it is the only thing here that costs
+  // more than a lookup, and it is the only route in Questor that will render
+  // one for a caller with no account. Twenty an hour is far more than anyone
+  // saving their own certificate needs.
+  //
+  // Both fail OPEN on a rate-limit-store outage, like every other public
+  // token-read. In production the counters live in the same database this
+  // route queries, so a store that cannot be reached is a route that cannot
+  // answer anyway — and failing closed would turn the certificate on somebody's
+  // desk into a dead link over a counter.
+  app.use('/api/v/:token/certificate.pdf', rateLimit({ name: 'verify-certificate', windowMs: 60 * 60_000, max: 20 }));
+  app.use('/api/v', rateLimit({ name: 'verify', windowMs: 15 * 60_000, max: 60 }), awardVerifyRouter);
 
   // Public organisation lookup for sign-in links. A person follows a link once
   // or twice; 30 per 15 minutes per IP stops anyone guessing slugs at speed.

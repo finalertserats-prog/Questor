@@ -5,16 +5,26 @@ import { EMAIL_SEND_TIMEOUT_MS, SMTP_KILL_DEADLINE_MS, smtpTransportOptions } fr
 import { sendViaSmtpChild } from './smtpChild.js';
 
 /**
- * A file travelling with a message. Text only, and UTF-8: the one thing
- * Questor attaches is a calendar invitation (services/calendarInvite.ts), and
- * keeping the content a string rather than a Buffer means a test can read what
- * was sent instead of decoding it.
+ * A file travelling with a message.
+ *
+ * `content` is a string rather than a Buffer so that a test can read what was
+ * sent instead of decoding it, and — the reason that matters — so that it
+ * survives the journey to the SMTP child, which is handed its message over IPC
+ * with `serialization: 'json'`. A Buffer crossing that boundary arrives as
+ * `{ type: 'Buffer', data: [...] }` and nodemailer attaches the JSON of it.
+ *
+ * `encoding` is how a binary file gets through the same door: a certificate is
+ * a PDF, base64 is a string, and every provider below already wants base64 or
+ * can be told to expect it. Absent means the content is UTF-8 text, which is
+ * what a calendar invitation is.
  */
 export interface EmailAttachment {
   readonly filename: string;
   readonly content: string;
   /** Carries its parameters, e.g. `text/calendar; charset=utf-8; method=REQUEST`. */
   readonly contentType: string;
+  /** How `content` is encoded. Absent means UTF-8 text. */
+  readonly encoding?: 'base64';
 }
 
 export interface EmailMessage {
@@ -25,10 +35,15 @@ export interface EmailMessage {
   /**
    * Never the only place a fact appears. Most people never open an attachment,
    * and some mail systems strip them, so anything that matters is in the body
-   * as well — the calendar invitation is in addition to the readable time, not
-   * instead of it.
+   * as well — the certificate is attached in addition to the link that leads
+   * to the same document, not instead of it.
    */
   attachments?: readonly EmailAttachment[];
+}
+
+/** Base64 for SendGrid, which takes nothing else, and for the JSON hop to the SMTP child. */
+function base64Of(file: EmailAttachment): string {
+  return file.encoding === 'base64' ? file.content : Buffer.from(file.content, 'utf8').toString('base64');
 }
 
 export interface EmailProvider {
@@ -68,9 +83,9 @@ class ConsoleEmailProvider implements EmailProvider {
       return { status: 'logged', id: `console-${Date.now()}` };
     }
     logger.info({ to: msg.to, subject: msg.subject }, `📧 [console email — NOT DELIVERED] ${msg.subject} -> ${msg.to}`);
-    // Names only, never the content: an attachment is the one part of a message
-    // whose size makes a log unreadable, and the calendar invitation repeats
-    // nothing the body does not already say.
+    // Names only, never the content: an attachment is the one part of a
+    // message whose size makes a log unreadable, and a base64 certificate
+    // would bury the body it is attached to.
     const files = msg.attachments?.length ? `\nattachments: ${msg.attachments.map((f) => f.filename).join(', ')}` : '';
     logger.info(`\n----- EMAIL BODY -----\n${msg.text}${files}\n----------------------`);
     // 'logged', never 'sent'. The caller decides what to tell the user, and it
@@ -103,11 +118,12 @@ class SendgridEmailProvider implements EmailProvider {
           { type: 'text/html', value: msg.html },
         ],
         // SendGrid takes base64 and its own `type`, which keeps the MIME
-        // parameters the calendar invitation depends on (`method=REQUEST`).
+        // parameters an attachment may depend on (a calendar invitation's
+        // `method=REQUEST`).
         ...(msg.attachments?.length
           ? {
             attachments: msg.attachments.map((file) => ({
-              content: Buffer.from(file.content, 'utf8').toString('base64'),
+              content: base64Of(file),
               filename: file.filename,
               type: file.contentType,
               disposition: 'attachment',
@@ -159,10 +175,15 @@ class SmtpEmailProvider implements EmailProvider {
       mail: {
         from: config.email.from, to: msg.to, subject: msg.subject, text: msg.text, html: msg.html,
         // nodemailer writes `contentType` into the part's Content-Type header
-        // verbatim, parameters and all, which is what keeps the iTIP `method=`
-        // matching the METHOD in the body.
+        // verbatim, parameters and all. `encoding` is always base64 here
+        // because the message crosses to the child as JSON, where a binary
+        // file has no other way through.
         ...(msg.attachments?.length
-          ? { attachments: msg.attachments.map((file) => ({ filename: file.filename, content: file.content, contentType: file.contentType })) }
+          ? {
+            attachments: msg.attachments.map((file) => ({
+              filename: file.filename, content: base64Of(file), contentType: file.contentType, encoding: 'base64',
+            })),
+          }
           : {}),
       },
       deadlineMs: SMTP_KILL_DEADLINE_MS,
