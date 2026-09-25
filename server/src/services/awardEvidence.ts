@@ -49,7 +49,7 @@ const signature = z.object({
   name: printable(120),
   /** The line under the rule: "Assessed by · subject-matter expert". */
   role: printable(160),
-});
+}).strict();
 
 const row = z.object({
   /** May carry `**emphasis**` around the names of people involved. */
@@ -66,7 +66,7 @@ const row = z.object({
    * turned into words.
    */
   when: z.string().datetime().nullable(),
-});
+}).strict();
 
 const EM_DASH = '—';
 
@@ -109,14 +109,26 @@ export function whenLabel(when: string | null): string {
  * count is here rather than on the stored column. Diamond stores two rows and
  * is never parsed by this: it carries no certificate, and padding its journey
  * out with three "no record" lines would be inventing a document.
+ *
+ * ---- Why this and the legacy shape below are both strict
+ *
+ * Zod objects allow unknown keys by default, and that default is what would
+ * let the original defect recur one letter away. A record carrying everything
+ * a current one has, wearing `version: 1`, would otherwise parse happily as
+ * legacy — silently dropping the name, the title and the signatures it was
+ * holding — which is once again a shape that changed while the number did not.
+ *
+ * Strict makes the two versions genuinely exclusive, and makes adding a field
+ * to either of them move the number with it, because the old schema refuses
+ * the new shape instead of quietly reading a subset of it.
  */
 export const awardEvidenceSchema = z.object({
   version: z.literal(2),
   candidateName: printable(200),
   roleTitle: printable(200),
   rows: z.array(row).length(5),
-  signatures: z.object({ left: signature, right: signature }),
-});
+  signatures: z.object({ left: signature, right: signature }).strict(),
+}).strict();
 
 export type AwardEvidence = z.infer<typeof awardEvidenceSchema>;
 
@@ -136,18 +148,43 @@ export const CURRENT_EVIDENCE_VERSION = 2;
  * `what` is NOT held to `printable` here. The old writer did not clean what it
  * stored, so a legacy row may carry a control character or run long; the
  * upgrade cleans it on the way through, which is a write and therefore the
- * right moment to. See `awardEvidenceUpgrade.ts`.
+ * right moment to. See `awardEvidenceBackfill.ts`.
  */
 export const legacyAwardEvidenceSchema = z.object({
   version: z.literal(1),
-  rows: z.array(z.object({ what: z.string(), when: z.string().datetime().nullable() })).length(5),
-});
+  rows: z.array(z.object({ what: z.string(), when: z.string().datetime().nullable() }).strict()).length(5),
+}).strict();
 
 export type LegacyAwardEvidence = z.infer<typeof legacyAwardEvidenceSchema>;
 
 export type StoredEvidenceRead =
   | { readonly kind: 'current'; readonly evidence: AwardEvidence }
   | { readonly kind: 'legacy'; readonly legacy: LegacyAwardEvidence };
+
+/**
+ * A record that is not wrong, only not yet brought up to date.
+ *
+ * Distinct from `AwardEvidenceError` because the two call for different
+ * sentences and different answers. A corrupt record is a fault in the data
+ * that nobody can fix by waiting; a version-1 record is a fault in the
+ * DEPLOYMENT — the backfill has not run, or could not finish — and it fixes
+ * itself the moment it does.
+ *
+ * Nothing renders one. The certificate could be assembled by resolving the
+ * name and the title live, and an earlier draft of this lane did exactly that
+ * on the way past a GET; it was wrong. A migration inside a read endpoint
+ * hands one reader a document built from live rows while the stored record
+ * says something else, and two exports of one reference then disagree. The
+ * only content that may leave this building is content derived from one
+ * committed record, so a record that has not been migrated is refused and the
+ * migration happens at rest.
+ */
+export class AwardEvidenceNotReadyError extends Error {
+  constructor(readonly awardId: string) {
+    super(`CandidateAward ${awardId} still holds a version 1 record and has not been backfilled`);
+    this.name = 'AwardEvidenceNotReadyError';
+  }
+}
 
 export class AwardEvidenceError extends Error {
   constructor(readonly awardId: string, readonly detail: string) {
@@ -205,6 +242,19 @@ export function parseStoredEvidence(awardId: string, evidenceJson: string): Stor
     return { kind: 'current', evidence: current.data };
   }
   throw new AwardEvidenceError(awardId, `evidenceJson is version ${version.data.version}, which this build cannot render`);
+}
+
+/**
+ * What a certificate is drawn from: the stored record, and nothing assembled
+ * on the way past.
+ *
+ * Pure, and deliberately so — there is no database here, because the moment
+ * there is, an export can start issuing a document that the row does not hold.
+ */
+export function certificateEvidence(awardId: string, evidenceJson: string): AwardEvidence {
+  const stored = parseStoredEvidence(awardId, evidenceJson);
+  if (stored.kind === 'current') return stored.evidence;
+  throw new AwardEvidenceNotReadyError(awardId);
 }
 
 /** The three tiers that carry a certificate. Diamond deliberately does not. */

@@ -31,10 +31,16 @@ import { markDraining } from './services/drainState.js';
 import { countLiveSessions, inFlightRequests } from './realtime/liveSessions.js';
 import { createShutdown } from './services/shutdown.js';
 import { startCredentialPurge } from './services/credentialPurgeJob.js';
+import { startAwardEvidenceBackfill } from './services/awardEvidenceBackfill.js';
 import { settlePasswordResets } from './services/passwordReset.js';
 
 preflight();
 startRetentionSweep();
+// Awards struck before a certificate's record held the candidate's name. Until
+// this has run, every certificate for one of them is refused rather than
+// rendered from live rows, so it runs at startup and takes itself off the
+// schedule once nothing is outstanding.
+startAwardEvidenceBackfill();
 startDemoPurge();
 // The half of the demo's fifteen-minute cap that no request can enforce: a
 // visitor who closes the tab makes no further requests.

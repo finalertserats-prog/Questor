@@ -434,7 +434,7 @@ function recorderOf(facts: AwardFacts): AwardSignature {
  * and the number is part of the contract rather than decoration. Version 1 —
  * `{ version, rows }`, no name, no title, no signatures — is what every award
  * in the database was written as before this shape existed, and
- * `services/awardEvidenceUpgrade.ts` is what reaches those.
+ * `services/awardEvidenceBackfill.ts` is what reaches those, as a sweep at rest.
  *
  * The number goes up whenever a field is added or removed. Leaving it at 1
  * while the required fields changed would mean the reader could not tell a

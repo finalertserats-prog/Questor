@@ -10,8 +10,7 @@ import { logAudit } from '../services/audit.js';
 import { getEmail } from '../providers/email/index.js';
 import { logger } from '../logger.js';
 import { assertCanAccessAward, badgeFilename, certificateFilename, readTier, verifyDisplayUrl } from '../services/awardAccess.js';
-import { AwardEvidenceError, NO_DIAMOND_CERTIFICATE, hasCertificate } from '../services/awardEvidence.js';
-import { certificateEvidence } from '../services/awardEvidenceUpgrade.js';
+import { AwardEvidenceError, AwardEvidenceNotReadyError, NO_DIAMOND_CERTIFICATE, certificateEvidence, hasCertificate } from '../services/awardEvidence.js';
 import { certificatePdf, issuedOn } from '../services/certificatePdf.js';
 import { badgeSvg } from '../services/badgeSvg.js';
 import { badgePng } from '../services/badgePng.js';
@@ -131,11 +130,11 @@ candidateAwardsRouter.get('/:id/awards', requireCapability('candidate:read'), as
  * live candidate, role or user rows. A certificate states what was true when
  * it was struck.
  *
- * The one exception is an award struck before the record held a name at all.
- * `certificateEvidence` resolves that once, writes the result back and audits
- * it, so the exception applies to the first export of such an award and to
- * nothing afterwards — see `services/awardEvidenceUpgrade.ts` for why that is
- * a resolution rather than a re-derivation.
+ * There are no exceptions, including for an award struck before the record
+ * held a name. Those are brought up to date at rest by
+ * `services/awardEvidenceBackfill.ts` and refused here until they have been,
+ * because a route that repaired a record on its way past would be issuing a
+ * document it had not stored — see that file for how that went.
  */
 
 
@@ -204,7 +203,7 @@ candidateAwardsRouter.get(
     const award = await assertCanAccessAward(req.auth!, req.params.id, tier);
     if (!hasCertificate(tier)) throw new HttpError(409, NO_DIAMOND_CERTIFICATE, 'no_certificate_for_tier');
 
-    const evidence = await certificateEvidence({ award });
+    const evidence = certificateEvidence(award.id, award.evidenceJson);
     const pdf = await certificatePdf({
       tier,
       reference: award.reference,
@@ -331,7 +330,7 @@ candidateAwardsRouter.post(
       throw new HttpError(409, 'This certificate has already been sent to the candidate.', 'already_sent');
     }
 
-    const evidence = await certificateEvidence({ award });
+    const evidence = certificateEvidence(award.id, award.evidenceJson);
     const candidate = await prisma.candidate.findFirstOrThrow({
       where: { id: award.candidateId, tenantId: award.tenantId },
       select: { email: true },
@@ -437,6 +436,25 @@ function escapeHtml(value: string): string {
  * is plainly on their screen, and would bury a data fault nobody then fixes.
  */
 candidateAwardsRouter.use((err: unknown, _req: Request, _res: Response, next: NextFunction) => {
+  /**
+   * Not yet migrated is a different answer from corrupt, and gets a different
+   * one: 503, because it is true now and will stop being true without anybody
+   * doing anything to the award.
+   *
+   * Logged at error level all the same. In a deployment where the backfill has
+   * run this is unreachable, so reaching it means the sweep has not run or
+   * cannot finish — and the person pressing the button would otherwise be the
+   * only one who ever knew.
+   */
+  if (err instanceof AwardEvidenceNotReadyError) {
+    logger.error({ err, awardId: err.awardId }, 'a certificate was asked for before its record was brought up to date');
+    next(new HttpError(
+      503,
+      'This certificate is not ready yet. It was struck before Questor recorded everything a certificate prints, and its record is still being brought up to date. Please try again shortly.',
+      'award_evidence_not_ready',
+    ));
+    return;
+  }
   if (err instanceof AwardEvidenceError) {
     logger.error({ err, awardId: err.awardId }, 'award evidence cannot be rendered');
     next(new HttpError(500, 'This certificate cannot be produced because its stored record is incomplete. Support has been notified.', 'award_evidence_corrupt'));

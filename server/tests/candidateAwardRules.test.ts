@@ -349,6 +349,35 @@ describe('telling one stored version from another', () => {
     expect(() => parseStoredEvidence('a1', JSON.stringify({ version: 99, rows: [] })))
       .toThrow(/version 99/);
   });
+
+  /**
+   * The case that actually matters, and the one the two assertions above do
+   * not reach: a record with everything a current one has, wearing the old
+   * number.
+   *
+   * A permissive schema reads it as legacy and silently drops the name, the
+   * title and the signatures it is holding — which is the original defect one
+   * letter away, a shape that changed while the version did not. So the stored
+   * schemas refuse what they do not recognise, and a field added to either
+   * shape has to move the number with it.
+   */
+  it('refuses a current-shaped record wearing the old number', () => {
+    const mislabelled = { ...JSON.parse(serialiseEvidence('silver', facts)) as object, version: 1 };
+
+    expect([
+      legacyAwardEvidenceSchema.safeParse(mislabelled).success,
+      (() => { try { parseStoredEvidence('a1', JSON.stringify(mislabelled)); return true; } catch { return false; } })(),
+    ]).toEqual([false, false]);
+  });
+
+  it('refuses a field nobody put in either shape', () => {
+    const current = JSON.parse(serialiseEvidence('silver', facts)) as object;
+
+    expect([
+      awardEvidenceSchema.safeParse({ ...current, surprise: 'a field from a later writer' }).success,
+      legacyAwardEvidenceSchema.safeParse({ ...legacyOf('silver'), surprise: 'likewise' }).success,
+    ]).toEqual([false, false]);
+  });
 });
 
 /**
