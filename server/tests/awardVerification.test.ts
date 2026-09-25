@@ -48,13 +48,24 @@ async function pipelineAt(ids: Seeded, stage: string): Promise<string> {
 }
 
 /**
- * A refusal, minus the request id every error carries.
+ * OUR refusal, minus the request id every error carries.
  *
  * The id is what a person quotes to support and is different on every
  * response, so comparing whole bodies would compare the ids. What has to be
  * identical is everything else: the status, the sentence and the code.
+ *
+ * The code is asserted here rather than only compared, and that is the
+ * load-bearing part. Express answers an unrouted path with its own HTML 404,
+ * which supertest parses to `{}` — so every case below that proves two
+ * refusals indistinguishable would have passed just as happily with this
+ * router deleted, because two empty bodies are also indistinguishable.
+ * Anchoring on a code only this router writes is what makes "the same answer"
+ * mean "the same answer we wrote" rather than "nothing answered either time".
  */
+const NOT_FOUND_CODE = 'verification_not_found';
+
 function refusal(res: { status: number; body: Record<string, unknown> }) {
+  expect(res.body.code).toBe(NOT_FOUND_CODE);
   const { requestId: _ignored, ...rest } = res.body;
   return { status: res.status, ...rest };
 }
@@ -143,12 +154,21 @@ describe('what the page shows', () => {
     );
   });
 
-  /** The token is the credential. Echoing it back is how one ends up in a log. */
+  /**
+   * The token is the credential. Echoing it back is how one ends up in a log.
+   *
+   * The name is asserted alongside the absence, and it has to be: an absence
+   * on its own is satisfied by an empty body, so with this router deleted —
+   * Express answers an unrouted path with its own HTML 404 — the case would
+   * have gone on passing while proving nothing. An assertion about what is
+   * missing needs an assertion that anything is there at all.
+   */
   it('does not echo the token back', async () => {
     const { token } = await struckSilver();
 
     const res = await request(app).get(`/api/v/${token}`);
 
+    expect(res.body.candidateName).toBe('Priya Sharma');
     expect(JSON.stringify(res.body)).not.toContain(token);
   });
 });
@@ -365,6 +385,13 @@ describe('rate limiting', () => {
       statuses.push((await request(app).get(`/api/v/${token}/certificate.pdf`)).status);
     }
 
+    // The relationship, not just the ceiling. Spending the render's allowance
+    // must not spend the page's: somebody who pressed Download a few times too
+    // often has to still be able to READ the record they are standing there
+    // trying to check. Asserting the page still answers is also what stops
+    // this passing on an absent route, where nothing would 429 and nothing
+    // would answer 200 either.
     expect(statuses).toContain(429);
+    expect((await request(app).get(`/api/v/${token}`)).status).toBe(200);
   });
 });
