@@ -96,6 +96,46 @@ export function octagon(centre: number, radius: number): readonly Point[] {
 }
 
 /**
+ * Hold a sampled curve inside an octagon of the same rotation as `octagon()`.
+ *
+ * The mockup draws the guilloché inside an SVG `clipPath` of radius 40. This
+ * file has one drawing primitive — a polygon of points — precisely so the
+ * .svg, the .png and the certificate PDF cannot render the badge differently,
+ * and a clip path would have to be carried through all three. So the clip is
+ * done where the curve is made instead: each sample is pulled back to the
+ * boundary along its own ray, which for a stroke that only just crosses the
+ * flat is what the clip looks like anyway.
+ *
+ * The overshoot is small — the outer rosette reaches 37.00 against this
+ * octagon's inradius of 36.96 — and the earlier judgement was that a third of
+ * a pixel did not justify the machinery. That was right about the arithmetic
+ * and wrong about the outcome: the browser component clipped and the exported
+ * file did not, so the badge in the app and the badge in the candidate's hand
+ * were two different drawings. Closing it here closes it for every renderer.
+ *
+ * The boundary distance at an angle is the inradius over the cosine of the
+ * angle to the nearest edge normal, and this octagon's normals sit on
+ * multiples of a right angle's quarter.
+ */
+function insideOctagon(points: readonly Point[], centre: number, radius: number): readonly Point[] {
+  const inradius = radius * Math.cos(Math.PI / 8);
+  const facet = Math.PI / 4;
+  return points.map((p) => {
+    const dx = p.x - centre;
+    const dy = p.y - centre;
+    const distance = Math.hypot(dx, dy);
+    if (distance === 0) return p;
+    const angle = Math.atan2(dy, dx);
+    // Angle to the nearest edge normal, in [-22.5deg, +22.5deg].
+    const offset = ((angle % facet) + facet * 1.5) % facet - facet / 2;
+    const limit = inradius / Math.cos(offset);
+    if (distance <= limit) return p;
+    const scale = limit / distance;
+    return { x: centre + dx * scale, y: centre + dy * scale };
+  });
+}
+
+/**
  * A hypotrochoid — the curve an engine-turning lathe cuts, and the reason the
  * guilloché field reads as struck metal rather than as printed decoration.
  *
@@ -294,13 +334,11 @@ export function badgeShapes(tier: Tier, size: number): readonly Shape[] {
   const shapes: Shape[] = [fill(rim, metalGradient(rim, tier, 1))];
   if (big) {
     shapes.push(stroke(octagon(50, 41), metal.dark, 0.45, 0.7, true));
-    // The mockup clips these to an octagon of radius 40. They reach 37 from
-    // centre against an inradius of 36.95, so the clip removes five hundredths
-    // of a unit on four flats — under a third of a pixel at any export size.
-    // Carrying a clipping path through three renderers to hide that would cost
-    // far more than it buys.
-    shapes.push(stroke(rosette(26, 5, 16, 5, 50, 50, 1), metal.dark, 0.24, 0.38, false));
-    shapes.push(stroke(rosette(19, 4, 12, 4, 50, 50, 1), metal.dark, 0.18, 0.38, false));
+    // Held inside the same octagon of radius 40 the mockup clips to, and the
+    // same one `TierBadge.tsx` clips to in the browser.
+    const field = (points: readonly Point[]): readonly Point[] => insideOctagon(points, 50, 40);
+    shapes.push(stroke(field(rosette(26, 5, 16, 5, 50, 50, 1)), metal.dark, 0.24, 0.38, false));
+    shapes.push(stroke(field(rosette(19, 4, 12, 4, 50, 50, 1)), metal.dark, 0.18, 0.38, false));
   }
   shapes.push(stroke(rim, metal.dark, 0.55, big ? 1.1 : 2.2, true));
   shapes.push(...signalBars(tier, big));
