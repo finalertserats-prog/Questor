@@ -1,5 +1,6 @@
 import type { DecisionOutcome } from './pipelineAutonomy.js';
 import type { PipelineStage } from './pipelineStages.js';
+import { awardsForPromotion } from './candidateAwards.js';
 
 /**
  * The promise on the candidate's consent screen — "A person on the hiring team
@@ -135,19 +136,32 @@ export function outcomeNeedsHumanReview(outcome: DecisionOutcome): boolean {
 }
 
 /**
- * Which stage moves the promise gates.
+ * Which stage moves the promise gates: the ones that would MINT something.
  *
- * Not every move is a judgement about the interview. Moving a candidate TO the
- * round the AI conducts says nothing about how it went — it has not happened
- * yet, and in the ordinary order of things it has not even been booked. Moving
- * them OUT of it does: it is the act that says the round went well enough to go
- * on, and it is the act that strikes the credential for it
- * (domain/candidateAwards.ts, awardsForPromotion). Everything past that round
- * is the same, which is why the last stage's own button checks too.
+ * The promise exists to stop a credential being struck on a conversation
+ * nobody read, so this asks that question directly rather than a proxy for it.
+ * A move that earns a tier is a move that says the round went well enough to
+ * go on, and it is the move that puts the presser's name on the certificate.
+ * A move that earns nothing says nothing, and is not gated.
  *
- * So the gate sits on leaving the AI round or anything after it. A plan with no
- * AI-conducted stage has no interview to promise a reading of, and gates
- * nothing.
+ * WHY NOT "is the stage being left an AI round". That was the first version of
+ * this rule and it was a proxy with a hole in it. The gate looked up the stage
+ * by `kind === 'ai_interview'`; the award engine strikes on `fromKey` being
+ * `silver` or `gold`. A stage plan is editable through
+ * `PUT /api/roles/:id/pipeline-stages` under `role:edit_scorecard`, which a
+ * RECRUITER holds — so a plan that reused the key `silver` with kind
+ * `human_interview` and had no AI-conducted stage at all made the gate answer
+ * "not an AI round" while the award engine answered "strike Silver". The exact
+ * mint the gate was written to prevent, through the shape of the plan rather
+ * than through the permission model. Asking what the move earns closes that by
+ * construction: kind and key stop having to agree.
+ *
+ * There is deliberately no case here for a move TOWARDS the AI round, and the
+ * next reader should not add one. Walking a candidate to the round they have
+ * not sat earns no tier, so `awardsForPromotion` is empty and nothing is
+ * refused — which is right, because a conversation that has not happened
+ * cannot have gone unread, and gating it would strand every candidate
+ * interviewed before anybody touched their pipeline.
  *
  * This exists because `POST /pipelines/:id/advance` had no check at all, and
  * the "Needs you" queue then made that endpoint the ordinary way a candidate is
@@ -156,11 +170,8 @@ export function outcomeNeedsHumanReview(outcome: DecisionOutcome): boolean {
  * Move to Gold was striking a Silver credential, in their name, on an interview
  * nobody had opened.
  */
-export function moveNeedsHumanReview(stages: readonly PipelineStage[], fromStageKey: string): boolean {
-  const aiRound = stages.findIndex((stage) => stage.kind === 'ai_interview');
-  if (aiRound < 0) return false;
-  const leaving = stages.findIndex((stage) => stage.key === fromStageKey);
-  return leaving >= 0 && leaving >= aiRound;
+export function moveNeedsHumanReview(stages: readonly PipelineStage[], fromStageKey: string, toStageKey: string): boolean {
+  return awardsForPromotion(stages, fromStageKey, toStageKey).length > 0;
 }
 
 /**

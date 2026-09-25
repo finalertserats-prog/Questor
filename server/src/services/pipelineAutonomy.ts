@@ -207,11 +207,12 @@ export async function advancePipeline(loaded: CandidatePipeline, o: PipelineAdva
   // recruiter who deliberately holds neither `assessment:review` nor the right
   // to decide or finalise could mint one on an interview nobody had opened.
   //
-  // Only on the moves the promise is about (domain/humanReviewRule.ts): walking
-  // a candidate TO the AI round says nothing about a conversation that has not
-  // happened, and gating it would strand every candidate whose interview was
-  // conducted before anyone touched their pipeline.
-  if (moveNeedsHumanReview(stages, loaded.currentStageKey)) {
+  // Only on the moves that would mint something (domain/humanReviewRule.ts).
+  // Walking a candidate TO the AI round earns no tier and is not gated, which
+  // is right: a conversation that has not happened cannot have gone unread, and
+  // refusing it would strand every candidate whose interview was conducted
+  // before anyone touched their pipeline.
+  if (moveNeedsHumanReview(stages, loaded.currentStageKey, next)) {
     const review = await humanReviewCheck({ tenantId: o.tenantId, candidateId: loaded.candidateId, roleId: loaded.roleId });
     if (review.missing) return { applied: false, because: 'human_review_required', missing: review.missing };
   }
@@ -320,9 +321,38 @@ export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecis
   // contended stage move, and re-reading the candidate's whole interview
   // history on every attempt would pay for a fact we already have.
   const review = await humanReviewCheck({ tenantId: o.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId });
-  if (review.missing && outcomeNeedsHumanReview(o.outcome)) {
-    return { applied: false, because: 'human_review_required', missing: review.missing };
-  }
+  /**
+   * Whether the promise gates THIS decision, once its effect is known.
+   *
+   * Two things are gated, for two different reasons.
+   *
+   * A decision that ENDS the journey is gated wherever the candidate stands.
+   * Rejecting somebody on an interview nobody read is the thing the promise is
+   * about, and it is no less so at Bronze than at Gold — a closed pipeline is
+   * the last word on that person. An approval at the final stage closes the
+   * journey too, and counts the same.
+   *
+   * A decision that MOVES them is gated only when the move would mint a
+   * credential, which is the same rule the Advance button follows
+   * (domain/humanReviewRule.ts). Before this the two disagreed: the button said
+   * yes to a Bronze → Silver move and the decision form answered 409 on the
+   * same pipeline, which is exactly the disagreement between two person-paths
+   * that `resolveDecision` was tightened to prevent, only inverted. Moving
+   * somebody TOWARDS an interview says nothing about a conversation that has
+   * not happened.
+   *
+   * `outcomeNeedsHumanReview` still exempts a withdrawal from all of it: the
+   * candidate has left, and making somebody read an interview first would keep
+   * a person in a pipeline they asked to leave.
+   */
+  const gatedBy = (effect: DecisionEffect): boolean => {
+    if (!outcomeNeedsHumanReview(o.outcome)) return false;
+    if (effect.kind === 'close') return true;
+    return moveNeedsHumanReview(
+      parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }),
+      effect.from, effect.to,
+    );
+  };
   // A withdrawal is recorded whatever the review says, and the record says so:
   // "the promise applied, and this decision was exempt from it" is a different
   // fact from "the promise was kept", and a year from now only one of them is
@@ -344,6 +374,13 @@ export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecis
     const about = 'stageKey' in wanted ? wanted.stageKey : stages.find((s) => s.kind === wanted.stageKind)?.key;
     const effect = about ? resolveDecision(stages, pipeline.currentStageKey, o.outcome, about) : null;
     if (!effect || !about) return { applied: false, because: 'nothing_to_do' };
+
+    // The promise, now that the effect is known. Checked before anything is
+    // written, and before the retry, so a decision that must not be recorded
+    // never reaches the transaction whatever the contention does.
+    if (review.missing && gatedBy(effect)) {
+      return { applied: false, because: 'human_review_required', missing: review.missing };
+    }
 
     // An approval that advances a candidate is a person moving them, so it
     // earns whatever tiers that move earns — Silver → Gold strikes Silver, and

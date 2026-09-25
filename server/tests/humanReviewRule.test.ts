@@ -138,40 +138,54 @@ describe('which outcomes the promise gates', () => {
  * round went well enough to go on, and strikes the credential for it.
  */
 describe('the moves the promise covers', () => {
-  const NO_AI_ROUND: readonly PipelineStage[] = [
-    { key: 'intake', label: 'Intake', kind: 'intake' },
-    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+  /**
+   * A plan a recruiter can create through PUT /api/roles/:id/pipeline-stages,
+   * which is held to `role:edit_scorecard` — a capability recruiters hold.
+   *
+   * It reuses the award engine's keys with a kind the first version of this
+   * rule looked for, and has no AI-conducted stage at all. That combination is
+   * what made the proxy version answer "no interview round here" while the
+   * award engine answered "strike Silver".
+   */
+  const KEYS_WITHOUT_AN_AI_ROUND: readonly PipelineStage[] = [
+    { key: 'participation', label: 'Participation', kind: 'intake' },
+    { key: 'silver', label: 'Silver', kind: 'human_interview' },
+    { key: 'gold', label: 'Gold', kind: 'human_interview' },
+    { key: 'diamond', label: 'Diamond', kind: 'human_interview' },
   ];
 
-  it('gates leaving the round the AI conducted', () => {
-    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'silver')).toBe(true);
+  it('gates the move that mints the tier the candidate is leaving', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'silver', 'gold')).toBe(true);
   });
 
-  // The press that used to strike a Silver credential, in the presser's name,
-  // on an interview nobody had opened.
-  it('gates every stage after it too', () => {
-    expect([
-      moveNeedsHumanReview(DEFAULT_STAGES, 'gold'),
-      moveNeedsHumanReview(DEFAULT_STAGES, 'diamond'),
-    ]).toEqual([true, true]);
+  it('gates the move that mints two at once', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'diamond')).toBe(true);
   });
 
-  // Gating this would strand every candidate whose interview was conducted
-  // before anybody touched their pipeline — which is now the ordinary case,
-  // because nothing moves them there on its own.
-  it('leaves the walk TO that round alone', () => {
+  // No tier is struck by arriving at the AI round, so nothing is refused — and
+  // that is the point rather than an oversight. A conversation that has not
+  // happened cannot have gone unread, and gating it would strand every
+  // candidate interviewed before anybody touched their pipeline.
+  it('leaves the walk towards that round alone, because it mints nothing', () => {
     expect([
-      moveNeedsHumanReview(DEFAULT_STAGES, 'participation'),
-      moveNeedsHumanReview(DEFAULT_STAGES, 'bronze'),
+      moveNeedsHumanReview(DEFAULT_STAGES, 'participation', 'bronze'),
+      moveNeedsHumanReview(DEFAULT_STAGES, 'bronze', 'silver'),
     ]).toEqual([false, false]);
   });
 
-  it('gates nothing in a plan with no AI-conducted round, which promised no reading', () => {
-    expect(NO_AI_ROUND.map((stage) => moveNeedsHumanReview(NO_AI_ROUND, stage.key))).toEqual([false, false]);
+  // The hole the proxy version left. Kind says "no AI round"; the award engine
+  // says "strike Silver". Asking what the move earns makes the two agree by
+  // construction.
+  it('gates a plan that mints Silver without calling any stage an AI round', () => {
+    expect(moveNeedsHumanReview(KEYS_WITHOUT_AN_AI_ROUND, 'silver', 'gold')).toBe(true);
   });
 
   it('gates nothing for a stage the plan does not contain', () => {
-    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'platinum')).toBe(false);
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'platinum', 'silver')).toBe(false);
+  });
+
+  it('gates nothing for a move that goes nowhere', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'silver')).toBe(false);
   });
 });
 

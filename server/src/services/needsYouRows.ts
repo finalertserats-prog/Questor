@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { candidateScope, capabilitiesOf, SME_RELATION } from './access.js';
+import { candidatesOwingReview } from './humanReviewGate.js';
 import { candidateSurfaceFor } from '../domain/candidateSurface.js';
 import { getNeedsAttention } from './dashboardMetrics.js';
 import { lookersByEntity, type Looker } from './assessmentViews.js';
@@ -273,13 +274,22 @@ export type ReadyBecause = 'profile_read' | 'interview_reviewed';
 /**
  * What makes a candidate standing at each kind of stage ready to be moved.
  *
- * `intake` takes either, and that is not tidiness. A candidate can be
- * interviewed and assessed while their pipeline still says Participation —
- * booking an interview needs an approved ROLE scorecard, not a candidate
- * profile — and before the autonomous moves were removed, `interview.scheduled`
- * carried them off it. Now nothing does, so without this they would never be
- * mentioned anywhere again. It also catches a candidate whose CV was read but
- * whose `candidate.profiled` event was lost: that event is raised through
+ * Every stage before the AI round takes EITHER evidence, and that is not
+ * tidiness. A candidate can be interviewed and assessed while their pipeline
+ * still says Participation — booking an interview needs an approved ROLE
+ * scorecard, not a candidate profile — and before the autonomous moves were
+ * removed, `interview.scheduled` carried them off it. Now nothing does, so a
+ * candidate whose only evidence is a read interview must be listed wherever
+ * they happen to be standing, or they are never mentioned anywhere again.
+ *
+ * That applies to Bronze exactly as it applies to Participation, and listing
+ * only `profile_read` there was the same hole one stage further on: a reviewer
+ * recording Proceed on such a candidate lands them at Bronze, where they have
+ * no profile version to be ready on and no `review` row any more, because the
+ * review is what they have just had. Interviewed, approved, and listed nowhere.
+ *
+ * Either-evidence also catches a candidate whose CV was read but whose
+ * `candidate.profiled` event was lost: that event is raised through
  * `notePipelineEvent`, which swallows its own failures by design.
  *
  * `human_interview` takes nothing. Finalisation is a person's own act with its
@@ -287,7 +297,7 @@ export type ReadyBecause = 'profile_read' | 'interview_reviewed';
  */
 const READY_AT: Readonly<Partial<Record<StageKind, readonly ReadyBecause[]>>> = {
   intake: ['interview_reviewed', 'profile_read'],
-  profile_review: ['profile_read'],
+  profile_review: ['interview_reviewed', 'profile_read'],
   ai_interview: ['interview_reviewed'],
 };
 
@@ -371,9 +381,15 @@ async function stageDecisionDrafts(tenantId: string, candidate: Prisma.Candidate
   if (standing.length === 0) return { count: 0, drafts: [] as Draft[] };
 
   const wantedBy = (because: ReadyBecause) => standing.filter((s) => s.wants.includes(because));
-  const [profiles, reviews] = await Promise.all([
+  const mayBeReviewed = wantedBy('interview_reviewed');
+  const [profiles, reviews, owing] = await Promise.all([
     profileReadAt(wantedBy('profile_read')),
-    interviewReviewedAt(tenantId, wantedBy('interview_reviewed')),
+    interviewReviewedAt(tenantId, mayBeReviewed),
+    // Whether the promise is kept for the WHOLE of their history, which is what
+    // the advance is gated on. A completed review is not the same question: a
+    // candidate with two conducted interviews, one read and one not, has one
+    // and would still be refused (services/humanReviewGate.ts).
+    candidatesOwingReview({ tenantId, of: mayBeReviewed.map((s) => ({ candidateId: s.candidateId, roleId: s.roleId })) }),
   ]);
 
   const ready = standing
@@ -381,6 +397,10 @@ async function stageDecisionDrafts(tenantId: string, candidate: Prisma.Candidate
       // In `READY_AT` order, so a candidate whose interview has been read is
       // described by that rather than by the CV reading that came first.
       for (const because of s.wants) {
+        // A read interview counts for nothing while another of theirs is still
+        // unread: the move would be refused, and a row is a promise that it
+        // would not be.
+        if (because === 'interview_reviewed' && owing.has(`${s.candidateId}:${s.roleId}`)) continue;
         const since = because === 'profile_read'
           ? profiles.get(s.candidateId)
           : reviews.get(`${s.candidateId}:${s.roleId}`);

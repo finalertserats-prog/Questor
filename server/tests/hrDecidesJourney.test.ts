@@ -373,6 +373,39 @@ describe('candidates who hold no Bronze', () => {
     expect([(await tiersOf(journey.candidateId)).length, row?.facts.readyBecause]).toEqual([0, 'profile_read']);
   });
 
+  /**
+   * The same candidate, approved rather than merely read.
+   *
+   * Proceed carries them off Participation and onto Bronze, where they have no
+   * CV to be ready on — and their `review` row is gone, because the review is
+   * what they have just had. Listing only the CV reading at Bronze put them
+   * exactly where removing the autonomous moves put everybody else: interviewed,
+   * approved, and mentioned nowhere.
+   */
+  it('keeps asking once a Proceed verdict has moved them on to Bronze', async () => {
+    const ids = await seeded();
+    const created = await request(app).post('/api/candidates').set('Authorization', ids.auth)
+      .send({ fullName: 'Dev Iyer', email: 'dev.iyer@example.test', roleId: ids.roleId });
+    const candidateId = created.body.candidate.id as string;
+    const { assessmentId } = await interviewed(ids, { candidateId, pipelineId: '' });
+
+    await review(ids, assessmentId, 'PROCEED');
+
+    const pipeline = await prisma.candidatePipeline.findFirstOrThrow({ where: { candidateId } });
+    const rows = await queue(ids);
+    expect({
+      stage: pipeline.currentStageKey,
+      profiles: await prisma.candidateProfileVersion.count({ where: { candidateId } }),
+      stillAsked: decisionsFor(rows, candidateId)[0]?.facts,
+      reviewRowGone: rows.every((r) => r.kind !== 'review'),
+    }).toEqual({
+      stage: 'bronze',
+      profiles: 0,
+      stillAsked: { stageLabel: 'Bronze', nextStageLabel: 'Silver', readyBecause: 'interview_reviewed' },
+      reviewRowGone: true,
+    });
+  });
+
   // Booking an interview needs an approved ROLE scorecard, not a candidate
   // profile, so a candidate with no CV can be interviewed and assessed while
   // their pipeline still says Participation. Before this, `interview.scheduled`
@@ -390,5 +423,140 @@ describe('candidates who hold no Bronze', () => {
 
     expect([pipeline.currentStageKey, row?.facts])
       .toEqual(['participation', { stageLabel: 'Participation', nextStageLabel: 'Bronze', readyBecause: 'interview_reviewed' }]);
+  });
+});
+
+/**
+ * A second interview nobody has read.
+ *
+ * The row's evidence used to be "a completed review exists", which is not the
+ * question the button asks: the advance is refused while ANY conducted,
+ * assessed interview of theirs is unread. One read and one unread interview
+ * therefore produced a row pointing at a 409 — the same shape of defect as
+ * offering the promotion before any review at all.
+ */
+describe('a candidate with one interview read and another not', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('is taken off the queue, because the move would be refused', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    const first = await interviewed(ids, journey);
+    await review(ids, first.assessmentId, 'CONSIDER');
+    const asked = decisionsFor(await queue(ids), journey.candidateId).length;
+
+    // A second round for the same candidate, assessed and left unread.
+    await interviewed(ids, journey);
+
+    const refused = await advance(ids, journey, 'gold');
+    expect([asked, decisionsFor(await queue(ids), journey.candidateId).length, refused.status])
+      .toEqual([1, 0, 409]);
+  });
+});
+
+/**
+ * The gate asks what the move would mint, not what the plan calls the stage.
+ *
+ * A stage plan is editable through PUT /api/roles/:id/pipeline-stages, held to
+ * `role:edit_scorecard` — which a RECRUITER holds. The first version of this
+ * gate looked for a stage whose kind was `ai_interview`; the award engine
+ * strikes on the KEY being `silver` or `gold`. A plan that reused those keys
+ * with kind `human_interview`, and had no AI-conducted stage at all, made the
+ * gate say "nothing to protect here" while the award engine struck Silver.
+ *
+ * Driven through the real endpoints, plan included: a hand-built stage plan
+ * would be the fixture writing its own input, and this is the exact shape that
+ * got past a review.
+ */
+describe('a stage plan that mints without naming an AI round', () => {
+  beforeEach(async () => { await wipe(); });
+
+  const NO_AI_ROUND = [
+    { key: 'participation', label: 'Participation', kind: 'intake' },
+    { key: 'silver', label: 'Silver', kind: 'human_interview' },
+    { key: 'gold', label: 'Gold', kind: 'human_interview' },
+    { key: 'diamond', label: 'Diamond', kind: 'human_interview' },
+  ];
+
+  /** The plan first, because a pipeline snapshots it when it starts. */
+  async function withPlan(ids: Seeded) {
+    const res = await request(app).put(`/api/roles/${ids.roleId}/pipeline-stages`).set('Authorization', ids.auth)
+      .send({ stages: NO_AI_ROUND });
+    if (res.status !== 200) throw new Error(`stage plan refused (${res.status}): ${JSON.stringify(res.body)}`);
+  }
+
+  it('still refuses the move that would mint Silver on an unread interview', async () => {
+    const ids = await seeded();
+    await withPlan(ids);
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    await interviewed(ids, journey);
+
+    const refused = await advance(ids, journey, 'gold');
+
+    expect([refused.status, refused.body.code, (await tiersOf(journey.candidateId)).map((a) => a.tier)])
+      .toEqual([409, 'human_review_required', ['bronze']]);
+  });
+
+  it('refuses the same move from the decision form, so the two paths agree', async () => {
+    const ids = await seeded();
+    await withPlan(ids);
+    const journey = await onboarded(ids);
+    await advance(ids, journey, 'silver');
+    await interviewed(ids, journey);
+
+    const refused = await request(app).post(`/api/pipelines/${journey.pipelineId}/decision`).set('Authorization', ids.auth)
+      .send({ decision: 'APPROVED', reason: REASON, stageKey: 'silver' });
+
+    expect([refused.status, refused.body.code]).toEqual([409, 'human_review_required']);
+  });
+});
+
+/**
+ * The move that mints nothing, from both person-paths.
+ *
+ * Before the gate asked what a move earns, the button said yes to this and the
+ * decision form answered 409 on the same pipeline — the same disagreement
+ * between two person-paths that the one-stage clamp exists to prevent, only
+ * inverted. Both now allow it, for the stated reason that moving somebody
+ * towards an interview says nothing about a conversation that has not happened.
+ */
+describe('moving a candidate with an unread interview towards the AI round', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('goes through on the Advance button, because it mints nothing', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await interviewed(ids, journey);
+
+    const moved = await advance(ids, journey, 'silver');
+
+    expect([moved.status, await stageOf(journey), moved.body.awards]).toEqual([200, 'silver', []]);
+  });
+
+  it('goes through on the decision form too, so neither path is stricter', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await interviewed(ids, journey);
+
+    const decided = await request(app).post(`/api/pipelines/${journey.pipelineId}/decision`).set('Authorization', ids.auth)
+      .send({ decision: 'APPROVED', reason: REASON, stageKey: 'bronze' });
+
+    expect([decided.status, await stageOf(journey)]).toEqual([200, 'silver']);
+  });
+
+  // A rejection ends the journey, and rejecting somebody on an interview
+  // nobody read is the thing the promise is about — so that one stays refused
+  // wherever the candidate is standing.
+  it('still refuses to END their journey on an interview nobody read', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await interviewed(ids, journey);
+
+    const refused = await request(app).post(`/api/pipelines/${journey.pipelineId}/decision`).set('Authorization', ids.auth)
+      .send({ decision: 'REJECTED', reason: REASON, stageKey: 'bronze' });
+
+    expect([refused.status, refused.body.code]).toEqual([409, 'human_review_required']);
   });
 });

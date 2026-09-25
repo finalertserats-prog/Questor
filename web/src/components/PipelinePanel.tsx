@@ -272,9 +272,10 @@ function StageBadge({ stageKey }: { stageKey: string }) {
  * showing the same data elsewhere — the candidate journey board — refreshes
  * with it rather than sitting on a stale copy until someone reloads.
  *
- * `refreshKey` works the other way: the server moves candidates on its own
- * (an analysed resume, a scheduled interview), so when the page re-reads for
- * any reason the panel re-reads too and never shows a stage already left.
+ * `refreshKey` works the other way: a candidate can move without this panel
+ * doing it — an analysed resume reaches Bronze on its own, and a reviewer's
+ * verdict elsewhere decides the round — so when the page re-reads for any
+ * reason the panel re-reads too and never shows a stage already left.
  */
 export function PipelinePanel(
   { candidateId, candidateName, interviews, onChanged, refreshKey = 0 }:

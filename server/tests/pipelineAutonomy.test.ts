@@ -174,9 +174,14 @@ describe('resolveDecision', () => {
   // Stages run in order, and the Advance button says so in as many words when
   // it refuses a key that is not the next one. A decision that could leapfrog
   // what the button cannot would make the two person-paths disagree.
-  it('never skips a stage the Advance button would have insisted on', () => {
-    const jumped = resolveDecision(DEFAULT_STAGES, 'participation', 'APPROVED', 'diamond');
-    expect(jumped).toBeNull();
+  //
+  // The approved round is three stages ahead and is NOT the last one, so this
+  // reaches the clamp rather than the guard that turns down a decision about
+  // the final stage. Without the clamp it lands on Diamond — finalised, from
+  // Participation, on one verdict.
+  it('never skips the stages in between, even when the approved round is far ahead', () => {
+    expect(resolveDecision(DEFAULT_STAGES, 'participation', 'APPROVED', 'gold'))
+      .toEqual({ kind: 'advance', from: 'participation', to: 'bronze', final: false });
   });
 
   it('still moves them off a round they are standing at when it is approved', () => {
