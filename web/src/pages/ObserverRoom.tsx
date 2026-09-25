@@ -9,7 +9,7 @@ import { POLL_DELAY_MS, nextPollDelay } from '../components/pollBackoff';
 import { formatScheduled } from '../components/dateFormat';
 import { useOrgTimeZone } from '../components/useOrgTimeZone';
 import {
-  CandidateLinkCard, InterviewerConsentCard, ObserverRoomControls, ObserverTranscript,
+  CandidateLinkCard, EntryGateCard, ObserverRoomControls, ObserverTranscript, RoundBlockedCard,
 } from '../components/ObserverPanels';
 import { roomPhase, stopSentence, type ObserverRoundView } from '../components/observerModel';
 import { createObserverCapture, type ObserverCapture, type UploadOutcome } from '../observerCapture';
@@ -20,15 +20,24 @@ import { createRecognizer } from '../speech';
  * The AI observer room for a human interview round, and afterwards the round's
  * record: transcript plus evidence quotes by competency.
  *
- * The interviewer keeps this page open on the device they take the call on.
- * Questor never joins the meeting; it hears what this device hears, and only
- * after both people have agreed.
+ * Everyone in the call keeps this page open on the device they are taking it
+ * on — whoever is conducting, and HR if they joined. Questor never joins the
+ * meeting; it hears what these devices hear.
+ *
+ * NOBODY PRESSES RECORD. Capture starts when this page is admitted to the room
+ * and stops when it leaves. Admission needs an agreement from everyone whose
+ * voice is captured, which is why there is a gate card here and no start
+ * button anywhere (domain/observedRound.ts on the server).
+ *
+ * There is no tile for the observer, and there is not going to be one: the AI
+ * is not a participant in the conversation. The notice on the gate is the
+ * disclosure, and the status line says whether capture is running.
  */
 
 const CHUNK_MS = 30_000;
-// Phases in which the other party, or the other device, can still change
-// something this page must show.
-const LIVE_PHASES = new Set(['ask_interviewer', 'awaiting_candidate', 'ready', 'listening', 'stopped']);
+// Phases in which somebody else, or another device, can still change something
+// this page must show.
+const LIVE_PHASES = new Set(['gate', 'awaiting_others', 'listening', 'stopped']);
 
 export function ObserverRoom() {
   const { roundId = '' } = useParams();
@@ -41,6 +50,10 @@ export function ObserverRoom() {
   const [captureProblem, setCaptureProblem] = useState('');
   const captureRef = useRef<ObserverCapture | null>(null);
   const captureStartedAt = useRef(0);
+  // Whether this device has already been admitted. State rather than a ref so
+  // the effect below re-runs when it changes, and so a failed join is not
+  // retried on every poll.
+  const [entered, setEntered] = useState(false);
 
   const stopCapture = useCallback(async (flush: boolean) => {
     const capture = captureRef.current;
@@ -67,6 +80,12 @@ export function ObserverRoom() {
         // "listening" and would stop a capture that is entitled to run.
         const stale = requestedAt < captureStartedAt.current;
         if (captureRef.current && !stale && next.observation?.status !== 'LISTENING') void stopCapture(false);
+        // Proof this tab is still capturing, sent between one stretch of speech
+        // and the next. Without it a quiet meeting and a closed tab look the
+        // same to the server, and only one of them is a problem.
+        if (captureRef.current && next.observation?.status === 'LISTENING') {
+          void api.post(`${base}/heartbeat`, {}).catch(() => undefined);
+        }
         const phase = roomPhase(next);
         const quotesPending = next.observation?.quotes.status === 'PENDING' && phase === 'ended';
         if (!LIVE_PHASES.has(phase) && !quotesPending) return;
@@ -107,9 +126,16 @@ export function ObserverRoom() {
     }
   }, []);
 
-  const start = useCallback(async () => {
-    // Capture begins only once the server has agreed it is listening.
-    if (!view || !(await act('start'))) return;
+  /**
+   * Join the room, which is what starts capture on this device.
+   *
+   * The microphone is opened only after the server has admitted this person and
+   * answered LISTENING. Opening it first and asking afterwards would put audio
+   * in a buffer before anybody had checked whether everyone had agreed, which
+   * is the shape of the mistake this whole design exists to avoid.
+   */
+  const join = useCallback(async () => {
+    if (!view || !(await act('join'))) return;
     captureStartedAt.current = Date.now();
     const capture = createObserverCapture({
       mode: view.capture.mode,
@@ -138,6 +164,23 @@ export function ObserverRoom() {
     await capture.start();
   }, [act, base, upload, view]);
 
+  /**
+   * Joining is automatic once the server says this person may enter: the round
+   * is already running for everybody else, and a second press to enter a room
+   * you have just agreed to enter is a press that means nothing.
+   *
+   * Driven by the server's `mayEnter` rather than by the phase. Asking to join
+   * while somebody has still to agree is refused — correctly — and the poll
+   * would then put a refusal banner on screen every few seconds in front of a
+   * person who has done nothing wrong and is simply waiting.
+   */
+  const mayEnter = view?.gate?.mayEnter === true;
+  useEffect(() => {
+    if (mayEnter && !entered) { setEntered(true); void join(); }
+    // `join` changes with every poll; re-running on it would re-enter the room.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mayEnter, entered]);
+
   if (!view) {
     return (
       <div className="page">
@@ -149,6 +192,7 @@ export function ObserverRoom() {
 
   const phase = roomPhase(view);
   const observation = view.observation;
+  const gate = view.gate;
   return (
     <div className="page observer-room">
       <PageHeader
@@ -159,29 +203,53 @@ export function ObserverRoom() {
       />
       {error && <Banner kind="error">{error}</Banner>}
       {captureProblem && <Banner kind="error">{captureProblem}</Banner>}
+      {/*
+        The two silent failures, said to the only person who can put either
+        right, and only while the round is still running.
+
+        Loud on purpose. Neither of these breaks anything visibly: a closed tab
+        and a headset both leave a round that looks observed, and the second
+        leaves a transcript that looks like evidence while containing one side
+        of the conversation. Each names its own remedy, because a general
+        warning about "capture problems" is one nobody acts on.
+      */}
+      {view.capture.alarm?.warning && (
+        <div data-testid="observer-not-hearing"><Banner kind="error">{view.capture.alarm.warning}</Banner></div>
+      )}
+      {view.capture.hearing?.warning && (
+        <div data-testid="observer-one-sided"><Banner kind="error">{view.capture.hearing.warning}</Banner></div>
+      )}
 
       {phase === 'unavailable' && (
         <Banner kind="info">This round has no AI observer. It runs, and is recorded, as normal.</Banner>
       )}
-      {phase === 'ask_interviewer' && (
-        <InterviewerConsentCard notice={view.notice} busy={busy} onConsent={() => void act('consent')} onDecline={() => void act('decline')} />
+      {phase === 'gate' && gate && view.you.party !== 'candidate' && (
+        <EntryGateCard
+          gate={gate}
+          party={view.you.party}
+          busy={busy}
+          onConsent={() => void act('consent')}
+          onDecline={() => void act('decline')}
+        />
       )}
-      {phase === 'awaiting_candidate' && observation?.candidateLink && (
+      {phase === 'awaiting_others' && observation?.candidateLink && observation.awaiting.includes('candidate') && (
         <CandidateLinkCard link={observation.candidateLink} onCopy={() => void navigator.clipboard?.writeText(observation.candidateLink ?? '')} />
       )}
-      {observation && phase !== 'ended' && phase !== 'declined' && phase !== 'unavailable' && (
+      {observation && (phase === 'listening' || phase === 'awaiting_others' || phase === 'stopped') && (
         <ObserverRoomControls
           phase={phase}
-          isInterviewer={observation.isInterviewer}
+          awaiting={observation.awaiting}
           busy={busy}
           stopSentence={stopSentence(observation)}
           degradedMessage={degraded || (observation.captureStatus === 'DEGRADED' ? 'Part of the round could not be transcribed; the transcript marks the gaps.' : undefined)}
-          onStart={() => void start()}
           onStop={() => void act('stop', () => stopCapture(false))}
           onEnd={() => void act('end', () => stopCapture(true))}
         />
       )}
-      {phase === 'declined' && observation && <Banner kind="info">{stopSentence(observation)}</Banner>}
+      {/* The whole point of surfacing this here: the person who opened the room
+          at the scheduled time learns why it is empty, and what to do, without
+          having to ask anybody. */}
+      {observation?.blocked && <RoundBlockedCard block={observation.blocked} />}
       {observation && (phase === 'ended' || observation.transcript.length > 0) && <ObserverTranscript observation={observation} />}
       {phase === 'ended' && observation?.quotes.status === 'UNAVAILABLE' && (
         <button type="button" className="btn secondary" disabled={busy} onClick={() => void act('quotes')}>

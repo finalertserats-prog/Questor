@@ -10,9 +10,12 @@ import {
 /**
  * The AI observer on a human interview round (task #10).
  *
- * Nothing is captured until BOTH the interviewer and the candidate have agreed,
- * each for themselves, and either can decline or stop it at any time. A stop
- * takes effect at once: whatever arrives afterwards is refused, not stored.
+ * Every human round is recorded, and consent is the gate on entering the room
+ * rather than a control inside it: nothing is captured until everyone whose
+ * voice it would capture has agreed, each for themselves, and nobody who has
+ * not agreed can be in the room to be captured. A decline does not make the
+ * round unrecorded — it stops the round. A stop takes effect at once:
+ * whatever arrives afterwards is refused, not stored.
  */
 
 const app = createApp();
@@ -26,7 +29,7 @@ describe('consent before capture', () => {
 
     const res = await sendText(app, ids.auth, roundId);
 
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(403);
   });
 
   it('refuses a transcript segment when only the interviewer has consented', async () => {
@@ -36,7 +39,7 @@ describe('consent before capture', () => {
 
     const res = await sendText(app, ids.auth, roundId);
 
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(403);
   });
 
   it('stores nothing when only the interviewer has consented', async () => {
@@ -48,17 +51,17 @@ describe('consent before capture', () => {
     expect((await observationOf(roundId)).segments).toHaveLength(0);
   });
 
-  it('will not start listening until the candidate has consented', async () => {
+  it('will not let the interviewer into the room until the candidate has consented', async () => {
     const ids = await seededObserver(app);
     const { roundId } = await humanRound(app, ids);
     await interviewerConsents(app, ids.auth, roundId);
 
-    const res = await request(app).post(`/api/observer/rounds/${roundId}/start`).set('Authorization', ids.auth).send({});
+    const res = await request(app).post(`/api/observer/rounds/${roundId}/join`).set('Authorization', ids.auth).send({});
 
     expect(res.status).toBe(409);
   });
 
-  it('refuses a segment after both consented but before listening started', async () => {
+  it('refuses a segment after everyone consented but before anyone entered the room', async () => {
     const ids = await seededObserver(app);
     const { roundId } = await humanRound(app, ids);
     const token = await interviewerConsents(app, ids.auth, roundId);
@@ -66,7 +69,7 @@ describe('consent before capture', () => {
 
     const res = await sendText(app, ids.auth, roundId);
 
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(403);
   });
 
   it('captures once both have consented and listening has started', async () => {
@@ -79,7 +82,7 @@ describe('consent before capture', () => {
     expect((await observationOf(roundId)).segments[0].text).toBe(SPOKEN);
   });
 
-  it('records who consented and when, for both parties', async () => {
+  it('records who consented and when, for every person in the room', async () => {
     const ids = await seededObserver(app);
     const { roundId } = await listening(app, ids);
     const observation = await observationOf(roundId);
@@ -88,8 +91,11 @@ describe('consent before capture', () => {
 
     expect(events.find((e) => e.action === 'observer.interviewer_consented')?.actorId).toBe(ids.userId);
     expect(events.find((e) => e.action === 'observer.candidate_consented')?.actorId).toBe('candidate');
-    expect(observation.interviewerConsentAt).not.toBeNull();
-    expect(observation.candidateConsentAt).not.toBeNull();
+    // The rows are the record, not a pair of columns: that is what lets a third
+    // person in the room be consented rather than merely unmentioned.
+    const rows = await prisma.observationParticipant.findMany({ where: { observationId: observation.id } });
+    expect(rows.every((row) => row.consentAt !== null)).toBe(true);
+    expect(rows.map((row) => row.party).sort()).toEqual(['candidate', 'interviewer']);
   });
 
   it('never gives the candidate link to the page as anything but a link', async () => {
@@ -112,7 +118,7 @@ describe('consent before capture', () => {
     expect(res.status).toBe(409);
   });
 
-  it('only lets the interviewer who consented send audio', async () => {
+  it('only lets somebody who agreed and entered the room send audio', async () => {
     const ids = await seededObserver(app);
     const { roundId } = await listening(app, ids);
     const otherAdmin = await colleagueAuth(ids.tenantId, 'admin', 'other-admin@demo.local');
@@ -121,20 +127,46 @@ describe('consent before capture', () => {
 
     expect(res.status).toBe(403);
   });
+
+  // HR joining a human round to set the context is expected behaviour. What is
+  // not expected is HR being heard without having agreed, so the gate applies
+  // to them exactly as it does to everybody else.
+  it('captures an HR colleague who agreed and joined', async () => {
+    const ids = await seededObserver(app);
+    const { roundId } = await listening(app, ids);
+    const hr = await colleagueAuth(ids.tenantId, 'admin', 'hr-joiner@demo.local');
+    await request(app).post(`/api/observer/rounds/${roundId}/consent`).set('Authorization', hr).send({});
+    await request(app).post(`/api/observer/rounds/${roundId}/join`).set('Authorization', hr).send({});
+
+    const res = await sendText(app, hr, roundId, 'HR setting the context for the role.');
+
+    expect(res.status).toBe(201);
+  });
+
+  it('refuses an HR colleague who opened the room but did not agree', async () => {
+    const ids = await seededObserver(app);
+    const { roundId } = await listening(app, ids);
+    const hr = await colleagueAuth(ids.tenantId, 'admin', 'hr-lurker@demo.local');
+    await request(app).get(`/api/observer/rounds/${roundId}`).set('Authorization', hr);
+
+    const res = await sendText(app, hr, roundId, 'Nobody agreed to hear this.');
+
+    expect(res.status).toBe(403);
+  });
 });
 
 describe('declining', () => {
   beforeEach(async () => { await wipe(); });
 
-  it('lets the candidate decline, and then nothing can start', async () => {
+  it('lets the candidate decline, and then nobody can enter the room', async () => {
     const ids = await seededObserver(app);
     const { roundId } = await humanRound(app, ids);
     const token = await interviewerConsents(app, ids.auth, roundId);
     await request(app).post(`/api/observer-consent/${token}/decline`).send({});
 
-    const start = await request(app).post(`/api/observer/rounds/${roundId}/start`).set('Authorization', ids.auth).send({});
+    const join = await request(app).post(`/api/observer/rounds/${roundId}/join`).set('Authorization', ids.auth).send({});
 
-    expect(start.status).toBe(409);
+    expect(join.status).toBe(409);
     expect((await observationOf(roundId)).status).toBe('DECLINED');
   });
 
@@ -223,7 +255,7 @@ describe('stopping mid-round', () => {
     const { roundId } = await listening(app, ids);
     await request(app).post(`/api/observer/rounds/${roundId}/stop`).set('Authorization', ids.auth).send({});
 
-    const res = await request(app).post(`/api/observer/rounds/${roundId}/start`).set('Authorization', ids.auth).send({});
+    const res = await request(app).post(`/api/observer/rounds/${roundId}/join`).set('Authorization', ids.auth).send({});
 
     expect(res.status).toBe(409);
   });
@@ -300,7 +332,7 @@ describe('the candidate consent link', () => {
 
     const res = await request(app).get(`/api/observer-consent/${token}`);
 
-    expect(res.body.notice).toMatch(/will not score/i);
+    expect(res.body.notice).toMatch(/does not score, rate, summarise or recommend/i);
   });
 
   it('does not reveal the candidate name or the transcript', async () => {

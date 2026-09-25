@@ -47,6 +47,19 @@ export interface Round {
   /** Claims filed by competency, each with the words it rests on. */
   evidenceEntries?: Array<{ competencyId: string; competencyName: string; claim: string; quote: string }>;
   recordedBy?: { userId: string; name: string } | null;
+  /**
+   * Why this round cannot go ahead, when it cannot: somebody who would be in
+   * the room has not agreed to it being recorded, and every human round is
+   * recorded. Null in the ordinary case, and absent on an older server.
+   */
+  observerBlocked?: { reason: string; nextSteps: string[] } | null;
+  /**
+   * What the recording actually got. A fact about the recording — never about
+   * the candidate, and never about the interviewer: a headset that stopped the
+   * candidate's voice reaching the device is nobody's fault, and wording it as
+   * one is how people stop reporting it.
+   */
+  captureReport?: { coverage: string; sentence: string } | null;
   /** Absent on an older server; null for AI rounds. */
   meeting?: RoundMeetingView | null;
 }
@@ -188,13 +201,43 @@ export function ledBy(round: Round): string {
  */
 export function RoundRecord({ round }: { round: Round }) {
   if (round.conductedBy !== 'HUMAN') return <span className="muted small">—</span>;
+  // Before the withheld case and before the empty one, because it is a
+  // different fact about the round and the most actionable of the three: this
+  // round is not going to happen, and somebody has to decide what does. The
+  // same discipline as `notesWithheld` — a round that cannot run must never
+  // read like a round nobody has written up yet.
+  if (round.observerBlocked && round.status === 'SCHEDULED') {
+    return (
+      <div data-testid="round-observer-blocked">
+        <span className="small">{round.observerBlocked.reason}</span>
+        <ul className="muted small" style={{ margin: '4px 0 0 16px' }}>
+          {round.observerBlocked.nextSteps.map((step) => <li key={step}>{step}</li>)}
+        </ul>
+      </div>
+    );
+  }
   if (round.notesWithheld) {
     return <span className="muted small" data-testid="round-notes-withheld">{round.notesWithheld}</span>;
   }
   const notes = round.notes ?? '';
-  if (!notes.trim()) return <span className="muted small">{round.evidence?.label ?? 'Nothing recorded yet'}</span>;
+  // Said above whatever the round holds, because it changes how to read it: a
+  // record labelled with the interviewer's own account is a different thing
+  // when the reason it is not a transcript is that the recording heard one
+  // person.
+  const capture = round.captureReport?.sentence
+    ? <p className="small" data-testid="round-capture-report">{round.captureReport.sentence}</p>
+    : null;
+  if (!notes.trim()) {
+    return (
+      <div>
+        {capture}
+        <span className="muted small">{round.evidence?.label ?? 'Nothing recorded yet'}</span>
+      </div>
+    );
+  }
   return (
     <details data-testid="round-record">
+      {capture}
       <summary>{round.evidence?.label ?? 'Interviewer’s written record'}</summary>
       {round.recordedBy?.name && <p className="muted small">Recorded by {round.recordedBy.name}.</p>}
       {(round.evidenceEntries ?? []).map((entry) => (

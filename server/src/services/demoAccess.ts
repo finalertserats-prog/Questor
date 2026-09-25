@@ -502,6 +502,7 @@ export async function purgeExpiredDemoTenants(now = new Date()): Promise<number>
     await tx.demoModelSpend.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.demoInterviewRun.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.observationSegment.deleteMany({ where: { tenantId: { in: tenantIds } } });
+    await tx.observationParticipant.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.roundObservation.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.interviewRound.deleteMany({ where: { tenantId: { in: tenantIds } } });
     await tx.candidatePipeline.deleteMany({ where: { tenantId: { in: tenantIds } } });

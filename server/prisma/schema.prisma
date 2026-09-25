@@ -1587,11 +1587,20 @@ model CandidateAtsLink {
   @@index([candidateId])
 }
 
-// The AI observer on a human round (services/roundObserver.ts). Both the
-// interviewer and the candidate consent before anything is captured; either
-// may decline or stop it. It produces a transcript and, once the round ends,
-// verbatim quotes mapped to scorecard competencies — never a score, rating,
-// recommendation or characterisation of the candidate.
+// The AI observer on a human round (services/roundObserver.ts). Every human
+// round is observed: the transcript is the evidence a Gold assessment rests on,
+// and a round that produced none would put a credential on top of nothing.
+//
+// Consent is therefore a gate on ENTERING the room rather than a control inside
+// it. A row in ObservationParticipant exists for every person whose voice may be
+// captured, and nobody reaches the room without an affirmative one of their own —
+// which is what makes "always recorded" and "always consented" the same sentence
+// instead of two that compete. A round nobody may enter does not run unrecorded;
+// it does not run (domain/observedRound.ts).
+//
+// It produces a transcript and, once the round ends, verbatim quotes mapped to
+// scorecard competencies — never a score, rating, recommendation or
+// characterisation of the candidate.
 model RoundObservation {
   id                   String    @id @default(cuid())
   tenantId             String
@@ -1600,24 +1609,40 @@ model RoundObservation {
   // Denormalised from the round's pipeline so erasure, retention and holds can
   // find a candidate's observations without walking the pipeline.
   candidateId          String
-  // AWAITING_CANDIDATE | CONSENTED | LISTENING | STOPPED | DECLINED | ENDED
-  status               String    @default("AWAITING_CANDIDATE")
-  // Which wording of the capture notice both parties agreed to.
+  // AWAITING_CONSENT | CONSENTED | LISTENING | STOPPED | DECLINED | ENDED
+  status               String    @default("AWAITING_CONSENT")
+  // Which wording of the entry notice everybody passed.
   noticeVersion        String
-  // The interviewer who consented; the only person who may send audio.
-  interviewerId        String
-  interviewerConsentAt DateTime?
+  // The seat conducting the round, resolved when the observation was created.
+  // NOT the set of people who may send audio: that is `participants`, because
+  // HR may be in the room too and a single id cannot hold them.
+  interviewerId        String    @default("")
   candidateTokenHash   String?   @unique
   candidateTokenSealed String    @default("")
-  candidateConsentAt   DateTime?
-  declinedBy           String?   // interviewer | candidate
+  declinedBy           String?   // interviewer | candidate | hr
   declinedAt           DateTime?
   startedAt            DateTime?
-  stoppedBy            String?   // interviewer | candidate
+  stoppedBy            String?   // interviewer | candidate | hr
   stoppedAt            DateTime?
   endedAt              DateTime?
   // OK | DEGRADED (some stretch of the round could not be captured)
   captureStatus        String    @default("OK")
+  // When a device in the room last PROVED it was capturing, as opposed to
+  // having once been told to. Consent says capture is allowed; only this says
+  // it is happening. A tab that was closed, a microphone the operating system
+  // handed to another application, a throttled background tab and a sleeping
+  // laptop all look identical to a consented round otherwise — and a round that
+  // merely looks observed is worse than one that plainly was not, because the
+  // record then asserts something untrue.
+  lastHeardAt          DateTime?
+  // Whether the round was heard from one side only. Separate from
+  // `captureStatus` because the two mean different things and only one of them
+  // downgrades the evidence: DEGRADED is a round with missing minutes, which is
+  // still a transcript of both people, while this is a complete-looking
+  // recording of the interviewer talking to somebody the device could not hear.
+  // A headset does it, nothing fails while it happens, and `evidenceKindOf`
+  // must never call the result a transcript (domain/observedRound.ts).
+  oneSided             Boolean   @default(false)
   // PENDING | READY | NONE | UNAVAILABLE
   quotesStatus         String    @default("PENDING")
   quotesNote           String    @default("")
@@ -1629,9 +1654,44 @@ model RoundObservation {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
   segments             ObservationSegment[]
+  participants         ObservationParticipant[]
 
   @@index([tenantId])
   @@index([candidateId])
+}
+
+// One person who may be in an observed round, and their consent to being
+// captured in it.
+//
+// A row per person rather than a pair of columns on the observation, because
+// the room holds three kinds of person — the candidate, whoever is conducting,
+// and HR if they joined — and the old `interviewerId` could only name one of
+// them. With a row each, "has everybody agreed?" is one query over this table
+// and cannot quietly omit somebody the columns had no space for.
+model ObservationParticipant {
+  id            String   @id @default(cuid())
+  tenantId      String
+  observationId String
+  observation   RoundObservation @relation(fields: [observationId], references: [id])
+  /// candidate | interviewer | hr
+  party         String
+  /// The User id for staff; the Candidate id for the candidate, who has no
+  /// account. Either names one real person, which is what the consent is
+  /// attributable to — and why the uniqueness below can be total rather than
+  /// leaving the candidate's row outside it on a nullable column.
+  personId      String
+  /// Which wording of the entry notice this person passed.
+  noticeVersion String
+  consentAt     DateTime?
+  declinedAt    DateTime?
+  /// When they last passed the gate into the room. Never set without consentAt.
+  admittedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  segments      ObservationSegment[]
+
+  @@unique([observationId, personId])
+  @@index([tenantId])
 }
 
 // One captured stretch of a human round, or a GAP where capture failed. Gaps
@@ -1642,6 +1702,11 @@ model ObservationSegment {
   tenantId      String
   observationId String
   observation   RoundObservation @relation(fields: [observationId], references: [id])
+  // Whose device heard this. Null only for segments captured before the room
+  // had more than one, which is why it cannot be required: a back-filled guess
+  // would be an attribution nobody made.
+  participantId String?
+  participant   ObservationParticipant? @relation(fields: [participantId], references: [id])
   index         Int
   kind          String   // SPEECH | GAP
   offsetMs      Int
@@ -1652,6 +1717,7 @@ model ObservationSegment {
 
   @@unique([observationId, index])
   @@index([tenantId])
+  @@index([participantId])
 }
 
 // ---- AI interviewers ----

@@ -8,6 +8,7 @@ import { isOperator } from '../middleware/operator.js';
 import { isPlatformOperator } from '../middleware/platformOperator.js';
 import type { AuthClaims } from './auth.js';
 import { identityCodeTroubleDrafts } from './identityCodeTrouble.js';
+import { roundBlock, type ObservationStatus, type ObservedParty } from '../domain/observedRound.js';
 import {
   actionFor, compareNeedsYou, isUrgent, mayActOn, maySee, NEEDS_YOU_KINDS, NOT_STARTED_STATES,
   type GateContext, type NeedsYouKind,
@@ -57,6 +58,10 @@ export interface NeedsYouRow {
     readonly channel?: string;
     readonly certainty?: string;
     readonly reason?: string;
+    /** For a blocked round: why it cannot go ahead, and what may be done instead. */
+    readonly blockedReason?: string;
+    readonly nextSteps?: readonly string[];
+    readonly scheduledAt?: string;
   };
   /** Colleagues who have already opened it, most recent first. */
   readonly openedBy: readonly Looker[];
@@ -141,6 +146,68 @@ async function expiringDrafts(tenantId: string, candidate: Prisma.CandidateWhere
   return { count, drafts };
 }
 
+/**
+ * Human rounds that cannot go ahead because somebody who would be in the room
+ * has not agreed to it being recorded.
+ *
+ * It is in this queue rather than only on the round, because nobody should
+ * discover it by opening an empty room at the scheduled time. The row carries
+ * the round's own sentence and its next steps, so the feed says the same thing
+ * the pipeline does rather than a shorter version of it.
+ *
+ * Only rounds still ahead of the team: once the round is completed or
+ * cancelled it is no longer a blocker, it is a decision that was taken.
+ */
+async function blockedRoundDrafts(tenantId: string, candidate: Prisma.CandidateWhereInput, limit: number) {
+  const where: Prisma.InterviewRoundWhereInput = {
+    tenantId, status: 'SCHEDULED', conductedBy: 'HUMAN',
+    pipeline: { status: 'ACTIVE', candidate },
+    observation: {
+      OR: [
+        { status: { in: ['DECLINED', 'STOPPED'] } },
+        { participants: { some: { declinedAt: { not: null }, party: { in: ['candidate', 'interviewer'] } } } },
+      ],
+    },
+  };
+  const [rows, count] = await Promise.all([
+    prisma.interviewRound.findMany({
+      where, orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }], take: limit,
+      select: {
+        id: true, scheduledAt: true, status: true,
+        observation: { select: { status: true, participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true } } } },
+        pipeline: { select: { candidate: { select: { id: true, fullName: true, role: { select: { id: true, title: true } } } } } },
+      },
+    }),
+    prisma.interviewRound.count({ where }),
+  ]);
+  const drafts: Draft[] = rows.flatMap((round) => {
+    const block = roundBlock({
+      status: (round.observation?.status ?? 'AWAITING_CONSENT') as ObservationStatus,
+      participants: (round.observation?.participants ?? []).map((p) => ({
+        party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
+      })),
+      roundStatus: round.status,
+    });
+    // The query and the rule are allowed to disagree — the query is a coarse
+    // filter over indexed columns, the rule is the answer. When they do, the
+    // rule wins and the row is simply not listed.
+    if (!block) return [];
+    const person = round.pipeline.candidate;
+    return [{
+      id: `round_not_recordable:${round.id}`,
+      kind: 'round_not_recordable' as const,
+      since: round.scheduledAt.toISOString(),
+      candidate: { id: person.id, name: person.fullName },
+      role: person.role ? { id: person.role.id, title: person.role.title } : null,
+      subject: null,
+      sessionId: null,
+      assessmentId: null,
+      facts: { blockedReason: block.reason, nextSteps: block.nextSteps, scheduledAt: round.scheduledAt.toISOString() },
+    }];
+  });
+  return { count, drafts };
+}
+
 async function stalledDrafts(tenantId: string, candidate: Prisma.CandidateWhereInput, now: Date, limit: number) {
   const where: Prisma.InterviewSessionWhereInput = {
     tenantId, candidate, state: { in: STALLED_STATES },
@@ -211,11 +278,12 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   const { tenantId } = auth;
   const none = Promise.resolve({ count: 0, drafts: [] as Draft[] });
 
-  const [attention, expiring, stalled, identity, catalog, demo] = await Promise.all([
+  const [attention, expiring, stalled, identity, blockedRounds, catalog, demo] = await Promise.all([
     ATTENTION_KINDS.some(may) ? attentionDrafts(tenantId, candidate, now, scan) : null,
     may('invitation_expiring') ? expiringDrafts(tenantId, candidate, now, scan) : none,
     may('stalled') ? stalledDrafts(tenantId, candidate, now, scan) : none,
     may('identity_code_stuck') ? identityCodeTroubleDrafts(tenantId, candidate, now, scan) : none,
+    may('round_not_recordable') ? blockedRoundDrafts(tenantId, candidate, scan) : none,
     may('catalog_proposals') ? catalogDrafts() : none,
     may('demo_request') ? demoDrafts(now, scan) : none,
   ]);
@@ -231,9 +299,10 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   counts.invitation_expiring = expiring.count;
   counts.stalled = stalled.count;
   counts.identity_code_stuck = identity.count;
+  counts.round_not_recordable = blockedRounds.count;
   counts.catalog_proposals = catalog.count;
   counts.demo_request = demo.count;
-  drafts.push(...expiring.drafts, ...stalled.drafts, ...identity.drafts, ...catalog.drafts, ...demo.drafts);
+  drafts.push(...expiring.drafts, ...stalled.drafts, ...identity.drafts, ...blockedRounds.drafts, ...catalog.drafts, ...demo.drafts);
 
   const rows = drafts
     .map((d): NeedsYouRow => ({

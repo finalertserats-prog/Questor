@@ -7,12 +7,20 @@ import { CandidateObserverConsent } from '../components/ObserverPanels';
 import type { CandidateConsentView } from '../components/observerModel';
 
 /**
- * The candidate's own say over the AI observer in a human interview round,
- * opened from a link the interviewer shares in the meeting.
+ * The candidate's entry gate for a human interview round, opened from a link
+ * they are sent before it.
+ *
+ * This is the same shape as the AI round's consent step in pages/Portal.tsx and
+ * for the same reason: the candidate reads what happens to their voice and
+ * agrees BEFORE the interview, not during it. The difference is the
+ * consequence. Declining the AI round's microphone means typing the answers
+ * instead; declining here means the round does not go ahead, because every
+ * human round is recorded and one that is not produces no evidence. That is
+ * said on the page before the press, never discovered after it.
  *
  * Opening the page records nothing: a link scanner or a preview fetch must not
  * be taken as agreement. Only the buttons change anything. The page keeps
- * itself current so "listening" is always true when it says so, and the stop
+ * itself current so "recording" is always true when it says so, and the stop
  * button is always one press away.
  */
 

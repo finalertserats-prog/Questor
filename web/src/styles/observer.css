@@ -104,3 +104,18 @@
   display: grid;
   gap: 16px;
 }
+
+/* A round that cannot go ahead. Marked with a rule down the left, like the
+   gaps in a transcript and the live indicator above — never a tinted fill,
+   which would read as decoration on a card that is telling somebody their
+   interview is not happening. */
+.observer-blocked {
+  border-left: var(--rail) solid var(--stop);
+}
+
+.observer-next-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}

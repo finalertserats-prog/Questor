@@ -62,8 +62,15 @@ describe('what a human round can claim it holds', () => {
     expect(evidenceView('notes').detail).toContain('nothing here can be checked');
   });
 
-  it('says the transcript is the candidate\'s own words', () => {
-    expect(evidenceView('transcript').detail).toContain('candidate\'s own words');
+  // No longer "the candidate's own words": the round is captured with everyone
+  // in the room consented, so the transcript is everyone's words, and claiming
+  // only the candidate's would understate what a reader is looking at.
+  it('says the transcript is what was said, not anyone\'s recollection of it', () => {
+    expect(evidenceView('transcript').detail).toContain('the words that were actually said');
+  });
+
+  it('says everyone in the room agreed to it before joining', () => {
+    expect(evidenceView('transcript').detail).toContain('agreed to that before they joined');
   });
 });
 

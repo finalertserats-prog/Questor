@@ -21,9 +21,12 @@
  *               nothing checked them against audio. This module is careful, in
  *               the words it hands the UI, never to let that read as a
  *               recording.
- *   transcript  the AI observer captured the round with both parties'
- *               agreement. The only one of the three that is a record of what
- *               was said rather than of what the interviewer made of it.
+ *   transcript  the AI observer captured the round. Every human round is
+ *               observed and nobody is admitted to one without agreeing to be
+ *               recorded (domain/observedRound.ts), so this is the ordinary
+ *               case at Silver and Gold rather than the rare one — and it is
+ *               the only one of the three that is a record of what was said
+ *               rather than of what the interviewer made of it.
  *
  * WHO MAY READ IT
  * Two interviewers on the same candidate at the same stage are there to give
@@ -70,9 +73,9 @@ const EVIDENCE: Readonly<Record<RoundEvidenceKind, RoundEvidenceView>> = {
   transcript: {
     kind: 'transcript',
     label: 'Transcript of the round',
-    detail: 'The AI observer captured this round with both parties\' agreement, so the quotes are the '
-      + 'candidate\'s own words rather than anyone\'s recollection. What the interviewers made of them '
-      + 'is still theirs to say; the observer never scores or recommends.',
+    detail: 'The AI observer captured this round. Everyone in the room agreed to that before they joined it, so '
+      + 'the quotes are the words that were actually said rather than anyone\'s recollection. What the '
+      + 'interviewers made of them is still theirs to say; the observer never scores or recommends.',
   },
 };
 
@@ -85,6 +88,13 @@ export interface EvidenceInput {
   readonly observationStatus: string | null;
   /** How many stretches of the round the observer actually captured. */
   readonly segmentCount: number;
+  /**
+   * Whether the recording heard one voice only — a headset, almost always
+   * (domain/observedRound.ts). Absent on a round recorded before this was
+   * measured, which is read as "not known to be", because relabelling old
+   * rounds under today's threshold would invent a finding about them.
+   */
+  readonly oneSided?: boolean;
 }
 
 /**
@@ -98,7 +108,13 @@ export interface EvidenceInput {
  * certificate's "Evidence of process, not a recommendation" exists to avoid.
  */
 export function evidenceKindOf(input: EvidenceInput): RoundEvidenceKind {
-  if (input.observationStatus === 'ENDED' && input.segmentCount > 0) return 'transcript';
+  // A one-sided recording is NOT a transcript, and this is the line that stops
+  // it being read as one. What the device captured is the interviewer talking;
+  // the candidate is missing from it entirely, and nothing downstream — a
+  // scorecard, a certificate, the transcript-read gate — may treat a record of
+  // one person as evidence of what two people said. It falls through to the
+  // interviewer's own account below, which is what it actually is.
+  if (input.observationStatus === 'ENDED' && input.segmentCount > 0 && input.oneSided !== true) return 'transcript';
   if (input.structuredCount > 0) return 'structured';
   return input.notes.trim().length > 0 ? 'notes' : 'none';
 }

@@ -26,6 +26,11 @@ async function deleteObservations(tx: Prisma.TransactionClient, ids: string[], c
   // Failed model calls can log the start of a reply that quotes the candidate.
   await count('observerModelExecutions', () => tx.modelExecution.deleteMany({ where: { sessionId: { in: ids.map(observationModelRef) } } }));
   await count('observationSegments', () => tx.observationSegment.deleteMany({ where: { observationId: { in: ids } } }));
+  // Before the observation, which they hold a foreign key onto — and after the
+  // segments, which hold one onto them. These rows name the people who were in
+  // the room, so leaving them behind would keep a record of who interviewed an
+  // erased candidate, which is the same personal data by another route.
+  await count('observationParticipants', () => tx.observationParticipant.deleteMany({ where: { observationId: { in: ids } } }));
   await count('observations', () => tx.roundObservation.deleteMany({ where: { id: { in: ids } } }));
 }
 

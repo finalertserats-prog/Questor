@@ -34,19 +34,28 @@ export function tokenFromLink(link: string): string {
   return link.split('/').pop() as string;
 }
 
-/** Interviewer consents; returns the candidate's consent token. */
+/** The interviewer passes the entry gate; returns the candidate's own gate token. */
 export async function interviewerConsents(app: Express, auth: string, roundId: string): Promise<string> {
   const res = await request(app).post(`/api/observer/rounds/${roundId}/consent`).set('Authorization', auth).send({});
   return tokenFromLink(res.body.observation.candidateLink as string);
 }
 
-/** Both parties consent and the interviewer starts listening. */
+/**
+ * Everyone passes the gate and the interviewer enters the room, which is what
+ * starts capture. There is no separate start: see domain/observedRound.ts.
+ */
 export async function listening(app: Express, ids: Seeded) {
   const { pipelineId, roundId } = await humanRound(app, ids);
   const token = await interviewerConsents(app, ids.auth, roundId);
   await request(app).post(`/api/observer-consent/${token}/consent`).send({});
-  await request(app).post(`/api/observer/rounds/${roundId}/start`).set('Authorization', ids.auth).send({});
+  await request(app).post(`/api/observer/rounds/${roundId}/join`).set('Authorization', ids.auth).send({});
   return { pipelineId, roundId, token };
+}
+
+/** The candidate's gate token for a round, read from the room the way staff do. */
+export async function gateToken(app: Express, auth: string, roundId: string): Promise<string> {
+  const res = await request(app).get(`/api/observer/rounds/${roundId}`).set('Authorization', auth);
+  return tokenFromLink(res.body.observation.candidateLink as string);
 }
 
 export function sendText(app: Express, auth: string, roundId: string, text = SPOKEN, offsetMs = 0) {

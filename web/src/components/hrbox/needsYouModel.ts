@@ -7,7 +7,7 @@
 
 export type NeedsYouKind =
   | 'human_request' | 'accommodation' | 'review' | 'feedback_held'
-  | 'invitation_expiring' | 'stalled' | 'catalog_proposals' | 'demo_request';
+  | 'invitation_expiring' | 'stalled' | 'round_not_recordable' | 'catalog_proposals' | 'demo_request';
 
 export interface Looker { readonly userId: string; readonly name: string; readonly initials: string }
 
@@ -21,7 +21,11 @@ export interface NeedsYouRow {
   readonly subject: string | null;
   readonly sessionId: string | null;
   readonly assessmentId: string | null;
-  readonly facts: { readonly interviewerName?: string | null; readonly expiresAt?: string; readonly opened?: boolean; readonly count?: number };
+  readonly facts: {
+    readonly interviewerName?: string | null; readonly expiresAt?: string; readonly opened?: boolean; readonly count?: number;
+    /** For a round that cannot go ahead: the server's own sentence, and what may be done instead. */
+    readonly blockedReason?: string; readonly nextSteps?: readonly string[]; readonly scheduledAt?: string;
+  };
   readonly openedBy: readonly Looker[];
   /**
    * Whether this reader may do the row's work or only look at it. A recruiter
@@ -102,13 +106,14 @@ export interface NeedsYouFeed {
 /** The rule colour a row is drawn with (styles/hrbox.css), never a fill. */
 export type RowTone = 'urgent' | 'review' | 'expire' | 'stall' | 'held' | 'operator';
 
-const KIND_COPY: Readonly<Record<NeedsYouKind, { readonly label: string; readonly tone: RowTone; readonly icon: 'handoff' | 'evidence-review' | 'hourglass' | 'pause' | 'mail' | 'list' | 'inbox' }>> = {
+const KIND_COPY: Readonly<Record<NeedsYouKind, { readonly label: string; readonly tone: RowTone; readonly icon: 'handoff' | 'evidence-review' | 'hourglass' | 'pause' | 'mail' | 'list' | 'inbox' | 'mic' }>> = {
   human_request: { label: 'Asked for a person', tone: 'urgent', icon: 'handoff' },
   accommodation: { label: 'Asked for an adjustment', tone: 'urgent', icon: 'handoff' },
   review: { label: 'Review ready', tone: 'review', icon: 'evidence-review' },
   feedback_held: { label: 'Feedback email held', tone: 'held', icon: 'mail' },
   invitation_expiring: { label: 'Invitation closes soon', tone: 'expire', icon: 'hourglass' },
   stalled: { label: 'Stalled interview', tone: 'stall', icon: 'pause' },
+  round_not_recordable: { label: 'Round cannot go ahead', tone: 'stall', icon: 'mic' },
   catalog_proposals: { label: 'Catalog proposals', tone: 'operator', icon: 'list' },
   demo_request: { label: 'Demo access requested', tone: 'operator', icon: 'inbox' },
 };
@@ -135,6 +140,7 @@ export function waitCaption(kind: NeedsYouKind): string {
   if (kind === 'invitation_expiring') return 'Sent';
   if (kind === 'stalled') return 'Quiet for';
   if (kind === 'feedback_held') return 'Held';
+  if (kind === 'round_not_recordable') return 'Booked for';
   return 'Waiting';
 }
 
@@ -175,6 +181,12 @@ export function whyLine(row: NeedsYouRow): string {
       return row.facts.opened ? 'Opened the link, not started yet.' : 'Has not opened the link yet.';
     case 'stalled':
       return by ? `Stopped part-way with ${by}. Decide whether to reopen or offer a retake.` : 'Stopped part-way. Decide whether to reopen or offer a retake.';
+    case 'round_not_recordable':
+      // The server's own sentence, not a shorter one written here: the feed and
+      // the round itself must say the same thing, and this is the queue where
+      // somebody first learns an interview in the diary will not happen.
+      return row.facts.blockedReason
+        ?? 'This round cannot go ahead as booked. Open the candidate to see why and decide what happens next.';
     case 'catalog_proposals':
       return 'New roles and titles from the monthly refresh wait for your approval.';
     case 'demo_request':

@@ -15,6 +15,7 @@ export const NEEDS_YOU_KINDS = [
   'invitation_expiring',
   'stalled',
   'identity_code_stuck',
+  'round_not_recordable',
   'catalog_proposals',
   'demo_request',
 ] as const;
@@ -59,6 +60,13 @@ export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
   // Retake and reopen are both interview:invite.
   stalled: { capability: 'interview:invite' },
   identity_code_stuck: { capability: 'interview:invite' },
+  // Every human round is recorded, so a round somebody has not agreed to be
+  // recorded in cannot go ahead at all (domain/observedRound.ts). That is a
+  // blocker on a named candidate, not a preference, and the two ways out —
+  // rebooking the round or taking the candidate out of the stage — both need
+  // `interview:schedule`. Gated on it so the row is only ever shown to
+  // somebody who can act on it.
+  round_not_recordable: { capability: 'interview:schedule' },
   catalog_proposals: { operator: 'platformOperator' },
   demo_request: { operator: 'operator' },
 };
@@ -133,6 +141,11 @@ export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: bool
       return { label: 'Decide next step', to: interview };
     case 'identity_code_stuck':
       return { label: 'Check the address', to: interview };
+    case 'round_not_recordable':
+      // The pipeline, on the candidate's own page: rebooking the round and
+      // moving the candidate on are both done there, and the round's own
+      // sentence about why it cannot go ahead is beside them.
+      return { label: 'Decide what happens next', to: target.candidateId ? `/candidates/${target.candidateId}` : interview };
     case 'catalog_proposals':
       return { label: 'Review proposals', to: '/catalog-review' };
     case 'demo_request':
@@ -149,6 +162,7 @@ export const KIND_LABEL: Readonly<Record<NeedsYouKind, string>> = {
   invitation_expiring: 'Invitation closes soon',
   stalled: 'Interview stopped part-way',
   identity_code_stuck: 'Could not send an identity code',
+  round_not_recordable: 'Interview round cannot go ahead',
   catalog_proposals: 'Catalog proposals waiting',
   demo_request: 'Demo access requested again',
 };

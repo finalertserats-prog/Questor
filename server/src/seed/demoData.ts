@@ -143,6 +143,7 @@ export async function wipe(): Promise<void> {
   // Observer segments, observations and the seated interviewers all hang off
   // rounds, so they go first.
   await prisma.observationSegment.deleteMany();
+  await prisma.observationParticipant.deleteMany();
   await prisma.roundObservation.deleteMany();
   await prisma.roundInterviewer.deleteMany();
   await prisma.interviewRound.deleteMany();

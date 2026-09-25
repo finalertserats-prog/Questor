@@ -11,6 +11,7 @@ import {
 import { LIVE_INTERVIEW_STATES, mayObserveLive } from '../services/observerPolicy.js';
 import { leftByButton, LEAVE_SOURCE } from '../realtime/interviewEngine.js';
 import { personaNameOf } from '../domain/persona.js';
+import { roundBlock, type ObservationStatus, type ObservedParty } from '../domain/observedRound.js';
 import type { AssessmentResult, RoleSuccessProfile } from '../domain/types.js';
 
 /**
@@ -103,6 +104,50 @@ async function approvedScorecard(roleId: string) {
  * Their assigned candidates and nothing about anyone else's. Not a filtered
  * candidate list: there is no unfiltered one for this role to fall back to.
  */
+/**
+ * The rounds this expert is seated on that cannot go ahead, keyed by candidate.
+ *
+ * Every human round is recorded, so a round somebody has not agreed to be
+ * recorded in does not run (domain/observedRound.ts). The expert has to be told
+ * where they look, which is here: leaving them to find out by opening an empty
+ * room at the scheduled time wastes their preparation and is the kind of dead
+ * end this product keeps having to go back and fix.
+ *
+ * Scoped by the seat, never by the candidate id alone. `RoundInterviewer` is
+ * the only thing that puts an expert in a room, so a round they are not on is
+ * not theirs to be told about, assigned candidate or not.
+ */
+async function blockedSeatedRounds(userId: string, tenantId: string, candidateIds: readonly string[]) {
+  const rounds = await prisma.interviewRound.findMany({
+    where: {
+      tenantId, status: 'SCHEDULED', conductedBy: 'HUMAN',
+      panel: { some: { userId } },
+      pipeline: { status: 'ACTIVE', candidateId: { in: [...candidateIds] } },
+    },
+    orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true, stageKey: true, scheduledAt: true, status: true,
+      pipeline: { select: { candidateId: true } },
+      observation: { select: { status: true, participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true } } } },
+    },
+  });
+  const byCandidate = new Map<string, Array<{ roundId: string; stageKey: string; scheduledAt: Date; reason: string; nextSteps: readonly string[] }>>();
+  for (const round of rounds) {
+    const block = roundBlock({
+      status: (round.observation?.status ?? 'AWAITING_CONSENT') as ObservationStatus,
+      participants: (round.observation?.participants ?? []).map((p) => ({
+        party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
+      })),
+      roundStatus: round.status,
+    });
+    if (!block) continue;
+    const list = byCandidate.get(round.pipeline.candidateId) ?? [];
+    list.push({ roundId: round.id, stageKey: round.stageKey, scheduledAt: round.scheduledAt, reason: block.reason, nextSteps: block.nextSteps });
+    byCandidate.set(round.pipeline.candidateId, list);
+  }
+  return byCandidate;
+}
+
 smeRouter.get('/assignments', MAY_READ, asyncHandler(async (req, res) => {
   const candidateIds = await smeAssignedCandidateIds(req.auth!.userId);
   if (candidateIds.length === 0) return res.json({ assignments: [], note: SME_ADVISORY_NOTE });
@@ -111,6 +156,7 @@ smeRouter.get('/assignments', MAY_READ, asyncHandler(async (req, res) => {
     where: { id: { in: candidateIds }, tenantId: req.auth!.tenantId },
     select: { id: true, fullName: true, roleId: true, role: { select: { id: true, title: true, level: true } } },
   });
+  const blockedRounds = await blockedSeatedRounds(req.auth!.userId, req.auth!.tenantId, candidateIds);
   const reviews = await prisma.smeReview.findMany({
     where: { smeUserId: req.auth!.userId, candidateId: { in: candidates.map((c) => c.id) } },
     select: { candidateId: true, roleId: true, recommendation: true, updatedAt: true },
@@ -140,6 +186,9 @@ smeRouter.get('/assignments', MAY_READ, asyncHandler(async (req, res) => {
         review: reviewOf(candidate)
           ? { recommendation: reviewOf(candidate)!.recommendation, updatedAt: reviewOf(candidate)!.updatedAt }
           : null,
+        // Rounds of theirs that cannot go ahead, each with the reason in a
+        // sentence and what can be done next. Empty for the ordinary case.
+        blockedRounds: blockedRounds.get(candidate.id) ?? [],
       })),
     note: SME_ADVISORY_NOTE,
   });

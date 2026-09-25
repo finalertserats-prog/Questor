@@ -29,6 +29,10 @@ import {
   checkEvidenceEntries, evidenceKindOf, evidenceView, parseEvidenceEntries, peerNotesWereVisible, peerQuarantine,
   MAX_ENTRY_CHARS, MAX_EVIDENCE_ENTRIES, type QuarantineInput,
 } from '../domain/roundEvidence.js';
+import {
+  ENTRY_NOTICE_VERSION, captureReport, roundBlock, type ObservationStatus, type ObservedParty,
+} from '../domain/observedRound.js';
+import { invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { scorecardForFit } from '../services/scorecards.js';
 import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
 import { decidePipeline } from '../services/pipelineAutonomy.js';
@@ -51,12 +55,28 @@ pipelinesRouter.use(authenticate);
 /** A round with everything a reader needs: who is seated on it, and what it captured. */
 export const roundInclude = {
   panel: { orderBy: { createdAt: 'asc' as const }, include: { user: { select: { id: true, name: true } } } },
-  observation: { select: { status: true, _count: { select: { segments: true } } } },
+  observation: {
+    select: {
+      status: true, captureStatus: true, oneSided: true,
+      // SPEECH only. A gap is a stretch the observer could NOT capture, so a
+      // round whose every segment is a gap has captured nothing — counting
+      // those would let it report as a transcript of a conversation none of
+      // which was heard.
+      _count: { select: { segments: { where: { kind: 'SPEECH' } } } },
+      participants: { select: { party: true, personId: true, consentAt: true, declinedAt: true } },
+    },
+  },
 };
 
 export type RoundRow = InterviewRound & {
   panel: Array<{ userId: string; seat: string; user: { id: string; name: string } }>;
-  observation: { status: string; _count: { segments: number } } | null;
+  observation: {
+    status: string;
+    captureStatus: string;
+    oneSided: boolean;
+    _count: { segments: number };
+    participants: Array<{ party: string; personId: string; consentAt: Date | null; declinedAt: Date | null }>;
+  } | null;
 };
 
 export type PipelineWithRounds = CandidatePipeline & { rounds: RoundRow[] };
@@ -113,6 +133,9 @@ export function presentRound(round: RoundRow, viewer: RoundViewer) {
     structuredCount: entries.length,
     observationStatus: round.observation?.status ?? null,
     segmentCount: round.observation?._count.segments ?? 0,
+    // A recording that heard one voice is not a transcript, whatever it
+    // contains (domain/roundEvidence.ts).
+    oneSided: round.observation?.oneSided ?? false,
   }));
   return {
     id: round.id,
@@ -149,6 +172,30 @@ export function presentRound(round: RoundRow, viewer: RoundViewer) {
     // showed nothing. '' whenever nothing is being withheld.
     notesWithheld: quarantine.reason,
     evidence,
+    // Why this round cannot go ahead, when it cannot. Same discipline as
+    // `notesWithheld` above: a round nobody may enter must never read like a
+    // round nobody got round to booking, so it carries a sentence and what can
+    // be done next rather than a status the page would have to interpret.
+    observerBlocked: round.observation
+      ? roundBlock({
+        status: round.observation.status as ObservationStatus,
+        participants: round.observation.participants.map((p) => ({
+          party: p.party as ObservedParty, personId: p.personId, consentAt: p.consentAt, declinedAt: p.declinedAt,
+        })),
+        roundStatus: round.status,
+      })
+      : null,
+    // What the recording got, once the round is over: everything, some of it,
+    // one voice, or nothing. A fact about the recording, said to HR in the same
+    // register as a round that could not go ahead.
+    captureReport: round.observation
+      ? captureReport({
+        status: round.observation.status as ObservationStatus,
+        speechCount: round.observation._count.segments,
+        captureStatus: round.observation.captureStatus,
+        oneSided: round.observation.oneSided,
+      })
+      : null,
     // Who wrote the record, for a certificate that would otherwise have to say
     // "the hiring team". Null on a round closed before the author was stored.
     recordedBy: round.recordedByUserId
@@ -627,6 +674,31 @@ pipelinesRouter.post('/:id/rounds', requireCapability('interview:schedule'), asy
         await assignCandidate(pipeline.candidateId, seat.userId, 'interviewer', tx);
       }
     }
+    // Every human round is observed, so the observation is booked with the
+    // round rather than started by a press later. In the same transaction for
+    // the same reason the seats are: a human round without one is a round
+    // whose people have nothing to agree to and which therefore cannot run.
+    //
+    // It starts at AWAITING_CONSENT with a row per person and no consent on
+    // any of them, so creating it captures nothing — it only opens the gate
+    // for everybody to pass.
+    if (roles.conductedBy === 'HUMAN' && roles.aiObserver) {
+      const entry = mintInvitationToken();
+      const secrets = invitationSecretColumns(entry);
+      await tx.roundObservation.create({
+        data: {
+          tenantId, roundId: created.id, candidateId: pipeline.candidateId, noticeVersion: ENTRY_NOTICE_VERSION,
+          interviewerId: panel[0]?.userId ?? '',
+          candidateTokenHash: secrets.tokenHash, candidateTokenSealed: secrets.tokenSealed,
+          participants: {
+            create: [
+              { tenantId, party: 'candidate', personId: pipeline.candidateId, noticeVersion: ENTRY_NOTICE_VERSION },
+              ...panel.map((seat) => ({ tenantId, party: 'interviewer', personId: seat.userId, noticeVersion: ENTRY_NOTICE_VERSION })),
+            ],
+          },
+        },
+      });
+    }
     return { round: created, noticeAdded, rebookedFrom };
   });
 
@@ -791,8 +863,9 @@ pipelinesRouter.post('/:id/rounds/:roundId/complete', MAY_REACH_A_ROUND, asyncHa
   // The round is over, so its AI observer is too: capture closes and the
   // transcript becomes read-only. Quotes are extracted in the background; the
   // round's own completion does not wait on a model.
-  const observationId = await endObservation(round.id, req.auth!.userId);
-  if (observationId) {
+  const ended = await endObservation(round.id, req.auth!.userId);
+  if (ended?.mayExtractQuotes) {
+    const { observationId } = ended;
     void extractEvidenceQuotes(observationId).catch((err: unknown) => {
       logger.error({ err: err instanceof Error ? err.message : String(err), observationId }, 'Observer quote extraction crashed');
     });

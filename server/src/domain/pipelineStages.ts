@@ -83,6 +83,13 @@ export interface RoundRoles {
 /** Who runs an interview round at a stage of this kind; null when the stage is not an interview. */
 export function roundRolesFor(kind: StageKind): RoundRoles | null {
   if (kind === 'ai_interview') return { conductedBy: 'AI', aiObserver: false, hrMayObserve: true };
+  // `hrMayObserve` stays false for a human round, and that is not an oversight
+  // about HR joining one — they may, and are expected to. It means something
+  // narrower: HR watching the AI interview SILENTLY, which the candidate is
+  // told about in the disclosure and never sees. In a human round HR is a
+  // person in the room whose own voice is captured and who passes the same
+  // entry gate as everybody else (domain/observedRound.ts). Setting this true
+  // would promise the candidate the silent kind, which is not what happens.
   if (kind === 'human_interview') return { conductedBy: 'HUMAN', aiObserver: true, hrMayObserve: false };
   return null;
 }

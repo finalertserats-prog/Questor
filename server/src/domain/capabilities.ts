@@ -27,6 +27,23 @@ export type Capability =
   | 'retention:configure'
   | 'audit:read'
   | 'admin:manage'
+  // Being in the room of an observed round, and nothing else.
+  //
+  // Its own namespace rather than an `interview:*` grant, and that is the whole
+  // point of it. An SME conducting a Gold round has to be able to consent to
+  // being recorded and to enter the room; the nearest existing capability,
+  // `interview:read`, also reaches scheduling and the routes that move a
+  // candidate between stages, which the owner has confirmed an SME must never
+  // have (docs/credentials-contract.md §3). A name under `interview:` would
+  // read as a general interview grant to whoever next writes a route guard —
+  // this one cannot be mistaken for one.
+  //
+  // It is half of the check, never the whole of it. On its own it opens
+  // nothing: services/roundObserver.ts additionally requires a seat on THAT
+  // round (a RoundInterviewer row) or an existing participant row, so it is not
+  // a way to read a colleague's round, and the candidate scope in
+  // services/access.ts still applies on top.
+  | 'observer:attend'
   // The subject-matter expert's two grants, and the one that puts work in front
   // of them. Named apart from `assessment:*` on purpose: an SME's opinion is
   // advice, a reviewer's is a decision the pipeline acts on, and giving the two
@@ -46,11 +63,12 @@ const CAPABILITIES: Record<RoleName, readonly Capability[]> = {
   // Runs requisitions and the candidates they are assigned. Deliberately cannot
   // approve the scorecard they authored, nor sign off an assessment.
   recruiter: ['role:create', 'role:read', 'role:edit_scorecard', 'candidate:create', 'candidate:read',
-    'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'interview:drive', 'assessment:read', 'sme:assign'],
+    'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'interview:drive', 'assessment:read',
+    'observer:attend', 'sme:assign'],
   // Hiring manager: approves what the recruiter drafted, and reviews outcomes.
   manager: ['role:create', 'role:read', 'role:edit_scorecard', 'role:approve_scorecard', 'candidate:read',
     'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'assessment:read', 'assessment:review', 'assessment:export',
-    'sme:assign'],
+    'observer:attend', 'sme:assign'],
   // Exists so review can be separated from whoever ran the interview. No
   // `sme:assign`: choosing who assesses a candidate is running the process, and
   // this role is deliberately only the second opinion on its output.
@@ -69,7 +87,14 @@ const CAPABILITIES: Record<RoleName, readonly Capability[]> = {
   // gates /finalize and /decision. Those are every way a candidate moves
   // between stages, so "an SME recommendation never moves anyone" is enforced
   // by this list rather than by remembering not to call them.
-  sme: ['sme:assigned_read', 'sme:review'],
+  //
+  // `observer:attend` is the one addition, and it is narrow on purpose: every
+  // human round is recorded, so an expert who could not be observed could not
+  // conduct one at all. It lets them read the entry notice, agree to being
+  // recorded, enter a round they are seated on and be captured in it. It
+  // reaches no other round, and none of scheduling, booking or moving a
+  // candidate — which remain absent from this list exactly as before.
+  sme: ['sme:assigned_read', 'sme:review', 'observer:attend'],
   // Tenant-wide, and every grant is listed explicitly rather than being an
   // invisible bypass inside the permission check.
   //
@@ -90,7 +115,7 @@ const CAPABILITIES: Record<RoleName, readonly Capability[]> = {
   admin: ['role:create', 'role:read', 'role:edit_scorecard', 'role:approve_scorecard', 'candidate:create',
     'candidate:read', 'candidate:erase', 'interview:create', 'interview:read', 'interview:invite', 'interview:schedule', 'interview:drive',
     'assessment:read', 'assessment:review', 'assessment:export', 'retention:configure',
-    'audit:read', 'admin:manage', 'sme:assign'],
+    'audit:read', 'admin:manage', 'observer:attend', 'sme:assign'],
 };
 
 export function isRoleName(v: string): v is RoleName {
