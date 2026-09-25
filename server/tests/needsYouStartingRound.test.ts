@@ -4,6 +4,7 @@ import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { signToken } from '../src/services/auth.js';
+import { collectNeedsYou } from '../src/services/needsYouRows.js';
 
 /**
  * The one round that belongs in "Needs you".
@@ -24,11 +25,11 @@ async function seeded() {
   return { tenantId: ids.tenantId, candidateId: ids.candidateId, auth: `Bearer ${login.body.token as string}` };
 }
 
-async function colleague(tenantId: string, handle: string) {
+async function colleague(tenantId: string, handle: string, role: 'recruiter' | 'sme' = 'recruiter') {
   const user = await prisma.user.create({
-    data: { tenantId, email: `${handle}@demo.local`, name: handle, passwordHash: 'x', role: 'recruiter' },
+    data: { tenantId, email: `${handle}@demo.local`, name: handle, passwordHash: 'x', role },
   });
-  return { id: user.id, auth: `Bearer ${signToken({ userId: user.id, tenantId, role: 'recruiter', email: user.email })}` };
+  return { id: user.id, auth: `Bearer ${signToken({ userId: user.id, tenantId, role, email: user.email })}` };
 }
 
 async function pipelineAtGold(auth: string, candidateId: string) {
@@ -113,6 +114,74 @@ describe('a round you are seated on in the "Needs you" queue', () => {
     const res = await queue(ids.auth);
 
     expect(startingRows(res.body)).toHaveLength(0);
+  });
+
+  /**
+   * What an expert's row would carry if they could reach the queue.
+   *
+   * They cannot today: /api/dashboard/needs-you is gated on `candidate:read`
+   * and an SME holds none. But the kind's gate admits `sme:assigned_read`, so
+   * the grant is already written and waiting for somebody to widen the route —
+   * and a seat is not an assignment. These go through `collectNeedsYou`
+   * directly, which is the layer that would be exposed, so they fail the day
+   * the route opens with the leak still in it rather than after.
+   */
+  describe('an expert seated on the round', () => {
+    const claims = (userId: string, tenantId: string) => ({ userId, tenantId, role: 'sme', email: 'e@demo.local' });
+
+    it('is not told who the candidate is when all they hold is the seat', async () => {
+      const ids = await seeded();
+      const sme = await colleague(ids.tenantId, 'sme-seat-only', 'sme');
+      await roundAt(ids, sme.id, new Date(Date.now() + 5 * 60_000));
+
+      const { rows } = await collectNeedsYou(claims(sme.id, ids.tenantId), new Date());
+
+      expect(rows.filter((r) => r.kind === 'round_starting').map((r) => r.candidate)).toEqual([null]);
+    });
+
+    it('is sent to their own worklist, not to a candidate page their assignment would refuse', async () => {
+      const ids = await seeded();
+      const sme = await colleague(ids.tenantId, 'sme-seat-link', 'sme');
+      await roundAt(ids, sme.id, new Date(Date.now() + 5 * 60_000));
+
+      const { rows } = await collectNeedsYou(claims(sme.id, ids.tenantId), new Date());
+
+      expect(rows.find((r) => r.kind === 'round_starting')?.action.to).toBe('/sme');
+    });
+
+    it('keeps the role title back too, which names the requisition', async () => {
+      const ids = await seeded();
+      const sme = await colleague(ids.tenantId, 'sme-seat-role', 'sme');
+      await roundAt(ids, sme.id, new Date(Date.now() + 5 * 60_000));
+
+      const { rows } = await collectNeedsYou(claims(sme.id, ids.tenantId), new Date());
+
+      expect(rows.find((r) => r.kind === 'round_starting')?.role).toBeNull();
+    });
+
+    it('still gets the row, because they do have somewhere to be', async () => {
+      const ids = await seeded();
+      const sme = await colleague(ids.tenantId, 'sme-seat-row', 'sme');
+      await roundAt(ids, sme.id, new Date(Date.now() + 5 * 60_000));
+
+      const { rows } = await collectNeedsYou(claims(sme.id, ids.tenantId), new Date());
+
+      expect(rows.filter((r) => r.kind === 'round_starting')).toHaveLength(1);
+    });
+
+    // Assigned is the entitlement the owner actually granted, and it is the
+    // only thing that turns the name back on.
+    it('is named the candidate once they have actually been assigned them', async () => {
+      const ids = await seeded();
+      const sme = await colleague(ids.tenantId, 'sme-assigned', 'sme');
+      await request(app).post(`/api/candidates/${ids.candidateId}/sme`).set('Authorization', ids.auth).send({ userId: sme.id });
+      await roundAt(ids, sme.id, new Date(Date.now() + 5 * 60_000));
+
+      const { rows } = await collectNeedsYou(claims(sme.id, ids.tenantId), new Date());
+      const row = rows.find((r) => r.kind === 'round_starting');
+
+      expect([row?.candidate?.id, row?.action.to]).toEqual([ids.candidateId, `/sme/candidates/${ids.candidateId}`]);
+    });
   });
 
   it('offers the meeting itself when the round has a link', async () => {

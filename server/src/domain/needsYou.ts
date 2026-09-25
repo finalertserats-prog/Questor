@@ -141,12 +141,16 @@ export interface ActionTarget {
   /** The meeting a round about to start is held in, when it has one. */
   readonly meetingUrl?: string | null;
   /**
-   * The reader reaches candidates through /api/sme rather than the hiring
-   * team's pages. Their row has to point at the surface their role can open:
-   * an expert sent to /candidates/:id lands on a 404 they cannot read as
-   * anything but "the link is broken".
+   * The candidate page THIS reader may open, already resolved by
+   * `candidateSurfaceFor` — not derived here from the candidate id.
+   *
+   * Deriving it here was a bug waiting for someone else to trip it. A path
+   * built from an id alone cannot know whether the reader is entitled to that
+   * candidate, so an expert holding nothing but a round seat was being pointed
+   * at `/sme/candidates/:id`, which their assignment would refuse. The caller
+   * knows the answer; it has to carry it rather than let this file guess.
    */
-  readonly expertLane?: boolean;
+  readonly candidatePath?: string | null;
 }
 
 /**
@@ -201,19 +205,14 @@ export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: bool
     //
     // Not "Confirm": nothing in the product records an interviewer accepting a
     // round, and a button whose press is not stored is worse than no button.
-    // When the round has no meeting link yet the honest offer is the candidate
-    // instead — the one page that answers "who am I seeing, and against what" —
-    // and the label says so rather than promising a room that does not exist.
+    // With no meeting link the offer falls back to whatever page this reader
+    // may open — which for someone holding only a seat is their own worklist,
+    // not the candidate. Null rather than a guessed path when there is none.
     case 'round_starting':
       return target.meetingUrl
         ? { label: 'Join', to: target.meetingUrl, external: true }
-        : { label: 'Get ready', to: candidatePage(target) };
+        : { label: 'Get ready', to: target.candidatePath ?? null };
   }
-}
-
-function candidatePage(target: ActionTarget): string | null {
-  if (!target.candidateId) return null;
-  return target.expertLane ? `/sme/candidates/${target.candidateId}` : `/candidates/${target.candidateId}`;
 }
 
 /** How a kind is named where the web's own copy is not available (the daily summary email). */

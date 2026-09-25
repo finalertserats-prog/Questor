@@ -193,9 +193,12 @@ export function whyLine(row: NeedsYouRow): string {
   const by = row.facts.interviewerName;
   switch (row.kind) {
     case 'round_starting':
+      // Deliberately does not promise the candidate: the row may be for an
+      // expert whose only claim is the seat, and the server sends them to their
+      // own worklist because a seat is not an assignment.
       return row.action.external
         ? 'You are conducting this. The meeting is open.'
-        : 'You are conducting this. No meeting link on the round yet — open the candidate.';
+        : 'You are conducting this. There is no meeting link on the round yet.';
     case 'identity_code_stuck':
       return 'Their identity code could not be sent. Check the address on file.';
     case 'human_request':

@@ -127,12 +127,22 @@ describe('needs-you actions', () => {
       .toEqual({ label: 'Join', to: 'https://meet.example.com/abc', external: true });
   });
 
-  it('offers the candidate instead when the round has no meeting link yet', () => {
-    expect(actionFor('round_starting', { candidateId: 'c1' })).toEqual({ label: 'Get ready', to: '/candidates/c1' });
+  it('offers the page the reader may open when the round has no meeting link yet', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', candidatePath: '/candidates/c1' }))
+      .toEqual({ label: 'Get ready', to: '/candidates/c1' });
   });
 
-  it('sends an expert to the candidate on the surface their role can open', () => {
-    expect(actionFor('round_starting', { candidateId: 'c1', expertLane: true }).to).toBe('/sme/candidates/c1');
+  // The path is resolved by the caller (domain/candidateSurface.ts), never
+  // built here from the id: an id alone cannot say whether this reader is
+  // entitled to that candidate, and guessing is how the queue came to point an
+  // unassigned expert at a page their assignment would refuse.
+  it('offers nothing rather than guessing a page when the caller resolved none', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1' }).to).toBeNull();
+  });
+
+  it('still offers the meeting when there is one, whatever page the reader may open', () => {
+    expect(actionFor('round_starting', { candidateId: 'c1', candidatePath: null, meetingUrl: 'https://meet.example.com/abc' }).to)
+      .toBe('https://meet.example.com/abc');
   });
 });
 

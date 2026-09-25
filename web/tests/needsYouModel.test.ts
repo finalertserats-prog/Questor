@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   bellBadge, bellLabel, clockLabel, closesIn, comingUpState, crewNote, crewSentence, doneLine, greetingFor, kindLine,
-  lookedLine, splitComingUp, waitCaption, waitLabel, whyLine,
+  lookedLine, splitComingUp, waitCaption, waitLabel, whoOf, whyLine,
   type ComingUpItem, type CrewMember, type NeedsYouRow,
 } from '../src/components/hrbox/needsYouModel';
 
@@ -90,7 +90,19 @@ describe('row copy', () => {
 
   it('says so plainly when a round about to start has no meeting link', () => {
     const noLink = startingRow(NOW + 5 * MIN);
-    expect(whyLine({ ...noLink, action: { label: 'Get ready', to: '/candidates/c1' } })).toContain('No meeting link');
+    expect(whyLine({ ...noLink, action: { label: 'Get ready', to: '/candidates/c1' } })).toContain('no meeting link');
+  });
+
+  // The row may belong to an expert holding only the seat, who is not entitled
+  // to the candidate and is sent to their own worklist instead.
+  it('does not promise the candidate to a reader who may not be shown one', () => {
+    const seatOnly = { ...startingRow(NOW + 5 * MIN), candidate: null, role: null, subject: 'An interview you are conducting' };
+    expect(whyLine({ ...seatOnly, action: { label: 'Get ready', to: '/sme' } })).not.toContain('candidate');
+  });
+
+  it('falls back to what the row is about when it may not name anybody', () => {
+    const seatOnly = { ...startingRow(NOW + 5 * MIN), candidate: null, role: null, subject: 'An interview you are conducting' };
+    expect(whoOf(seatOnly)).toBe('An interview you are conducting');
   });
 
   it('names the interviewer whose assessment is in', () => {

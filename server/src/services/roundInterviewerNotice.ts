@@ -3,7 +3,7 @@ import { logger } from '../logger.js';
 import { config } from '../config.js';
 import { getEmail, type EmailMessage } from '../providers/email/index.js';
 import { brandedEmail, escapeHtml, headerSafe } from '../providers/email/branding.js';
-import { capabilitiesOf } from '../domain/capabilities.js';
+import { candidateSurfaceFor } from '../domain/candidateSurface.js';
 import { SME_RELATION } from './access.js';
 import { tenantTimeZone } from './tenantTimeZone.js';
 import { formatScheduledTime } from './zonedTime.js';
@@ -167,21 +167,16 @@ export function buildRoundInterviewerEmail(d: InterviewerEmail): EmailMessage {
 }
 
 /**
- * The page a seated person's own role can open for this candidate.
+ * The page a seated person's own role can open, as a whole URL.
  *
- * Not one link for everybody. A colleague who works in candidate scope reaches
- * /candidates/:id; an expert holds none of the capabilities that page is gated
- * on and reaches the candidate only through /api/sme — and only for a candidate
- * they were ASSIGNED, which a round seat does not grant (routes/pipelines.ts
- * says so in as many words). So an expert who has not also been assigned has no
- * candidate page at all, and is sent to their own worklist rather than to a 404
- * they would read as a broken product.
+ * The decision itself is `candidateSurfaceFor`, shared with the "Needs you"
+ * queue so the two surfaces cannot answer the same question differently. Its
+ * `mayName` half is not read here, and does not need to be: this letter never
+ * names the candidate to anybody (see the file comment).
  */
 function linkFor(role: string, candidateId: string, smeAssigned: boolean): string | null {
-  const capabilities = capabilitiesOf(role);
-  if (capabilities.includes('candidate:read')) return `${config.webOrigin}/candidates/${candidateId}`;
-  if (!capabilities.includes('sme:assigned_read')) return null;
-  return smeAssigned ? `${config.webOrigin}/sme/candidates/${candidateId}` : `${config.webOrigin}/sme`;
+  const { path } = candidateSurfaceFor({ role, candidateId, smeAssigned });
+  return path && `${config.webOrigin}${path}`;
 }
 
 export interface NotifyInterviewersInput {

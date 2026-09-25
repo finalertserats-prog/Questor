@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
-import { candidateScope, capabilitiesOf } from './access.js';
+import { candidateScope, capabilitiesOf, SME_RELATION } from './access.js';
+import { candidateSurfaceFor } from '../domain/candidateSurface.js';
 import { getNeedsAttention } from './dashboardMetrics.js';
 import { lookersByEntity, type Looker } from './assessmentViews.js';
 import { interviewerIdOf, listActiveInterviewers } from './interviewers.js';
@@ -51,15 +52,6 @@ export const PER_KIND_SCAN = 200;
 const STARTING_LEAD_MS = 15 * 60_000;
 /** The longest a round may run (routes/roundMeetingSchemas.ts), which bounds the query. */
 const LONGEST_ROUND_MS = 480 * 60_000;
-/**
- * Always read at least this many seated rounds, whatever `scan` the caller
- * asked for. Every other kind counts with its own `count()` query, so the bell
- * can pass `scan: 1` and still get an exact total; this kind's count comes from
- * the rows, so a scan of 1 would have reported "1" to somebody seated on two
- * rounds at once. The window is minutes wide and scoped to one person's seats,
- * so nobody reaches this floor.
- */
-const SEATED_SCAN_FLOOR = 50;
 /** Interviews that stopped part-way (services/incompleteInterviews.ts). */
 const STALLED_STATES = ['INCOMPLETE', 'TECHNICAL_FAILURE'];
 /** Invitations whose link a candidate may still hold. */
@@ -119,11 +111,15 @@ export function gateContextOf(auth: AuthClaims): GateContext {
 const ATTENTION_KINDS = ['review', 'accommodation', 'human_request', 'feedback_held'] as const;
 
 /**
- * `meetingUrl` is draft-only: it decides where the row's action points and is
- * then dropped, rather than being published beside an action that already
- * carries it. One answer to "where do I join" is enough.
+ * `meetingUrl` and `candidatePath` are draft-only: between them they decide
+ * where the row's action points, and are then dropped rather than published
+ * beside an action that already carries the answer. One answer to "where do I
+ * go" is enough, and a second copy is a second thing to keep in step.
  */
-type Draft = Omit<NeedsYouRow, 'urgent' | 'openedBy' | 'canAct' | 'action'> & { readonly meetingUrl?: string | null };
+type Draft = Omit<NeedsYouRow, 'urgent' | 'openedBy' | 'canAct' | 'action'> & {
+  readonly meetingUrl?: string | null;
+  readonly candidatePath?: string | null;
+};
 
 const sessionSelect = {
   id: true,
@@ -285,39 +281,82 @@ async function stalledDrafts(tenantId: string, candidate: Prisma.CandidateWhereI
  * Human rounds only. On an AI round the seat is an observer, not a conductor,
  * and "join" is not what they would be doing.
  *
- * The count comes from the rows rather than from a second `count()` query,
- * because whether a round is over depends on its own `durationMinutes` — an
- * expression Prisma cannot filter on, and two queries that disagree about the
- * total is worse than one bounded read. See SEATED_SCAN_FLOOR for what keeps
- * the read deep enough for that count to be true.
+ * Whether a round is over depends on its own `durationMinutes`, which is not an
+ * expression Prisma can filter on — so the end is decided here rather than by
+ * the database. That is why this reads twice: once for two scalar columns over
+ * the whole window, which makes the count EXACT the way every other kind's
+ * `count()` is, and once for the rows the page will actually show. A single
+ * capped read would have given a number that quietly stopped being true past
+ * the cap, and a count nobody can trust is worse than a slower one.
+ *
+ * Who the candidate is travels only to a reader entitled to know
+ * (`candidateSurfaceFor`). A seat is not an assignment, so an expert holding
+ * one gets the row without the name — see domain/candidateSurface.ts.
  */
-async function startingDrafts(tenantId: string, userId: string, now: Date, limit: number) {
-  const rows = await prisma.interviewRound.findMany({
-    where: {
-      tenantId, status: 'SCHEDULED', conductedBy: 'HUMAN',
-      panel: { some: { userId } },
-      scheduledAt: { gte: new Date(now.getTime() - LONGEST_ROUND_MS), lte: new Date(now.getTime() + STARTING_LEAD_MS) },
-    },
-    orderBy: [{ scheduledAt: 'asc' }, { id: 'asc' }], take: Math.max(limit, SEATED_SCAN_FLOOR),
-    select: { id: true, scheduledAt: true, durationMinutes: true, meetingUrl: true, pipeline: { select: sessionSelect } },
+async function startingDrafts(tenantId: string, userId: string, role: string, now: Date, limit: number) {
+  const where: Prisma.InterviewRoundWhereInput = {
+    tenantId, status: 'SCHEDULED', conductedBy: 'HUMAN',
+    panel: { some: { userId } },
+    scheduledAt: { gte: new Date(now.getTime() - LONGEST_ROUND_MS), lte: new Date(now.getTime() + STARTING_LEAD_MS) },
+  };
+  const order = [{ scheduledAt: 'asc' as const }, { id: 'asc' as const }];
+  // Two columns and no join: the cost of a `count()`, and seat-scoped to a
+  // window a few hours wide, so there is nothing here to bound.
+  const windowed = await prisma.interviewRound.findMany({
+    where, orderBy: order, select: { id: true, scheduledAt: true, durationMinutes: true },
   });
-  const live = rows.filter((r) => r.scheduledAt.getTime() + r.durationMinutes * 60_000 > now.getTime());
-  const drafts: Draft[] = live.map((r) => ({
-    id: `round_starting:${r.id}`,
-    kind: 'round_starting',
-    since: r.scheduledAt.toISOString(),
-    candidate: { id: r.pipeline.candidate.id, name: r.pipeline.candidate.fullName },
-    role: { id: r.pipeline.role.id, title: r.pipeline.role.title },
-    subject: null,
-    // No session, even where the round has one. `enrichRows` reads a session
-    // to name the AI interviewer who ran it and to list who else has opened it;
-    // neither says anything true about a human round somebody is walking into.
-    sessionId: null,
-    assessmentId: null,
-    meetingUrl: r.meetingUrl,
-    facts: {},
-  }));
+  const live = windowed.filter((r) => r.scheduledAt.getTime() + r.durationMinutes * 60_000 > now.getTime());
+  if (live.length === 0) return { count: 0, drafts: [] as Draft[] };
+
+  // By id, so a page of rows cannot be crowded out by rounds that have already
+  // finished sitting ahead of them in the window.
+  const wanted = live.slice(0, limit).map((r) => r.id);
+  const rows = await prisma.interviewRound.findMany({
+    where: { id: { in: wanted } }, orderBy: order,
+    select: { id: true, scheduledAt: true, meetingUrl: true, pipeline: { select: sessionSelect } },
+  });
+  // One assignment read for the page, not one per row — and none at all on the
+  // common path, where the reader works in candidate scope and the answer
+  // cannot change what they are shown.
+  const assigned = capabilitiesOf(role).includes('candidate:read')
+    ? new Set<string>()
+    : await smeAssignedAmong(userId, rows.map((r) => r.pipeline.candidate.id));
+
+  const drafts: Draft[] = rows.map((r) => {
+    const surface = candidateSurfaceFor({
+      role, candidateId: r.pipeline.candidate.id, smeAssigned: assigned.has(r.pipeline.candidate.id),
+    });
+    return {
+      id: `round_starting:${r.id}`,
+      kind: 'round_starting',
+      since: r.scheduledAt.toISOString(),
+      candidate: surface.mayName ? { id: r.pipeline.candidate.id, name: r.pipeline.candidate.fullName } : null,
+      role: surface.mayName ? { id: r.pipeline.role.id, title: r.pipeline.role.title } : null,
+      // What the row is about when it may not say who. Enough to act on — they
+      // know whose interview it is once they are in the room — without the
+      // queue being the thing that names a person nobody assigned them.
+      subject: surface.mayName ? null : 'An interview you are conducting',
+      // No session, even where the round has one. `enrichRows` reads a session
+      // to name the AI interviewer who ran it and to list who else has opened it;
+      // neither says anything true about a human round somebody is walking into.
+      sessionId: null,
+      assessmentId: null,
+      meetingUrl: r.meetingUrl,
+      candidatePath: surface.path,
+      facts: {},
+    };
+  });
   return { count: live.length, drafts };
+}
+
+/** Which of these candidates this person holds the SME assignment for. */
+async function smeAssignedAmong(userId: string, candidateIds: readonly string[]): Promise<ReadonlySet<string>> {
+  if (candidateIds.length === 0) return new Set();
+  const rows = await prisma.candidateAssignment.findMany({
+    where: { userId, relation: SME_RELATION, candidateId: { in: [...new Set(candidateIds)] } },
+    select: { candidateId: true },
+  });
+  return new Set(rows.map((row) => row.candidateId));
 }
 
 async function catalogDrafts(): Promise<{ count: number; drafts: Draft[] }> {
@@ -372,7 +411,7 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
     may('round_not_recordable') ? blockedRoundDrafts(tenantId, candidate, scan) : none,
     may('catalog_proposals') ? catalogDrafts() : none,
     may('demo_request') ? demoDrafts(now, scan) : none,
-    may('round_starting') ? startingDrafts(tenantId, auth.userId, now, scan) : none,
+    may('round_starting') ? startingDrafts(tenantId, auth.userId, auth.role, now, scan) : none,
   ]);
 
   const counts = emptyCounts();
@@ -392,13 +431,10 @@ export async function collectNeedsYou(auth: AuthClaims, now: Date, scan: number 
   counts.round_starting = starting.count;
   drafts.push(...expiring.drafts, ...stalled.drafts, ...identity.drafts, ...blockedRounds.drafts, ...catalog.drafts, ...demo.drafts, ...starting.drafts);
 
-  // Which surface this reader's role can open a candidate on. Read once from
-  // the capabilities already in hand rather than per row.
-  const expertLane = !gate.capabilities.includes('candidate:read');
   const rows = drafts
-    .map(({ meetingUrl, ...d }): NeedsYouRow => ({
+    .map(({ meetingUrl, candidatePath, ...d }): NeedsYouRow => ({
       ...d, urgent: isUrgent(d.kind), openedBy: [], canAct: canAct(d.kind),
-      action: actionFor(d.kind, { ...d, candidateId: d.candidate?.id, meetingUrl, expertLane }, canAct(d.kind)),
+      action: actionFor(d.kind, { ...d, candidateId: d.candidate?.id, meetingUrl, candidatePath }, canAct(d.kind)),
     }))
     .sort(compareNeedsYou);
   const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
