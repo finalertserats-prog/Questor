@@ -129,29 +129,49 @@ export function linkedinSlug(url: string): string {
 }
 
 /**
- * The spellings of a slug that mean the same profile.
+ * A pattern matching one slug however its characters were percent-encoded.
  *
- * A stored `alice%2Dnguyen-83xq7z` and a transcript's browser-visible
- * `alice-nguyen-83xq7z` are the same person, and matching one does not match
- * the other. Percent-encoding is the same family as the scheme and the
- * trailing slash — variants of one link — and was the one left out.
+ * Enumerating spellings was the obvious approach and it does not work: any
+ * character may be percent-encoded, and `encodeURIComponent` escapes almost
+ * none of them. It leaves `-` alone, so for a slug like `alice-nguyen-83xq7z`
+ * the round trip produces the string you started with and the `%2D` spelling a
+ * site may actually serve is never generated. Percent-encoding is a per
+ * character choice, so the match has to be too.
  *
- * It matters more than it looks. When a slug is name-like and the link needle
- * misses, the name pass chews it into "[name]-[name]-83xq7z", and that suffix
- * is still enough to find the profile.
+ * Each character therefore matches itself OR its escape. The `i` flag covers
+ * `%2d` against `%2D`. Non-ASCII characters use their UTF-8 escape sequence,
+ * which is what `encodeURIComponent` produces for them.
  *
- * A malformed escape is not decodable and is simply left as stored.
+ * This matters more than it looks. When the link needle misses a name-like
+ * slug, the name pass chews it into "[name]-[name]-83xq7z", and the suffix is
+ * still enough to find the profile.
  */
-function slugSpellings(slug: string): readonly string[] {
-  const decoded = (() => {
-    try {
-      return decodeURIComponent(slug);
-    } catch {
-      return slug;
-    }
-  })();
-  return [...new Set([slug, decoded, encodeURIComponent(decoded)].filter((v) => v.length >= MIN_SLUG))];
+function slugPattern(slug: string): string {
+  return [...slug].map((ch) => {
+    const code = ch.codePointAt(0) ?? 0;
+    const escaped = code <= 0x7f
+      ? `%${code.toString(16).padStart(2, '0')}`
+      : encodeURIComponent(ch);
+    return [...new Set([escape(ch), escape(escaped)])].join('|');
+  }).map((alts) => (alts.includes('|') ? `(?:${alts})` : alts)).join('');
 }
+
+/**
+ * The profile slug as a reader would see it, decoded once so the pattern above
+ * is built from characters rather than from escapes. A malformed escape is not
+ * decodable and is used as stored.
+ */
+function readableSlug(url: string): string {
+  const slug = linkedinSlug(url);
+  if (!slug) return '';
+  try {
+    const decoded = decodeURIComponent(slug);
+    return decoded.length >= MIN_SLUG ? decoded : slug;
+  } catch {
+    return slug;
+  }
+}
+
 
 const escape = (literal: string): string => literal.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 
@@ -246,25 +266,27 @@ function phoneNeedles(phone: string): readonly Needle[] {
 function linkedinNeedles(linkedinUrl: string): readonly Needle[] {
   const url = linkedinUrl.trim();
   if (!url) return [];
-  const slug = linkedinSlug(url);
+  const slug = readableSlug(url);
   if (!slug) return [{ pattern: new RegExp(escape(url), 'giu'), replacement: LINK_PLACEHOLDER }];
+  const body = slugPattern(slug);
 
-  return slugSpellings(slug).flatMap((spelling) => [
+  return [
     // The full URL first, so a link becomes one placeholder rather than a
     // scheme followed by one.
     {
-      pattern: new RegExp(String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${escape(spelling)}[^\s"'<>)\]]*`, 'giu'),
+      pattern: new RegExp(String.raw`(?:https?:\/\/)?(?:[\w-]+\.)*linkedin\.com\/in\/${body}[^\s"'<>)\]]*`, 'giu'),
       replacement: LINK_PLACEHOLDER,
     },
     // Then the slug alone, because "my LinkedIn is priya-sharma-4417" is a
     // sentence people say. Hyphens count as part of the token, so a slug is
     // never matched inside a longer hyphenated string.
     {
-      pattern: new RegExp(`(?<![\p{L}\p{N}_-])${escape(spelling)}(?![\p{L}\p{N}_-])`, 'giu'),
+      pattern: new RegExp(`(?<![\\p{L}\\p{N}_-])${body}(?![\\p{L}\\p{N}_-])`, 'giu'),
       replacement: LINK_PLACEHOLDER,
     },
-  ]);
+  ];
 }
+
 
 
 /**

@@ -135,6 +135,59 @@ describe('a row matched only by its content', () => {
   });
 });
 
+/**
+ * The two rows that put a candidate into the audit trail in the first place.
+ *
+ * Both are filed under a session id, so both are PROVABLY the candidate's and
+ * both must be CLEARED rather than merely redacted. That distinction is the
+ * whole lane: a redacted payload keeps whatever prose surrounded the handle,
+ * and for the accommodation row that prose is a health disclosure the
+ * candidate was told had gone.
+ *
+ * The ownership rule now decides clear-versus-redact, so this is the property
+ * most at risk from that change and the one least visible if it broke — the
+ * "no trace of the candidate anywhere" assertions pass either way, because
+ * redaction removes the handle too.
+ */
+describe('the rows that leak a candidate are cleared, not redacted', () => {
+  beforeEach(async () => { await wipe(); });
+
+  it('clears the accommodation request, prose and all', async () => {
+    const ids = await candidateWhoAskedForAnAccommodation();
+
+    await erase(ids);
+
+    const row = await prisma.auditEvent.findFirstOrThrow({
+      where: { entityId: ids.sessionId, action: 'accommodation.requested' },
+    });
+    expect(row.afterJson).toBe(PAYLOAD_REMOVED);
+  });
+
+  it('clears a failed identity-code send, whose provider error quotes the address', async () => {
+    // Shape taken from services/identityCode.ts, which audits the mail
+    // provider's raw error - and an SMTP rejection routinely quotes the
+    // recipient it refused. Filed under the session id, so ownership is proven
+    // and the payload goes rather than being redacted down to "[email]".
+    const ids = await candidateWhoAskedForAnAccommodation();
+    const bounced = await prisma.auditEvent.create({
+      data: {
+        tenantId: ids.tenantId, actorId: 'system', actorType: 'system',
+        action: 'identity.code_send_failed', entityType: 'InterviewSession',
+        entityId: ids.sessionId,
+        afterJson: JSON.stringify({
+          channel: 'email',
+          detail: '550 5.1.1 <priya.sharma@example.com> recipient rejected',
+        }),
+      },
+    });
+
+    await erase(ids);
+
+    const row = await prisma.auditEvent.findUniqueOrThrow({ where: { id: bounced.id } });
+    expect(row.afterJson).toBe(PAYLOAD_REMOVED);
+  });
+});
+
 describe('erasure reports and refuses', () => {
   beforeEach(async () => { await wipe(); });
 
