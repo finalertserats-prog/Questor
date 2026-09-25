@@ -91,6 +91,54 @@ async function downgradeToVersionOne(candidateId: string, tier: string): Promise
   return evidenceJson;
 }
 
+/**
+ * Prisma's delegates are proxy properties, so `vi.spyOn` on one does not
+ * restore — `mockRestore` leaves the method undefined for every test that
+ * follows. Everything below swaps by hand and puts the original back.
+ */
+type Transaction = typeof prisma.$transaction;
+
+/** A database that will not take the write at all. */
+function refuseTheWrite(): () => void {
+  const original = prisma.$transaction;
+  prisma.$transaction = (() => Promise.reject(new Error('the database is not accepting writes'))) as Transaction;
+  return () => { prisma.$transaction = original; };
+}
+
+/** A transaction whose audit write refuses, with the award update still working. */
+function breakTheAuditTrail(): () => void {
+  const original = prisma.$transaction;
+  prisma.$transaction = ((run: (tx: unknown) => unknown) =>
+    (original as (fn: (tx: unknown) => unknown) => Promise<unknown>).call(prisma, (tx: unknown) =>
+      run(new Proxy(tx as object, {
+        get: (target, property) => property === 'auditEvent'
+          ? { create: () => Promise.reject(new Error('the audit trail is not accepting writes')) }
+          : Reflect.get(target, property),
+      })))) as Transaction;
+  return () => { prisma.$transaction = original; };
+}
+
+/**
+ * Another instance upgrading the row between this sweep reading it and writing
+ * it — so the conditional update matches nothing, which is what losing that
+ * race looks like from the inside.
+ *
+ * The winner stores a record the product really produced, captured before the
+ * row was put back to version 1, rather than JSON written here.
+ */
+function letAnotherInstanceWinFirst(awardId: string, winning: string): () => void {
+  const original = prisma.$transaction;
+  let taken = false;
+  prisma.$transaction = (async (run: (tx: unknown) => unknown) => {
+    if (!taken) {
+      taken = true;
+      await prisma.candidateAward.update({ where: { id: awardId }, data: { evidenceJson: winning } });
+    }
+    return (original as (fn: (tx: unknown) => unknown) => Promise<unknown>).call(prisma, run);
+  }) as Transaction;
+  return () => { prisma.$transaction = original; };
+}
+
 describe('a certificate exported from an award the product actually struck', () => {
   let ids: Seeded;
   let candidateId: string;
@@ -358,22 +406,97 @@ describe('bringing the awards struck before the shape changed up to date', () =>
     expect([events.length, events.some((event) => event.afterJson.includes(CANDIDATE_NAME))]).toEqual([1, false]);
   });
 
+  /**
+   * The sweep says it audits what it changes. These are the two ways that
+   * could have been true only most of the time.
+   */
+  it('changes nothing when the note saying it changed cannot be written', async () => {
+    // The obvious call here was `logAudit`, which runs on the shared client
+    // and swallows its own failures — so a lost audit would have left the row
+    // already upgraded, no event recording it, and nothing that would ever
+    // retry, because the row no longer reads as legacy and the next run skips
+    // it. Permanent and silent. Both or neither instead.
+    await downgradeToVersionOne(candidateId, 'silver');
+    const restore = breakTheAuditTrail();
+
+    const result = await backfillLegacyAwardEvidence().finally(restore);
+
+    const events = await prisma.auditEvent.findMany({ where: { action: 'candidate.award.evidence_upgraded' } });
+    expect([result.upgraded, result.failed, result.remaining, await versionOf('silver'), events.length])
+      .toEqual([0, 1, 1, 1, 0]);
+  });
+
+  it('upgrades the record on the next run once the trail is writable again', async () => {
+    await downgradeToVersionOne(candidateId, 'silver');
+    const restore = breakTheAuditTrail();
+    await backfillLegacyAwardEvidence().finally(restore);
+
+    const second = await backfillLegacyAwardEvidence();
+
+    expect([second.upgraded, second.remaining, await versionOf('silver')]).toEqual([1, 0, 2]);
+  });
+
+  it('calls a record another instance took overtaken, not failed', async () => {
+    // `remaining` reaches zero either way, so this is about the run note
+    // telling the truth: a sweep reporting failures it did not have sends
+    // somebody looking for a fault that is not there.
+    //
+    // This pins the behaviour rather than catching a regression. The way it
+    // could have gone wrong was a cast re-asserting that a re-parsed record
+    // was still legacy — unsound, but never reachable, because the bytes being
+    // re-parsed were the same snapshot that had just been classified. The cast
+    // is gone and the parsed record is carried instead, so the two can no
+    // longer be made to disagree by anything a later change might do.
+    const struck = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier: 'silver' } });
+    await downgradeToVersionOne(candidateId, 'silver');
+    const restore = letAnotherInstanceWinFirst(struck.id, struck.evidenceJson);
+
+    const result = await backfillLegacyAwardEvidence().finally(restore);
+
+    expect([result.upgraded, result.overtaken, result.failed, result.remaining]).toEqual([0, 1, 0, 0]);
+  });
+
   it('reports a record it could not write instead of counting it done', async () => {
     // The award stays version 1, so the export goes on refusing it and the
     // next run tries again. A sweep that reported success here would leave a
     // certificate refused for ever with nothing saying why.
     await downgradeToVersionOne(candidateId, 'silver');
-    // Swapped by hand rather than with a spy: Prisma's delegates are proxy
-    // properties, and restoring a spy on one leaves the method undefined for
-    // every test that follows.
-    const original = prisma.candidateAward.updateMany;
-    prisma.candidateAward.updateMany = (() => Promise.reject(new Error('the database is not accepting writes'))) as typeof original;
+    const restore = refuseTheWrite();
 
-    const result = await backfillLegacyAwardEvidence().finally(() => {
-      prisma.candidateAward.updateMany = original;
-    });
+    const result = await backfillLegacyAwardEvidence().finally(restore);
 
     expect([result.upgraded, result.failed, result.remaining, await versionOf('silver')]).toEqual([0, 1, 1, 1]);
+  });
+
+  /**
+   * A genuine old record that had picked up a field of its own must not become
+   * unreachable. Flatly strict legacy parsing made it corrupt rather than old:
+   * skipped by the sweep, uncounted, and refused by the export for ever with
+   * nothing saying why.
+   */
+  it('still reaches an old record carrying a field nobody remembers adding', async () => {
+    const legacy = JSON.parse(await downgradeToVersionOne(candidateId, 'silver')) as Record<string, unknown>;
+    await prisma.candidateAward.updateMany({
+      where: { candidateId, tier: 'silver' },
+      data: { evidenceJson: JSON.stringify({ ...legacy, struckByJobVersion: 'something a past lane wrote' }) },
+    });
+
+    const result = await backfillLegacyAwardEvidence();
+
+    expect([result.upgraded, result.remaining, await versionOf('silver')]).toEqual([1, 0, 2]);
+  });
+
+  it('drops that stray field rather than carrying it into the new record', async () => {
+    const legacy = JSON.parse(await downgradeToVersionOne(candidateId, 'silver')) as Record<string, unknown>;
+    await prisma.candidateAward.updateMany({
+      where: { candidateId, tier: 'silver' },
+      data: { evidenceJson: JSON.stringify({ ...legacy, struckByJobVersion: 'something a past lane wrote' }) },
+    });
+
+    await backfillLegacyAwardEvidence();
+
+    const after = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier: 'silver' } });
+    expect(after.evidenceJson).not.toContain('struckByJobVersion');
   });
 
   it('carries on past an award it could not read at all', async () => {
