@@ -101,10 +101,18 @@ export function verifyDisplayUrl(verifyToken: string): string {
  * "refused without looking" from "looked and found nothing" — by the shape of
  * the answer or by how long it took — has been handed a way to learn which
  * strings are worth guessing. So the only things refused here are the ones no
- * minted token could ever be: longer than any of them, or carrying a character
- * that cannot appear in a URL path and that Postgres would refuse to compare
- * anyway. Everything else, `not-a-real-token` included, goes to the database
- * and comes back as the same nothing an unknown token comes back as.
+ * minted token could ever be: longer than any of them, or carrying a byte
+ * outside printable ASCII. Everything else, `not-a-real-token` included, goes
+ * to the database and comes back as the same nothing an unknown token comes
+ * back as.
+ *
+ * Note what that second rule does NOT claim. It is not that the character is
+ * illegal in a URL or unwelcome to Postgres — Express decodes `%C3%A9` into a
+ * perfectly legal `é`, and Postgres compares it without complaint. It is only
+ * that base64url has 64 characters and every one of them is printable ASCII,
+ * so anything outside that range is a string this column can never hold. The
+ * bound exists so a megabyte of path is not turned into a query, not because
+ * anything downstream would object.
  *
  * The remaining difference — a token that resolves does more work than one
  * that does not — is not removable, because answering at all means looking.

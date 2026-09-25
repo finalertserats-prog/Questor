@@ -21,7 +21,18 @@ describe('which state an answer puts the page in', () => {
   });
 
   it('treats a record still being brought up to date as one to come back to', () => {
-    expect(verifyPhaseFor(503)).toBe('notReady');
+    expect(verifyPhaseFor(503, 'award_evidence_not_ready')).toBe('notReady');
+  });
+
+  /**
+   * A 503 is not by itself a statement about the certificate. A load balancer
+   * answers one during a deploy, and so does a server that is simply down.
+   * Reading the status alone, the page would tell an employer holding a real
+   * certificate "This record isn't ready yet" — a confident, specific and
+   * false claim about their document — when Questor was merely restarting.
+   */
+  it('does not call a proxy’s 503 a fact about the record', () => {
+    expect(verifyPhaseFor(503)).toBe('failed');
   });
 
   it('treats a fault at our end as a fault at our end', () => {

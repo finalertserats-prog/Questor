@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import { HttpError, asyncHandler } from '../middleware/index.js';
 import { logger } from '../logger.js';
+import { fingerprint } from '../middleware/rateLimit.js';
 import { certificateFilename, findAwardByVerifyToken, verifyDisplayUrl } from '../services/awardAccess.js';
 import {
   AwardEvidenceError, AwardEvidenceNotReadyError, certificateEvidence, claimFor, footnoteFor, hasCertificate,
@@ -99,11 +100,29 @@ function notFound(): HttpError {
  * cached 404 would make a genuine certificate look forged for as long as the
  * cache held it.
  */
-awardVerifyRouter.use((_req, res, next) => {
+awardVerifyRouter.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
   res.set('X-Robots-Tag', 'noindex, nofollow, noarchive, noimageindex');
+  // On this router the PATH is the credential, and the app's error handler
+  // logs the path of every failed request at error level. A 503 for a record
+  // the sweep has not reached, or a 500 for one that cannot be read, would
+  // therefore write a live bearer key into the log — the one place nobody
+  // thinks to guard, and one an erasure can never reach. The comment above
+  // `res.json` below says echoing a token back "is how one ends up in a log";
+  // this is the line that makes that true rather than aspirational.
+  //
+  // A fingerprint rather than a bare `/api/v/…`: two log lines about the same
+  // link can still be matched to each other, which is what an operator needs
+  // to tell one broken certificate from twenty. Same device, and the same
+  // reason, as the rate limiter's keys.
+  req.logPath = `${req.baseUrl}/${fingerprint(pathToken(req.path))}`;
   next();
 });
+
+/** The token out of a router-relative path, whichever route under it was asked for. */
+function pathToken(path: string): string {
+  return path.replace(/^\/+/, '').split('/')[0] ?? '';
+}
 
 /**
  * The award this token verifies, or the one refusal.

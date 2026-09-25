@@ -5,6 +5,7 @@ import { prisma } from '../src/db.js';
 import { createDemoData, wipe, DEMO_RESUME } from '../src/seed/demoData.js';
 import { _enableRateLimitsInTests, _resetRateLimits } from '../src/middleware/rateLimit.js';
 import { eraseCandidate } from '../src/services/dataRights.js';
+import { logger } from '../src/logger.js';
 
 /**
  * The public verification page — `questor.app/v/<token>` — and the download
@@ -277,6 +278,33 @@ describe('what it refuses, and how it refuses', () => {
    * bits, so they already knew. Telling a candidate their real certificate is
    * unknown to us would be the worse answer.
    */
+  /**
+   * And it does it without writing the token down.
+   *
+   * The app's error handler logs the path of every failed request at error
+   * level, and on this router the path IS the credential — a bearer key to a
+   * named person's record, in the one place nobody thinks to guard and an
+   * erasure can never reach. This is the only route where a 5xx is reachable
+   * by an unauthenticated stranger holding a live token, so it is the only
+   * place this can be pinned.
+   */
+  it('writes no live token into the log when it refuses', async () => {
+    const { ids, token } = await struckSilver();
+    const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId: ids.candidateId, tier: 'silver' } });
+    const current = JSON.parse(award.evidenceJson) as { rows: unknown[] };
+    await prisma.candidateAward.update({
+      where: { id: award.id },
+      data: { evidenceJson: JSON.stringify({ version: 1, rows: current.rows }) },
+    });
+    const written = vi.spyOn(logger, 'error').mockImplementation(() => undefined as never);
+
+    await request(app).get(`/api/v/${token}`);
+    const lines = JSON.stringify(written.mock.calls);
+    written.mockRestore();
+
+    expect(lines).not.toContain(token);
+  });
+
   it('asks the reader to come back when the record has not been migrated yet', async () => {
     const { ids, token } = await struckSilver();
     const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId: ids.candidateId, tier: 'silver' } });
@@ -385,12 +413,17 @@ describe('rate limiting', () => {
       statuses.push((await request(app).get(`/api/v/${token}/certificate.pdf`)).status);
     }
 
-    // The relationship, not just the ceiling. Spending the render's allowance
-    // must not spend the page's: somebody who pressed Download a few times too
-    // often has to still be able to READ the record they are standing there
-    // trying to check. Asserting the page still answers is also what stops
-    // this passing on an absent route, where nothing would 429 and nothing
-    // would answer 200 either.
+    // The relationship, not just the ceiling. Somebody who pressed Download a
+    // few times too often has to still be able to READ the record they are
+    // standing there trying to check.
+    //
+    // Note it is not that the two budgets are separate — the limiters run in
+    // series, so every PDF request that passes the first also spends one from
+    // the page's. It holds because 20 renders an hour cannot exhaust 60 page
+    // reads a quarter-hour. That is arithmetic, so this case is what notices
+    // if either number moves. Asserting the page still answers 200 is also
+    // what stops this passing on an absent route, where nothing would 429 and
+    // nothing would answer 200 either.
     expect(statuses).toContain(429);
     expect((await request(app).get(`/api/v/${token}`)).status).toBe(200);
   });

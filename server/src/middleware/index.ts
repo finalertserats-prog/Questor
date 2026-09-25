@@ -21,6 +21,18 @@ declare global {
     interface Request {
       auth?: AuthClaims;
       requestId?: string;
+      /**
+       * What the error log should say this request's path was, where the real
+       * one must not be written down.
+       *
+       * Set by routes whose URL carries a credential: the public certificate
+       * check is reached at `/api/v/<token>`, and that token is a bearer key
+       * to a named person's record. A route sets this to something that
+       * identifies the request without being usable — see
+       * `routes/awardVerify.ts`. Every other route leaves it unset and is
+       * logged exactly as before.
+       */
+      logPath?: string;
     }
   }
 }
@@ -303,7 +315,12 @@ function clientBodyError(err: unknown): { status: number; message: string } | nu
 
 export function errorHandler(err: any, req: Request, res: Response, _next: NextFunction) {
   const status = err.status ?? err.statusCode ?? 500;
-  logger.error({ err: err?.message ?? String(err), stack: err?.stack, requestId: req.requestId, path: req.path }, 'Request error');
+  // `req.logPath` where a route set one, because on some routes the path IS a
+  // credential. `/api/v/<token>` is the public certificate check, and writing
+  // that token into the log at error level would put a live bearer key into
+  // the one place nobody thinks to guard — the same reason the rate limiter
+  // fingerprints its keys rather than logging them.
+  logger.error({ err: err?.message ?? String(err), stack: err?.stack, requestId: req.requestId, path: req.logPath ?? req.path }, 'Request error');
 
   // Only messages we authored are safe to return. Everything else (upstream API
   // bodies, Prisma errors, stack-bearing runtime errors) previously reached the

@@ -42,13 +42,22 @@ export interface VerifiedRecord {
  * of its own for "deleted" would put the distinction back on the screen that
  * the server went to the trouble of removing.
  *
+ * "Not ready" is keyed on the CODE and not on the 503, and the difference is
+ * the difference between a true sentence and a false one. Questor answers 503
+ * for a record the migration sweep has not reached yet, and says so; a load
+ * balancer answers 503 during a deploy, or when the server is simply down, and
+ * says nothing. Reading the status alone, the page would tell an employer
+ * "This record isn't ready yet" — a specific, confident claim about a
+ * certificate — when what actually happened is that Questor was restarting.
+ * Only our own answer carries `award_evidence_not_ready`.
+ *
  * 429 lands in `failed` rather than in a state of its own. Someone reading a
  * certificate has made one request; being over a limit means a script shares
  * their address, and "try again in a moment" is both true and all they can do.
  */
-export function verifyPhaseFor(status: number): VerifyPhase {
+export function verifyPhaseFor(status: number, code?: string): VerifyPhase {
   if (status === 404) return 'unknown';
-  if (status === 503) return 'notReady';
+  if (status === 503 && code === 'award_evidence_not_ready') return 'notReady';
   return 'failed';
 }
 

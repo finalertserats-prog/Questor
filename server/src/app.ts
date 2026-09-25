@@ -341,12 +341,18 @@ export function createApp() {
   // is a bound on the flood rather than the thing standing in the way of a
   // guess.
   //
-  // The render gets its own tighter ceiling on top, mounted first so it is the
-  // one that answers. A certificate lays out a page of vector text and strikes
-  // a seal into it on the event loop; it is the only thing here that costs
-  // more than a lookup, and it is the only route in Questor that will render
-  // one for a caller with no account. Twenty an hour is far more than anyone
-  // saving their own certificate needs.
+  // The render gets its own tighter ceiling ON TOP of the page's, not instead
+  // of it: these run in series, so a PDF request that passes the first also
+  // spends one from the second. A certificate lays out a page of vector text
+  // and strikes a seal into it on the event loop; it is the only thing here
+  // that costs more than a lookup, and the only route in Questor that renders
+  // one for a caller with no account.
+  //
+  // Because they are in series, what keeps someone who pressed Download too
+  // often from also being locked out of READING their record is the size of
+  // the numbers and nothing else: 20 renders an hour cannot exhaust 60 page
+  // reads a quarter-hour. Change either and that stops being true — it is an
+  // arithmetic guarantee, not a structural one.
   //
   // Both fail OPEN on a rate-limit-store outage, like every other public
   // token-read. In production the counters live in the same database this

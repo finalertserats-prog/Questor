@@ -1,9 +1,33 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
-import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe, DEMO_RESUME } from '../src/seed/demoData.js';
-import { getEmail, type EmailMessage } from '../src/providers/email/index.js';
+
+/**
+ * A render that can be made to fail on demand.
+ *
+ * The real renderer otherwise, so every case but one exercises the document
+ * the product actually produces. The flag exists because the ordering being
+ * pinned below — render, THEN claim the row — is invisible to any test that
+ * fails earlier than the render: feeding the route a corrupt evidence record
+ * throws in `certificateEvidence`, which is before the claim whichever order
+ * the two are in, so the case passes on code that has the order backwards.
+ */
+const render = vi.hoisted(() => ({ fail: false }));
+
+vi.mock('../src/services/certificatePdf.js', async (orig) => {
+  const actual = await orig<typeof import('../src/services/certificatePdf.js')>();
+  return {
+    ...actual,
+    certificatePdf: (input: Parameters<typeof actual.certificatePdf>[0]) => (
+      render.fail ? Promise.reject(new Error('pdfkit fell over')) : actual.certificatePdf(input)
+    ),
+  };
+});
+
+const { createApp } = await import('../src/app.js');
+const { getEmail } = await import('../src/providers/email/index.js');
+type EmailMessage = import('../src/providers/email/index.js').EmailMessage;
 
 /**
  * The certificate the send email carries.
@@ -61,6 +85,7 @@ beforeEach(async () => {
   ids = await seeded();
   candidateId = await walkedToDiamond(ids);
   sent = [];
+  render.fail = false;
   captureMail();
 });
 
@@ -85,6 +110,26 @@ describe('the certificate travels with the letter that announces it', () => {
     const file = sent[0].attachments![0];
     expect(file.contentType).toBe('application/pdf');
     expect(Buffer.from(file.content, 'base64').subarray(0, 5).toString('latin1')).toBe('%PDF-');
+  });
+
+  /**
+   * The line above decodes the content as base64 because this test knows it
+   * is base64. The PROVIDER only knows because the attachment says so, and
+   * every provider needs telling: a PDF cannot cross to the forked SMTP
+   * sender as bytes, because that child is handed its message with
+   * `serialization: 'json'`.
+   *
+   * Without this assertion the case above passes whether or not anything was
+   * ever told, and nodemailer would put the base64 text into the body of an
+   * `application/pdf` part. The send succeeds, the provider reports success,
+   * and the candidate opens a file that will not open — on the one send this
+   * certificate gets. `emailAttachmentEncoding.test.ts` pins the far end of
+   * the same path.
+   */
+  it('says the content is base64, because no provider can tell by looking', async () => {
+    await send('silver');
+
+    expect(sent[0].attachments![0].encoding).toBe('base64');
   });
 
   /**
@@ -114,12 +159,48 @@ describe('the certificate travels with the letter that announces it', () => {
   });
 
   /**
-   * Rendered before the row is claimed, so a render that fails leaves the
-   * certificate sendable. Marking it sent and then failing to build the
-   * document would refuse every retry for ever, and the candidate would never
-   * learn that anything had been meant for them.
+   * The ordering, exercised rather than described.
+   *
+   * `sentToCandidateAt` is what makes the send one-shot: a certificate marked
+   * sent refuses every later attempt. So a render that throws AFTER the claim
+   * burns the only send this award will ever get, and the candidate — who was
+   * told nothing — never receives it.
+   *
+   * The failure has to come from the RENDER for this to mean anything. An
+   * earlier draft corrupted the evidence record instead, which throws in
+   * `certificateEvidence` — before the claim whichever order the render and
+   * the claim are in. Moving the render below the claim left that version
+   * green, so the comment above it was documenting a property nothing held.
    */
-  it('does not mark a certificate sent when its document cannot be built', async () => {
+  it('does not burn the one send when the document cannot be rendered', async () => {
+    render.fail = true;
+    const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier: 'gold' } });
+
+    const res = await send('gold');
+
+    expect(res.status).toBe(500);
+    const after = await prisma.candidateAward.findFirstOrThrow({ where: { id: award.id } });
+    expect(after.sentToCandidateAt).toBeNull();
+  });
+
+  /** And the send still works afterwards, which is the point of not claiming it. */
+  it('lets the certificate be sent once the renderer is working again', async () => {
+    render.fail = true;
+    await send('gold');
+
+    render.fail = false;
+    const res = await send('gold');
+
+    expect(res.status).toBe(200);
+    expect(sent.at(-1)?.attachments).toHaveLength(1);
+  });
+
+  /**
+   * A record that cannot be read at all is refused too, and also leaves the
+   * award sendable — this one fails before the render, which is why it cannot
+   * stand in for the case above.
+   */
+  it('does not mark a certificate sent when its stored record cannot be read', async () => {
     const award = await prisma.candidateAward.findFirstOrThrow({ where: { candidateId, tier: 'gold' } });
     await prisma.candidateAward.update({ where: { id: award.id }, data: { evidenceJson: '{"version":2,"rows":[]}' } });
 

@@ -49,7 +49,11 @@ export function Verify() {
       .catch((err: unknown) => {
         if (cancelled) return;
         setRecord(null);
-        setPhase(verifyPhaseFor(err instanceof ApiError ? err.status : 0));
+        // The code as well as the status: only Questor's own 503 means the
+        // record is being migrated, and a proxy's 503 during a deploy must not
+        // be reported to an employer as a fact about their certificate.
+        const failure = err instanceof ApiError ? err : null;
+        setPhase(verifyPhaseFor(failure?.status ?? 0, failure?.code));
       });
     return () => { cancelled = true; };
   }, [token, attempt]);

@@ -17,23 +17,25 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const server = vi.hoisted(() => ({
   record: null as unknown,
-  error: null as null | { status: number },
+  error: null as null | { status: number; code?: string },
   downloads: [] as string[],
   downloadFails: false,
 }));
 
 class FakeApiError extends Error {
   status: number;
+  code?: string;
 
-  constructor(status: number) {
+  constructor(status: number, code?: string) {
     super(`HTTP ${status}`);
     this.status = status;
+    this.code = code;
   }
 }
 
 vi.mock('../src/api/client', () => ({
   api: {
-    get: () => (server.error ? Promise.reject(new FakeApiError(server.error.status)) : Promise.resolve(server.record)),
+    get: () => (server.error ? Promise.reject(new FakeApiError(server.error.status, server.error.code)) : Promise.resolve(server.record)),
     download: (path: string) => {
       server.downloads.push(path);
       return server.downloadFails ? Promise.reject(new FakeApiError(429)) : Promise.resolve();
@@ -179,10 +181,18 @@ describe('a link that does not resolve', () => {
   });
 
   it('asks a reader whose record is still being migrated to come back', async () => {
-    server.error = { status: 503 };
+    server.error = { status: 503, code: 'award_evidence_not_ready' };
     show();
 
     expect((await screen.findByRole('heading', { level: 1 })).textContent).toContain('isn’t ready yet');
+  });
+
+  /** A deploy's 503 says nothing about the certificate, so the page must not either. */
+  it('does not tell a reader their record is unready when it was only the server', async () => {
+    server.error = { status: 503 };
+    show();
+
+    expect((await screen.findByRole('heading', { level: 1 })).textContent).not.toContain('isn’t ready yet');
   });
 });
 
