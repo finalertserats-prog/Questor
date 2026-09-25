@@ -195,22 +195,49 @@ export async function releaseInterruptedCalendarSends(now: Date): Promise<number
 }
 
 /**
- * What a recipient's calendar currently shows for this interview, when that is
- * not what the interview says.
+ * Why a recipient's calendar is not in step with the interview it belongs to,
+ * or null when it is.
  *
- * Null when their copy is right, or when nothing has ever been sent to them.
- * This is the answer to "nothing knows the calendar is stale" — it is a plain
- * query, so it can be shown to a recruiter, counted, and alerted on.
+ * This is the answer to "nothing knows the calendar is stale" — a plain
+ * function over a row, so the answer can be shown to a recruiter, counted and
+ * alerted on.
+ *
+ * `orphaned` is a state in its own right rather than silence. The target is
+ * named by type and id, not by a foreign key, so a path that deletes a round
+ * without deleting its deliveries leaves rows carrying a name and an address
+ * pointing at nothing. Treating a missing target as "not behind" would mean a
+ * row nothing points at is also a row nothing looks for, which is precisely
+ * how personal data goes quiet rather than away.
  */
-export function calendarIsBehind(row: Pick<CalendarDelivery, 'status' | 'scheduledAtSent'>, scheduledAt: Date | null): boolean {
-  if (row.status === 'QUEUED' || row.status === 'SENDING' || row.status === 'FAILED') return true;
-  if (!row.scheduledAtSent || !scheduledAt) return false;
-  return row.scheduledAtSent.getTime() !== scheduledAt.getTime();
+export type CalendarEntryProblem = 'owed' | 'abandoned' | 'behind' | 'orphaned';
+
+export function calendarEntryProblem(
+  row: Pick<CalendarDelivery, 'status' | 'scheduledAtSent'>,
+  target: { readonly scheduledAt: Date | null } | null,
+): CalendarEntryProblem | null {
+  if (!target) return 'orphaned';
+  if (row.status === 'QUEUED' || row.status === 'SENDING') return 'owed';
+  if (row.status === 'FAILED') return 'abandoned';
+  // Nothing was ever delivered to this address, so there is nothing of ours in
+  // their calendar to be wrong.
+  if (!row.scheduledAtSent) return null;
+  // They hold an entry and the interview now holds no time at all. An AI
+  // interview can be unscheduled, which leaves a meeting in somebody's
+  // calendar that nothing is going to happen at — the same failure as a time
+  // that moved, and it would have read as "fine" if the two nulls were
+  // collapsed together.
+  if (!target.scheduledAt) return 'behind';
+  return row.scheduledAtSent.getTime() !== target.scheduledAt.getTime() ? 'behind' : null;
 }
 
 export interface StaleCalendarEntry {
   readonly delivery: CalendarDelivery;
-  /** The instant the interview actually holds, or null if it no longer holds one. */
+  readonly problem: CalendarEntryProblem;
+  /**
+   * The instant the interview actually holds. Null both when it no longer
+   * holds one and when the interview itself is gone — `problem` tells the two
+   * apart.
+   */
   readonly scheduledAt: Date | null;
 }
 
@@ -230,10 +257,14 @@ export async function staleCalendarEntries(o: { readonly tenantId?: string; read
   });
   const out: StaleCalendarEntry[] = [];
   for (const delivery of rows) {
-    const scheduledAt = delivery.targetType === 'round'
-      ? (await prisma.interviewRound.findUnique({ where: { id: delivery.targetId }, select: { scheduledAt: true } }))?.scheduledAt ?? null
-      : (await prisma.interviewSession.findUnique({ where: { id: delivery.targetId }, select: { scheduledAt: true } }))?.scheduledAt ?? null;
-    if (calendarIsBehind(delivery, scheduledAt)) out.push({ delivery, scheduledAt });
+    // `undefined` from Prisma means no such row: the distinction between "the
+    // interview holds no time" and "there is no interview" is the whole point
+    // of the orphan state, so it must not be flattened to null here.
+    const target = delivery.targetType === 'round'
+      ? await prisma.interviewRound.findUnique({ where: { id: delivery.targetId }, select: { scheduledAt: true } })
+      : await prisma.interviewSession.findUnique({ where: { id: delivery.targetId }, select: { scheduledAt: true } });
+    const problem = calendarEntryProblem(delivery, target ?? null);
+    if (problem) out.push({ delivery, problem, scheduledAt: target?.scheduledAt ?? null });
   }
   return out;
 }

@@ -176,10 +176,21 @@ async function sendOne(user: Recipient, now: Date): Promise<'sent' | 'empty' | '
   // Nothing else weakens. A second instance computing the same non-empty queue
   // still loses the claim below, exactly as it does today.
   const auth = { userId: user.id, tenantId: user.tenantId, role: user.role, email: user.email };
-  const { total, rows } = await collectNeedsYou(auth, now, DIGEST_ROW_LIMIT);
-  if (total === 0) return 'empty';
+  const probe = await collectNeedsYou(auth, now, DIGEST_ROW_LIMIT);
+  if (probe.total === 0) return 'empty';
   const id = await claim(user, now);
   if (!id) return 'taken';
+  // Read again now the day is claimed. The first read only answered "is there
+  // anything?", and work arriving between the two would otherwise be left out
+  // of the letter AND locked out until tomorrow by the claim it did not make.
+  // A second read costs one query, and only for a reader who has something.
+  const { total, rows } = await collectNeedsYou(auth, now, DIGEST_ROW_LIMIT);
+  if (total === 0) {
+    // Everything was dealt with in between. Give the day back rather than
+    // spending it on a letter with nothing in it.
+    await prisma.digestDelivery.delete({ where: { id } });
+    return 'empty';
+  }
   const origin = config.webOrigin.replace(/\/+$/, '');
   const message = buildDigestEmail({
     userName: user.name, total, now,

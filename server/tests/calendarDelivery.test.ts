@@ -228,6 +228,165 @@ describe('a round that moved again while its send was failing', () => {
   });
 });
 
+/**
+ * What the retry must read afresh, and what it must not carry over.
+ *
+ * Every queued row in here is produced by driving the real routes — book,
+ * reschedule, cancel — and then letting the job run. Nothing below writes a
+ * CalendarDelivery by hand, because the defects these cover are exactly the
+ * kind a test that builds its own input cannot see.
+ */
+describe('a round cancelled while a correction was still owed', () => {
+  async function owedThenCancelled(): Promise<string> {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    // A move whose notice fails: the row is queued carrying "moved".
+    mail.failNext = true;
+    await move(pipelineId, roundId, '15:00');
+    mail.failNext = false;
+    // The round is then cancelled with no mail provider that delivers, so the
+    // cancellation reaches nobody and does not touch the queued row. The round
+    // is cancelled all the same, which is the state the retry has to read.
+    mail.delivers = false;
+    await request(app).post(`/api/pipelines/${pipelineId}/rounds/${roundId}/cancel`).set(auth()).send({});
+    mail.delivers = true;
+    return roundId;
+  }
+
+  it('is still carrying the older intent when the retry picks it up', async () => {
+    const roundId = await owedThenCancelled();
+
+    const row = await prisma.calendarDelivery.findFirstOrThrow({ where: { targetId: roundId } });
+    expect({ status: row.status, kind: row.kind }).toEqual({ status: 'QUEUED', kind: 'moved' });
+  });
+
+  it('withdraws the entry rather than re-adding a meeting that is not happening', async () => {
+    await owedThenCancelled();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(icsProperty(calendarOf(toCandidate().at(-1))!.content, 'METHOD')).toBe('METHOD:CANCEL');
+  });
+
+  it('marks the entry cancelled in its body as well as its method', async () => {
+    await owedThenCancelled();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(icsProperty(calendarOf(toCandidate().at(-1))!.content, 'STATUS')).toBe('STATUS:CANCELLED');
+  });
+
+  it('declares the withdrawal in the MIME type too, or clients ignore it', async () => {
+    await owedThenCancelled();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(calendarOf(toCandidate().at(-1))!.contentType).toContain('method=CANCEL');
+  });
+
+  it('tells the candidate in words that it is cancelled, not that it moved', async () => {
+    await owedThenCancelled();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(toCandidate().at(-1)?.text ?? '').toMatch(/cancelled/i);
+  });
+});
+
+/**
+ * A CalendarDelivery row is ONE address's copy of an entry. Correcting it means
+ * writing to that address — sending to whatever address the candidate has today
+ * would leave the stale copy exactly where it was and then record it as fixed.
+ *
+ * (Questor has no route for changing a candidate's address, so that one step is
+ * a direct write. Everything the retry actually reads — the round, the queued
+ * row — still comes from the real routes.)
+ */
+describe('a candidate whose address changed while a correction was owed', () => {
+  const MOVED_ON = 'priya.sharma@newaddress.example.com';
+
+  async function owedThenMovedAddress(): Promise<string> {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    mail.failNext = true;
+    await move(pipelineId, roundId, '15:00');
+    mail.failNext = false;
+    await prisma.candidate.update({ where: { id: demo.candidateId }, data: { email: MOVED_ON, emailNormalized: MOVED_ON } });
+    return roundId;
+  }
+
+  it('corrects the calendar that actually holds the stale entry', async () => {
+    await owedThenMovedAddress();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(mail.messages.at(-1)?.to).toBe(CANDIDATE);
+  });
+
+  it('does not write to the new address instead', async () => {
+    await owedThenMovedAddress();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(mail.messages.filter((m) => m.to === MOVED_ON)).toEqual([]);
+  });
+
+  it('resolves the row it was actually about', async () => {
+    const roundId = await owedThenMovedAddress();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    const row = await prisma.calendarDelivery.findFirstOrThrow({ where: { targetId: roundId, recipientEmail: CANDIDATE } });
+    expect(row.status).toBe('SENT');
+  });
+
+  it('invents no row for an address that was never sent to', async () => {
+    await owedThenMovedAddress();
+
+    await deliverDueCalendarEntries(new Date(Date.now() + 3_600_000));
+
+    expect(await prisma.calendarDelivery.count({ where: { recipientEmail: MOVED_ON } })).toBe(0);
+  });
+});
+
+/**
+ * The row names its target by type and id rather than by a foreign key, so
+ * nothing in the database stops it outliving the interview. A row nothing
+ * points at must not also be a row nothing looks for — it still holds a name
+ * and an email address.
+ */
+describe('a delivery whose interview has gone', () => {
+  it('is reported, rather than quietly counting as up to date', async () => {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    // A deletion path that does not clean up deliveries, which is exactly the
+    // case a foreign key would have caught and there is none.
+    const observations = await prisma.roundObservation.findMany({ where: { roundId }, select: { id: true } });
+    const observationIds = observations.map((o) => o.id);
+    await prisma.observationSegment.deleteMany({ where: { observationId: { in: observationIds } } });
+    await prisma.observationParticipant.deleteMany({ where: { observationId: { in: observationIds } } });
+    await prisma.roundObservation.deleteMany({ where: { roundId } });
+    await prisma.roundInterviewer.deleteMany({ where: { roundId } });
+    await prisma.interviewRound.delete({ where: { id: roundId } });
+
+    expect((await behindFor(roundId)).map((e) => e.problem)).toEqual(['orphaned']);
+  });
+});
+
+describe('an interview that lost its time while somebody held an entry', () => {
+  it('is reported, because their calendar still shows a meeting', async () => {
+    const pipelineId = await goldPipeline();
+    const roundId = (await bookGold(pipelineId)).body.round.id as string;
+    const row = await prisma.calendarDelivery.findFirstOrThrow({ where: { targetId: roundId } });
+    // Rounds always hold a time; an AI interview does not have to, so this is
+    // the shape of row that can outlive the booking it describes.
+    await prisma.calendarDelivery.update({ where: { id: row.id }, data: { targetType: 'interview', targetId: demo.sessionId } });
+    await prisma.interviewSession.update({ where: { id: demo.sessionId }, data: { scheduledAt: null } });
+
+    expect((await behindFor(demo.sessionId)).map((e) => e.problem)).toEqual(['behind']);
+  });
+});
+
 describe('an entry that keeps failing', () => {
   it('stops asking after enough attempts, and says so', async () => {
     const pipelineId = await goldPipeline();

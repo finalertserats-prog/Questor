@@ -106,7 +106,24 @@ export async function notifyCandidateOfHumanRound(o: {
   readonly candidateId: string;
   readonly roleId: string;
   readonly stageLabel: string;
+  /**
+   * What prompted this notice — but only as a starting point. A round found
+   * CANCELLED below overrides it, for the words and the calendar METHOD alike,
+   * because a retry carries the intent it was queued with and the round may
+   * have been cancelled since.
+   */
   readonly kind: RoundNoticeKind;
+  /**
+   * The address whose calendar this notice is correcting, when it is not
+   * simply the candidate's current one.
+   *
+   * A CalendarDelivery row is ONE address's copy of an entry. Correcting it
+   * means writing to that address: sending to whatever address the candidate
+   * has today would leave the copy the row is about untouched, and then record
+   * the row as fixed. Only the retry passes this; a first send has no older
+   * address to be about.
+   */
+  readonly deliverTo?: { readonly email: string; readonly name: string };
 }): Promise<CandidateNotice> {
   const { round } = o;
   if (round.scheduledAt.getTime() <= Date.now()) {
@@ -118,7 +135,16 @@ export async function notifyCandidateOfHumanRound(o: {
     prisma.tenant.findUnique({ where: { id: round.tenantId }, select: { name: true } }),
   ]);
   if (!candidate?.email || !role) return { sent: false, note: 'The candidate has no email address, so they were not emailed.' };
-  if (await demoRecipientBlocked(round.tenantId, candidate.email)) {
+  // Whose calendar this message is for: the row's address when one is given,
+  // the candidate's current one otherwise. The demo block and the send below
+  // both test THIS address rather than the candidate record's.
+  //
+  // The guard above is deliberately still about the candidate record. A
+  // candidate with no address at all is someone this product can no longer
+  // write to, and a retry for them is closed and reported rather than sent to
+  // an address only the delivery row remembers.
+  const recipient = o.deliverTo ?? { email: candidate.email, name: candidate.fullName };
+  if (await demoRecipientBlocked(round.tenantId, recipient.email)) {
     return { sent: false, note: 'In the demo, email goes only to you, so the candidate was not emailed.' };
   }
   const email = getEmail();
@@ -136,8 +162,16 @@ export async function notifyCandidateOfHumanRound(o: {
   if (current.scheduledAt.getTime() <= Date.now()) {
     return { sent: false, note: 'The round time has passed, so the candidate was not emailed.' };
   }
+  // The intent as the round stands NOW, not as it stood when this was queued.
+  //
+  // A retry carries the kind it was queued with. If a round was moved, the
+  // notice failed, and the round was then cancelled, replaying "moved" would
+  // send METHOD:REQUEST for an interview that is not happening — re-adding a
+  // meeting to the candidate's calendar with nothing left to correct it. The
+  // round's own status is the only thing that can answer this truthfully.
+  const kind: RoundNoticeKind = current.status === 'CANCELLED' ? 'cancelled' : o.kind;
   const message = buildHumanRoundEmail({
-    kind: o.kind, candidateName: candidate.fullName, roleTitle: role.title, companyName,
+    kind, candidateName: candidate.fullName, roleTitle: role.title, companyName,
     stageLabel: o.stageLabel, scheduledAt: current.scheduledAt, durationMinutes: current.durationMinutes,
     timeZone: current.scheduledTimeZone ?? await tenantTimeZone(current.tenantId),
     // The round's own snapshot, and nothing else. Reading Candidate.timeZone
@@ -150,24 +184,23 @@ export async function notifyCandidateOfHumanRound(o: {
   // The candidate's own copy, naming only them. It may say what the interview
   // is for — it is theirs — which a copy for anyone else may not.
   const invite = roundInviteAttachment(claimed, {
-    recipientName: candidate.fullName, recipientEmail: candidate.email,
+    recipientName: recipient.name, recipientEmail: recipient.email,
     summary: `${companyName}: ${o.stageLabel} interview — ${role.title}`,
     description: message.text,
     location: current.meetingUrl,
     startsAt: current.scheduledAt, durationMinutes: current.durationMinutes,
-    method: o.kind === 'cancelled' ? 'CANCEL' : 'REQUEST',
+    method: kind === 'cancelled' ? 'CANCEL' : 'REQUEST',
     organizerName: `${companyName} hiring team`,
   });
   const target: CalendarTarget = { type: 'round', id: round.id, tenantId: round.tenantId };
-  const recipient = { email: candidate.email, name: candidate.fullName };
   try {
-    await email.send({ ...message, to: candidate.email, attachments: [invite] });
+    await email.send({ ...message, to: recipient.email, attachments: [invite] });
     // Recorded AFTER the provider accepted it, so the row says what their
     // calendar actually holds rather than what we hoped it would.
     await recordCalendarSent({
-      target, recipient, kind: o.kind, sequence: claimed.sequence, scheduledAt: current.scheduledAt,
+      target, recipient, kind, sequence: claimed.sequence, scheduledAt: current.scheduledAt,
     });
-    return { sent: true, note: `The candidate was emailed at ${candidate.email}.` };
+    return { sent: true, note: `The candidate was emailed at ${recipient.email}.` };
   } catch (err) {
     const message_ = err instanceof Error ? err.message : String(err);
     logger.error({ err: message_, roundId: round.id }, 'Round email to the candidate failed');
@@ -176,8 +209,8 @@ export async function notifyCandidateOfHumanRound(o: {
     // rebuild rather than a replay: by the time it runs, the round may have
     // moved again, and the entry that goes out must describe wherever it is
     // then, not wherever it was when this attempt failed.
-    await recordCalendarFailure({ target, recipient, kind: o.kind, error: message_ });
-    const behind = calendarStateNote(await calendarDeliveryFor(target, candidate.email));
+    await recordCalendarFailure({ target, recipient, kind, error: message_ });
+    const behind = calendarStateNote(await calendarDeliveryFor(target, recipient.email));
     return { sent: false, note: `The email to the candidate could not be sent. Tell them yourself.${behind}` };
   }
 }

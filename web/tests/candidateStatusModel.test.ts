@@ -251,4 +251,25 @@ describe('an hour the candidate has to act on', () => {
   it('prints nothing for a moment we do not have', () => {
     expect(statusMoment(null, 'Asia/Kolkata', 'Europe/London')).toBe('');
   });
+
+  // Two zones a whole day apart can show the same hands on the clock. Kiritimati
+  // is UTC+14 and Honolulu UTC-10: at this instant both read 00:30, but one is
+  // the 2nd of January and the other is still the 1st. Suppressing the reader's
+  // own time because the hour matched told a candidate 00:30 and let them turn
+  // up a day out.
+  it('adds the reader’s own time when the clock agrees but the day does not', () => {
+    const shown = statusMoment('2026-01-01T10:30:00Z', 'Pacific/Kiritimati', 'Pacific/Honolulu');
+
+    expect(shown).toContain('your time');
+  });
+
+  it('names the reader’s own day, not just their hour, when the two differ', () => {
+    const shown = statusMoment('2026-01-01T10:30:00Z', 'Pacific/Kiritimati', 'Pacific/Honolulu');
+
+    expect(shown).toMatch(/Thu 1 Jan/);
+  });
+
+  it('still says nothing extra when the reader is on the same day and clock', () => {
+    expect(statusMoment('2026-01-01T10:30:00Z', 'Pacific/Kiritimati', 'Pacific/Kiritimati')).not.toContain('your time');
+  });
 });

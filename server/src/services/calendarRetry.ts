@@ -9,7 +9,7 @@ import { invitationLink } from './invitations.js';
 import { composeInvitation } from './interviewInvite.js';
 import { notifyCandidateOfHumanRound, type RoundNoticeKind } from './roundCandidateNotice.js';
 import {
-  CALENDAR_DELIVERY_JOB, calendarIsBehind, claimCalendarDelivery, closeCalendarDelivery,
+  CALENDAR_DELIVERY_JOB, calendarEntryProblem, claimCalendarDelivery, closeCalendarDelivery,
   dueCalendarDeliveries, recordCalendarFailure, recordCalendarSent, releaseInterruptedCalendarSends,
   staleCalendarEntries, type CalendarTarget,
 } from './calendarDelivery.js';
@@ -45,8 +45,10 @@ async function giveUp(row: CalendarDelivery, reason: string): Promise<void> {
 /**
  * A round's entry, rebuilt through the very function that sends it in the
  * first place — so a retry cannot drift from a first attempt. That function
- * re-reads the round, claims a fresh sequence and records the outcome on this
- * row itself, which is why nothing is recorded here.
+ * re-reads the round under a fresh claim, derives the calendar METHOD from the
+ * round's status at that moment rather than from the intent this row was
+ * queued with, and records the outcome on this row itself, which is why
+ * nothing is recorded here.
  */
 async function retryRound(row: CalendarDelivery): Promise<'sent' | 'closed' | 'retry'> {
   const round = await prisma.interviewRound.findUnique({ where: { id: row.targetId } });
@@ -61,9 +63,15 @@ async function retryRound(row: CalendarDelivery): Promise<'sent' | 'closed' | 'r
     candidateId: pipeline.candidateId,
     roleId: pipeline.roleId,
     stageLabel,
-    // Whatever the last intent was. The METHOD the entry carries is read from
-    // the round's own status inside, not from this.
+    // The words follow the intent this was queued with. The calendar METHOD
+    // does not — a round cancelled since then sends a withdrawal, whatever
+    // this says.
     kind: (row.kind as RoundNoticeKind) || 'moved',
+    // THIS row's address, not whoever the candidate is reachable at today.
+    // The row is one address's copy of the entry; correcting it means writing
+    // to that address. Sending to a newer address would leave the stale copy
+    // in place and then mark it fixed.
+    deliverTo: { email: row.recipientEmail, name: row.recipientName },
   });
   if (notice.sent) return 'sent';
   // notifyCandidateOfHumanRound records a send it attempted and lost. If the
@@ -86,17 +94,20 @@ async function retryInterview(row: CalendarDelivery): Promise<'sent' | 'closed' 
     return 'closed';
   }
   const [candidate, role, tenant, invitation] = await Promise.all([
-    prisma.candidate.findFirst({ where: { id: session.candidateId, tenantId: session.tenantId }, select: { fullName: true, email: true } }),
+    prisma.candidate.findFirst({ where: { id: session.candidateId, tenantId: session.tenantId }, select: { fullName: true } }),
     prisma.role.findFirst({ where: { id: session.roleId, tenantId: session.tenantId }, select: { title: true } }),
     prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { name: true } }),
     prisma.invitation.findUnique({ where: { sessionId: session.id } }),
   ]);
-  if (!candidate?.email || !role) { await giveUp(row, 'The candidate has no email address.'); return 'closed'; }
+  if (!candidate || !role) { await giveUp(row, 'The candidate no longer exists.'); return 'closed'; }
   if (!invitation) { await giveUp(row, 'This interview has no invitation to resend.'); return 'closed'; }
   if (invitation.expiresAt && invitation.expiresAt < new Date()) { await giveUp(row, 'The invitation has expired.'); return 'closed'; }
   const portalUrl = invitationLink(invitation);
   if (!portalUrl) { await giveUp(row, 'The invitation link can no longer be rebuilt.'); return 'closed'; }
-  if (await demoRecipientBlocked(session.tenantId, candidate.email)) {
+  // Every check, and the send itself, is about THIS row's address — the one
+  // holding the entry that needs correcting — not whatever address the
+  // candidate record carries now.
+  if (await demoRecipientBlocked(session.tenantId, recipient.email)) {
     await giveUp(row, 'In the demo, email goes only to the sandbox owner.');
     return 'closed';
   }
@@ -104,14 +115,16 @@ async function retryInterview(row: CalendarDelivery): Promise<'sent' | 'closed' 
   if (!email.delivers) { await giveUp(row, `Email is not configured to deliver (provider "${email.name}").`); return 'closed'; }
 
   const composed = await composeInvitation({
-    session, candidate, roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, expiresAt: invitation.expiresAt,
+    session,
+    candidate: { fullName: candidate.fullName, email: recipient.email },
+    roleTitle: role.title, companyName: tenant?.name ?? 'our', portalUrl, expiresAt: invitation.expiresAt,
   });
   if (composed.sequence === null || !composed.scheduledAt) {
     await giveUp(row, 'The interview no longer has a time to put in a calendar.');
     return 'closed';
   }
   try {
-    await email.send({ ...composed.message, to: candidate.email, attachments: composed.attachments });
+    await email.send({ ...composed.message, to: recipient.email, attachments: composed.attachments });
   } catch (err) {
     await recordCalendarFailure({ target, recipient, kind: 'invited', error: err instanceof Error ? err.message : String(err) });
     return 'retry';
@@ -146,14 +159,24 @@ export async function attemptCalendarDelivery(id: string, now = new Date()): Pro
  */
 async function alertOnAbandoned(): Promise<number> {
   const stale = await staleCalendarEntries({ take: 200 });
-  const abandoned = stale.filter((s) => s.delivery.status === 'FAILED');
-  if (abandoned.length === 0) return 0;
-  await alertOperator(
-    CALENDAR_DELIVERY_JOB.name,
-    `${abandoned.length} interview calendar ${abandoned.length === 1 ? 'entry is' : 'entries are'} out of date and no longer being retried. `
-    + 'The people holding them are seeing an interview time that has changed.',
-  );
-  return abandoned.length;
+  const abandoned = stale.filter((s) => s.problem === 'abandoned');
+  // An orphan is a different alarm: the entry cannot be corrected because the
+  // interview it belongs to is gone, and the row is still holding a name and
+  // an email address that something should have deleted.
+  const orphaned = stale.filter((s) => s.problem === 'orphaned');
+  if (abandoned.length === 0 && orphaned.length === 0) return 0;
+  const parts = [
+    abandoned.length > 0
+      ? `${abandoned.length} interview calendar ${abandoned.length === 1 ? 'entry is' : 'entries are'} out of date and no longer being retried; `
+        + 'the people holding them are seeing an interview time that has changed.'
+      : '',
+    orphaned.length > 0
+      ? `${orphaned.length} calendar delivery ${orphaned.length === 1 ? 'row points' : 'rows point'} at an interview that no longer exists, `
+        + 'and each still holds a recipient\u2019s name and address.'
+      : '',
+  ].filter(Boolean);
+  await alertOperator(CALENDAR_DELIVERY_JOB.name, parts.join(' '));
+  return abandoned.length + orphaned.length;
 }
 
 /** Everything due, for the background job. Returns the note for the job run. */
@@ -175,4 +198,4 @@ export function startCalendarDelivery(intervalMs: number = CALENDAR_DELIVERY_JOB
 }
 
 /** Re-exported so a caller needs one import to ask "is anybody's calendar wrong?". */
-export { calendarIsBehind, staleCalendarEntries };
+export { calendarEntryProblem, staleCalendarEntries };

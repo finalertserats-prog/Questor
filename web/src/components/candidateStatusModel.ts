@@ -112,8 +112,18 @@ export function statusMoment(
   });
   const viewer = usableZone(viewerZone ?? null);
   if (!viewer) return stated;
+  // The DAY as well as the hour. Two zones a whole day apart can show the same
+  // hands on the clock — Kiritimati is UTC+14 and Honolulu UTC-10, so one
+  // instant reads 00:30 in both while being the 2nd of January in one and the
+  // 1st in the other. Comparing only the clock suppressed the reader's own
+  // time exactly when they most needed it, and they turned up a day out.
   const clock = (z: string | undefined) => at.toLocaleTimeString('en-GB', { timeZone: z, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-  return clock(viewer) === clock(zone) ? stated : `${stated} (${clock(viewer)} your time)`;
+  const day = (z: string | undefined) => at.toLocaleDateString('en-GB', { timeZone: z, weekday: 'short', day: 'numeric', month: 'short' });
+  if (clock(viewer) === clock(zone) && day(viewer) === day(zone)) return stated;
+  // Their day is repeated alongside their hour whenever it is not the stated
+  // one; a bare "(00:30 your time)" under a date a day away is the same trap.
+  const mine = day(viewer) === day(zone) ? clock(viewer) : `${day(viewer)}, ${clock(viewer)}`;
+  return `${stated} (${mine} your time)`;
 }
 
 /** The name they are greeted by. Their own first name, never a nickname we invented. */
