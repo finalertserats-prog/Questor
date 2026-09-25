@@ -416,7 +416,12 @@ describe('claiming a candidate', () => {
     const claim = await prisma.$transaction((tx) =>
       claimCandidateForAnonymisation(tx, { candidateId: ids.candidateId, now, eligible: eligible(now) }));
 
-    expect(claim?.identity).toEqual({
+    // Asserted non-null first: `claim?.identity` against an object literal does
+    // fail loudly when the claim is null, but it reads as though the comparison
+    // is the point when what is actually being checked is that a claim happened
+    // at all.
+    expect(claim).not.toBeNull();
+    expect(claim!.identity).toEqual({
       fullName: NAME, email: EMAIL, emailNormalized: EMAIL, phone: PHONE, linkedinUrl: LINKEDIN,
     });
   });

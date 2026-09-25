@@ -59,6 +59,24 @@ async function candidateWhoAskedForAnAccommodation() {
 const auditFor = (entityId: string) =>
   prisma.auditEvent.findMany({ where: { entityId }, orderBy: { createdAt: 'asc' } });
 
+/**
+ * The accommodation row, or a failure that says the fixture stopped writing it.
+ *
+ * Deliberately not `.find(...)` with `?.` at the call sites. Comparing
+ * `{ id: after?.id, ... }` against `{ id: before?.id, ... }` passes when BOTH
+ * sides are missing — every field is `undefined` on each, `toEqual` agrees, and
+ * a test whose whole job is "the row survives" reports success having compared
+ * nothing at all. Absent values silently taking part in a comparison is the
+ * same shape that hid a real defect elsewhere in this repo, and it is worth a
+ * loud throw to keep it out of the one test that guards "rows stay, payloads
+ * go".
+ */
+async function accommodationRow(sessionId: string) {
+  const found = (await auditFor(sessionId)).find((e) => e.action === 'accommodation.requested');
+  if (!found) throw new Error('No accommodation.requested audit row: the fixture is no longer writing one.');
+  return found;
+}
+
 describe('the accommodation request', () => {
   beforeEach(async () => { await wipe(); });
 
@@ -105,20 +123,17 @@ describe('what the audit log keeps', () => {
 
   it('keeps the row itself — who acted, what they did, on what, and when', async () => {
     const ids = await candidateWhoAskedForAnAccommodation();
-    const before = (await auditFor(ids.sessionId)).find((e) => e.action === 'accommodation.requested');
+    const before = await accommodationRow(ids.sessionId);
 
     await runAnonymisationSweep(new Date());
 
-    const after = (await auditFor(ids.sessionId)).find((e) => e.action === 'accommodation.requested');
-    expect({
-      id: after?.id, actorId: after?.actorId, actorType: after?.actorType,
-      action: after?.action, entityType: after?.entityType, entityId: after?.entityId,
-      createdAt: after?.createdAt,
-    }).toEqual({
-      id: before?.id, actorId: before?.actorId, actorType: before?.actorType,
-      action: before?.action, entityType: before?.entityType, entityId: before?.entityId,
-      createdAt: before?.createdAt,
+    const after = await accommodationRow(ids.sessionId);
+    const identity = (row: typeof after) => ({
+      id: row.id, actorId: row.actorId, actorType: row.actorType,
+      action: row.action, entityType: row.entityType, entityId: row.entityId,
+      createdAt: row.createdAt,
     });
+    expect(identity(after)).toEqual(identity(before));
   });
 
   it('says where a payload was taken out, and which process took it', async () => {
@@ -126,11 +141,11 @@ describe('what the audit log keeps', () => {
 
     await runAnonymisationSweep(new Date());
 
-    const event = (await auditFor(ids.sessionId)).find((e) => e.action === 'accommodation.requested');
+    const event = await accommodationRow(ids.sessionId);
     // Anonymisation severs a person from a record that is KEPT; erasure removes
     // them entirely. A reader of the log should be able to tell which one
     // emptied a payload, so the marker names the process.
-    expect(event?.afterJson).toBe(payloadRemoved('anonymisation'));
+    expect(event.afterJson).toBe(payloadRemoved('anonymisation'));
   });
 
   it('does not invent a "before" for an action that never recorded one', async () => {
@@ -141,8 +156,8 @@ describe('what the audit log keeps', () => {
 
     await runAnonymisationSweep(new Date());
 
-    const event = (await auditFor(ids.sessionId)).find((e) => e.action === 'accommodation.requested');
-    expect(event?.beforeJson).toBe('');
+    const event = await accommodationRow(ids.sessionId);
+    expect(event.beforeJson).toBe('');
   });
 
   it('still proves the anonymisation happened', async () => {
@@ -183,7 +198,8 @@ describe('what the audit clearing must not reach', () => {
     await runAnonymisationSweep(new Date());
 
     const theirs = await auditFor(namesake.id);
-    expect(theirs[0]?.afterJson).toMatch(/still in process/);
+    expect(theirs).toHaveLength(1);
+    expect(theirs[0].afterJson).toMatch(/still in process/);
   });
 
   it('leaves the rest of the organisation’s audit log alone', async () => {
