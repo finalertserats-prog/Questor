@@ -80,7 +80,9 @@ describe('ErrorBoundary', () => {
 });
 
 describe('isPublicPath', () => {
-  it.each(['/portal/abc', '/room/abc', '/talk-to-a-person/x', '/feedback-consent/x'])('treats %s as candidate-facing', (path) => {
+  // '/v/' is read by an employer rather than a candidate, and has even less of
+  // a dashboard to be offered: they have no account and never will.
+  it.each(['/portal/abc', '/room/abc', '/talk-to-a-person/x', '/feedback-consent/x', '/v/abc'])('treats %s as candidate-facing', (path) => {
     expect(isPublicPath(path)).toBe(true);
   });
 

@@ -31,6 +31,11 @@ export function boundaryCopy(scope: BoundaryScope): BoundaryCopy {
  * Candidate-facing addresses: no dashboard to send anyone to. /about and
  * /privacy are here because a candidate reads both without an account, and
  * offering them "go to the dashboard" sends them to a sign-in page.
+ *
+ * `/v/` is the widest case of all: the verification page on the face of every
+ * certificate is usually read by an EMPLOYER, who has no account and never
+ * will. Offering them a dashboard would be the one thing on the page that
+ * suggests Questor wants something from them.
  */
 const PUBLIC_PREFIXES = ['/portal/', '/room/', '/talk-to-a-person/', '/observer-consent/', '/feedback-consent/', '/v/', '/signup', '/demo', '/login', '/o/', '/forgot-password', '/reset-password', '/about', '/privacy'];
 
