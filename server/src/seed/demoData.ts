@@ -167,7 +167,6 @@ export async function wipe(): Promise<void> {
   // it — a wipe that left these behind would carry one file's recommendations
   // into the next file's candidate ids on the same worker database.
   await prisma.smeReview.deleteMany();
-=======
   // Awards carry no declared relation, so nothing below would fail on a
   // constraint if they were left — they would simply survive into the next
   // test file and hand it another run's certificates.

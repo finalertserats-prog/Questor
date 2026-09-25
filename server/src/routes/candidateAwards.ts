@@ -1,13 +1,20 @@
 import { Router } from 'express';
-<<<<<<< HEAD
-import { prisma, parseJsonOptional } from '../db.js';
-import { asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
+import { parseJsonOptional, prisma } from '../db.js';
+import { HttpError, asyncHandler, authenticate, requireCapability } from '../middleware/index.js';
 import { assertCanAccessCandidate } from '../services/access.js';
 import { DEFAULT_STAGES, parseStagesStrict } from '../domain/pipelineStages.js';
-import {
-  awardHeadline, isAwardTier, journeyTiers, tierHasCertificate, unearnedReason,
-  TIER_LABELS, type AwardTier, type StoredEvidence,
-} from '../domain/candidateAwards.js';
+import { TIER_LABELS, awardHeadline, isAwardTier, journeyTiers, tierHasCertificate, type AwardTier, type StoredEvidence, unearnedReason } from '../domain/candidateAwards.js';
+import type { NextFunction, Request, Response } from 'express';
+import { rateLimit } from '../middleware/rateLimit.js';
+import { logAudit } from '../services/audit.js';
+import { getEmail } from '../providers/email/index.js';
+import { logger } from '../logger.js';
+import { assertCanAccessAward, badgeFilename, certificateFilename, readTier, verifyDisplayUrl } from '../services/awardAccess.js';
+import { AwardEvidenceError, NO_DIAMOND_CERTIFICATE, hasCertificate, parseAwardEvidence } from '../services/awardEvidence.js';
+import { certificatePdf, issuedOn } from '../services/certificatePdf.js';
+import { badgeSvg } from '../services/badgeSvg.js';
+import { badgePng } from '../services/badgePng.js';
+import { MAX_BADGE_PX, MIN_BADGE_PX } from '../services/rasterPng.js';
 
 /**
  * The candidate's journey, one row per tier.
@@ -105,26 +112,6 @@ candidateAwardsRouter.get('/:id/awards', requireCapability('candidate:read'), as
 
   res.json({ awards: rows });
 }));
-=======
-import type { NextFunction, Request, Response } from 'express';
-import { prisma } from '../db.js';
-import { asyncHandler, authenticate, requireCapability, HttpError } from '../middleware/index.js';
-import { rateLimit } from '../middleware/rateLimit.js';
-import { logAudit } from '../services/audit.js';
-import { getEmail } from '../providers/email/index.js';
-import { logger } from '../logger.js';
-import {
-  assertCanAccessAward,
-  badgeFilename,
-  certificateFilename,
-  readTier,
-  verifyDisplayUrl,
-} from '../services/candidateAwards.js';
-import { hasCertificate, parseAwardEvidence, NO_DIAMOND_CERTIFICATE, AwardEvidenceError } from '../services/awardEvidence.js';
-import { certificatePdf, issuedOn } from '../services/certificatePdf.js';
-import { badgeSvg } from '../services/badgeSvg.js';
-import { badgePng } from '../services/badgePng.js';
-import { MAX_BADGE_PX, MIN_BADGE_PX } from '../services/rasterPng.js';
 
 /**
  * Exporting a credential: the certificate as a PDF, the badge as a PNG or an
@@ -445,4 +432,3 @@ candidateAwardsRouter.use((err: unknown, _req: Request, _res: Response, next: Ne
   }
   next(err);
 });
->>>>>>> 160ba8f (feat(cert): export and send a candidate's credential)
