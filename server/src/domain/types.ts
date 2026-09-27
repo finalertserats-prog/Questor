@@ -373,6 +373,27 @@ export interface EvidenceSpan {
 }
 
 // ---- Assessment ----
+/**
+ * WHY a competency reached the end of an interview with no evidence.
+ *
+ * Every one of these used to print the same sentence — "No transcript evidence
+ * was gathered for this competency during the interview" — to the person
+ * deciding whether to hire someone. They are not the same finding:
+ *
+ *   not_asked      no question on it was put. Our scheduling, not their skill.
+ *   unanswered     it was asked, and nothing answerable came back.
+ *   declined       it was asked, and the candidate said they could not or
+ *                  would not answer. A fact about what they said.
+ *   not_extracted  it was asked and answered, and OUR extraction attached
+ *                  nothing. Our bug, and the only one that must never read as
+ *                  a finding about them.
+ *
+ * None of them is a level, and none may be read as a low score: a competency
+ * with a gap is Not Enough Evidence exactly as it was before. Which one
+ * happened is decided in engines/evidenceGap.ts, from the transcript.
+ */
+export type EvidenceGap = 'not_asked' | 'unanswered' | 'declined' | 'not_extracted';
+
 export interface CompetencyScore {
   id: string;
   name: string;
@@ -385,6 +406,17 @@ export interface CompetencyScore {
   rubricVersion: string;
   /** True when rubric grading was configured but failed, so no score was produced. */
   gradingUnavailable?: boolean;
+  /**
+   * WHY there is no evidence, when there is none: nobody asked, nobody
+   * answered, the candidate declined, or our own extraction missed it.
+   *
+   * Present only on a competency with no attributed evidence — it explains an
+   * absence and says nothing when there is something to explain it away. It
+   * does NOT change `notEnoughEvidence`, `confidence` or `level`, which mean
+   * exactly what they meant before for every existing reader; it only lets a
+   * reader tell four very different findings apart. See engines/evidenceGap.ts.
+   */
+  evidenceGap?: EvidenceGap;
   /**
    * The AI's own level, before role calibration moved it. Present only when a
    * calibration applied — so an uncalibrated assessment is byte-for-byte what

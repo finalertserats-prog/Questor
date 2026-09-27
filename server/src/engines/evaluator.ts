@@ -7,6 +7,7 @@ import {
   attributeEvidence, independentEvidenceWeight,
   type AttributedEvidenceSpan,
 } from './evidenceExtractor.js';
+import { classifyEvidenceGap, evidenceGapOpenQuestion, evidenceGapRationale } from './evidenceGap.js';
 import { validateNoProtectedInference } from './policyEngine.js';
 import { applyCalibration, type CalibrationMap } from '../domain/calibration.js';
 import { generateJson, getLlm } from '../providers/llm/index.js';
@@ -83,11 +84,15 @@ export async function evaluate(opts: {
       ? Promise.resolve<CompetencyScore>({
           id: c.id, name: c.name, level: null, requiredLevel: c.requiredLevel,
           confidence: 0.2, notEnoughEvidence: true, evidence: [], rubricVersion,
+          // Already the right finding, and now machine-readable alongside the
+          // three the transcript itself tells apart (engines/evidenceGap.ts).
+          evidenceGap: 'not_asked',
           rationale: 'This competency was not assessed — the interview did not have time to cover it. This is a gap in the interview, not a finding about the candidate.',
         })
       : scoreCompetency({
           competency: c,
           evidence: attribution.byCompetency[c.id] ?? [],
+          turns,
           rubricVersion,
           sessionId: opts.sessionId,
           techStack: opts.techStack,
@@ -116,6 +121,8 @@ export async function evaluate(opts: {
   );
 
   const gradingFailures = calibrated.filter((s) => s.gradingUnavailable);
+  // The candidate answered and we lost it. Ours to own, like a grading failure.
+  const extractionMisses = calibrated.filter((s) => s.evidenceGap === 'not_extracted');
   // Nothing was graded AND grading is why. The mean above is 0/1 = 0 in that
   // case, which is not a low score — it is the absence of one, and it was
   // reaching reports and the ATS as a real result. Reported as null instead so
@@ -153,11 +160,16 @@ export async function evaluate(opts: {
     ...failedMustPass.map((s) => `${s.name} is a must-pass competency but was demonstrated at level ${effective(s)}/5 (required ${s.requiredLevel}).`),
     ...calibrated.filter((s) => (effective(s) ?? 5) <= 2 && !s.notEnoughEvidence).map((s) => `${s.name} showed limited depth (level ${effective(s)}/5).`),
   ];
-  const openQuestions = calibrated.filter((s) => s.notEnoughEvidence).map((s) => (
-    s.gradingUnavailable
-      ? `${s.name} could not be graded automatically — requires human assessment.`
-      : `Not enough evidence gathered for ${s.name} — recommend a focused human follow-up.`
-  ));
+  const openQuestions = calibrated.filter((s) => s.notEnoughEvidence).map((s) => {
+    if (s.gradingUnavailable) return `${s.name} could not be graded automatically — requires human assessment.`;
+    // Same distinction as the rationale, in the list a reviewer plans the next
+    // round from: "they would not answer this" and "nobody asked this" lead to
+    // different follow-ups, and used to be the same line.
+    if (s.evidenceGap) return evidenceGapOpenQuestion(s.evidenceGap, s.name);
+    // Evidence existed and the grader judged it insufficient — a reading of
+    // evidence, not an absence of it.
+    return `Not enough evidence gathered for ${s.name} — recommend a focused human follow-up.`;
+  });
   // A required technology nobody evidenced is an open question for the next
   // round, never a mark against the candidate: it sits with the other gaps,
   // outside the score and the recommendation.
@@ -179,6 +191,12 @@ export async function evaluate(opts: {
     ...(evidenceCoverage < 0.6 ? [`Sufficient-evidence coverage was ${Math.round(evidenceCoverage * 100)}% — some competencies lack evidence that demonstrates them.`] : []),
     ...mustPassNEE.map((s) => `Must-pass competency ${s.name} lacks sufficient evidence; recommendation is capped pending human review.`),
     ...(gradingFailures.length ? [`${gradingFailures.length} competenc${gradingFailures.length === 1 ? 'y' : 'ies'} could not be graded automatically and were excluded from the score; this is a system limitation, not a finding about the candidate.`] : []),
+    // Answered, and our own extraction lost it. Disclosed at the top of the
+    // assessment for the same reason a grading failure is: a reader must not
+    // have to open each competency to discover the gap is ours.
+    ...(extractionMisses.length
+      ? [`${extractionMisses.length} competenc${extractionMisses.length === 1 ? 'y was' : 'ies were'} answered but no evidence could be attached to ${extractionMisses.length === 1 ? 'it' : 'them'} automatically: ${extractionMisses.map((s) => s.name).join(', ')}. This is a failure in our evidence extraction, not a finding about the candidate.`]
+      : []),
     // Named, not counted. A reviewer deciding whether to progress someone needs
     // to know WHICH parts of the role remain unknown, so they can cover them in
     // the next round rather than treating the assessment as complete.
@@ -240,6 +258,8 @@ export async function evaluate(opts: {
 async function scoreCompetency(o: {
   competency: Competency;
   evidence: AttributedEvidenceSpan[];
+  /** The whole transcript: with no evidence, it is the only thing that can say why. */
+  turns: readonly TurnRecord[];
   rubricVersion: string;
   sessionId?: string;
   techStack?: readonly TechStackItem[];
@@ -256,9 +276,15 @@ async function scoreCompetency(o: {
     : 1;
 
   if (evidence.length === 0) {
+    // "Nobody asked", "they would not answer" and "we failed to extract it" are
+    // three different findings about three different things, and they all used
+    // to print one sentence to the person deciding someone's career. The
+    // transcript already knows which happened — ask it.
+    const gap = classifyEvidenceGap({ turns: o.turns, competencyId: c.id });
     return {
       ...base, level: null, confidence: 0.2, notEnoughEvidence: true,
-      rationale: 'No transcript evidence was gathered for this competency during the interview.',
+      evidenceGap: gap,
+      rationale: evidenceGapRationale(gap),
     };
   }
 
