@@ -36,6 +36,7 @@ import './styles/drafts.css';
 import './styles/compare.css';
 import './styles/status.css';
 import './styles/fit.css';
+import './styles/profileRead.css';
 import './styles/demoInterview.css';
 import './styles/calibration.css';
 

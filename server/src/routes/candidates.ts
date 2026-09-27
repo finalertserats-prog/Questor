@@ -14,6 +14,7 @@ import { MAX_RESUME_TEXT_CHARS, isResumeMimeType } from '../engines/resumeParser
 import { RESUME_MAX_BYTES, readResumeFile, sanitizeFilename } from '../services/resumeFile.js';
 import { FIT_ENGINE_VERSION, scoreFit } from '../engines/fitScoring.js';
 import { storedCvFacts } from '../services/resumeProfile.js';
+import { profileAsRead } from '../domain/profileAsRead.js';
 import { FIT_CAVEAT, comparableFitScore, isProvisionalFit } from '../domain/fitVocabulary.js';
 import type { FitScore } from '../domain/types.js';
 import { roleTechStack } from '../services/roleTechStack.js';
@@ -346,6 +347,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
     currentRole: currentRole ? { id: currentRole.id, title: currentRole.title, level: currentRole.level } : null,
     profileVersion: { id: profileVersion.id, version: profileVersion.version, createdAt: profileVersion.createdAt },
     profile,
+    profileRead: profileAsRead(facts),
     currentFit,
     alternativeRoles: alternatives,
     consideredRoleCount: scopedRoles.length,

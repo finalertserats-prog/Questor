@@ -14,6 +14,8 @@ import { CandidateAwards } from '../components/CandidateAwards';
 import type { AwardResponseRow } from '../components/candidateAwardsModel';
 import { buildJourney, type JourneyAssessment, type JourneyPipeline, type JourneyRole } from '../components/candidateJourney';
 import { Icon } from '../components/Icon';
+import { ProfileAsRead } from '../components/profile/ProfileAsRead';
+import type { ProfileRead } from '../components/profile/profileReadModel';
 import { PageHeader } from '../components/PageHeader';
 import { EmptyState } from '../components/EmptyState';
 import { ResumeUploadCard } from '../components/ResumeFields';
@@ -153,6 +155,8 @@ interface ProfileAnalysisResp {
   currentRole: { id: string; title: string; level: string | null } | null;
   profileVersion: { id: string; version: number; createdAt: string } | null;
   profile: Profile | null;
+  /** Lane 1: the role-agnostic reading, every fact carrying its document line. */
+  profileRead?: ProfileRead | null;
   currentFit: Fit | null;
   alternativeRoles: Array<{
     roleId: string; title: string; level: string | null; score: number; confidence: number;
@@ -575,6 +579,7 @@ export function CandidateDetail() {
           interviewCompetencies={interviewCompetencies}
           assessmentBlockedReason={assessmentBlockedReason}
           hasAssessment={Boolean(assessmentId)}
+          rawText={data?.rawText ?? ''}
         />
       </section>
 
@@ -852,7 +857,7 @@ export function CandidateDetail() {
 
 function CandidateProfileTab({
   fallbackCandidate, analysis, error, fallbackProfile, fallbackFit, onResumeUploaded,
-  interviewCompetencies, assessmentBlockedReason, hasAssessment,
+  interviewCompetencies, assessmentBlockedReason, hasAssessment, rawText,
 }: {
   fallbackCandidate: CandidateResp['candidate'];
   analysis: ProfileAnalysisResp | null;
@@ -863,6 +868,8 @@ function CandidateProfileTab({
   interviewCompetencies: readonly InterviewCompetency[];
   assessmentBlockedReason: string | null;
   hasAssessment: boolean;
+  /** The CV as uploaded, so a line reference can open the real line. */
+  rawText: string;
 }) {
   const candidate = analysis?.candidate ?? fallbackCandidate;
   const profile = analysis?.profile ?? fallbackProfile;
@@ -900,44 +907,40 @@ function CandidateProfileTab({
           <ResumeUploadCard candidateId={candidate.id} onUploaded={onResumeUploaded} />
         </>
       ) : (
-        <div className="card">
-          <h2 className="card-title"><Icon name="job" />Parsed resume{profile.totalYears != null ? ` · ${profile.totalYears} yrs experience` : ''}</h2>
-          {(profile.skills ?? []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <h3>Skills</h3>
-              <div>{profile.skills.map((s, i) => <span key={i} className="chip">{s}</span>)}</div>
-            </div>
-          )}
-          {(profile.employment ?? []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <h3>Employment history</h3>
-              {profile.employment.map((e, i) => (
-                <div key={i} className="profile-entry">
-                  <div><b>{e.title}</b>{e.company ? <> · {e.company}</> : null} <span className="muted small">{e.start ?? ''}{e.end ? ` — ${e.end}` : ''}</span></div>
-                  {(e.bullets ?? []).length > 0 && <ul style={{ margin: '4px 0 0' }}>{e.bullets.map((b, j) => <li key={j} className="small">{b}</li>)}</ul>}
+        <>
+          <div className="card" data-tour="candidate-profile-read">
+            <h2 className="card-title"><Icon name="candidate-profile" />The profile, as read</h2>
+            <p className="muted small">
+              What this CV says, before any role is involved — and where it says it. Press a line
+              reference to see that line of the document the candidate uploaded. Nothing here is a
+              score: how the profile fares against a role is the reading below.
+            </p>
+            <ProfileAsRead read={analysis?.profileRead ?? null} rawText={rawText} />
+          </div>
+
+          {/* What the older reading holds and the one above does not. The two
+              used to render the same CV twice — the same employment history,
+              the same education, one carrying provenance and one not — which is
+              two halves of a design that can disagree with nobody able to say
+              which is right. */}
+          {((profile.projects ?? []).length > 0 || (profile.certifications ?? []).length > 0) && (
+            <div className="card">
+              <h2 className="card-title"><Icon name="job" />Also on the resume</h2>
+              {(profile.projects ?? []).length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <h3>Projects</h3>
+                  <ul>{profile.projects.map((p, i) => <li key={i}><b>{p.name}</b>{p.summary ? ` — ${p.summary}` : ''}</li>)}</ul>
                 </div>
-              ))}
+              )}
+              {(profile.certifications ?? []).length > 0 && (
+                <div>
+                  <h3>Certifications</h3>
+                  <div>{profile.certifications.map((c, i) => <span key={i} className="chip">{c}</span>)}</div>
+                </div>
+              )}
             </div>
           )}
-          {(profile.education ?? []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <h3>Education</h3>
-              <ul>{profile.education.map((e, i) => <li key={i}>{e.degree}{e.institution ? ` · ${e.institution}` : ''}{e.year ? ` (${e.year})` : ''}</li>)}</ul>
-            </div>
-          )}
-          {(profile.projects ?? []).length > 0 && (
-            <div style={{ marginBottom: 12 }}>
-              <h3>Projects</h3>
-              <ul>{profile.projects.map((p, i) => <li key={i}><b>{p.name}</b>{p.summary ? ` — ${p.summary}` : ''}</li>)}</ul>
-            </div>
-          )}
-          {(profile.certifications ?? []).length > 0 && (
-            <div>
-              <h3>Certifications</h3>
-              <div>{profile.certifications.map((c, i) => <span key={i} className="chip">{c}</span>)}</div>
-            </div>
-          )}
-        </div>
+        </>
       )}
 
       <div className="card" data-tour="candidate-fit">

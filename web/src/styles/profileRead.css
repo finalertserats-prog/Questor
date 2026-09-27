@@ -1,0 +1,189 @@
+/* ==========================================================================
+   The profile as read (components/profile/ProfileAsRead.tsx)
+
+   Lane 1: what the CV says and where it says it, before any role is mentioned.
+
+   Same rule as the fit and assessment panels: state is marked by a rule down
+   the leading edge, by the weight of the type and by the word itself — never by
+   a tinted fill. A panel washed in a colour looks like it has decided
+   something, and this one decides nothing about the candidate; it reports what
+   a document contains.
+
+   The source tag is the working part of the screen. It has to read as
+   pressable without shouting, because a recruiter presses it dozens of times a
+   day, and the line it reveals is set in the data face so it looks like the
+   document rather than like our prose.
+
+   Every colour here is a token. Nothing below names one.
+   ========================================================================== */
+
+.par {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  width: 100%;
+}
+
+.par-summary {
+  margin: 0;
+  font-size: var(--type-section-size);
+  line-height: var(--type-section-line);
+  color: var(--ink-2);
+}
+
+/* --- tabs ----------------------------------------------------------------- */
+
+.par-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  border-bottom: var(--hair) solid var(--rule);
+}
+
+.par-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: var(--rail) solid transparent;
+  padding: var(--space-2) var(--space-3);
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink-3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.par-tab:hover { color: var(--ink-2); }
+.par-tab:focus-visible { outline: var(--rail) solid var(--focus); outline-offset: 2px; }
+.par-tab[aria-selected='true'] { color: var(--ink); border-bottom-color: var(--rule-strong); }
+
+.par-count {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  color: var(--ink-3);
+}
+
+/* A dot, not a badge: it says "there is something on this tab" without
+   claiming the something is urgent. Given a title so it is not colour alone. */
+.par-flag {
+  color: var(--hold-edge);
+  font-weight: 700;
+}
+
+/* --- facts ---------------------------------------------------------------- */
+
+.par-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-3);
+}
+
+.par-fact {
+  border-left: var(--rail) solid var(--rule-strong);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.par-read { border-left-color: var(--rule-strong); }
+.par-check { border-left-color: var(--hold-edge); }
+.par-unplaceable { border-left-color: var(--rule); }
+
+.par-fact-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.par-title {
+  font-size: var(--type-card-title-size);
+  line-height: var(--type-card-title-line);
+  font-weight: 600;
+  color: var(--ink);
+  min-width: 0;
+}
+
+.par-detail { color: var(--ink-2); }
+
+.par-mark {
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  color: var(--hold);
+  white-space: nowrap;
+}
+
+.par-unplaceable .par-mark { color: var(--ink-3); }
+
+.par-note {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-2);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-section-line);
+}
+
+.par-none,
+.par-foot {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-section-line);
+}
+
+.par-foot { display: flex; align-items: center; gap: var(--space-2); }
+
+/* --- the source tag, and the line it opens -------------------------------- */
+
+.par-src {
+  appearance: none;
+  background: none;
+  border: var(--hair) dashed var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 2px var(--space-2);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  color: var(--ink-3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.par-src:hover:not(:disabled) { color: var(--ink); border-style: solid; }
+.par-src:focus-visible { outline: var(--rail) solid var(--focus); outline-offset: 2px; }
+.par-src[aria-expanded='true'] { color: var(--ink); border-style: solid; }
+
+/* A profile parsed before the document line was recorded. Not pressable, and
+   the cursor says so before the click does. */
+.par-src:disabled { cursor: default; opacity: 0.7; }
+
+/* The candidate's own words, as the document has them — set apart from our
+   prose so the two can never be read as the same voice. */
+.par-original {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: var(--hair) solid var(--rule);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-section-line);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.par-lineno {
+  color: var(--ink-3);
+  margin-right: var(--space-2);
+  user-select: none;
+}
+
+@media (max-width: 40rem) {
+  .par-fact-top { gap: var(--space-1); }
+  .par-tab { padding: var(--space-2); }
+}
