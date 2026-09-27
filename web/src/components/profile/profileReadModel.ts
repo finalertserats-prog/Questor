@@ -99,13 +99,62 @@ export function sourceLabel(e: Pick<ReadEvidence, 'sourceLine'>): string {
  * The original line, from the CV text the browser already holds.
  *
  * Not the parsed quote: the point of opening this is to see what the candidate
- * actually wrote, including anything the parse dropped on the way past.
+ * actually wrote, including anything the reading left out on the way past.
+ *
+ * THE POLICY THIS ASSUMES, written down because it is easy to assume the
+ * opposite. What is shown here is the CV **as uploaded**, not the redacted
+ * reading. Redaction exists so the SCORER never sees contact details, a
+ * photograph, an institution or a graduation year — not to keep them from the
+ * recruiter, who already reads an excerpt of the same document on the journey
+ * board and who can open the original file regardless. The qualification card
+ * makes the same split deliberately, showing institution and year as
+ * display-only beside a note saying no score reads them. If that policy ever
+ * changes, this function and that card are where it changes.
+ *
+ * The document is split once by the panel; this convenience form is for callers
+ * with a single line to look up, and for tests.
  */
-export function documentLine(rawText: string, sourceLine?: number): string | null {
+export function splitDocument(rawText: string): string[] {
+  return rawText.replace(/\r\n?/g, '\n').split('\n');
+}
+
+export function documentLineFrom(lines: readonly string[], sourceLine?: number): string | null {
+  // 1-based. 0 is not a line, and treating it as one would print the first line
+  // of the CV under every fact whose number failed to be recorded.
   if (!sourceLine || sourceLine < 1) return null;
-  const lines = rawText.replace(/\r\n?/g, '\n').split('\n');
   const found = lines[sourceLine - 1];
   return found === undefined ? null : found;
+}
+
+export function documentLine(rawText: string, sourceLine?: number): string | null {
+  return documentLineFrom(splitDocument(rawText), sourceLine);
+}
+
+/**
+ * Whether a fact's line can actually be opened, and why not when it cannot.
+ *
+ * Three ways it cannot, and they are different facts about the world. Saying
+ * "parsed before the line was recorded" when the truth is "this screen does not
+ * have the CV text" tells a recruiter their profile is old when it is not, and
+ * sends them to re-parse something that would not help.
+ */
+export type SourceAvailability = 'ready' | 'not-recorded' | 'no-document' | 'out-of-range';
+
+export function sourceAvailability(
+  sourceLine: number | undefined, lines: readonly string[],
+): SourceAvailability {
+  if (!sourceLine || sourceLine < 1) return 'not-recorded';
+  if (lines.length === 0 || (lines.length === 1 && lines[0] === '')) return 'no-document';
+  return documentLineFrom(lines, sourceLine) === null ? 'out-of-range' : 'ready';
+}
+
+export function sourceTitle(state: SourceAvailability, sourceLine?: number): string {
+  switch (state) {
+    case 'ready': return 'Show this line of the CV';
+    case 'not-recorded': return 'This profile was parsed before the document line was recorded. Re-analysing the CV records it.';
+    case 'no-document': return 'The CV text is not available on this screen, so the line cannot be shown.';
+    case 'out-of-range': return `Line ${sourceLine} is past the end of the CV text held here.`;
+  }
 }
 
 /** Why a role is worth a second look, or null when it reads cleanly. */

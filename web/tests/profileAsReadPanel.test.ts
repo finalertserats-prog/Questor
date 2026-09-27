@@ -123,6 +123,22 @@ describe('the profile as read', () => {
     expect(screen.getByText(/never scored/)).toBeTruthy();
   });
 
+  it('says the opened line is the document as uploaded, not the redacted reading', () => {
+    // The scorer never sees contact details, an institution or a graduation
+    // year; a recruiter reading the CV does. Which of the two this panel is
+    // showing has to be on the screen, not only in a comment.
+    panel();
+    fireEvent.click(screen.getByRole('button', { name: 'line 5' }));
+    expect(screen.getByText(/as uploaded, including anything the reading left out/)).toBeTruthy();
+  });
+
+  it('does not claim a profile is old when it is the CV text that is missing', () => {
+    panel({}, '');
+    const tag = screen.getByRole('button', { name: 'line 5' });
+    expect([(tag as HTMLButtonElement).disabled, tag.getAttribute('title')])
+      .toEqual([true, 'The CV text is not available on this screen, so the line cannot be shown.']);
+  });
+
   it('never puts a score, a band or a percentage anywhere on the screen', () => {
     // The whole premise of Lane 1: a judgement needs a role to be judged
     // against, and this screen has not been told one.

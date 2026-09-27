@@ -187,3 +187,13 @@
   .par-fact-top { gap: var(--space-1); }
   .par-tab { padding: var(--space-2); }
 }
+
+/* Said beside the line rather than in a tooltip: the document shown here is
+   the CV as uploaded, not the redacted reading the scorer works from. Anyone
+   reading this screen should know which of the two they are looking at. */
+.par-asis {
+  display: block;
+  margin-top: var(--space-1);
+  font-family: inherit;
+  color: var(--ink-3);
+}

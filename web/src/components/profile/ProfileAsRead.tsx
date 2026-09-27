@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Icon } from '../Icon';
 import { EmptyState } from '../EmptyState';
 import {
-  documentLine, monthsInWords, profileTabs, readingSummary, redactionWords, roleConcern, roleDates,
-  roleState, sourceLabel, technologyNote, technologyState,
+  documentLineFrom, monthsInWords, profileTabs, readingSummary, redactionWords, roleConcern,
+  roleDates, roleState, sourceAvailability, sourceLabel, sourceTitle, splitDocument,
+  technologyNote, technologyState,
   type ProfileRead, type ReadEvidence, type ReadState,
 } from './profileReadModel';
 
@@ -31,18 +32,19 @@ const STATE_MARK: Readonly<Record<ReadState, string>> = {
   unplaceable: '[ source not recorded ]',
 };
 
-function Source({ evidence, rawText }: { evidence: ReadEvidence; rawText: string }) {
+function Source({ evidence, lines }: { evidence: ReadEvidence; lines: readonly string[] }) {
   const [open, setOpen] = useState(false);
-  const original = documentLine(rawText, evidence.sourceLine);
+  const state = sourceAvailability(evidence.sourceLine, lines);
+  const original = state === 'ready' ? documentLineFrom(lines, evidence.sourceLine) : null;
   return (
     <>
       <button
         type="button"
         className="par-src"
         aria-expanded={open}
-        disabled={!original}
+        disabled={state !== 'ready'}
         onClick={() => setOpen((v) => !v)}
-        title={original ? 'Show this line of the CV' : 'This profile was parsed before the line was recorded'}
+        title={sourceTitle(state, evidence.sourceLine)}
       >
         {sourceLabel(evidence)}
       </button>
@@ -50,6 +52,7 @@ function Source({ evidence, rawText }: { evidence: ReadEvidence; rawText: string
         <p className="par-original">
           <span className="par-lineno">{evidence.sourceLine}</span>
           {original}
+          <span className="par-asis">The CV as uploaded, including anything the reading left out.</span>
         </p>
       )}
     </>
@@ -57,14 +60,14 @@ function Source({ evidence, rawText }: { evidence: ReadEvidence; rawText: string
 }
 
 function Fact({
-  state, title, detail, note, evidence, rawText,
+  state, title, detail, note, evidence, lines,
 }: {
   state: ReadState;
   title: string;
   detail?: string | null;
   note?: string | null;
   evidence?: ReadEvidence;
-  rawText: string;
+  lines: readonly string[];
 }) {
   return (
     <li className={`par-fact par-${state}`}>
@@ -72,7 +75,7 @@ function Fact({
         <span className="par-title">{title}</span>
         {detail && <span className="par-detail">{detail}</span>}
         {STATE_MARK[state] && <span className="par-mark">{STATE_MARK[state]}</span>}
-        {evidence && <Source evidence={evidence} rawText={rawText} />}
+        {evidence && <Source evidence={evidence} lines={lines} />}
       </div>
       {note && <p className="par-note">{note}</p>}
     </li>
@@ -81,6 +84,10 @@ function Fact({
 
 export function ProfileAsRead({ read, rawText }: { read: ProfileRead | null; rawText: string }) {
   const [tab, setTab] = useState<string>('experience');
+  // Split once. Every fact can open its own line, and doing this per fact —
+  // then again on each re-render when one is opened — is work proportional to
+  // facts times CV size for something the panel needs done once.
+  const lines = useMemo(() => splitDocument(rawText), [rawText]);
 
   if (!read) {
     return (
@@ -131,7 +138,7 @@ export function ProfileAsRead({ read, rawText }: { read: ProfileRead | null; raw
                   detail={[roleDates(r), monthsInWords(r.months)].filter(Boolean).join(' · ')}
                   note={roleConcern(r)}
                   evidence={r.evidence}
-                  rawText={rawText}
+                  lines={lines}
                 />
               ))}
             </ul>
@@ -158,7 +165,7 @@ export function ProfileAsRead({ read, rawText }: { read: ProfileRead | null; raw
                   detail={monthsInWords(t.monthsUsed)}
                   note={technologyNote(t)}
                   evidence={t.evidence[0]}
-                  rawText={rawText}
+                  lines={lines}
                 />
               ))}
             </ul>
@@ -177,7 +184,7 @@ export function ProfileAsRead({ read, rawText }: { read: ProfileRead | null; raw
                   title={s.value}
                   detail={s.kind}
                   evidence={s.evidence}
-                  rawText={rawText}
+                  lines={lines}
                 />
               ))}
             </ul>
@@ -197,7 +204,7 @@ export function ProfileAsRead({ read, rawText }: { read: ProfileRead | null; raw
                   detail={[q.displayOnly.institution, q.displayOnly.year].filter(Boolean).join(', ') || undefined}
                   note="The institution and year are shown to you and are never read by any score."
                   evidence={q.evidence}
-                  rawText={rawText}
+                  lines={lines}
                 />
               ))}
             </ul>

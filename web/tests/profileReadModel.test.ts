@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   documentLine, monthsInWords, profileTabs, readingSummary, redactionWords, roleConcern, roleDates,
-  roleState, sourceLabel, technologyIsListedOnly, technologyNote, technologyState,
+  roleState, sourceAvailability, sourceLabel, sourceTitle, splitDocument, technologyIsListedOnly,
+  technologyNote, technologyState,
   type ProfileRead, type ReadRole, type ReadTechnology,
 } from '../src/components/profile/profileReadModel';
 
@@ -170,5 +171,40 @@ describe('where a fact came from', () => {
 
   it('says it was not recorded rather than naming a line it does not have', () => {
     expect(sourceLabel({ sourceLine: undefined })).toBe('source not recorded');
+  });
+});
+
+describe('why a line cannot be opened', () => {
+  const lines = splitDocument(CV);
+
+  it('is ready when the line is there', () => {
+    expect(sourceAvailability(5, lines)).toBe('ready');
+  });
+
+  it('separates a profile parsed before the line was recorded', () => {
+    expect(sourceAvailability(undefined, lines)).toBe('not-recorded');
+  });
+
+  it('separates this screen not having the CV text from the profile being old', () => {
+    // Told apart because they send a recruiter to different places: one is
+    // fixed by re-analysing, the other is not fixed by anything they can do.
+    expect(sourceAvailability(5, splitDocument(''))).toBe('no-document');
+  });
+
+  it('separates a line past the end of the text we hold', () => {
+    expect(sourceAvailability(999, lines)).toBe('out-of-range');
+  });
+
+  it('never blames the profile for a missing document, or the reverse', () => {
+    const notRecorded = sourceTitle('not-recorded');
+    const noDocument = sourceTitle('no-document');
+    expect([notRecorded.includes('parsed before'), noDocument.includes('parsed before')])
+      .toEqual([true, false]);
+  });
+
+  it('treats line 0 as no line at all', () => {
+    // 1-based. Read as an index it would show the first line of the CV under
+    // every fact whose number failed to be recorded.
+    expect([sourceAvailability(0, lines), documentLine(CV, 0)]).toEqual(['not-recorded', null]);
   });
 });
