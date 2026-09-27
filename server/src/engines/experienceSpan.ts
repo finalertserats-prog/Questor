@@ -57,7 +57,18 @@ const ONGOING = '(?:present|current|now|to\\s*date|till\\s*date|ongoing|date)(?!
  * the same century as its start.
  */
 const RANGE = new RegExp(
-  `(?:(${MONTH_WORD})[\\s.,]*)?(${YEAR})\\s*${DASH}\\s*(?:(${ONGOING})|(?:(${MONTH_WORD})[\\s.,]*)?(${YEAR}|\\d{2})(?![\\d]))`,
+  // `(?:\\d{1,2}[./-]){0,2}` before the end year is finding C1, in the half
+  // that feeds `totalYears`. Without it `01.03.2019 - 30.06.2021` read its end
+  // as "30" — two digits, so the same century, so 2030 — which was then
+  // clamped to today: a job that finished in June 2021 counted as still
+  // running and the candidate gained five years they had not lived.
+  // `totalYears` is printed on their profile and feeds the band calibration
+  // that decides how hard their interview is pitched.
+  //
+  // It consumes a leading day and month and leaves the year, and matches
+  // nothing on the shapes that already worked — `2017 - 18` has no separator
+  // for it to take, so the two-digit shorthand is untouched.
+  `(?:(${MONTH_WORD})[\\s.,]*)?(${YEAR})\\s*${DASH}\\s*(?:(${ONGOING})|(?:(${MONTH_WORD})[\\s.,]*)?(?:\\d{1,2}[./-]){0,2}(${YEAR}|\\d{2})(?![\\d]))`,
   'gi',
 );
 

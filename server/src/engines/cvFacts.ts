@@ -23,7 +23,23 @@ const MONTHS: Readonly<Record<string, number>> = {
 
 const MONTH_WORD = '(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*';
 const YEAR = '((?:19|20)\\d{2})';
-const POINT = `(?:${MONTH_WORD}\\.?[\\s,/-]*${YEAR}|${YEAR}|(\\d{1,2})[/.]${YEAR})`;
+/**
+ * One end of a range, in the shapes CVs are written in.
+ *
+ * The last alternative carries an OPTIONAL leading day, and that is the whole
+ * of finding C1 in the half that builds a candidate's roles. Without it
+ * `30.06.2021` offered `30` where a month was expected, no alternative
+ * matched, the range failed, and the ENTIRE ROLE was dropped from the
+ * candidate's history — for every CV written day-first, which is most of
+ * Europe and India.
+ *
+ * When both leading numbers could be a day or a month the date is genuinely
+ * ambiguous, and it is read day-first, because that is how the CVs this failed
+ * on are written. The year — which is what tenure, band calibration and the
+ * interview's pitch are computed from — is right either way; at worst the
+ * month is off, and no month at all was being read before.
+ */
+const POINT = `(?:${MONTH_WORD}\\.?[\\s,/-]*${YEAR}|${YEAR}|(?:\\d{1,2}[/.-])?(\\d{1,2})[/.-]${YEAR})`;
 const PRESENT = '(present|current|now|to date|till date|ongoing|date)';
 const RANGE_RE = new RegExp(`${POINT}\\s*(?:-|–|—|to|until|\\u2192)\\s*(?:${POINT}|${PRESENT})`, 'i');
 
