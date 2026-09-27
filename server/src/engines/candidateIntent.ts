@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import {
-  ASKED_OF_US, ENDS_HERE, detectAiIdentityQuestion, detectDistress, detectHumanRequest,
+  ASKED_OF_US, ENDS_HERE, POLITE_TAIL, detectAiIdentityQuestion, detectDistress, detectHumanRequest,
   detectInjection, detectRepeatRequest, detectWithdrawal,
 } from './policyEngine.js';
 
@@ -93,7 +93,10 @@ function words(t: string): string[] {
 // "ok stop", "no, stop", "sorry, one moment", "please stop".
 const FILLER = String.raw`(?:ok|okay|no|nope|please|just|yes|yeah|hey|sorry|um+|uh+|hmm+|so|well|oh|actually|right|look|and|now|then|alright)`;
 const PAD = String.raw`(?:${FILLER}\s+)*`;
-const TAIL = String.raw`(?:\s+(?:please|now|here|already|then|ok|okay|thanks|thank you))*`;
+// POLITE_TAIL is shared with ENDS_HERE, so a refusal reads the same whether it
+// is the whole message ("not today, sorry") or the end of one ("I need to stop,
+// if that's alright").
+const TAIL = String.raw`(?:\s+(?:please|now|here|already|then|ok|okay|thanks|thank you|${POLITE_TAIL}))*`;
 
 /** A whole message that is nothing but this, padded with filler. */
 function whole(core: string): RegExp {
@@ -352,7 +355,15 @@ function isQuestionToInterviewer(raw: string, t: string): boolean {
 // Somebody else's request, reported: "the client asked if we could pick this
 // up after work" and "I asked the client, can we do this later…" are stories
 // about a project, not a candidate asking to leave.
-const REPORTED_SPEECH = /\b(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|they|he|she)\b[^.?!]{0,30}\b(?:asked|said|told|wanted|suggested|requested|preferred)\b|\b(?:i|we)\s+(?:asked|told|emailed|called|checked with|said to|spoke to|pushed back on)\s+(?:the\s+|our\s+|my\s+)?(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|them|him|her)\b/;
+// Both halves of this required a NAMED party — "the client asked", "I told the
+// manager". The commonest form of reported speech names nobody and runs
+// straight into what was said: "I said we could do it tomorrow", "I suggested
+// we push the release". That walked past the guard and ended the interview,
+// and it is the sentence a candidate says when asked how they handle a
+// slipping deadline. The third alternative is a past-tense speech verb
+// followed by the SUBJECT of what was said, which is the one thing an object
+// of the verb can never be.
+const REPORTED_SPEECH = /\b(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|they|he|she)\b[^.?!]{0,30}\b(?:asked|said|told|wanted|suggested|requested|preferred)\b|\b(?:i|we)\s+(?:asked|told|emailed|called|checked with|said to|spoke to|pushed back on)\s+(?:the\s+|our\s+|my\s+)?(?:client|customer|team|manager|vendor|stakeholder|lead|boss|recruiter|sponsor|them|him|her)\b|\b(?:i|we|he|she|they)\s+(?:said|suggested|mentioned|proposed|recommended|thought|felt|replied|explained|agreed|argued|decided)\s+(?:that\s+)?(?:i|we|they|he|she|it|you)\b/;
 
 // …unless the candidate's own request opens the message, in which case whatever
 // they go on to report about a client does not take it away from them.

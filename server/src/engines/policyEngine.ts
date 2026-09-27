@@ -193,7 +193,21 @@ export function detectDistress(text: string): boolean {
  * which is the opposite failure to the one this detector exists for, and with
  * no model configured this pattern is the only thing reading the sentence.
  */
-export const ENDS_HERE = String.raw`(?:\s+(?:it|this|that|here|now|already|please|everything|for (?:now|today)|with (?:this|it|the interview|this interview)|the (?:interview|call|session|chat)|this (?:interview|call|session)))*\s*(?:[.,;!?]|$)`;
+/**
+ * The politeness that trails a request instead of leading it.
+ *
+ * "sorry, not today" was heard and "not today, sorry" was not, because the
+ * padding was only ever allowed to lead — so whether somebody was let out of an
+ * interview depended on which end they put the apology. The same held for "if
+ * that's alright", which is how a nervous candidate asks for anything.
+ *
+ * It is safe to let these close a request because none of them can be the
+ * OBJECT of the verb: "I need to stop sorry" ends a sentence, "I need to stop
+ * using Excel" does not, and that distinction is the whole job of ENDS_HERE.
+ */
+export const POLITE_TAIL = String.raw`(?:sorry|please|thanks|thank you|if (?:that'?s|that is|thats|it'?s|it is) (?:ok|okay|alright|all right|fine)|if possible|if you don'?t mind)`;
+
+export const ENDS_HERE = String.raw`(?:\s+(?:it|this|that|here|now|already|please|everything|for (?:now|today)|with (?:this|it|the interview|this interview)|the (?:interview|call|session|chat)|this (?:interview|call|session)|${POLITE_TAIL}))*\s*(?:[.,;!?]|$)`;
 
 /**
  * "I'm done" is also said with the reason attached, and a clause of one's own

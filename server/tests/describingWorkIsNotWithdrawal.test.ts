@@ -82,6 +82,22 @@ const DESCRIBING_WORK = [
 // must always be able to get out. Every tightening above is only safe if this
 // list stays green, so it is pinned here beside the corpus it constrains rather
 // than in a file somebody might tighten without reading.
+// Reporting what somebody said. The guard for this read a NAMED addressee —
+// "I told the client", "the manager asked" — so the commonest form of all,
+// where the reported clause follows straight on ("I said we could do it
+// tomorrow"), walked past it and ended the interview. A candidate answering
+// "how do you handle a slipping deadline?" says this sentence.
+const REPORTED_SPEECH = [
+  'The rollback was risky. I said we could do it tomorrow, my team was stretched.',
+  'I suggested we push the release to next week and nobody objected.',
+  'I mentioned we might do it later, once the audit closed.',
+  'He thought we could do it tomorrow but the window had gone.',
+  'We agreed that I would pause the rollout until the data landed.',
+  'I proposed we stop the experiment early because the effect was already clear.',
+  'I replied that we would finish it another day.',
+  'I explained we could not continue with that vendor.',
+];
+
 const PLAIN_WITHDRAWALS = [
   "I'm done", "I'm done.", 'I am done.', "I'm finished", "I'm finished, thanks",
   "no, I'm done", 'done', 'I am done with this', "I'm done with this interview",
@@ -161,9 +177,21 @@ const PLAIN_ENDINGS = [
   'can we do this later', 'can we reschedule', "I'll do it later", "I'm not ready",
   'can we continue after class', "could we pick this up once my exams are over",
   'sorry, my manager just called, can we do this later?',
+  // The apology comes after the refusal as often as before it. "sorry, not
+  // today" was heard and "not today, sorry" was not, because the padding was
+  // only ever allowed to lead — so whether somebody was let out of the
+  // interview depended on which end they put the apology.
+  'not today, sorry', 'not right now, sorry', 'no more, sorry',
+  'can we do this another time, if that is ok',
+  'I need to stop, if that is alright',
 ];
 
 describe('describing work is not asking to leave', () => {
+  it.each(REPORTED_SPEECH)('reporting what was said is not saying it: %s', (text) => {
+    const reading = detectCandidateIntent(text);
+    expect(ENDING_INTENTS.has(reading.intent), `read as ${reading.intent} by ${reading.rule}`).toBe(false);
+  });
+
   it.each(DESCRIBING_WORK)('withdrawal detector ignores: %s', (text) => {
     expect(detectWithdrawal(text)).toBe(false);
   });
