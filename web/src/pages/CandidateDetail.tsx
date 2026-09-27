@@ -123,6 +123,19 @@ export function candidateDetailTabFromParam(value: string | null): CandidateDeta
   return candidateDetailTabs.find((t) => t.key === value)?.key ?? 'profile';
 }
 
+/**
+ * Where a link to this page lands.
+ *
+ * Every caller goes through here so the question "which tab does this open?"
+ * is answered in one place. The default is the profile, and anything that has
+ * just made work for someone — a candidate added, a person set up on a second
+ * role — asks for `journey`, because that panel holds the only control in the
+ * product that starts an interview.
+ */
+export function candidateDetailPath(candidateId: string, tab: CandidateDetailTabKey = 'profile'): string {
+  return tab === 'profile' ? `/candidates/${candidateId}` : `/candidates/${candidateId}?tab=${tab}`;
+}
+
 export function candidateDetailTabId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-tab`; }
 export function candidateDetailPanelId(key: CandidateDetailTabKey) { return `candidate-detail-${key}-panel`; }
 

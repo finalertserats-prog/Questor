@@ -466,6 +466,53 @@ describe('when the mail server is down', () => {
   });
 });
 
+/**
+ * The first click of the whole product. `/login` deliberately carries no
+ * credential form — everyone signs in at `/o/<slug>` — and the slug is minted
+ * at approval, so the welcome mail is the only place the new admin can learn
+ * it. Two real organisations were approved, followed this link, and never
+ * signed in.
+ */
+describe('the welcome email of an approved account', () => {
+  it('links to the new organisation own sign-in page rather than the picker', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    await request(app).post(`/api/signup/decision/${decisionTokenFromOperatorMail()}`).send({ decision: 'approve' });
+
+    const tenant = await prisma.tenant.findFirstOrThrow({ where: { name: 'Priya Labs' } });
+    const welcome = sent.find((m) => m.to === 'priya@example.com' && m.subject.includes('ready'));
+    expect(welcome?.text).toContain(`https://questor.example/o/${tenant.slug}`);
+  });
+
+  it('never sends the new admin to a page with no way to sign in', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    await request(app).post(`/api/signup/decision/${decisionTokenFromOperatorMail()}`).send({ decision: 'approve' });
+
+    const welcome = sent.find((m) => m.to === 'priya@example.com' && m.subject.includes('ready'));
+    // Both halves, because `welcome?.text` is undefined when no mail was sent
+    // at all, and "undefined does not contain /login" is true for the wrong
+    // reason: a deleted welcome email would pass a bare negative assertion.
+    expect([Boolean(welcome), welcome?.text.includes('https://questor.example/login')]).toEqual([true, false]);
+  });
+
+  it('writes the slug out in words, so the address survives a stripped link', async () => {
+    await request(app).post('/api/signup').send(signupBody());
+    await request(app).post(`/api/signup/decision/${decisionTokenFromOperatorMail()}`).send({ decision: 'approve' });
+
+    const tenant = await prisma.tenant.findFirstOrThrow({ where: { name: 'Priya Labs' } });
+    const welcome = sent.find((m) => m.to === 'priya@example.com' && m.subject.includes('ready'));
+    expect(welcome?.text).toContain(`Your organisation's sign-in name is ${tenant.slug}`);
+  });
+
+  it('sends someone joining an existing organisation to that organisation door', async () => {
+    await existingTenant('acme');
+    await request(app).post('/api/signup').send(signupBody({ mode: 'join', orgCode: 'acme', organisationName: undefined, email: 'joiner@example.com' }));
+    await request(app).post(`/api/signup/decision/${decisionTokenFromOperatorMail()}`).send({ decision: 'approve' });
+
+    const welcome = sent.find((m) => m.to === 'joiner@example.com' && m.subject.includes('ready'));
+    expect(welcome?.text).toContain('https://questor.example/o/acme');
+  });
+});
+
 describe('the audit trail of a declined new-organisation request', () => {
   it('records the decision against the operator organisation rather than nowhere', async () => {
     await adminAuth();

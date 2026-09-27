@@ -259,6 +259,11 @@ export async function decideSignupRequest(opts: {
 
   let createdUserId: string | undefined;
   let createdTenantId: string | undefined;
+  // The door the welcome mail sends them to. Read inside the transaction from
+  // the tenant that was created or joined, never rebuilt from the request —
+  // `uniqueTenantSlug` may append a suffix, and a guessed slug is a link to
+  // somebody else's organisation.
+  let signInOrg: { name: string; slug: string | null } | undefined;
   let declinedReason: string | null = null;
   let grantedAreaSlugs: string[] = [];
   // Asked for but not granted, because the catalog retired the area between
@@ -297,6 +302,7 @@ export async function decideSignupRequest(opts: {
       });
       createdTenantId = tenant.id;
       createdUserId = user.id;
+      signInOrg = { name: tenant.name, slug: tenant.slug };
     } else {
       const tenant = await tx.tenant.create({
         data: {
@@ -334,6 +340,7 @@ export async function decideSignupRequest(opts: {
       }
       createdTenantId = tenant.id;
       createdUserId = user.id;
+      signInOrg = { name: tenant.name, slug: tenant.slug };
     }
 
     await tx.signupRequest.update({ where: { id: row.id }, data: { createdTenantId, createdUserId } });
@@ -357,9 +364,29 @@ export async function decideSignupRequest(opts: {
   // that bounces must not turn that into a 500, which then reads as "already
   // decided" on the operator's retry.
   let welcomeDelivered = false;
-  if (createdUserId) {
+  // `signInOrg` is set by both branches that set `createdUserId`, so this reads
+  // as "an account was created" — and naming it here means a future branch that
+  // creates a user without an organisation cannot send a welcome that points
+  // nowhere.
+  if (createdUserId && signInOrg) {
+    const org = signInOrg;
+    // Not reachable on either path today — a new organisation is created with
+    // a slug, and a join found its tenant *by* slug — but `Tenant.slug` is
+    // nullable and the compiler is right to insist. If it ever happens there is
+    // no door to name, and that is worth an operator's attention rather than a
+    // silent fall back to the picker, which is the page this mail exists to
+    // stop sending people to.
+    if (!org.slug) {
+      logger.error({ signupRequestId: row.id, createdTenantId }, 'Approved an account in an organisation with no sign-in slug; the welcome cannot name their door');
+    }
     try {
-      await getEmail().send(renderSignupWelcomeEmail({ to: row.email, name: row.name, signInUrl: webUrl('/login') }));
+      await getEmail().send(renderSignupWelcomeEmail({
+        to: row.email,
+        name: row.name,
+        organisation: org.name,
+        orgSlug: org.slug,
+        signInUrl: org.slug ? webUrl(`/o/${org.slug}`) : webUrl('/login'),
+      }));
       welcomeDelivered = true;
     } catch (err) {
       logger.error({ err: err instanceof Error ? err.message : String(err), signupRequestId: row.id }, 'Account created but the welcome email could not be sent');

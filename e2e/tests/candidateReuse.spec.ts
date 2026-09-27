@@ -77,8 +77,10 @@ test('picks an existing person on Add candidate and sets them up for a second ro
   await roleSelect.selectOption(roleValue);
   await page.getByRole('button', { name: 'Set up for this role' }).click();
 
-  // A new application: a different record, for the second role.
-  await expect(page).toHaveURL(/\/candidates\/[^/?#]+$/, { timeout: 20_000 });
+  // A new application: a different record, for the second role, opened on the
+  // journey tab — an application with no interview is not a finished job, and
+  // the control that starts one lives only there.
+  await expect(page).toHaveURL(/\/candidates\/[^/?#]+\?tab=journey$/, { timeout: 20_000 });
   await expect(page).not.toHaveURL(candidateUrl);
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.stat').filter({ hasText: 'Applied role' })).toContainText(secondTitle, { timeout: 20_000 });

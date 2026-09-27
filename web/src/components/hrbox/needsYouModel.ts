@@ -81,19 +81,79 @@ export interface CrewMember {
   readonly at: string | null;
 }
 
+/** The step an organisation that has not interviewed anyone yet should take next. */
+export interface FirstRun {
+  readonly step: 'role' | 'scorecard' | 'candidate' | 'interview';
+  readonly roleId: string | null;
+  readonly candidateId: string | null;
+  /** False when this reader would be refused the step; the card then names who to ask. */
+  readonly canAct: boolean;
+}
+
+export interface FirstRunCard {
+  readonly title: string;
+  readonly message: string;
+  /** Named per step rather than inferred from the link, which reads as "done" when there is no link. */
+  readonly icon: 'job-description' | 'evidence-review' | 'add-candidate' | 'ai-interview';
+  readonly action: { readonly label: string; readonly to: string } | null;
+}
+
 /**
- * Nothing has ever happened in this organisation — no work to need anyone,
- * nothing booked, nothing finished.
+ * What to say to an organisation that has not interviewed anyone yet.
  *
  * This is NOT the same as an established team that is simply caught up, and
  * telling the two apart is the whole point. Home said "Nothing needs you. The
  * interviewers will say when something does" to both, so an organisation that
- * had just signed up was told, on its first screen, to wait. Two real
- * organisations registered, saw that, and never created a role.
+ * had just signed up was told, on its first screen, to wait.
+ *
+ * The first fix replaced that with "Start with a role" — and then never moved
+ * on, because it too was computed from the queue alone. An organisation with a
+ * role, an approved scorecard and a candidate has exactly as empty a queue as
+ * one with nothing, so it was invited to create a second role rather than to
+ * interview the candidate it already had. The step now comes from the server,
+ * which can see the roles and candidates this page cannot.
  */
-export function hasNothingYet(feed: NeedsYouFeed): boolean {
-  return feed.needsYou.total === 0 && feed.comingUp.length === 0 && feed.doneRecently.length === 0;
+export function firstRunCard(feed: NeedsYouFeed): FirstRunCard | null {
+  const run = feed.firstRun;
+  if (!run) return null;
+  const card = FIRST_RUN_COPY[run.step](run);
+  // A button someone will be refused at is worse than no button: it reads as
+  // the product being broken rather than as the step belonging to someone else.
+  return run.canAct ? card : { ...card, message: card.blocked, action: null };
 }
+
+type FirstRunCopy = FirstRunCard & { readonly blocked: string };
+
+export const FIRST_RUN_COPY: Readonly<Record<FirstRun['step'], (run: FirstRun) => FirstRunCopy>> = {
+  role: () => ({
+    title: 'Start with a role',
+    icon: 'job-description',
+    message: 'Paste or upload a job description and Questor drafts a scorecard from it. You approve the scorecard, add candidates, and the interviews follow from there.',
+    blocked: 'Nothing has been set up yet. An admin or a recruiter here creates the first role.',
+    action: { label: 'Create your first role', to: '/roles/new' },
+  }),
+  scorecard: (run) => ({
+    title: 'Approve the scorecard',
+    icon: 'evidence-review',
+    message: 'Questor has drafted what the role is measured on. Nobody can be interviewed for it until someone approves that draft.',
+    blocked: 'The scorecard is drafted and waiting for approval. An admin or a hiring manager here approves it.',
+    action: { label: 'Approve the scorecard', to: `/roles/${run.roleId}` },
+  }),
+  candidate: (run) => ({
+    title: 'Add your first candidate',
+    icon: 'add-candidate',
+    message: 'The role is ready. Add someone with their resume and Questor reads it against the scorecard before the interview.',
+    blocked: 'The role is ready for candidates. An admin or a recruiter here adds them.',
+    action: { label: 'Add your first candidate', to: `/candidates/new?roleId=${run.roleId}` },
+  }),
+  interview: (run) => ({
+    title: 'Set up the interview',
+    icon: 'ai-interview',
+    message: 'Your candidate is waiting. Setting up the interview sends them a link and one of the interviewers takes it from there.',
+    blocked: 'A candidate is waiting for an interview. An admin or a recruiter here sets it up.',
+    action: { label: 'Set up the interview', to: `/candidates/${run.candidateId}?tab=journey` },
+  }),
+};
 
 export interface NeedsYouFeed {
   readonly generatedAt: string;
@@ -108,6 +168,8 @@ export interface NeedsYouFeed {
   readonly comingUp: readonly ComingUpItem[];
   readonly doneRecently: readonly DoneItem[];
   readonly crew: readonly CrewMember[];
+  /** Null once the organisation has interviewed someone, and while anything else is on this page. */
+  readonly firstRun: FirstRun | null;
 }
 
 /** The rule colour a row is drawn with (styles/hrbox.css), never a fill. */

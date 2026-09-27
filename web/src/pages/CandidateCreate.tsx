@@ -33,6 +33,7 @@ import {
   type ImportResult,
 } from '../components/candidateImportModel';
 import { useToast } from '../components/Toast';
+import { candidateDetailPath } from './CandidateDetail';
 
 interface Role {
   id: string; title: string; level: string; status: string;
@@ -116,7 +117,7 @@ export function CandidateCreate() {
     try {
       const { candidate } = await api.post<{ candidate: { id: string } }>(`/candidates/${person.candidateId}/apply`, { roleId });
       toast.show(`${person.fullName} is now a candidate for this role.`);
-      nav(`/candidates/${candidate.id}`);
+      nav(candidateDetailPath(candidate.id, 'journey'));
     } catch (err: unknown) {
       setError(applyFailureMessage(err));
       setSubmitting(false);
@@ -175,7 +176,9 @@ export function CandidateCreate() {
     try {
       if (withResume) await uploadResume(record.id, resume);
       toast.show(`${record.name || 'Candidate'} added.`);
-      nav(`/candidates/${record.id}`);
+      // The journey tab, not the profile: a candidate with no interview is not
+      // a finished job, and the control that starts one lives only there.
+      nav(candidateDetailPath(record.id, 'journey'));
     } catch (err: unknown) {
       setError(resumeUploadMessage(err));
       setSubmitting(false);

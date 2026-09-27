@@ -80,15 +80,35 @@ export function renderSignupAcknowledgementEmail(opts: { to: string; name: strin
   });
 }
 
-export function renderSignupWelcomeEmail(opts: { to: string; name: string; signInUrl: string }): EmailMessage {
+/**
+ * The first click of the product, and for a long time the last one.
+ *
+ * `signInUrl` must be the organisation's own door (`/o/<slug>`). `/login`
+ * carries no credential form by design — it is an organisation picker — and the
+ * slug is minted at approval, so this mail is the only place the new admin can
+ * learn it. Sent to `/login`, they had to guess their own organisation by a
+ * three-character prefix. Two real organisations were approved, arrived there,
+ * and never signed in.
+ *
+ * The slug is therefore written out in words as well as linked: a mail client
+ * that strips the button, a forwarded plain-text copy and a printed page all
+ * still carry the one fact they cannot recover from anywhere else.
+ */
+export function renderSignupWelcomeEmail(opts: { to: string; name: string; organisation: string; orgSlug: string | null; signInUrl: string }): EmailMessage {
+  // Null only for an organisation that predates per-organisation sign-in links
+  // and was never given a slug; the caller logs that for the operator.
+  const slugLine = opts.orgSlug
+    ? `Your organisation's sign-in name is ${opts.orgSlug} — everyone at ${opts.organisation} signs in at the address above.`
+    : null;
   const text = [
     `Hi ${opts.name},`,
     '',
-    'Your Questor account has been approved.',
+    `Your Questor account has been approved, for ${opts.organisation}.`,
     '',
     'You can sign in here:',
     opts.signInUrl,
     '',
+    ...(slugLine ? [slugLine, ''] : []),
   ].join('\n');
   return brandedEmail({
     to: opts.to,
@@ -96,8 +116,9 @@ export function renderSignupWelcomeEmail(opts: { to: string; name: string; signI
     text,
     html: [
       p(`Hi ${opts.name},`),
-      p('Your Questor account has been approved.'),
-      link(opts.signInUrl, 'Sign in to Questor'),
+      p(`Your Questor account has been approved, for ${opts.organisation}.`),
+      link(opts.signInUrl, `Sign in to ${opts.organisation}`),
+      ...(slugLine ? [p(slugLine)] : []),
     ].join('\n'),
   });
 }

@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { candidateScope } from './access.js';
+import { firstRunOf, type FirstRun } from './firstRun.js';
 import { COMPLETED_STATES } from './dashboardMetrics.js';
 import { interviewerIdOf, listActiveInterviewers } from './interviewers.js';
 import { LIVE_INTERVIEW_STATES } from './observerPolicy.js';
@@ -90,6 +91,12 @@ export interface NeedsYouFeed {
   readonly comingUp: readonly ComingUpItem[];
   readonly doneRecently: readonly DoneItem[];
   readonly crew: readonly CrewMember[];
+  /**
+   * The step an organisation that has not interviewed anyone yet should take
+   * next. Null once it has, and null whenever the queue, the week ahead or the
+   * week behind has anything in it.
+   */
+  readonly firstRun: FirstRun | null;
 }
 
 /** Midnight today on the organisation's clock. */
@@ -235,6 +242,14 @@ export async function getNeedsYou(auth: AuthClaims, paging: Paging, now: Date = 
   ]);
   const start = (paging.page - 1) * paging.pageSize;
   const items = await enrichRows(auth, queue.rows.slice(start, start + paging.pageSize), now);
+  // Asked for only when there is nothing else to show. An organisation that is
+  // simply caught up and one that has never started look identical from the
+  // queue alone, and telling them apart is the whole point of the card. A quiet
+  // established organisation reaches this too and pays one indexed existence
+  // check for it; see firstRunOf, which answers null on that read.
+  const firstRun = queue.total === 0 && upcoming.length === 0 && done.length === 0
+    ? await firstRunOf(auth)
+    : null;
   return {
     generatedAt: now.toISOString(),
     timeZone,
@@ -242,6 +257,7 @@ export async function getNeedsYou(auth: AuthClaims, paging: Paging, now: Date = 
     comingUp: upcoming,
     doneRecently: done,
     crew: crewOf(interviewers, upcoming, done, dayStart, dayEnd),
+    firstRun,
   };
 }
 
