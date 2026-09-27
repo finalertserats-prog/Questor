@@ -449,6 +449,8 @@ describe('the journey, one row per tier', () => {
       badgeSvg: `/api/candidates/${ids.candidateId}/awards/silver/badge.svg`,
       badgePng: `/api/candidates/${ids.candidateId}/awards/silver/badge.png`,
       certificatePdf: `/api/candidates/${ids.candidateId}/awards/silver/certificate.pdf`,
+      verifyLink: `/api/candidates/${ids.candidateId}/awards/silver/verify-link`,
+      certificateSend: `/api/candidates/${ids.candidateId}/awards/silver/certificate/send`,
     });
   });
 

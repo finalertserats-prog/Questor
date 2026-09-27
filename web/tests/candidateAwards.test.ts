@@ -13,7 +13,7 @@ import { awardRows, type AwardResponseRow } from '../src/components/candidateAwa
  * like an oversight, it is the rule, and a developer removes it by accident.
  */
 
-const server = vi.hoisted(() => ({ downloads: [] as string[], fails: false }));
+const server = vi.hoisted(() => ({ fetched: [] as string[], saved: [] as string[], fails: false }));
 
 class FakeApiError extends Error {
   status: number;
@@ -22,13 +22,20 @@ class FakeApiError extends Error {
 
 vi.mock('../src/api/client', () => ({
   api: {
-    download: (path: string) => {
-      server.downloads.push(path);
-      return server.fails ? Promise.reject(new FakeApiError(404, 'That certificate is not ready.')) : Promise.resolve();
+    fetchFile: (path: string) => {
+      server.fetched.push(path);
+      return server.fails
+        ? Promise.reject(new FakeApiError(404, 'That certificate is not ready.'))
+        : Promise.resolve({ blob: new Blob(['<svg/>'], { type: 'image/svg+xml' }), filename: 'questor-silver-QS-SLV-8F2K-4471.svg' });
     },
+    saveFile: (_blob: Blob, filename: string) => { server.saved.push(filename); },
+    get: () => Promise.resolve({ verifyUrl: 'https://questor.app/v/tok', reference: 'QS-SLV-8F2K-4471' }),
+    post: () => Promise.resolve({ sentToCandidateAt: '2026-09-27T10:00:00.000Z', delivered: true }),
   },
   ApiError: FakeApiError,
 }));
+
+vi.mock('../src/auth', () => ({ useAuth: () => ({ user: { id: 'u1', capabilities: ['candidate:read'] } }) }));
 
 const { CandidateAwards } = await import('../src/components/CandidateAwards');
 
@@ -75,7 +82,15 @@ const PENDING_SILVER: AwardResponseRow = {
 const show = (awards: readonly AwardResponseRow[]) =>
   render(createElement(CandidateAwards, { awards, candidateName: 'Mei Lin Chua' }));
 
-beforeEach(() => { server.downloads = []; server.fails = false; });
+beforeEach(() => {
+  server.fetched = []; server.saved = []; server.fails = false;
+  // jsdom has neither object URLs nor a modal dialog; the panel is what is
+  // under test, not the platform.
+  URL.createObjectURL = vi.fn(() => 'blob:questor/1');
+  URL.revokeObjectURL = vi.fn();
+  HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) { this.setAttribute('open', ''); };
+  HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) { this.removeAttribute('open'); };
+});
 afterEach(cleanup);
 
 describe('a tier that has not been earned', () => {
@@ -134,10 +149,14 @@ describe('a tier that has been earned', () => {
     expect(container.textContent).toContain('internal');
   });
 
-  it('asks the server for the agreed path, with the /api prefix stripped once', async () => {
+  // The credential opens inside the app; nothing is saved until the person
+  // asks for it from inside the viewer (awardViewer.test.ts has the rest).
+  it('opens the certificate in the app and asks the server for the agreed path, with the /api prefix stripped once', async () => {
     show([EARNED_SILVER]);
     screen.getByRole('button', { name: 'Certificate' }).click();
-    await waitFor(() => expect(server.downloads).toEqual(['/candidates/c1/awards/silver/certificate.pdf']));
+    await screen.findByRole('dialog');
+    await waitFor(() => expect(server.fetched).toEqual(['/candidates/c1/awards/silver/certificate.pdf']));
+    expect(server.saved).toEqual([]);
   });
 
   it('names the failure rather than leaving a button that does nothing', async () => {
@@ -183,5 +202,23 @@ describe('the row view model', () => {
   it('falls back to a usable filename when the name is nothing it can use', () => {
     const [row] = awardRows([EARNED_SILVER], '   ');
     expect(row.fileStem).toBe('candidate-silver');
+  });
+
+  it('carries the verification-link and send paths the server states, prefix stripped', () => {
+    const [row] = awardRows([{
+      ...EARNED_SILVER,
+      exports: { ...EARNED_SILVER.exports!, verifyLink: '/api/candidates/c1/awards/silver/verify-link', certificateSend: '/api/candidates/c1/awards/silver/certificate/send' },
+    }], 'Mei Lin Chua');
+    expect([row.verifyLinkPath, row.sendPath]).toEqual(['/candidates/c1/awards/silver/verify-link', '/candidates/c1/awards/silver/certificate/send']);
+  });
+
+  it('carries no send path where the server states none, and none at all before a tier is earned', () => {
+    const [bronze, pending] = awardRows([EARNED_BRONZE, PENDING_SILVER], 'Mei Lin Chua');
+    expect([bronze.sendPath, pending.sendPath, pending.verifyLinkPath]).toEqual([null, null, null]);
+  });
+
+  it('remembers when a certificate was sent', () => {
+    const [row] = awardRows([{ ...EARNED_SILVER, sentToCandidateAt: '2026-09-25T10:00:00.000Z' }], 'Mei Lin Chua');
+    expect(row.sentToCandidateAt).toBe('2026-09-25T10:00:00.000Z');
   });
 });

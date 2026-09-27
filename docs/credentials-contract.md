@@ -164,6 +164,13 @@ text — searchable, selectable, screen-reader legible. Never a screenshot.
 
 - `GET /api/candidates/:id/awards/:tier/certificate.pdf` — the certificate
 - `GET /api/candidates/:id/awards/:tier/badge.png` and `.svg` — the badge
+- `GET /api/candidates/:id/awards/:tier/verify-link` — the public
+  verification link (`{ verifyUrl, reference }`), for the viewer's "share".
+  Added 2026-09-28. Nothing new is minted: it is the `…/v/<token>` address the
+  certificate already prints, handed over on request so that the journey list
+  never carries the token. `candidate:read`, audited as
+  `candidate.award.verify_link_shared` (the token itself stays out of the
+  trail), and refused for Diamond with the same sentence as the certificate.
 - Bronze carries the **INTERNAL** watermark and the kicker
   "Record of assessment · not for release".
 - Every certificate carries the Q watermark at 1.8% and the footnote:
@@ -201,6 +208,19 @@ emailed on its own; badges and certificates are the hiring team's.
 buttons: `Badge` and `Certificate`. Diamond shows only `Badge`. A tier not yet
 earned shows a dashed placeholder, no buttons, and the reason
 ("Awarded when she moves to Gold").
+
+**The buttons open a viewer, they do not save a file** (owner, 2026-09-27;
+`web/src/components/AwardViewer.tsx`). Pressing `Badge` or `Certificate` opens
+a modal dialog showing the badge the server drew or the certificate it laid
+out — the same bytes an export answers, fetched once. Inside the dialog:
+`Download` (those bytes, under the server's filename), `Copy verification
+link` (the public `/v/<token>` page — "share" is that link and nothing new),
+and, on a Silver or Gold certificate for a user who may administer the tenant,
+`Send to candidate`, which asks for confirmation naming the candidate and then
+calls the send route above, once. Bronze offers no send and says why. The
+first version of this saved files straight to disk; on Windows an `.svg` is
+labelled "Microsoft Edge HTML Document", which is how a badge download came to
+be reported as "an HTML file".
 
 **Badge sizes in the app: 20, 24, 30, 36.** The hallmark (`Q·585`, `Q·925`,
 `Q·999`) is engraved only at 56px and above; below that it muddies the metal.

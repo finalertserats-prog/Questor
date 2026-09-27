@@ -20,6 +20,10 @@ export interface AwardExports {
   readonly badgeSvg: string;
   readonly badgePng: string;
   readonly certificatePdf: string | null;
+  /** The public verification link, on request. Null where there is no public page (Diamond). */
+  readonly verifyLink?: string | null;
+  /** Where an admin releases the certificate to the candidate. Null where that is never done (Bronze, Diamond). */
+  readonly certificateSend?: string | null;
 }
 
 /** One row as the server sends it (GET /api/candidates/:id/awards). */
@@ -35,6 +39,7 @@ export interface AwardResponseRow {
   readonly headline?: string;
   readonly hasCertificate?: boolean;
   readonly exports?: AwardExports;
+  readonly sentToCandidateAt?: string | null;
 }
 
 export interface AwardRowView {
@@ -49,14 +54,20 @@ export interface AwardRowView {
   readonly reason: string;
   readonly awardedAt: string | null;
   readonly reference: string;
-  /** Paths for `api.download`, which prefixes /api itself. Null where there is nothing to export. */
+  /** Paths for the api client, which prefixes /api itself. Null where there is nothing to fetch. */
   readonly badgePath: string | null;
   readonly certificatePath: string | null;
+  /** Where the viewer asks for the public verification link. Null where there is no public page. */
+  readonly verifyLinkPath: string | null;
+  /** Where an admin sends the certificate to the candidate. Null where that is never done. */
+  readonly sendPath: string | null;
+  /** When the certificate went to the candidate, or null while it has not. */
+  readonly sentToCandidateAt: string | null;
   readonly fileStem: string;
 }
 
 /**
- * `api.download` prefixes /api, and the server states the agreed paths in
+ * The api client prefixes /api, and the server states the agreed paths in
  * full, as the contract writes them. Stripping it once here beats each caller
  * remembering — a path sent through with its prefix asks for /api/api/… and
  * fails as a 404 that reads like a missing endpoint.
@@ -71,21 +82,27 @@ export function awardRows(rows: readonly AwardResponseRow[], candidateName: stri
   const stem = candidateName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'candidate';
   return [...rows]
     .sort((a, b) => TIER_ORDER.indexOf(a.tier) - TIER_ORDER.indexOf(b.tier))
-    .map((row) => ({
-      tier: row.tier,
-      label: row.label,
-      earned: row.earned,
-      description: row.earned ? row.headline ?? '' : '',
-      internal: row.tier === 'bronze',
-      reason: row.earned ? '' : row.reason ?? '',
-      awardedAt: row.earned ? row.awardedAt ?? null : null,
-      reference: row.earned ? row.reference ?? '' : '',
+    .map((row) => {
       // An unearned tier has no export, and the row must not offer one: the
       // badge is struck at the moment of promotion, so there is no file to
       // render and a button here would ask the server for a certificate for
       // something that has not happened.
-      badgePath: row.earned && row.exports ? apiRelative(row.exports.badgeSvg) : null,
-      certificatePath: row.earned && row.exports?.certificatePdf ? apiRelative(row.exports.certificatePdf) : null,
-      fileStem: `${stem}-${row.tier}`,
-    }));
+      const exports = row.earned ? row.exports : undefined;
+      return {
+        tier: row.tier,
+        label: row.label,
+        earned: row.earned,
+        description: row.earned ? row.headline ?? '' : '',
+        internal: row.tier === 'bronze',
+        reason: row.earned ? '' : row.reason ?? '',
+        awardedAt: row.earned ? row.awardedAt ?? null : null,
+        reference: row.earned ? row.reference ?? '' : '',
+        badgePath: exports ? apiRelative(exports.badgeSvg) : null,
+        certificatePath: exports?.certificatePdf ? apiRelative(exports.certificatePdf) : null,
+        verifyLinkPath: exports?.verifyLink ? apiRelative(exports.verifyLink) : null,
+        sendPath: exports?.certificateSend ? apiRelative(exports.certificateSend) : null,
+        sentToCandidateAt: row.earned ? row.sentToCandidateAt ?? null : null,
+        fileStem: `${stem}-${row.tier}`,
+      };
+    });
 }

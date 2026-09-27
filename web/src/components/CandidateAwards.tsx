@@ -2,19 +2,21 @@ import { useState } from 'react';
 import { Icon } from './Icon';
 import { TierBadge } from './TierBadge';
 import { formatDate } from './dateFormat';
-import { api, ApiError } from '../api/client';
-import { awardRows, type AwardResponseRow, type AwardRowView } from './candidateAwardsModel';
+import { AwardViewer, type AwardViewKind } from './AwardViewer';
+import { awardRows, type AwardResponseRow, type AwardRowView, type AwardTier } from './candidateAwardsModel';
 
 /**
  * Badges and certificates, one row per tier.
  *
- * An earned row carries the metal, what happened, the date and its exports. An
- * unearned one carries a dashed placeholder, the reason, and no buttons at
- * all — because the badge is struck at the moment of promotion, so there is
- * nothing to export and a greyed-out button would suggest otherwise.
+ * An earned row carries the metal, what happened, the date and two buttons
+ * that open the credential inside the app (AwardViewer). An unearned one
+ * carries a dashed placeholder, the reason, and no buttons at all — because
+ * the badge is struck at the moment of promotion, so there is nothing to show
+ * and a greyed-out button would suggest otherwise.
  *
- * Sending anything to a candidate is an admin action and lives behind this
- * panel, never on a row.
+ * Nothing is saved or sent from a row. Downloading, sharing and sending live
+ * inside the viewer, where the person can see what they are about to do it
+ * with.
  */
 
 export interface CandidateAwardsProps {
@@ -22,9 +24,21 @@ export interface CandidateAwardsProps {
   readonly candidateName: string;
 }
 
+interface Opened {
+  readonly tier: AwardTier;
+  readonly kind: AwardViewKind;
+}
+
 export function CandidateAwards({ awards, candidateName }: CandidateAwardsProps) {
-  const rows = awardRows(awards, candidateName);
-  const [failure, setFailure] = useState('');
+  const [opened, setOpened] = useState<Opened | null>(null);
+  // A send made inside the viewer, remembered so the row says so at once
+  // rather than after the page next reloads its awards.
+  const [sent, setSent] = useState<Readonly<Partial<Record<AwardTier, string>>>>({});
+  const rows = awardRows(awards, candidateName).map((row) => {
+    const sentAt = sent[row.tier];
+    return sentAt ? { ...row, sentToCandidateAt: sentAt } : row;
+  });
+  const openRow = opened ? rows.find((row) => row.tier === opened.tier) ?? null : null;
 
   if (rows.length === 0) {
     return (
@@ -44,33 +58,26 @@ export function CandidateAwards({ awards, candidateName }: CandidateAwardsProps)
         A tier is earned on the way out of it — Silver when the candidate moves to Gold, Gold when
         they move to Diamond. Diamond has no certificate; the journey is its record.
       </p>
-      {failure && <p className="award-failure" role="alert">{failure}</p>}
       <ol className="award-rows">
         {rows.map((row) => (
-          <AwardRow key={row.tier} row={row} onFailure={setFailure} />
+          <AwardRow key={row.tier} row={row} onOpen={(kind) => setOpened({ tier: row.tier, kind })} />
         ))}
       </ol>
+      {opened && openRow && (
+        <AwardViewer
+          key={`${opened.tier}-${opened.kind}`}
+          row={openRow}
+          kind={opened.kind}
+          candidateName={candidateName}
+          onClose={() => setOpened(null)}
+          onSent={(sentToCandidateAt) => setSent((current) => ({ ...current, [opened.tier]: sentToCandidateAt }))}
+        />
+      )}
     </section>
   );
 }
 
-function AwardRow({ row, onFailure }: { row: AwardRowView; onFailure: (message: string) => void }) {
-  const [busy, setBusy] = useState('');
-
-  async function save(kind: 'badge' | 'certificate', path: string, filename: string) {
-    setBusy(kind);
-    onFailure('');
-    try {
-      await api.download(path, filename);
-    } catch (err: unknown) {
-      // Named rather than swallowed: a button that does nothing at all reads as
-      // a broken page, and the person then presses it again.
-      onFailure(err instanceof ApiError ? err.message : 'That file could not be prepared. Try again in a moment.');
-    } finally {
-      setBusy('');
-    }
-  }
-
+function AwardRow({ row, onOpen }: { row: AwardRowView; onOpen: (kind: AwardViewKind) => void }) {
   if (!row.earned) {
     return (
       <li className="award-row award-row-pending">
@@ -91,25 +98,20 @@ function AwardRow({ row, onFailure }: { row: AwardRowView; onFailure: (message: 
         <b>{row.label}</b>
         {row.description ? ` — ${row.description}` : ''}
         {row.internal && <span className="award-mark"> · internal</span>}
+        {row.sentToCandidateAt && <span className="award-mark"> · sent to candidate</span>}
       </span>
       <span className="award-when">{formatDate(row.awardedAt)}</span>
       <span className="award-actions">
         {row.badgePath && (
-          <button
-            type="button" className="award-action" disabled={busy !== ''}
-            onClick={() => void save('badge', row.badgePath as string, `${row.fileStem}-badge.svg`)}
-          >
-            {busy === 'badge' ? 'Preparing…' : 'Badge'}
+          <button type="button" className="award-action" onClick={() => onOpen('badge')}>
+            Badge
           </button>
         )}
         {/* Diamond records what an employer decided, which is theirs to
             announce, so it offers no certificate. */}
         {row.certificatePath && (
-          <button
-            type="button" className="award-action" disabled={busy !== ''}
-            onClick={() => void save('certificate', row.certificatePath as string, `${row.fileStem}-certificate.pdf`)}
-          >
-            {busy === 'certificate' ? 'Preparing…' : 'Certificate'}
+          <button type="button" className="award-action" onClick={() => onOpen('certificate')}>
+            Certificate
           </button>
         )}
       </span>
