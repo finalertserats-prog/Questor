@@ -200,7 +200,12 @@ function stripBullet(line: string): string {
  * after it filed as certifications, because "languages" was not on the list
  * and nothing else ended the section.
  */
-const SECTION_HEADINGS = new Set([
+/**
+ * Exported so the shared section vocabulary can be held to it. This set and
+ * `domain/cvSections.ts` are two readers of one idea, and when they drifted
+ * apart a CV headed "Positions Held" yielded zero roles.
+ */
+export const SECTION_HEADINGS = new Set([
   'experience', 'work experience', 'professional experience', 'employment', 'employment history',
   'work history', 'career history', 'career timeline', 'education', 'academic', 'qualifications',
   'professional background', 'background', 'career summary', 'experience summary',

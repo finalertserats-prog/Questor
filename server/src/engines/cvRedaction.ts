@@ -1,5 +1,6 @@
 import { detectInjection } from './policyEngine.js';
 import { CV_SECTIONS, type CvLine, type CvSection, type ProtectedKind, type RedactionReport } from '../domain/cvFacts.js';
+import { CV_SECTION_MATCHERS } from '../domain/cvSections.js';
 
 /**
  * A CV, reduced to the lines a score is allowed to be built from.
@@ -24,27 +25,8 @@ import { CV_SECTIONS, type CvLine, type CvSection, type ProtectedKind, type Reda
  * an incidental quote.
  */
 
-const SECTION_PATTERNS: ReadonlyArray<{ readonly section: CvSection; readonly re: RegExp }> = [
-  { section: 'experience', re: /^(work\s+)?(experience|employment|work history|professional (experience|background)|career (history|summary))\b/i },
-  { section: 'education', re: /^(education|academic (background|qualifications?)|qualifications?)\b/i },
-  { section: 'skills', re: /^(skills?|technical skills?|core competenc(y|ies)|technolog(y|ies)|tech stack|toolkit)\b/i },
-  { section: 'projects', re: /^(projects?|selected projects?|personal projects?|portfolio)\b/i },
-  { section: 'certifications', re: /^(certifications?|certificates?|licen[cs]es?|accreditations?)\b/i },
-  { section: 'summary', re: /^(summary|profile|objective|about( me)?|professional summary)\b/i },
-  /**
-   * The back of the CV: the sections that are neither work nor a claim about
-   * skills. Named here because a heading this list does not recognise leaves
-   * every line under it filed as whatever came before — and on an academic CV
-   * what comes before is the experience section, so every publication in a
-   * forty-item bibliography was read as a job the person had done. The
-   * citations are full of the right words, so the evidence count went up with
-   * the length of the bibliography.
-   *
-   * Filed as `other`: still readable, still quotable, but no longer an account
-   * of doing the work.
-   */
-  { section: 'other', re: /^(publications?|selected publications?|papers?|grants?|funding|awards?|honou?rs|patents?|conferences?|talks?|presentations?|references?|interests?|hobbies|activities|memberships?|affiliations?|languages?|volunteering)\b/i },
-];
+// The vocabulary lives in domain/cvSections.ts, shared with resumeParser, so
+// a heading known to one reader can never be unknown to the other.
 
 /** A heading is a short line that names a section and nothing else. */
 const MAX_HEADING_CHARS = 48;
@@ -52,7 +34,7 @@ const MAX_HEADING_CHARS = 48;
 function headingSection(line: string): CvSection | null {
   const trimmed = line.trim().replace(/[:–—-]+$/, '').trim();
   if (!trimmed || trimmed.length > MAX_HEADING_CHARS) return null;
-  for (const { section, re } of SECTION_PATTERNS) {
+  for (const { section, re } of CV_SECTION_MATCHERS) {
     if (re.test(trimmed)) return section;
   }
   return null;
