@@ -179,7 +179,7 @@ function mergeRoles(
       ...(endYear ? { endYear } : {}),
       ...(months ? { months } : {}),
       ...(r.employerContext ? { employerContext: r.employerContext } : {}),
-      evidence: { line: line.index, quote: line.text, section: line.section },
+      evidence: { line: line.index, sourceLine: line.sourceLine, quote: line.text, section: line.section },
       bullets: [],
     });
     held.add(r.line);
@@ -196,7 +196,7 @@ function mergeScope(base: readonly CvScopeFact[], offered: readonly CvFactsReply
     const key = `${s.kind}:${s.value.toLowerCase()}`;
     if (!line || seen.has(key) || !saysIt(line, s.value)) continue;
     seen.add(key);
-    added.push({ kind: s.kind as CvScopeKind, value: s.value, evidence: { line: line.index, quote: line.text, section: line.section } });
+    added.push({ kind: s.kind as CvScopeKind, value: s.value, evidence: { line: line.index, sourceLine: line.sourceLine, quote: line.text, section: line.section } });
   }
   return added.length === 0 ? base : [...base, ...added];
 }
@@ -212,7 +212,7 @@ function rebuiltWithRoles(facts: CvFacts, roles: readonly CvRoleHeld[], today: D
     const next = starts.find((s) => s > role.evidence.line) ?? Number.POSITIVE_INFINITY;
     const bullets = facts.lines
       .filter((l) => l.index > role.evidence.line && l.index < next && l.section === 'experience' && l.text.length > 12 && !l.injection)
-      .map((l) => ({ line: l.index, quote: l.text, section: l.section }));
+      .map((l) => ({ line: l.index, sourceLine: l.sourceLine, quote: l.text, section: l.section }));
     return { ...role, bullets };
   });
 

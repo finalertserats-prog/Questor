@@ -16,7 +16,10 @@ import type { Fit } from '../src/components/fit/fitModel';
 
 afterEach(cleanup);
 
-const evidence = (quote: string, line = 4) => ({ line, quote, section: 'experience' });
+// `line` is the index into the lines the scorer kept; `sourceLine` is where it
+// is in the document. They are deliberately different here, because the panel
+// used to print the first as the second.
+const evidence = (quote: string, line = 4, sourceLine = 12) => ({ line, sourceLine, quote, section: 'experience' });
 
 const FIT: Fit = {
   overall: 78,
@@ -92,9 +95,28 @@ describe('strengths', () => {
     expect(row.textContent).toContain('Owned the streaming ingestion in Kafka.');
   });
 
-  it('say where on the CV the line was', () => {
+  it('say where on the CV the line was, by its line in the document', () => {
     panel();
-    expect(screen.getByTestId('fit-competency-c1').textContent).toContain('CV line 5');
+    expect(screen.getByTestId('fit-competency-c1').textContent).toContain('CV line 12');
+  });
+
+  it('never print the index into the kept lines as a place in the document', () => {
+    // The fixture's index is 4. Printing it — as "CV line 5" — sent a recruiter
+    // to a line that holds something else, off by everything redaction removed
+    // above it. On a real CV that is the whole header block.
+    panel();
+    expect(screen.getByTestId('fit-competency-c1').textContent).not.toContain('CV line 5');
+  });
+
+  it('says nothing about a line it cannot place, rather than a wrong number', () => {
+    // Facts parsed before the document line was recorded have no sourceLine. A
+    // re-analysis fills it in; until then the panel names the section only.
+    panel({
+      competencies: [{ ...FIT.competencies[0], evidence: [{ line: 4, quote: 'Owned the streaming ingestion in Kafka.', section: 'experience' }] }],
+      technologies: [],
+    });
+    const text = screen.getByTestId('fit-competency-c1').textContent ?? '';
+    expect([text.includes('CV line'), text.includes('experience')]).toEqual([false, true]);
   });
 
   it('separate what is claimed once from what is shown', () => {

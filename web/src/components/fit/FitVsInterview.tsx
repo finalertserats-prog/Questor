@@ -1,6 +1,6 @@
 import { Banner } from '../ui';
 import {
-  COMPARISON_LABELS, COMPARISON_TONE, comparisonHeadline, compareFitWithInterview,
+  COMPARISON_LABELS, COMPARISON_TONE, comparisonHeadline, compareFitWithInterview, evidenceWhere,
   strengthLabel, type ComparisonRow, type Fit, type InterviewCompetency,
 } from './fitModel';
 
@@ -62,7 +62,7 @@ function Row({ row }: { row: ComparisonRow }) {
             : (
               <ul className="fit-quotes">
                 {row.cvEvidence.slice(0, 2).map((e) => (
-                  <li key={e.line}><q>{e.quote}</q><span className="fit-where">CV line {e.line + 1}</span></li>
+                  <li key={e.line}><q>{e.quote}</q><span className="fit-where">{evidenceWhere(e, false)}</span></li>
                 ))}
               </ul>
             )}

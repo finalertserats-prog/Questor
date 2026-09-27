@@ -54,7 +54,7 @@ function monthsBetween(range: DateRange): number {
   return Math.max(1, (range.end!.year - range.start.year) * 12 + (range.end!.month - range.start.month) + 1);
 }
 
-const evidenceOf = (line: CvLine): CvEvidence => ({ line: line.index, quote: line.text, section: line.section });
+const evidenceOf = (line: CvLine): CvEvidence => ({ line: line.index, sourceLine: line.sourceLine, quote: line.text, section: line.section });
 
 // --- Roles -------------------------------------------------------------------
 

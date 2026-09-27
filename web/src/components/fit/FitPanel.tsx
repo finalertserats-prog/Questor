@@ -7,7 +7,7 @@ import {
   FIT_PROVISIONAL_LABEL, FIT_PROVISIONAL_NOTE,
 } from './fitVocabulary';
 import {
-  bandLabel, bandMeaning, bandOf, bandTone, eligibilityKindLabel, isDetailedFit, isProvisionalFit,
+  bandLabel, bandMeaning, bandOf, bandTone, eligibilityKindLabel, evidenceWhere, isDetailedFit, isProvisionalFit,
   strengthLabel,
   type Fit, type FitCompetencyRead, type FitEligibilityRead, type FitEvidence, type FitTechnologyRead,
 } from './fitModel';
@@ -191,7 +191,7 @@ function Quotes({ evidence }: { evidence: readonly FitEvidence[] }) {
       {evidence.map((e) => (
         <li key={`${e.line}-${e.quote.slice(0, 12)}`}>
           <q>{e.quote}</q>
-          <span className="fit-where">CV line {e.line + 1}, {e.section}</span>
+          <span className="fit-where">{evidenceWhere(e)}</span>
         </li>
       ))}
     </ul>

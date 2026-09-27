@@ -230,7 +230,14 @@ export function prepareCvForScoring(rawText: string): ScoreableCv {
   let seenHeading = false;
   let headerLines = 0;
 
+  // Two numbers, and they are not the same number. `index` is the position in
+  // the array the scorer reads; `sourceLine` is the line in the document the
+  // candidate uploaded. They diverge by every blank line and every line
+  // redaction drops — on a real CV, by the whole header block — and it is
+  // `sourceLine` a person is ever shown.
+  let sourceLine = 0;
   for (const raw of source) {
+    sourceLine++;
     const index = lines.length;
     const trimmed = raw.replace(/\s+/g, ' ').trim();
     if (!trimmed) continue;
@@ -239,7 +246,7 @@ export function prepareCvForScoring(rawText: string): ScoreableCv {
     if (heading) {
       section = heading;
       seenHeading = true;
-      lines.push({ index, text: trimmed, section, removed: [], injection: false });
+      lines.push({ index, sourceLine, text: trimmed, section, removed: [], injection: false });
       continue;
     }
 
@@ -298,7 +305,7 @@ export function prepareCvForScoring(rawText: string): ScoreableCv {
 
     const injection = detectInjection(text).injection;
     if (injection) injectionLines.push(index);
-    lines.push({ index, text, section, removed: inline, injection });
+    lines.push({ index, sourceLine, text, section, removed: inline, injection });
   }
 
   return {

@@ -10,7 +10,31 @@ import { FIT_BAND_LABELS, FIT_BAND_MEANINGS, FIT_BAND_TONE, FIT_STRENGTH_LABELS,
  * and a name join would quietly compare the wrong two things.
  */
 
-export interface FitEvidence { line: number; quote: string; section: string; }
+export interface FitEvidence {
+  /** Index into the lines the scorer kept — a key, never a place in the document. */
+  line: number;
+  /**
+   * The 1-based line in the CV as uploaded. Absent on facts parsed before this
+   * existed; a re-analysis fills it in.
+   */
+  sourceLine?: number;
+  quote: string;
+  section: string;
+}
+
+/**
+ * Where a quote came from, for a person who may go and check it.
+ *
+ * This printed `line + 1`, which is a position in the array the scorer kept —
+ * blank lines and everything redaction removed are not in it, so on a real CV,
+ * which opens with a name, an address and a phone number, the number sent a
+ * recruiter to the wrong line. Saying nothing beats saying something false: an
+ * older fact with no document line names its section instead.
+ */
+export function evidenceWhere(e: Pick<FitEvidence, 'sourceLine' | 'section'>, withSection = true): string {
+  const where = e.sourceLine ? `CV line ${e.sourceLine}` : 'CV';
+  return withSection ? `${where}, ${e.section}` : where;
+}
 
 export interface FitComponent {
   key: string; label: string; weight: number; score: number;

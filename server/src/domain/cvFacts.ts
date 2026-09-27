@@ -23,7 +23,24 @@ export type ProtectedKind =
 
 /** One line of the CV as the scorer is allowed to see it. */
 export interface CvLine {
+  /**
+   * Position in THIS array — the lines the scorer kept. Blank lines and the
+   * ones redaction dropped are not here, so this is not a place in the
+   * document and must never be shown to a person as one. It is a key: bullets
+   * are attributed to the role above them by comparing it, and the model merge
+   * looks rows up by it.
+   */
   readonly index: number;
+  /**
+   * The 1-based line in the document as uploaded. This is the one a person is
+   * shown, and the one that has to be right: a recruiter checking a parsed
+   * fact opens the CV at this line and expects to find the quote on it.
+   *
+   * Optional only because facts parsed before this existed are stored without
+   * it; a re-analysis fills it in. Absent means "we cannot say where", and the
+   * reader says that rather than printing a number that is wrong.
+   */
+  readonly sourceLine?: number;
   /** The line after protected content was removed. The only text that is ever scored or quoted. */
   readonly text: string;
   readonly section: CvSection;
@@ -35,7 +52,10 @@ export interface CvLine {
 
 /** A fact's provenance: the exact line, already cleared of protected content. */
 export interface CvEvidence {
+  /** Index into the kept lines — a key, not a place. See {@link CvLine.index}. */
   readonly line: number;
+  /** The 1-based line in the uploaded document. See {@link CvLine.sourceLine}. */
+  readonly sourceLine?: number;
   readonly quote: string;
   readonly section: CvSection;
 }
