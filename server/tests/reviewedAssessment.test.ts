@@ -50,6 +50,32 @@ describe('the reviewed assessment', () => {
     expect(reviewed.competencies.find((c) => c.id === 'lead')).toMatchObject({ level: 3, notEnoughEvidence: false });
   });
 
+  it('drops the reason the AI had no evidence, because the reviewer found some', () => {
+    // `evidenceGap` explains why a competency has no evidence. A reviewer who
+    // grades it has said there was something to grade, so leaving "the
+    // candidate did not answer this" stamped on a level 3 would put two
+    // contradictory findings on one competency.
+    const graded = { ...competency('lead', 'Leadership', null), evidence: [], evidenceGap: 'declined' as const };
+    const ai: AssessmentResult = { ...AI, competencies: [graded] };
+
+    const reviewed = applyReviewOverrides(ai, review({ overrides: [{ competencyId: 'lead', from: null, to: 3, reason: 'Covered in the second half.' }] }));
+
+    // The key itself, not just its value: this is serialised to JSON and read
+    // back, and `{ evidenceGap: undefined }` and no key at all are the same
+    // assertion here but different rows in the database.
+    expect('evidenceGap' in reviewed.competencies[0]).toBe(false);
+    expect(reviewed.competencies[0].evidenceGap).toBeUndefined();
+  });
+
+  it('leaves the reason intact on a competency the reviewer did not grade', () => {
+    const untouched = { ...competency('lead', 'Leadership', null), evidence: [], evidenceGap: 'declined' as const };
+    const ai: AssessmentResult = { ...AI, competencies: [untouched, competency('stake', 'Stakeholder management', 2)] };
+
+    const reviewed = applyReviewOverrides(ai, review());
+
+    expect(reviewed.competencies.find((c) => c.id === 'lead')?.evidenceGap).toBe('declined');
+  });
+
   it("takes the reviewer's disposition as the recommendation", () => {
     expect(applyReviewOverrides(AI, review()).recommendation).toBe('CONSIDER');
   });

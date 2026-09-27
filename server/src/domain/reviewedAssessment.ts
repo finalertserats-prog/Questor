@@ -78,7 +78,11 @@ export function applyReviewOverrides(result: AssessmentResult, review: Completed
     if (level === undefined) return c;
     // A reviewer who grades a competency has, by doing so, said there was
     // enough to grade it on — whatever the AI concluded about the evidence.
-    return { ...c, level, notEnoughEvidence: false, gradingUnavailable: false };
+    // `evidenceGap` goes with it: it exists to explain an absence of evidence,
+    // and "the candidate did not answer this" left standing beside a level the
+    // reviewer gave is two contradictory findings on one competency.
+    const { evidenceGap: _resolved, ...rest } = c;
+    return { ...rest, level, notEnoughEvidence: false, gradingUnavailable: false };
   });
 
   return {
