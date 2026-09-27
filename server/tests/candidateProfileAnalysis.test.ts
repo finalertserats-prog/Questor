@@ -200,7 +200,14 @@ describe('candidate profile analysis endpoint', () => {
     // necessarily the first: a role that names no must-have has nothing to
     // quote under "must-haves met", and says so rather than padding it.
     expect(res.body.alternativeRoles[0].components.some((c: { evidence: string[] }) => c.evidence.length > 0)).toBe(true);
-    expect(res.body.alternativeRoles[0].why).toMatch(/Python|Spark|Airflow|stronger/i);
+    // This fixture's CV speaks to none of the applied role's scorecard:
+    // coverage 0, band `not_enough_evidence`. The product already said so in
+    // words — and still handed out the 51 underneath it, so an alternative was
+    // explained as "N points stronger" than a reading it calls unreadable.
+    // Ranking the alternatives is fine; comparing them to that number is not.
+    expect(res.body.currentFit.band).toBe('not_enough_evidence');
+    expect(res.body.alternativeRoles[0].why)
+      .toMatch(/says too little about the applied role for its reading to be compared/i);
   });
 
   it('does not leak another tenant role in alternatives', async () => {

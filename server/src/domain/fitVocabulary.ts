@@ -108,15 +108,48 @@ export function isProvisionalFit(fit: { readonly provisional?: boolean } | null 
 }
 
 /**
+ * The share of a scorecard's weight a CV must speak to before its number means
+ * anything. Below this the reading is `not_enough_evidence`.
+ */
+export const MIN_COMPARABLE_COVERAGE = 0.35;
+
+/**
  * The number a ranking, a filter or a comparison may use, or null.
  *
- * Null for a provisional reading, and null for a reading with no number at all.
+ * Null for a provisional reading, null for a reading with no number at all,
+ * and null when the CV said too little for the number to mean anything.
+ *
+ * That last one was missing, and it mattered. `fitBandOf` already set
+ * `not_enough_evidence` below the coverage floor and FIT_NEEDS_A_PERSON says
+ * the right thing in words — but the number was still written to
+ * `fit.overall` and still handed out here, and the number is what sorts a
+ * list. So a scanned CV nobody could read sat at 55 in a ranked list above a
+ * real candidate at 52, and the stated policy — silence is silence — was
+ * enforced everywhere except on the one value that orders people.
+ *
+ * `limited_match` deliberately keeps its number: "the CV evidences little of
+ * what this role asks for" is something the document actually said, and
+ * withholding it would hide a real reading rather than an absent one.
+ *
  * Every caller that orders or compares candidates goes through this, so the
  * rule lives in one place instead of in each of them.
  */
-export function comparableFitScore(fit: { readonly provisional?: boolean; readonly overall?: unknown } | null | undefined): number | null {
+export function comparableFitScore(
+  fit: {
+    readonly provisional?: boolean;
+    readonly overall?: unknown;
+    readonly band?: FitBand;
+    readonly coverage?: number;
+  } | null | undefined,
+): number | null {
   if (!fit || isProvisionalFit(fit)) return null;
-  return typeof fit.overall === 'number' ? fit.overall : null;
+  if (typeof fit.overall !== 'number') return null;
+  if (fit.band === 'not_enough_evidence') return null;
+  // Readings written before the band existed carry coverage alone; those
+  // written before either carry neither, and a number whose provenance cannot
+  // be established is not one to sort people by.
+  if (typeof fit.coverage === 'number' && fit.coverage < MIN_COMPARABLE_COVERAGE) return null;
+  return fit.overall;
 }
 
 /**

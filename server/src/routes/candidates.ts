@@ -15,7 +15,7 @@ import { RESUME_MAX_BYTES, readResumeFile, sanitizeFilename } from '../services/
 import { FIT_ENGINE_VERSION, scoreFit } from '../engines/fitScoring.js';
 import { storedCvFacts } from '../services/resumeProfile.js';
 import { profileAsRead } from '../domain/profileAsRead.js';
-import { FIT_CAVEAT, comparableFitScore, isProvisionalFit } from '../domain/fitVocabulary.js';
+import { FIT_CAVEAT, MIN_COMPARABLE_COVERAGE, comparableFitScore, isProvisionalFit } from '../domain/fitVocabulary.js';
 import type { FitScore } from '../domain/types.js';
 import { roleTechStack } from '../services/roleTechStack.js';
 import { listCandidates } from '../services/candidateList.js';
@@ -220,7 +220,7 @@ function stalenessOf(stored: Partial<FitScore> | null, fresh: FitScore): { stale
   };
 }
 
-function explainAlternative(score: number, current: number | null, fit: any): string {
+function explainAlternative(score: number, current: number | null, fit: any, currentFit?: { readonly band?: string; readonly coverage?: number } | null): string {
   const strongest = [...(fit.components ?? [])]
     .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
     .slice(0, 2)
@@ -229,7 +229,19 @@ function explainAlternative(score: number, current: number | null, fit: any): st
   // With no fit for the applied role there is nothing to be stronger than.
   // This used to measure against a fabricated zero, so every alternative
   // read as "N points stronger" and HR was nudged to move the candidate.
-  if (current === null) return `No fit for the applied role to compare against. ${basis}`;
+  // Two different reasons there is no number to compare against, and they say
+  // different things to a recruiter. "Nothing has been read yet" is a job to
+  // do; "the CV says too little about that role for its number to mean
+  // anything" is a finding about the document, and the second used to be
+  // reported as the first.
+  if (current === null) {
+    const thin = currentFit
+      && (currentFit.band === 'not_enough_evidence'
+        || (typeof currentFit.coverage === 'number' && currentFit.coverage < MIN_COMPARABLE_COVERAGE));
+    return thin
+      ? `The CV says too little about the applied role for its reading to be compared. ${basis}`
+      : `No fit for the applied role to compare against. ${basis}`;
+  }
   const delta = Math.round(score - current);
   return delta > 0
     ? `${delta} points stronger than the applied role. ${basis}`
@@ -325,7 +337,7 @@ candidatesRouter.get('/:id/profile-analysis', requireCapability('candidate:read'
         score: fit.overall,
         confidence: fit.confidence,
         components: fit.components,
-        why: explainAlternative(fit.overall, currentOverall, fit),
+        why: explainAlternative(fit.overall, currentOverall, fit, currentFit),
       };
     })
     .sort((a, b) => b.score - a.score)
