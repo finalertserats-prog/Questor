@@ -87,6 +87,19 @@ export function verifyDisplayUrl(verifyToken: string): string {
 }
 
 /**
+ * The same link with its scheme on, for a clipboard rather than a page.
+ *
+ * The certificate prints the address without one because a reader types it;
+ * a person sharing it from the viewer pastes it, and a pasted `questor.app/v/…`
+ * is plain text in a mail client where `https://questor.app/v/…` is a link.
+ * The origin's own scheme, so a development server does not hand out links
+ * to a host that is not listening for them.
+ */
+export function verifyLinkUrl(verifyToken: string): string {
+  return `${config.webOrigin.replace(/\/+$/, '')}/v/${verifyToken}`;
+}
+
+/**
  * The download's name.
  *
  * The reference and nothing else. A candidate's name in a filename travels

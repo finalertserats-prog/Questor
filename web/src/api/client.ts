@@ -168,7 +168,18 @@ function saveBlob(blob: Blob, filename: string): void {
  * anything else goes through the same interpretation as every other call and
  * reaches the page as an ApiError it already knows how to show.
  */
-async function download(path: string, fallbackFilename: string, opts?: RequestOptions): Promise<void> {
+export interface FetchedFile {
+  readonly blob: Blob;
+  /** The name the server gave the file, or null where it gave none. */
+  readonly filename: string | null;
+}
+
+/**
+ * The bytes, held rather than saved: a credential is shown inside the app
+ * first, and only saved if the person then asks for it. Same rules as
+ * `download` for what counts as a file and what reaches the page as an error.
+ */
+async function fetchFile(path: string, opts?: RequestOptions): Promise<FetchedFile> {
   let res: Response;
   try {
     res = await fetch(`/api${path}`, { method: 'GET', credentials: 'include', signal: requestSignal(opts?.signal) });
@@ -182,13 +193,22 @@ async function download(path: string, fallbackFilename: string, opts?: RequestOp
     if (outcome.kind === 'error') throw new ApiError(outcome.status, outcome.message, outcome.code);
     throw new ApiError(res.status, UNREADABLE_MESSAGE);
   }
-  saveBlob(await res.blob(), attachmentName(res.headers.get('Content-Disposition')) ?? fallbackFilename);
+  return { blob: await res.blob(), filename: attachmentName(res.headers.get('Content-Disposition')) };
+}
+
+async function download(path: string, fallbackFilename: string, opts?: RequestOptions): Promise<void> {
+  const file = await fetchFile(path, opts);
+  saveBlob(file.blob, file.filename ?? fallbackFilename);
 }
 
 export const api = {
   get: <T>(p: string, opts?: RequestOptions) => req<T>('GET', p, undefined, false, opts),
   /** Saves the answer as a file instead of parsing it; see `download` above. */
   download,
+  /** The answer as bytes to show, and the name to save it under if asked. */
+  fetchFile,
+  /** Hands bytes already fetched to the browser as a download. */
+  saveFile: saveBlob,
   post: <T>(p: string, body?: unknown) => req<T>('POST', p, body),
   put: <T>(p: string, body?: unknown) => req<T>('PUT', p, body),
   patch: <T>(p: string, body?: unknown) => req<T>('PATCH', p, body),

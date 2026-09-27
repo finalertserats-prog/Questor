@@ -9,7 +9,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { logAudit } from '../services/audit.js';
 import { getEmail } from '../providers/email/index.js';
 import { logger } from '../logger.js';
-import { assertCanAccessAward, badgeFilename, certificateFilename, readTier, verifyDisplayUrl } from '../services/awardAccess.js';
+import { assertCanAccessAward, badgeFilename, certificateFilename, readTier, verifyDisplayUrl, verifyLinkUrl } from '../services/awardAccess.js';
 import { AwardEvidenceError, AwardEvidenceNotReadyError, NO_DIAMOND_CERTIFICATE, certificateEvidence, hasCertificate } from '../services/awardEvidence.js';
 import { certificatePdf, issuedOn } from '../services/certificatePdf.js';
 import { badgeSvg } from '../services/badgeSvg.js';
@@ -29,14 +29,26 @@ import { MAX_BADGE_PX, MIN_BADGE_PX } from '../services/rasterPng.js';
 export const candidateAwardsRouter = Router();
 candidateAwardsRouter.use(authenticate);
 
-/** The agreed export paths (docs/credentials-contract.md §5). Served by the certificate lane. */
+/**
+ * The agreed export paths (docs/credentials-contract.md §5), and beside them
+ * the two things the viewer can do with a credential once it is open.
+ *
+ * Stated here rather than assembled by the client, so the client never
+ * builds a path of its own: a row that carries no path offers no button.
+ */
 function exportPaths(candidateId: string, tier: AwardTier) {
   const base = `/api/candidates/${candidateId}/awards/${tier}`;
+  // Diamond records what an employer decided, which is theirs to announce:
+  // no certificate, and so no public page to link to and nothing to send.
+  const printed = tierHasCertificate(tier);
   return {
     badgeSvg: `${base}/badge.svg`,
     badgePng: `${base}/badge.png`,
-    // Diamond records what an employer decided, which is theirs to announce.
-    certificatePdf: tierHasCertificate(tier) ? `${base}/certificate.pdf` : null,
+    certificatePdf: printed ? `${base}/certificate.pdf` : null,
+    verifyLink: printed ? `${base}/verify-link` : null,
+    // Bronze is the hiring team's and is never issued to the candidate; the
+    // send route refuses it, and a row that carries no path offers no button.
+    certificateSend: printed && tier !== 'bronze' ? `${base}/certificate/send` : null,
   };
 }
 
@@ -227,6 +239,46 @@ candidateAwardsRouter.get(
     res.type('application/pdf');
     res.set('Content-Disposition', `attachment; filename="${certificateFilename(award.reference, tier)}"`);
     res.send(pdf);
+  }),
+);
+
+// ------------------------------------------------------------------- share
+
+/**
+ * The public verification link, for the viewer's "share".
+ *
+ * Nothing new is minted: this is the address the certificate already prints
+ * under VERIFY, handed over on request. On request, rather than on every
+ * journey row — the token is the key to a public page about a named person,
+ * and the journey is read far more often than a link is shared. Asking for it
+ * is the moment the document leaves the building, so it goes in the trail
+ * beside an export, and the token itself stays out of the trail for the
+ * reason `auditAwards` gives.
+ *
+ * Diamond has no certificate and therefore no public page (the verification
+ * route refuses it as though it did not exist), so a link to one would be a
+ * link to nothing. Refused with the same sentence the certificate uses.
+ */
+candidateAwardsRouter.get(
+  '/:id/awards/:tier/verify-link',
+  mayRead,
+  exportLimit,
+  asyncHandler(async (req, res) => {
+    const tier = readTier(req.params.tier);
+    const award = await assertCanAccessAward(req.auth!, req.params.id, tier);
+    if (!hasCertificate(tier)) throw new HttpError(409, NO_DIAMOND_CERTIFICATE, 'no_public_page_for_tier');
+
+    await logAudit({
+      tenantId: req.auth!.tenantId,
+      actorId: req.auth!.userId,
+      actorType: 'user',
+      action: 'candidate.award.verify_link_shared',
+      entityType: 'CandidateAward',
+      entityId: award.id,
+      after: { tier, reference: award.reference },
+    });
+
+    res.json({ verifyUrl: verifyLinkUrl(award.verifyToken), reference: award.reference });
   }),
 );
 

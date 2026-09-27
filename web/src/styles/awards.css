@@ -114,3 +114,188 @@
     grid-column: 2;
   }
 }
+
+/* ==========================================================================
+   The credential viewer — a native dialog showing the badge the server drew
+   or the certificate it laid out, with the actions beneath. The dialog
+   element is the sheet, with no padding, and .award-viewer-sheet fills it
+   entirely — so the only click whose target is the dialog element itself
+   is one on its ::backdrop, which is how "click outside" is told apart.
+   ========================================================================== */
+
+.award-viewer {
+  box-sizing: border-box;
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius-sheet);
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.award-viewer::backdrop {
+  background: var(--scrim);
+}
+
+.award-viewer-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px 18px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.award-viewer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.award-viewer-title {
+  margin: 0;
+  font-size: 1.15rem;
+  text-transform: capitalize;
+}
+.award-viewer-sub {
+  margin: 2px 0 0;
+}
+.award-viewer-close {
+  flex: none;
+  font: inherit;
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-3);
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.award-viewer-close:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+/* The stage: a sunk sheet the credential sits on. The badge is square and
+   the certificate is A4 landscape, and each keeps its own shape rather than
+   filling the box. */
+.award-viewer-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sheet-sunk);
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  min-height: 200px;
+}
+.award-viewer-stage-badge {
+  padding: 24px;
+}
+.award-viewer-badge {
+  display: block;
+  width: min(320px, 60vw);
+  height: auto;
+}
+.award-viewer-stage-certificate {
+  padding: 0;
+  aspect-ratio: 1.414 / 1;
+  max-height: 60vh;
+}
+.award-viewer-sheet-pdf {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: var(--radius);
+}
+.award-viewer-wait {
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+}
+
+.award-viewer-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.award-viewer-actions .award-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+.award-action-primary {
+  color: var(--sheet);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.award-action-primary:hover:not(:disabled) {
+  color: var(--sheet);
+  background: var(--accent-700);
+  border-color: var(--accent-700);
+}
+
+.award-viewer-status {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.85rem;
+  color: var(--ink-2);
+}
+.award-viewer-status:empty {
+  display: none;
+}
+
+.award-viewer-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.award-viewer-manual input {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 6px 8px;
+  border: var(--hair) solid var(--field-edge);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: var(--sheet);
+}
+
+.award-viewer-note {
+  margin: 0;
+}
+
+.award-viewer-confirm {
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.award-viewer-confirm p {
+  margin: 0;
+}
+
+/* On a phone the dialog is a sheet, edge to edge, and the certificate takes
+   the width it can get. */
+@media (max-width: 760px) {
+  .award-viewer {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    margin: 8px auto;
+  }
+  .award-viewer-sheet {
+    max-height: calc(100vh - 16px);
+    padding: 12px 12px 14px;
+  }
+  .award-viewer-stage-certificate {
+    max-height: 45vh;
+  }
+}
