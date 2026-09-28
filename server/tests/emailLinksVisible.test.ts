@@ -18,13 +18,13 @@ import { renderCandidateFeedbackEmail } from '../src/providers/email/candidateFe
  * also be written out as text the reader can copy.
  */
 
-const sent = vi.hoisted(() => ({ messages: [] as Array<{ to: string; subject: string; text: string; html: string }> }));
+const sent = vi.hoisted(() => ({ delivers: true, messages: [] as Array<{ to: string; subject: string; text: string; html: string }> }));
 vi.mock('../src/providers/email/index.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/providers/email/index.js')>();
   return {
     ...actual,
     getEmail: () => ({
-      name: 'test', configured: true, delivers: true,
+      name: 'test', configured: true, delivers: sent.delivers,
       async send(msg: { to: string; subject: string; text: string; html: string }) {
         sent.messages.push(msg);
         return { status: 'sent', id: `test-${sent.messages.length}` };
@@ -52,6 +52,7 @@ describe('the interview invitation', () => {
 
   beforeEach(async () => {
     sent.messages = [];
+    sent.delivers = true;
     await wipe();
     await prisma.aIInterviewer.deleteMany();
     await prisma.voiceProfile.deleteMany();
@@ -79,6 +80,7 @@ describe('the invitation reads like a real invitation', () => {
 
   beforeEach(async () => {
     sent.messages = [];
+    sent.delivers = true;
     await wipe();
     await prisma.aIInterviewer.deleteMany();
     await prisma.voiceProfile.deleteMany();
@@ -115,14 +117,62 @@ describe('the invitation reads like a real invitation', () => {
     expect(visibleText((await invite()).html)).toMatch(/link is open until \w+,? \d{1,2} \w+ \d{4}/);
   });
 
-  it('never mentions AI, in either body', async () => {
+  // REVERSED 2026-09-28, on the owner's instruction. This used to assert that
+  // the invitation never mentioned AI, on the argument that the page behind
+  // the link explains it before consent is asked — which it does. The owner
+  // asked for the interviewer to be named in the letter, and naming them means
+  // saying what they are. It is also the better order: a candidate decides
+  // whether to click knowing who is on the other side, rather than finding out
+  // after they have set aside an evening for it.
+  it('names the interviewer and says what they are, in both bodies', async () => {
     const message = await invite();
-    expect([/\bAI\b|artificial/i.test(message.text), /\bAI\b|artificial/i.test(visibleText(message.html))]).toEqual([false, false]);
+    expect([/an AI interviewer/.test(message.text), /an AI interviewer/.test(visibleText(message.html))]).toEqual([true, true]);
+  });
+
+  it('says a person on the hiring team reviews it, so the AI is not the last word', async () => {
+    expect((await invite()).text).toContain('A person on the hiring team reviews the interview.');
   });
 
   it('puts the company name at the top instead of the Questor logo', async () => {
     const html = (await invite()).html;
-    expect([html.includes('questor-wordmark'), visibleText(html).trim().startsWith(company)]).toEqual([false, true]);
+    // The inbox preview line comes first in the source and is hidden from the
+    // body, so it is dropped before asking what the reader sees first.
+    const shown = visibleText(html.replace(/<div style="display:none[\s\S]*?<\/div>/, ''));
+    expect([html.includes('questor-wordmark'), shown.trim().startsWith(company)]).toEqual([false, true]);
+  });
+
+  it('previews the role in the inbox rather than the words "Hi Ada"', async () => {
+    expect((await invite()).html).toMatch(/mso-hide:all/);
+  });
+
+  // The page reports what this reply says about the send. It used to toast
+  // "Invitation created." whatever came back, so an undelivered invitation
+  // read as a success; the field names below are the contract that fix rests
+  // on, and renaming either of them would silently restore the old behaviour.
+  async function inviteResponse() {
+    const created = await request(app).post('/api/interviews').set('Authorization', bearer).send({ candidateId: ids.candidateId, interviewer: 'avery', durationMinutes: 30 });
+    const res = await request(app).post(`/api/interviews/${created.body.session.id as string}/invite`).set('Authorization', bearer).send({});
+    return res.body.invitation as { delivered: boolean; deliveryNote: string };
+  }
+
+  it('reports a send that went as delivered, and says where', async () => {
+    const invitation = await inviteResponse();
+
+    expect([invitation.delivered, invitation.deliveryNote.includes('@')]).toEqual([true, true]);
+  });
+
+  it('reports a send that did not go as undelivered', async () => {
+    sent.delivers = false;
+
+    expect((await inviteResponse()).delivered).toBe(false);
+  });
+
+  // A red banner with no instruction is just a red box. The recruiter is told
+  // what to do instead, and the page shows this sentence verbatim.
+  it('tells the recruiter to send the link themselves when it did not go', async () => {
+    sent.delivers = false;
+
+    expect((await inviteResponse()).deliveryNote).toContain('Copy the link and send it yourself');
   });
 
   it('tells the candidate they can ask for adjustments', async () => {

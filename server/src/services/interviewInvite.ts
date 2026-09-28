@@ -1,8 +1,11 @@
+import { prisma, parseJsonOptional } from '../db.js';
+import { logger } from '../logger.js';
 import type { EmailAttachment, EmailMessage } from '../providers/email/index.js';
-import { companyEmail, emailButton, escapeHtml, headerSafe } from '../providers/email/branding.js';
-import { firstName } from '../engines/openingModel.js';
-import { candidateClockSentence, formatScheduledTime } from './zonedTime.js';
-import { tenantTimeZone } from './tenantTimeZone.js';
+import { buildCandidateInvite } from '../providers/email/candidateInviteEmail.js';
+import { personaNameOf } from '../domain/persona.js';
+import { hasObserverNotice } from './observerPolicy.js';
+import { orgZone } from './scheduleZone.js';
+import type { StatedZoneSource } from './zonedTime.js';
 import { claimSessionCalendar, sessionInviteAttachment } from './interviewCalendar.js';
 
 /**
@@ -17,87 +20,41 @@ import { claimSessionCalendar, sessionInviteAttachment } from './interviewCalend
  * cannot live behind a request.
  */
 
-/** The invitation a candidate receives. It reads as a note from the company's
- *  hiring team: what the next step is, how long it takes, and the link. How the
- *  interview works, including that the interviewer is an AI, is explained on the
- *  page the link opens, before the interview starts and before consent is asked.
- *  Plain-text and HTML bodies are built from the same facts, and the link is
- *  also written out, because some mail clients (Gmail in spam) disable links. */
-interface InviteDetails {
-  readonly candidateName: string;
-  readonly roleTitle: string;
-  readonly companyName: string;
-  readonly portalUrl: string;
-  readonly durationMinutes: number;
-  readonly expiresAt: Date | null;
-  /** The booked time, when one is set and still ahead. */
-  readonly scheduledAt: Date | null;
-  /** The zone the email states times in: the booking's, else the organisation's (IST when it has none). */
-  readonly timeZone: string;
-  /**
-   * The candidate's own zone, as at the booking, when HR recorded one. Null
-   * leaves the line out: telling somebody a time is "yours" when it is the
-   * recruiter's sounds checked, and is not.
-   */
-  readonly candidateTimeZone: string | null;
-}
-
-function inviteDate(at: Date, timeZone: string): string {
-  const day = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone }).format(at);
-  return `${day} (${timeZone})`;
-}
-
-function buildInvite(d: InviteDetails) {
-  const first = firstName(d.candidateName) || 'there';
-  const booked = d.scheduledAt ? formatScheduledTime(d.scheduledAt, d.timeZone) : null;
-  const intro = booked
-    ? `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you do online. It is booked for ${booked}, and takes about ${d.durationMinutes} minutes.`
-    : `Thank you for applying for the ${d.roleTitle} role at ${d.companyName}. We would like to invite you to the next step: a first-round interview you can do online, whenever it suits you. It takes about ${d.durationMinutes} minutes.`;
-  const tips = [
-    'Find a quiet spot. A laptop or a phone both work.',
-    'Speak or type your answers, whichever you prefer.',
-    'If you need any adjustments, you can ask for them when you open the link.',
-  ];
-  // The portal has no way to book a time, so an unbooked invite offers none.
-  const whenToStart = booked
-    ? 'Please open the link at that time.'
-    : `You can start whenever suits you${d.expiresAt ? ' before then' : ''}.`;
-  const until = d.expiresAt ? `The link is open until ${inviteDate(d.expiresAt, d.timeZone)}. ${whenToStart}` : whenToStart;
-  // Only where there is a booked time to restate: an invitation the candidate
-  // may open whenever suits them has no instant to put on their clock.
-  const theirClock = d.scheduledAt ? candidateClockSentence(d.scheduledAt, d.timeZone, d.candidateTimeZone) : null;
-  const text = [
-    `Hi ${first},`,
-    '',
-    intro,
-    ...(theirClock ? ['', theirClock] : []),
-    '',
-    `Start your interview: ${d.portalUrl}`,
-    '',
-    'A few things that help:',
-    ...tips.map((tip) => `- ${tip}`),
-    '',
-    until,
-    '',
-    'Best regards,',
-    `The ${d.companyName} hiring team`,
-  ].join('\n');
-  const html = [
-    `<p style="margin:0 0 14px">Hi ${escapeHtml(first)},</p>`,
-    `<p style="margin:0 0 18px">${escapeHtml(intro)}</p>`,
-    ...(theirClock ? [`<p style="margin:0 0 18px">${escapeHtml(theirClock)}</p>`] : []),
-    emailButton(d.portalUrl, 'Start your interview'),
-    '<p style="margin:4px 0 6px;font-weight:600">A few things that help</p>',
-    `<ul style="margin:0 0 16px;padding-left:20px">${tips.map((tip) => `<li style="margin:0 0 6px">${escapeHtml(tip)}</li>`).join('')}</ul>`,
-    `<p style="margin:0 0 18px;color:#5a5a6e;font-size:14px">${escapeHtml(until)}</p>`,
-    `<p style="margin:0">Best regards,<br>The ${escapeHtml(d.companyName)} hiring team</p>`,
-  ].join('\n');
-  return companyEmail({
-    to: '',
-    subject: `Your interview for ${headerSafe(d.roleTitle)} at ${headerSafe(d.companyName)}`,
-    text,
-    html,
-  }, d.companyName);
+/**
+ * Who the candidate will meet, and whether anyone else may watch.
+ *
+ * Read here rather than taken from the caller, because three routes and a
+ * retry job compose this letter and none of them selected these columns. The
+ * letter has to name the interviewer (the owner's ask, 2026-09-28) and it may
+ * only repeat the observer notice when this candidate's own disclosure
+ * actually carries it — saying it otherwise would be a disclosure of something
+ * that is not true, which is worse than saying nothing.
+ */
+async function whoIsInTheRoom(sessionId: string): Promise<{ interviewerName: string | null; observerMayWatch: boolean }> {
+  const unknown = { interviewerName: null, observerMayWatch: false };
+  try {
+    const row = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { personaJson: true, consentJson: true } });
+    if (!row) return unknown;
+    const consent = parseJsonOptional<{ disclosureText?: unknown }>(
+      row.consentJson, {}, { model: 'InterviewSession', id: sessionId, field: 'consentJson' },
+    );
+    const disclosureText = typeof consent.disclosureText === 'string' ? consent.disclosureText : '';
+    return {
+      interviewerName: personaNameOf(row.personaJson, sessionId),
+      observerMayWatch: hasObserverNotice(disclosureText),
+    };
+  } catch (err) {
+    // This read is an improvement to the letter, not a precondition for
+    // sending it. A slow replica or a row damaged years ago must not be what
+    // stops a candidate hearing about their interview — before this read
+    // existed, the invitation went. The disclosure does not degrade to
+    // nothing: `interviewerName: null` still renders "an AI interviewer", and
+    // the observer notice is shown again on the consent screen and spoken in
+    // the opening, so the email is the third place it is said, not the only
+    // one.
+    logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId }, 'Could not read who is in the room for an invitation; sending without the interviewer’s name');
+    return unknown;
+  }
 }
 
 /**
@@ -163,18 +120,23 @@ function inviteCalendar(o: {
 }
 
 /**
- * The booked time an invitation states, and the zone it states every date in.
+ * The booked time an invitation states, the zone it states every date in, and
+ * — the part that used to be thrown away — where that zone came from.
+ *
  * A time already gone is left out: "booked for yesterday" helps nobody. The
  * zone falls back to the organisation's (IST when it has none), never the
- * server's clock.
+ * server's clock. The fallback order was never wrong; what was wrong is that
+ * it was silent, so a candidate read a time in somebody else's zone with
+ * nothing in the letter to say it was not theirs. `source` is what lets the
+ * letter say which of the four it is (services/scheduleZone.ts).
  */
 async function inviteTiming(session: { tenantId: string; scheduledAt: Date | null; scheduledTimeZone: string | null; candidateTimeZone: string | null }) {
   const ahead = session.scheduledAt && session.scheduledAt.getTime() > Date.now() ? session.scheduledAt : null;
-  return {
-    scheduledAt: ahead,
-    timeZone: session.scheduledTimeZone ?? await tenantTimeZone(session.tenantId),
-    candidateTimeZone: session.candidateTimeZone,
-  };
+  if (session.scheduledTimeZone) {
+    return { scheduledAt: ahead, timeZone: session.scheduledTimeZone, zoneSource: 'booked' as StatedZoneSource, candidateTimeZone: session.candidateTimeZone };
+  }
+  const org = await orgZone(session.tenantId);
+  return { scheduledAt: ahead, timeZone: org.zone, zoneSource: org.source as StatedZoneSource, candidateTimeZone: session.candidateTimeZone };
 }
 
 export interface ComposedInvitation {
@@ -213,10 +175,11 @@ export async function composeInvitation(o: {
   readonly portalUrl: string;
   readonly expiresAt: Date | null;
 }): Promise<ComposedInvitation> {
-  const state = await invitationState(o.session);
-  const message = buildInvite({
+  const [state, room] = await Promise.all([invitationState(o.session), whoIsInTheRoom(o.session.id)]);
+  const message = buildCandidateInvite({
     candidateName: o.candidate.fullName, roleTitle: o.roleTitle, companyName: o.companyName,
-    portalUrl: o.portalUrl, durationMinutes: state.durationMinutes, expiresAt: o.expiresAt, ...state.timing,
+    portalUrl: o.portalUrl, durationMinutes: state.durationMinutes, expiresAt: o.expiresAt,
+    ...state.timing, ...room,
   });
   const attachments = inviteCalendar({
     state, message, candidate: o.candidate, companyName: o.companyName, roleTitle: o.roleTitle, portalUrl: o.portalUrl,

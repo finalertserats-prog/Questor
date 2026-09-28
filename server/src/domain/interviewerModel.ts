@@ -133,8 +133,28 @@ export const DEFAULT_DISCLOSURE_BODY =
  * them like a real interviewer would (engines/openingModel.ts).
  */
 export function consentIntro(name: string | null | undefined): string {
+  return `Your interviewer today is ${interviewerPhrase(name)}. ${HUMAN_REVIEW}`;
+}
+
+/**
+ * The same disclosure, in an invitation sent days before the interview.
+ *
+ * Identical facts, one word of tense apart: "today" is plainly false in a
+ * letter about next Tuesday, and a candidate who notices that stops trusting
+ * the rest. Built from the same two pieces as `consentIntro` so the email and
+ * the consent screen cannot come to say different things about who is
+ * interviewing — which is the failure that matters, not the tense.
+ */
+export function inviteIntro(name: string | null | undefined): string {
+  return `Your interviewer will be ${interviewerPhrase(name)}. ${HUMAN_REVIEW}`;
+}
+
+const HUMAN_REVIEW = 'A person on the hiring team reviews the interview.';
+
+/** "Avery, an AI interviewer from Questor", or the unnamed form for a session from before the catalogue. */
+function interviewerPhrase(name: string | null | undefined): string {
   const who = typeof name === 'string' && name.trim() ? `${name.trim()}, an AI interviewer` : 'an AI interviewer';
-  return `Your interviewer today is ${who} from Questor. A person on the hiring team reviews the interview.`;
+  return `${who} from Questor`;
 }
 
 // Any introduction a stored disclosure may already start with: the current
