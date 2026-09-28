@@ -2,8 +2,10 @@ import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { config } from '../config.js';
 import { getEmail, type EmailMessage } from '../providers/email/index.js';
-import { brandedEmail, escapeHtml, headerSafe } from '../providers/email/branding.js';
+import { brandedEmail, detailsTable, emailButton, escapeHtml, headerSafe, noticeBlock, safeHref, textSafe } from '../providers/email/branding.js';
+import { ENTRY_CONSEQUENCE, ENTRY_NOTICE } from '../domain/observedRound.js';
 import { candidateSurfaceFor } from '../domain/candidateSurface.js';
+import { personaNameOf } from '../domain/persona.js';
 import { SME_RELATION } from './access.js';
 import { tenantTimeZone } from './tenantTimeZone.js';
 import { formatScheduledTime } from './zonedTime.js';
@@ -94,7 +96,40 @@ interface InterviewerEmail {
   readonly aiRound: boolean;
   /** Only read for `seated`; the round decides it (see `seatedKind`). */
   readonly seated?: SeatedKind;
+  /** A human round Questor transcribes. False on an AI round, and on a human round with no observer attached. */
+  readonly aiObserver?: boolean;
+  /**
+   * The page this reader joins the round through: the observer room on a human
+   * round, the live-observe page on an AI one. Distinct from `link`, which is
+   * the prep page, and from `meetingUrl`, which is somebody else's product —
+   * Questor never joins the meeting.
+   */
+  readonly roomUrl?: string | null;
+  /** The AI interviewer conducting an AI round, when the session recorded one. */
+  readonly interviewerName?: string | null;
 }
+
+/**
+ * What a human observer of an AI interview is told, verbatim from the banner
+ * they will see on the page itself (web/src/pages/ObserveInterview.tsx). The
+ * same sentence in both places, so the letter is not making a promise the
+ * product then words differently.
+ */
+export const SILENT_OBSERVER_NOTICE =
+  'You are observing silently. The candidate was told a member of the hiring team may observe, '
+  + 'and nothing you do here reaches them.';
+
+/**
+ * The AI observer on a human round, named where the reader will see it before
+ * they click Join.
+ *
+ * The owner's instruction was that it "will not be seen in the room". It is
+ * built SILENT rather than HIDDEN: it takes no part and appears as no
+ * participant, and it is disclosed here and again at the door. An unannounced
+ * recorder in a room where everyone has been promised that nothing is captured
+ * without their agreement would make that promise untrue.
+ */
+const AI_OBSERVER_ROW = 'Questor’s observer — it listens and transcribes, and never speaks';
 
 const SEATED_OPENING: Readonly<Record<SeatedKind, (label: string, when: string, minutes: number) => string>> = {
   conducting: (label, when, minutes) =>
@@ -137,6 +172,52 @@ function subject(d: InterviewerEmail, label: string): string {
   }
 }
 
+/**
+ * Who else is in the room, as the details block names them.
+ *
+ * Three rounds, three answers, and the difference is the whole point of this
+ * change: on an AI round the reader is the observer, on a human round the
+ * observer is Questor's and the reader is the interviewer.
+ */
+function roomRows(d: InterviewerEmail, joinable: boolean): readonly { label: string; value: string }[] {
+  if (d.aiRound) {
+    const who = d.interviewerName?.trim() ? `${textSafe(d.interviewerName)} (AI interviewer)` : 'An AI interviewer';
+    return [
+      { label: 'Interviewer', value: who },
+      { label: 'You', value: joinable ? 'Observing — you take no part in the interview' : '' },
+    ];
+  }
+  return [
+    { label: 'Interviewer', value: 'You' },
+    { label: 'Also in the room', value: joinable && d.aiObserver ? AI_OBSERVER_ROW : '' },
+  ];
+}
+
+/**
+ * What the reader is told before they join, and nothing when there is nothing
+ * to join.
+ *
+ * A human round Questor transcribes gets the candidate's own notice, word for
+ * word: the interviewer is a recorded party too, and a softened staff version
+ * would be a second promise to keep true. A cancelled round and one already
+ * over get none — there is no room to enter, and a recording notice about a
+ * room nobody is entering reads as a warning about something else.
+ */
+function joinDisclosure(d: InterviewerEmail, joinable: boolean): readonly string[] {
+  if (!joinable) return [];
+  if (d.aiRound) return [SILENT_OBSERVER_NOTICE];
+  return d.aiObserver ? [ENTRY_NOTICE, ENTRY_CONSEQUENCE] : [];
+}
+
+/** An address as a link when it is one we will make clickable, and as plain text when it is not. */
+function emailLink(href: string, label?: string): string {
+  const safe = safeHref(href);
+  const shown = escapeHtml(label ?? href);
+  return safe
+    ? `<a href="${escapeHtml(safe)}" style="color:#2f2f7a;word-break:break-all">${shown}</a>`
+    : `<span style="word-break:break-all">${escapeHtml(href)}</span>`;
+}
+
 export function buildRoundInterviewerEmail(d: InterviewerEmail): EmailMessage {
   // Stage labels are configurable, so control characters are stripped before
   // they reach a subject line or a plain-text body, where a line break could
@@ -146,17 +227,47 @@ export function buildRoundInterviewerEmail(d: InterviewerEmail): EmailMessage {
   const intro = opening(d, label, when);
   // A cancelled round's meeting no longer exists, and a round already over has
   // nothing left to join, so neither repeats the link.
-  const over = d.kind === 'cancelled' || d.seated === 'reviewing';
+  // `seated` only means anything for a seating letter — it is computed by the
+  // round and passed for every kind. Reading it unconditionally let a move
+  // that happened to carry `reviewing` drop the room AND the recording notice
+  // with it, which is the one combination that must never happen: an
+  // invitation into a recorded room with nothing said about the recording.
+  // `sendAll` happens to filter that case out today; the builder must not
+  // depend on a caller for it.
+  const over = d.kind === 'cancelled' || (d.kind === 'seated' && d.seated === 'reviewing');
   const meetingUrl = over ? null : d.meetingUrl;
+  const roomUrl = over ? null : d.roomUrl ?? null;
   const pageLead = d.seated === 'reviewing' ? 'Everything you need is here:' : 'Everything you need to prepare is here:';
 
-  const lines = [intro];
+  const rows = [
+    { label: 'Interview', value: label },
+    { label: over ? 'Took place' : 'When', value: when },
+    { label: 'How long', value: `About ${d.durationMinutes} minutes` },
+    ...roomRows(d, !over),
+  ];
+  const said = joinDisclosure(d, !over);
+  // Questor does not join the meeting: on a human round the call is somebody
+  // else's product and the transcript is captured from the device the reader
+  // takes it on. Two links, because they are two different things to open.
+  const roomLabel = d.aiRound ? 'Watch the interview' : 'Open Questor for this round';
+
+  // The notice comes BEFORE the links, in both bodies: what a reader is
+  // agreeing to by walking in belongs in front of the door, not behind it.
+  const lines = [intro, rows.filter((r) => r.value).map((r) => `${r.label}: ${r.value}`).join('\n')];
+  if (said.length) lines.push(...said);
   if (meetingUrl) lines.push(`Join the meeting: ${meetingUrl}`);
+  if (roomUrl) lines.push(`${roomLabel}: ${roomUrl}`);
   if (d.link) lines.push(`${pageLead}\n${d.link}`);
 
-  const htmlLines = [`<p>${escapeHtml(intro)}</p>`];
-  if (meetingUrl) htmlLines.push(`<p>Join the meeting: <a href="${escapeHtml(meetingUrl)}">${escapeHtml(meetingUrl)}</a></p>`);
-  if (d.link) htmlLines.push(`<p>${escapeHtml(pageLead.replace(/:$/, ''))} <a href="${escapeHtml(d.link)}">here</a>.</p>`);
+  const htmlLines = [`<p style="margin:0 0 16px">${escapeHtml(intro)}</p>`, detailsTable(rows)];
+  // Escaping keeps a value inside its attribute; it says nothing about where
+  // the attribute points. A meeting URL is typed by an operator, so it is
+  // scheme-checked before it is made clickable — a `data:` href in a letter
+  // that appears to come from the reader's own company is a credible phish.
+  if (said.length) htmlLines.push(noticeBlock(said));
+  if (meetingUrl) htmlLines.push(`<p style="margin:0 0 14px">Join the meeting: ${emailLink(meetingUrl)}</p>`);
+  if (roomUrl) htmlLines.push(emailButton(roomUrl, roomLabel));
+  if (d.link) htmlLines.push(`<p style="margin:0">${escapeHtml(pageLead.replace(/:$/, ''))} ${emailLink(d.link, 'here')}.</p>`);
 
   return brandedEmail({
     to: '',
@@ -213,12 +324,30 @@ export async function notifyRoundInterviewers(o: NotifyInterviewersInput): Promi
   }
 }
 
+/**
+ * The AI interviewer a session recorded, or null — never an invented name.
+ *
+ * Best-effort on purpose. It runs before the per-seat sends, so a throw here
+ * would take every letter with it and the whole panel would silently learn
+ * nothing about a round they are seated on. A missing name costs one line.
+ */
+async function aiInterviewerName(sessionId: string | null): Promise<string | null> {
+  if (!sessionId) return null;
+  try {
+    const session = await prisma.interviewSession.findUnique({ where: { id: sessionId }, select: { personaJson: true } });
+    return session ? personaNameOf(session.personaJson, sessionId) : null;
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err), sessionId }, 'Could not read the AI interviewer’s name for a round letter');
+    return null;
+  }
+}
+
 async function sendAll(o: NotifyInterviewersInput): Promise<InterviewerNotice[]> {
   const round = await prisma.interviewRound.findFirst({
     where: { id: o.roundId, tenantId: o.tenantId },
     select: {
       scheduledAt: true, scheduledTimeZone: true, durationMinutes: true, meetingUrl: true,
-      conductedBy: true, sessionId: true,
+      conductedBy: true, sessionId: true, aiObserver: true,
       // The seat's user is read through the relation so a seat whose account
       // has gone takes itself out of the list rather than being emailed into
       // the void — there is no deactivated flag on User to consult, so
@@ -262,12 +391,25 @@ async function sendAll(o: NotifyInterviewersInput): Promise<InterviewerNotice[]>
     select: { userId: true },
   })).map((row) => row.userId));
 
+  // Where this reader joins, which is a different page in each of the three
+  // cases. Both are behind their own sign-in, so neither is a credential and
+  // neither can be used by anyone the round does not already seat.
+  const roomUrl = aiRound
+    ? `${config.webOrigin}/interviews/${round.sessionId}/observe`
+    : `${config.webOrigin}/rounds/${o.roundId}/observer`;
+  // Only the interviewer's name, and only so the letter can say who conducts
+  // an AI round. Nothing about the candidate is read: this letter never names
+  // them (see the file comment). InterviewRound carries the id without a
+  // relation, so this is its own read.
+  const interviewerName = aiRound ? await aiInterviewerName(round.sessionId) : null;
+
   // One failing address must not silence the others: each send stands alone,
   // and they go together rather than one after the next.
   return Promise.all(seats.map(async (seat): Promise<InterviewerNotice> => {
     const message = buildRoundInterviewerEmail({
       kind: o.kind, stageLabel: o.stageLabel, scheduledAt: round.scheduledAt, timeZone, seated,
       durationMinutes: round.durationMinutes, meetingUrl: round.meetingUrl, previousWhen, aiRound,
+      aiObserver: round.aiObserver, roomUrl, interviewerName,
       link: linkFor(seat.user!.role, o.candidateId, assigned.has(seat.userId)),
     });
     try {
