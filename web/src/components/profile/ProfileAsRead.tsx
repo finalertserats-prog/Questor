@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { Icon } from '../Icon';
 import { EmptyState } from '../EmptyState';
 import {
-  documentLineFrom, monthsInWords, profileTabs, readingSummary, redactionWords, roleConcern,
+  datedLineCoverage, documentLineFrom, monthsInWords, parseFlags, profileTabs, readingSummary,
+  redactionWords, roleConcern,
   roleDates, roleState, sourceAvailability, sourceLabel, sourceTitle, splitDocument,
   technologyNote, technologyState,
   type ProfileRead, type ReadEvidence, type ReadState,
@@ -59,6 +60,36 @@ function Source({ evidence, lines }: { evidence: ReadEvidence; lines: readonly s
   );
 }
 
+/**
+ * What the reading could not see, above everything it could.
+ *
+ * At the top on purpose. The failure this answers is a screen that said "1
+ * role read from the CV — nothing flagged" about a document with two jobs on
+ * it: every fact shown was true, and the reading was still wrong, and there
+ * was nowhere on the page for that to appear. A recruiter scanning down the
+ * roles has no reason to suspect a missing one, so the absence has to be the
+ * first thing rather than something to notice.
+ *
+ * Each finding names the lines to open, because "check the CV" is not an
+ * action and "check line 9" is.
+ */
+function ParseNotices({ read }: { read: ProfileRead }) {
+  const flags = parseFlags(read);
+  const coverage = datedLineCoverage(read);
+  if (flags.length === 0) return null;
+  return (
+    <ul className="par-notices" aria-label="What the reading could not see">
+      {flags.map((flag) => (
+        <li key={`${flag.code}-${flag.sourceLines.join(',')}`} className={`par-notice par-notice-${flag.severity}`}>
+          <span className="par-mark">{flag.severity === 'note' ? '[ note ]' : '[ check ]'}</span>
+          <span className="par-notice-text">{flag.message}</span>
+        </li>
+      ))}
+      {coverage && <li className="par-notice par-notice-note"><span className="par-notice-text">{coverage}.</span></li>}
+    </ul>
+  );
+}
+
 function Fact({
   state, title, detail, note, evidence, lines,
 }: {
@@ -105,6 +136,7 @@ export function ProfileAsRead({ read, rawText }: { read: ProfileRead | null; raw
   return (
     <section className="par" aria-label="The profile as read">
       <p className="par-summary">{readingSummary(read)}</p>
+      <ParseNotices read={read} />
 
       <div className="par-tabs" role="tablist" aria-label="Profile sections">
         {tabs.map((t) => (

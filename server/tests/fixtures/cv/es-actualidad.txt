@@ -1,0 +1,22 @@
+Mateo Serrano
+Calle Mayor 8, 28013 Madrid
+mateo.serrano@ejemplo.es
+
+Perfil
+Analista de datos con siete años de experiencia en banca.
+
+Experiencia laboral
+
+Marzo 2022 – actualidad, Analista de datos senior, Banco Peninsular, Madrid
+- Responsable de la calidad de los datos y del control de riesgos
+- Modelos de riesgo en Python y SQL
+
+Febrero 2019 – febrero 2022, Analista de datos, Consultora Aurora
+- Informes regulatorios en Power BI
+- Automatización de cargas con Airflow
+
+Educación
+Grado en Estadística, Universidad Complutense, 2018
+
+Habilidades
+Python, SQL, Power BI, Airflow, PostgreSQL

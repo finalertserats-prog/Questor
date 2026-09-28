@@ -31,6 +31,50 @@
   color: var(--ink-2);
 }
 
+/* --- what the reading could not see ---------------------------------------
+
+   Above the tabs, because the failure it answers is a panel that said
+   "nothing flagged" about a CV whose current job it had missed: a recruiter
+   scanning the roles has no reason to suspect an absent one, so the absence
+   has to arrive before the list rather than be noticed inside it.
+
+   Marked the same way as everything else on this screen — a rule down the
+   leading edge and a bracketed word — and deliberately NOT louder than a
+   fact. These are statements about our reading, not alarms about a person,
+   and a banner would read as the second. A `note` is set on the plain rule so
+   that a CV with only context on it does not look as though something is
+   wrong with it. */
+
+.par-notices {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.par-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  border-left: var(--rail) solid var(--hold-edge);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  min-width: 0;
+}
+
+.par-notice-note { border-left-color: var(--rule); }
+.par-notice-blocking { border-left-color: var(--stop-edge); }
+
+.par-notice-text {
+  color: var(--ink-2);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-section-line);
+  min-width: 0;
+}
+
+.par-notice-note .par-mark { color: var(--ink-3); }
+
 /* --- tabs ----------------------------------------------------------------- */
 
 .par-tabs {

@@ -73,6 +73,35 @@ export interface ProfileRead {
   };
   readonly source: 'deterministic' | 'model_assisted';
   readonly modelNote?: string;
+  /**
+   * What the reading could not see. Absent on profiles parsed before the
+   * parser could say — which means "nothing was assessed", never "nothing was
+   * wrong". See server/src/domain/cvParseQuality.ts.
+   */
+  readonly parseQuality?: ReadParseQuality;
+}
+
+/** Mirrors `CvParseSeverity`: what a finding should change, and nothing more. */
+export type ReadParseSeverity = 'blocking' | 'review' | 'note';
+
+export interface ReadParseFlag {
+  readonly code: string;
+  readonly severity: ReadParseSeverity;
+  /**
+   * Shown verbatim. Written about the READING, never about the candidate:
+   * "we could not read a current role" and not "could not verify employment",
+   * because the second makes a person the suspect for a failing of ours.
+   */
+  readonly message: string;
+  /** 1-based lines of the uploaded document this points at. */
+  readonly sourceLines: readonly number[];
+}
+
+export interface ReadParseQuality {
+  readonly readable: boolean;
+  readonly datedLines: number;
+  readonly datedLinesRead: number;
+  readonly flags: readonly ReadParseFlag[];
 }
 
 /**
@@ -254,17 +283,66 @@ export function profileTabs(read: ProfileRead): ProfileTabCount[] {
 }
 
 /**
+ * The findings the parser raised about its own reading, worst first.
+ *
+ * Empty on a profile parsed before the parser could say so — which the reader
+ * must treat as "nothing was assessed", not as "nothing was wrong". A screen
+ * that turns silence into reassurance is the defect this whole signal exists
+ * to fix.
+ */
+export function parseFlags(read: ProfileRead): readonly ReadParseFlag[] {
+  const order: Readonly<Record<ReadParseSeverity, number>> = { blocking: 0, review: 1, note: 2 };
+  return [...(read.parseQuality?.flags ?? [])].sort((a, b) => order[a.severity] - order[b.severity]);
+}
+
+/** Findings that want a person, as opposed to findings that are context. */
+export function parseChecks(read: ProfileRead): readonly ReadParseFlag[] {
+  return parseFlags(read).filter((f) => f.severity !== 'note');
+}
+
+/** False only where the document turned out not to be a CV at all. */
+export function readingIsUsable(read: ProfileRead): boolean {
+  return read.parseQuality?.readable !== false;
+}
+
+/**
+ * "N of M dated lines were read", or null where the parse did not record it.
+ *
+ * The plainest statement of what the reading missed, and the one a recruiter
+ * can check in seconds: the document has this many lines with dates on them,
+ * and the reading used this many of them.
+ */
+export function datedLineCoverage(read: ProfileRead): string | null {
+  const q = read.parseQuality;
+  if (!q || q.datedLines === 0) return null;
+  return `${q.datedLinesRead} of ${q.datedLines} dated lines read`;
+}
+
+/**
  * The one-line summary above the tabs.
  *
- * It leads with what was read rather than with a score, and it names the number
- * of things worth checking, because that is the only number on this screen a
- * person can act on.
+ * It leads with what was read rather than with a score, and it names the
+ * number of things worth checking, because that is the only number on this
+ * screen a person can act on. It counts the parser's own findings alongside
+ * the per-fact ones: a missing role is not visible in any of the facts that
+ * ARE shown, so it can only arrive here.
  */
 export function readingSummary(read: ProfileRead): string {
-  const checks = profileTabs(read).reduce((n, t) => n + t.needsCheck, 0);
+  if (!readingIsUsable(read)) {
+    return 'This document could not be read as a CV. Open the file and check it is the right one.';
+  }
+  const checks = profileTabs(read).reduce((n, t) => n + t.needsCheck, 0) + parseChecks(read).length;
   const roles = read.roles.length === 1 ? '1 role' : `${read.roles.length} roles`;
   const how = read.source === 'model_assisted' ? 'read from the CV, refined by a model' : 'read from the CV';
   if (read.roles.length === 0) return `Nothing could be read from this CV as work history. ${how}.`;
-  const checkPart = checks === 0 ? 'nothing flagged' : `${checks} to check`;
+  // "Nothing flagged" is a claim, and it may only be made where something
+  // looked. A profile parsed before the parser could report on itself was
+  // never examined for what it missed, and printing reassurance over it is
+  // the confident silence this whole signal exists to end.
+  const checkPart = checks > 0
+    ? `${checks} to check`
+    : read.parseQuality
+      ? 'nothing flagged'
+      : 'not checked for gaps — re-analyse the CV to check it';
   return `${roles} ${how} — ${checkPart}.`;
 }

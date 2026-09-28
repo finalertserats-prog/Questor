@@ -1,0 +1,25 @@
+Priya Raman
+priya.raman@example.com | +44 7700 900123 | London
+
+Professional Summary
+Backend engineer with nine years building payment systems.
+
+Work Experience
+
+Staff Engineer, Halcyon Payments — Mar 2021 - Present
+- Led the ledger rewrite, a team of 9 engineers
+- Owned the settlement service handling 40m transactions/day
+- Rebuilt the deployment pipeline on Kubernetes and Terraform
+
+Senior Software Engineer, Orbit Retail — Jun 2018 - Feb 2021
+- Built the checkout API in Java and Spring Boot
+- Introduced Kafka for order events
+
+Software Engineer, Calder Analytics — Sep 2016 - May 2018
+- Wrote reporting jobs in Python and SQL
+
+Education
+B.Tech in Computer Science, Anna University, 2016
+
+Technical Skills
+Java, Spring Boot, Python, SQL, Kafka, Kubernetes, Terraform, PostgreSQL

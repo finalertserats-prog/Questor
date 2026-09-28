@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { generateJson } from '../providers/llm/index.js';
 import { boundText } from '../library/generator.js';
 import { factsFromPreparedCv } from './cvFacts.js';
+import { reassessAfterMerge } from '../domain/cvParseQuality.js';
 import type { ScoreableCv } from './cvRedaction.js';
 import type { CvFacts, CvLine, CvRoleHeld, CvScopeFact, CvScopeKind } from '../domain/cvFacts.js';
 
@@ -126,7 +127,12 @@ export async function refineCvFacts(cv: ScoreableCv, rawText: string, opts: Refi
   // Tenure, gaps and technology recency all hang off the roles, so they are
   // recomputed from the merged set rather than patched.
   const rebuilt = factsFromPreparedCv(cv, rawText, opts);
-  return { ...rebuiltWithRoles(rebuilt, merged, opts.today ?? new Date()), scope, source: 'model_assisted' };
+  const withRoles: CvFacts = { ...rebuiltWithRoles(rebuilt, merged, opts.today ?? new Date()), scope, source: 'model_assisted' };
+  // And so does the account of what the reading missed. Finding the roles the
+  // rule-based reader could not see is most of what the model is for, so a
+  // flag naming those lines has to be withdrawn when it succeeds — a warning
+  // that outlives its reason is how a panel teaches people to ignore warnings.
+  return { ...withRoles, parseQuality: reassessAfterMerge(withRoles, rawText) };
 }
 
 /** The wordings that actually mean "and I am still there". */

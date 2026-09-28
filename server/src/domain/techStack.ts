@@ -128,12 +128,47 @@ const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
  * "Python-first" is Python.
  */
 export function technologyPattern(name: string): RegExp {
-  const tail = name.length <= 3 ? '\\w+#\\-' : '\\w+#';
-  return new RegExp(`(?<![\\w+#.${name.length <= 3 ? '\\-' : ''}])${escapeRegex(name)}(?![${tail}])`, 'i');
+  // `\w` is ASCII. `ü`, `é`, `ñ`, `ø`, `ł` and every letter outside a-z are
+  // therefore NOT word characters, so every one of them read as a boundary —
+  // and the German word "für" contains a standalone "r", so a construction
+  // manager's CV reading "Verantwortlich für Datenqualität" was credited with
+  // the R programming language, in a skills list HR reads beside his name and
+  // an interviewer asks him about. The same hole was open for "C" beside
+  // "ç"/"č", for "Go" beside any accent, and in every language Questor takes
+  // a CV in. `\p{L}\p{N}` with the `u` flag is what "a letter or a digit"
+  // actually means.
+  //
+  // `\p{M}` matters as much as `\p{L}` and is easy to leave out. A PDF text
+  // layer may hand us `fu` + U+0308 rather than `ü`: the same word, decomposed.
+  // Without marks in the class the combining accent is not a letter either,
+  // the "r" is standalone again, and the bug returns on exactly the documents
+  // it was found on — invisibly, because the two spellings look identical.
+  const edge = `\\p{L}\\p{M}\\p{N}_+#${name.length <= 3 ? '\\-' : ''}`;
+  return new RegExp(`(?<![${edge}.])${escapeRegex(name)}(?![${edge}])`, 'iu');
 }
 
 export function mentionsTechnology(text: string, name: string): boolean {
   return name.length > 0 && technologyPattern(name).test(text);
+}
+
+/**
+ * The same question asked of PROSE, where a single letter is a letter far more
+ * often than it is a language.
+ *
+ * A word boundary is enough for "Kafka" and not remotely enough for "R" or
+ * "C": a middle initial, a grade, a column heading, a clause marker and half
+ * the abbreviations in any European language are a lone capital letter. So a
+ * one-letter name has to sit in a list the way a skills line writes one —
+ * after a comma, a bracket, a slash, "and" or "in", and followed by the same.
+ *
+ * `detectTechStack` has required this of job descriptions since it was
+ * written. The CV side did not, which is why the invention landed on the
+ * candidate rather than on the employer's own advert.
+ */
+export function mentionsTechnologyInProse(text: string, name: string): boolean {
+  if (!name) return false;
+  const re = SINGLE_LETTER.test(name) ? SINGLE_LETTER_CONTEXT(name) : technologyPattern(name);
+  return re.test(text);
 }
 
 const byKey = new Map<string, KnownTechnology>();
@@ -146,9 +181,24 @@ export function knownTechnology(name: string): KnownTechnology | undefined {
   return byKey.get(cleanCompetencyText(name).toLowerCase());
 }
 
-/** Single letters match too easily in prose ("C", "R"); only an explicit list-style mention counts. */
+/**
+ * Single letters match too easily in prose ("C", "R"); only an explicit
+ * list-style or naming mention counts.
+ *
+ * The leading words are the ones that introduce a tool rather than a letter:
+ * "modelled in R", "built using R", "experience with C". Without them the
+ * rule was list-only, and a CV that describes its work in sentences — which
+ * is most of them outside engineering — lost the language entirely, which is
+ * the mirror of the false positive and lands on the same candidate.
+ *
+ * A full stop is allowed to close the mention ("...models in R.") but not to
+ * open it, so "Reported to R. Mehta" is still a person's initial.
+ */
 const SINGLE_LETTER = /^[A-Za-z]$/;
-const SINGLE_LETTER_CONTEXT = (name: string) => new RegExp(`(?:^|[,;(/]|\\band\\b|\\bin\\b)\\s*${escapeRegex(name)}(?=\\s*(?:[,;)/]|\\band\\b|$))`, 'im');
+const SINGLE_LETTER_CONTEXT = (name: string) => new RegExp(
+  `(?:^|[,;(/]|\\b(?:and|in|with|using|used|via)\\b)\\s*${escapeRegex(name)}(?=\\s*(?:[,;)/.]|\\band\\b|$))`,
+  'im',
+);
 
 /** The clause a mention sits in: from the previous line break, full stop or semicolon to the next. */
 function clauseAround(text: string, at: number): string {

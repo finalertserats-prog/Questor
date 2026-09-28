@@ -22,7 +22,17 @@
  * Deliberately conservative. Where the CV gives no range this returns
  * undefined rather than a guess, because "we do not know" is a state the rest
  * of the system already handles and a wrong number is not.
+ *
+ * WHAT A DATE RANGE IS no longer lives here. It lives in domain/cvDates.ts,
+ * which the role reader in engines/cvFacts.ts also calls, because the two used
+ * to be separate regexes with separate vocabularies: a timeline strip reading
+ * "2017 - 18" added to this total while producing no role at all, and a German
+ * CV whose current job ran "01.03.2021 – heute" contributed to neither. What
+ * stays here is this module's POLICY — mask what is not prose, clamp the
+ * future, refuse anything before 1950, and add the union rather than the span.
  */
+
+import { findDateRanges, looksLikeCareerBreak } from '../domain/cvDates.js';
 
 export interface ExperienceRange {
   /** Months since year 0, so arithmetic needs no calendar. */
@@ -31,46 +41,6 @@ export interface ExperienceRange {
   /** The range had no end date: "2019 - Present". */
   readonly ongoing: boolean;
 }
-
-const MONTHS: Record<string, number> = {
-  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-  jul: 6, aug: 7, sep: 8, sept: 8, oct: 9, nov: 10, dec: 11,
-};
-
-const MONTH_WORD = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?';
-const YEAR = '(?:19|20)\\d{2}';
-const DASH = '(?:-|–|—|~|to|through|until|till)';
-/**
- * The trailing boundary is not optional. Without it "present" matched inside
- * "presently", "now" inside "nowhere", and bare "date" inside "dated" and
- * "dates" — so "Engineer, Acme 2019 - dates vary" became a role still running
- * today. Bare "date" is kept only because "to date" and "till date" are
- * written both ways, with and without the preposition.
- */
-const ONGOING = '(?:present|current|now|to\\s*date|till\\s*date|ongoing|date)(?![a-z])';
-
-/**
- * A range, in the shapes CVs actually write:
- *   "August 2025 – June 2026"   "2021 - 2024"   "Jul 2019 – Oct 2020"
- *   "2017 - 18"                 "Mar 2024 - Present"
- * The two-digit end ("2017 - 18") is common on timeline strips and is read as
- * the same century as its start.
- */
-const RANGE = new RegExp(
-  // `(?:\\d{1,2}[./-]){0,2}` before the end year is finding C1, in the half
-  // that feeds `totalYears`. Without it `01.03.2019 - 30.06.2021` read its end
-  // as "30" — two digits, so the same century, so 2030 — which was then
-  // clamped to today: a job that finished in June 2021 counted as still
-  // running and the candidate gained five years they had not lived.
-  // `totalYears` is printed on their profile and feeds the band calibration
-  // that decides how hard their interview is pitched.
-  //
-  // It consumes a leading day and month and leaves the year, and matches
-  // nothing on the shapes that already worked — `2017 - 18` has no separator
-  // for it to take, so the two-digit shorthand is untouched.
-  `(?:(${MONTH_WORD})[\\s.,]*)?(${YEAR})\\s*${DASH}\\s*(?:(${ONGOING})|(?:(${MONTH_WORD})[\\s.,]*)?(?:\\d{1,2}[./-]){0,2}(${YEAR}|\\d{2})(?![\\d]))`,
-  'gi',
-);
 
 /**
  * Text that is not prose and must not be scanned for dates: an email address,
@@ -158,14 +128,16 @@ export function proseOnly(text: string): string {
   return out.join('');
 }
 
-function monthIndex(word: string | undefined): number | null {
-  if (!word) return null;
-  const key = word.toLowerCase().replace(/\./g, '').slice(0, 4);
-  return MONTHS[key] ?? MONTHS[key.slice(0, 3)] ?? null;
-}
-
+/**
+ * A point on the calendar as a month count. `fallback` is where a date that
+ * named no month sits: the start of its year at one end of a range, the end of
+ * it at the other, so "2021 - 2024" is three years and not two.
+ *
+ * `cvDates` numbers months 1-12 the way a person writes them; this file counts
+ * from 0 so the arithmetic needs no calendar.
+ */
 function absMonth(year: number, month: number | null, fallback: number): number {
-  return year * 12 + (month ?? fallback);
+  return year * 12 + (month === null ? fallback : month - 1);
 }
 
 /**
@@ -184,41 +156,21 @@ export function experienceRanges(text: string, now = new Date()): ExperienceRang
 }
 
 function rangesInRun(run: string, nowMonth: number): ExperienceRange[] {
+  // A break the candidate wrote down is not work. Whole-line, because the
+  // dates and the words that make it a break sit on the same line and masking
+  // only the words would leave the range behind to be counted anyway.
+  if (looksLikeCareerBreak(run)) return [];
   const scannable = proseOnly(run);
   const out: ExperienceRange[] = [];
-  for (const m of scannable.matchAll(RANGE)) {
-    const startYear = Number(m[2]);
-    const startMonth = monthIndex(m[1]);
-    // A range with no month starts at the beginning of its year and ends at
-    // the end of the end year: "2021 - 2024" is three years, not two.
-    const start = absMonth(startYear, startMonth, 0);
-    let end: number;
-    let ongoing = false;
-    if (m[3]) {
-      ongoing = true;
-      end = nowMonth;
-    } else {
-      const raw = m[5];
-      // "2017 - 18" means 2018. Taking the start's century outright breaks
-      // across one: "1998 - 02" would become 1902, which ends before it
-      // starts and was therefore thrown away entirely, losing the role. A
-      // two-digit end that lands before its start belongs to the next
-      // century, because a range runs forwards.
-      let endYear = Number(raw);
-      if (raw.length === 2) {
-        const century = Math.floor(startYear / 100) * 100;
-        endYear = century + Number(raw);
-        if (endYear < startYear) endYear += 100;
-      }
-      const endMonthWord = monthIndex(m[4]);
-      end = absMonth(endYear, endMonthWord, 11);
-    }
+  for (const range of findDateRanges(scannable)) {
+    const start = absMonth(range.start.year, range.start.month, 0);
+    let end = range.ongoing ? nowMonth : absMonth(range.end!.year, range.end!.month, 11);
     // A CV that dates a role into the future is either mistaken or listing a
     // contract end; either way nobody has worked months that have not happened.
     if (end > nowMonth) end = nowMonth;
     if (end < start) continue;
     if (start < 1950 * 12) continue;
-    out.push({ startMonth: start, endMonth: end, ongoing });
+    out.push({ startMonth: start, endMonth: end, ongoing: range.ongoing });
   }
   return out;
 }

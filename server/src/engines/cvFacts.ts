@@ -1,8 +1,10 @@
-import { TECHNOLOGIES, mentionsTechnology } from '../domain/techStack.js';
+import { TECHNOLOGIES, mentionsTechnologyInProse } from '../domain/techStack.js';
+import { firstDateRange, looksLikeCareerBreak, stripDateRanges } from '../domain/cvDates.js';
+import { assessParseQuality } from '../domain/cvParseQuality.js';
 import { prepareCvForScoring, scoreableLines, type ScoreableCv } from './cvRedaction.js';
 import { spellingsOf } from './fitEvidence.js';
 import type {
-  CvEvidence, CvFacts, CvGap, CvLine, CvQualification, CvRoleHeld, CvScopeFact, CvScopeKind,
+  CvEvidence, CvFacts, CvGap, CvLine, CvQualification, CvRoleHeld, CvScopeFact, CvScopeKind, CvSection,
   CvTechnologyUse, CvTenure,
 } from '../domain/cvFacts.js';
 
@@ -17,53 +19,32 @@ import type {
  * scored, and HR sees the same panel either way.
  */
 
-const MONTHS: Readonly<Record<string, number>> = {
-  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
-};
-
-const MONTH_WORD = '(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*';
-const YEAR = '((?:19|20)\\d{2})';
-/**
- * One end of a range, in the shapes CVs are written in.
- *
- * The last alternative carries an OPTIONAL leading day, and that is the whole
- * of finding C1 in the half that builds a candidate's roles. Without it
- * `30.06.2021` offered `30` where a month was expected, no alternative
- * matched, the range failed, and the ENTIRE ROLE was dropped from the
- * candidate's history — for every CV written day-first, which is most of
- * Europe and India.
- *
- * When both leading numbers could be a day or a month the date is genuinely
- * ambiguous, and it is read day-first, because that is how the CVs this failed
- * on are written. The year — which is what tenure, band calibration and the
- * interview's pitch are computed from — is right either way; at worst the
- * month is off, and no month at all was being read before.
- */
-const POINT = `(?:${MONTH_WORD}\\.?[\\s,/-]*${YEAR}|${YEAR}|(?:\\d{1,2}[/.-])?(\\d{1,2})[/.-]${YEAR})`;
-const PRESENT = '(present|current|now|to date|till date|ongoing|date)';
-const RANGE_RE = new RegExp(`${POINT}\\s*(?:-|–|—|to|until|\\u2192)\\s*(?:${POINT}|${PRESENT})`, 'i');
-
 export interface DatePoint { readonly year: number; readonly month: number }
 export interface DateRange { readonly start: DatePoint; readonly end: DatePoint | null; readonly current: boolean }
 
-/** A "Mar 2019 – Present" style range, or null when the line carries no usable one. */
+/**
+ * A "Mar 2019 – Present" style range, or null when the line carries no usable
+ * one.
+ *
+ * WHAT A DATE RANGE IS lives in domain/cvDates.ts, shared with the years-of-
+ * experience reader in engines/experienceSpan.ts. The two used to hold
+ * separate regexes with separate vocabularies, and the difference was a
+ * defect, not a design: a timeline strip reading "2017 - 18" counted towards
+ * the years total while producing no listed role, and a German CV whose
+ * current job ran "01.03.2021 – heute" produced neither, because `heute` was
+ * in no vocabulary at all. What stays here is what this reader does with a
+ * range: a month where the CV wrote none is January, and a range that ends
+ * before it starts is refused.
+ */
 export function parseDateRange(line: string, today = new Date()): DateRange | null {
-  const m = RANGE_RE.exec(line);
-  if (!m) return null;
-  const start = pointFrom(m[1], m[2], m[3], m[4], m[5]);
-  if (!start) return null;
-  const current = Boolean(m[11]);
-  const end = current ? { year: today.getFullYear(), month: today.getMonth() + 1 } : pointFrom(m[6], m[7], m[8], m[9], m[10]);
-  if (!end) return null;
+  const range = firstDateRange(line);
+  if (!range) return null;
+  const start = { year: range.start.year, month: range.start.month ?? 1 };
+  const end = range.ongoing
+    ? { year: today.getFullYear(), month: today.getMonth() + 1 }
+    : { year: range.end!.year, month: range.end!.month ?? 1 };
   if (end.year < start.year) return null;
-  return { start, end, current };
-}
-
-function pointFrom(monthWord?: string, yearAfterMonth?: string, bareYear?: string, numericMonth?: string, yearAfterNumeric?: string): DatePoint | null {
-  if (monthWord && yearAfterMonth) return { year: Number(yearAfterMonth), month: MONTHS[monthWord.slice(0, 4).toLowerCase()] ?? MONTHS[monthWord.slice(0, 3).toLowerCase()] ?? 1 };
-  if (numericMonth && yearAfterNumeric) return { year: Number(yearAfterNumeric), month: Math.min(12, Math.max(1, Number(numericMonth))) };
-  if (bareYear) return { year: Number(bareYear), month: 1 };
-  return null;
+  return { start, end, current: range.ongoing };
 }
 
 function monthsBetween(range: DateRange): number {
@@ -82,23 +63,50 @@ const MAX_ROLE_LINE_CHARS = 140;
 const MAX_ROLES = 14;
 
 /**
- * A role heading: a line in the experience section that names a job and is not
+ * A role heading: a line in the experience region that names a job and is not
  * a bullet. The dates may sit on it or on the line just below — both are common
  * and both are read, because a role whose dates are missed becomes a fake gap.
+ *
+ * A line the candidate wrote to say they were NOT working is not a job. It
+ * carries a date range and a comma like any other, so it used to be read as
+ * one, and "Career break, full-time carer — Apr 2017 - Feb 2020" became three
+ * years of employment.
  */
-function isRoleHeading(line: CvLine, next: CvLine | undefined): boolean {
-  if (line.section !== 'experience') return false;
+function isRoleHeading(line: CvLine, next: CvLine | undefined, region: CvSection): boolean {
+  if (line.section !== region) return false;
   const t = line.text;
   if (!t || t.length > MAX_ROLE_LINE_CHARS || BULLET.test(t)) return false;
+  if (looksLikeCareerBreak(t)) return false;
   if (!ROLE_WORDS.test(t) && !TITLE_SEPARATOR.test(t)) return false;
   return Boolean(parseDateRange(t)) || Boolean(next && next.text.length < MAX_ROLE_LINE_CHARS && parseDateRange(next.text));
+}
+
+/**
+ * Where the roles are.
+ *
+ * Normally the section the CV labelled. But a heading nobody taught the
+ * vocabulary — "Where I've Worked", "My Track Record" — leaves every line
+ * under it filed as `summary`, `isRoleHeading` returns false on all of them,
+ * and the CV yields ZERO roles. The candidate is marked down for the words
+ * they chose as headings, silently.
+ *
+ * So when a document turns out to have no experience section at all, the
+ * reading falls back to the lines that fell through — and says it did, via the
+ * `headings_not_recognised` flag. It is a fallback and not a default: where
+ * the CV did label its experience, the label wins, because a labelled section
+ * is better evidence than a shape.
+ */
+function experienceRegion(lines: readonly CvLine[]): { region: CvSection; recognised: boolean } {
+  return lines.some((l) => l.section === 'experience')
+    ? { region: 'experience', recognised: true }
+    : { region: 'summary', recognised: false };
 }
 
 /** The capture is the point: `exec(...)[1]` is the parenthesised description itself. */
 const EMPLOYER_CONTEXT = /\(([^)]*\b(?:employees?|people|staff|fortune \d+|startup|scale-?up|\$\d|revenue|headcount|seed|series [a-e]|fintech|healthcare|retail|banking|telecom|saas|e-?commerce|manufacturing|logistics|insurance|media|education|government|non-?profit)\b[^)]*)\)/i;
 
 function splitTitleEmployer(text: string): { title: string; employer: string } {
-  const withoutDates = text.replace(RANGE_RE, '').replace(/[\s()|,;–—-]+$/, '').trim();
+  const withoutDates = stripDateRanges(text).replace(/^[\s()|,;–—-]+/, '').replace(/[\s()|,;–—-]+$/, '').trim();
   const parts = withoutDates.split(TITLE_SEPARATOR).map((p) => p.trim()).filter(Boolean);
   if (parts.length < 2) return { title: withoutDates.slice(0, 80), employer: '' };
   // The half that reads like a job is the title, whichever side it sits on.
@@ -108,8 +116,23 @@ function splitTitleEmployer(text: string): { title: string; employer: string } {
     : { title: parts[1].slice(0, 80), employer: parts[0].slice(0, 80) };
 }
 
-function extractRoles(lines: readonly CvLine[], today: Date): CvRoleHeld[] {
+export interface RolesRead {
+  readonly roles: readonly CvRoleHeld[];
+  /**
+   * The lines the dates actually came from — which is not always the role's
+   * own line, because a two-column CV puts them on the next one. Compared
+   * against the lines that merely LOOK dated, this is how the reading knows
+   * what it missed.
+   */
+  readonly datedLinesRead: ReadonlySet<number>;
+  readonly region: CvSection;
+  readonly headingsRecognised: boolean;
+}
+
+function extractRoles(lines: readonly CvLine[], today: Date): RolesRead {
+  const { region, recognised } = experienceRegion(lines);
   const roles: CvRoleHeld[] = [];
+  const datedLinesRead = new Set<number>();
   let current: { role: CvRoleHeld; bullets: CvEvidence[] } | null = null;
 
   const close = () => {
@@ -121,10 +144,12 @@ function extractRoles(lines: readonly CvLine[], today: Date): CvRoleHeld[] {
   for (let i = 0; i < lines.length && roles.length < MAX_ROLES; i++) {
     const line = lines[i];
     const next = lines[i + 1];
-    if (isRoleHeading(line, next)) {
+    if (isRoleHeading(line, next, region)) {
       close();
-      const dateLine = parseDateRange(line.text, today) ? line.text : (next?.text ?? '');
-      const range = parseDateRange(dateLine, today);
+      const onOwnLine = Boolean(parseDateRange(line.text, today));
+      const dateSource = onOwnLine ? line : next;
+      const range = parseDateRange(dateSource?.text ?? '', today);
+      if (range && dateSource) datedLinesRead.add(dateSource.index);
       const { title, employer } = splitTitleEmployer(line.text);
       const context = EMPLOYER_CONTEXT.exec(`${line.text} ${next?.text ?? ''}`)?.[1];
       current = {
@@ -140,14 +165,14 @@ function extractRoles(lines: readonly CvLine[], today: Date): CvRoleHeld[] {
       };
       continue;
     }
-    if (current && line.section === 'experience' && line.text.length > 12) {
+    if (current && line.section === region && line.text.length > 12) {
       current.bullets.push(evidenceOf(line));
-    } else if (current && line.section !== 'experience') {
+    } else if (current && line.section !== region) {
       close();
     }
   }
   close();
-  return roles;
+  return { roles, datedLinesRead, region, headingsRecognised: recognised };
 }
 
 // --- Technologies -------------------------------------------------------------
@@ -180,7 +205,7 @@ function extractTechnologies(lines: readonly CvLine[], roles: readonly CvRoleHel
     const counted = new Set<string>();
 
     for (const line of lines) {
-      if (!spellings.some((s) => mentionsTechnology(line.text, s))) continue;
+      if (!spellings.some((s) => mentionsTechnologyInProse(line.text, s))) continue;
       if (evidence.length < 4) evidence.push(evidenceOf(line));
       const role = byLine.get(line.index);
       if (!role?.startYear) continue;
@@ -327,10 +352,11 @@ export function extractCvFacts(rawText: string, opts: ExtractOptions = {}): CvFa
 }
 
 /** The same parse when the caller has already prepared the CV (so redaction runs once). */
-export function factsFromPreparedCv(cv: ScoreableCv, _rawText: string, opts: ExtractOptions = {}): CvFacts {
+export function factsFromPreparedCv(cv: ScoreableCv, rawText: string, opts: ExtractOptions = {}): CvFacts {
   const today = opts.today ?? new Date();
   const lines = scoreableLines(cv);
-  const roles = extractRoles(lines, today);
+  const read = extractRoles(lines, today);
+  const roles = read.roles;
   const { tenure, gaps } = tenureAndGaps(roles);
   const location = lines.find((l) => LOCATION_RE.test(l.text));
   const workAuth = lines.find((l) => WORK_AUTH_RE.test(l.text));
@@ -346,6 +372,19 @@ export function factsFromPreparedCv(cv: ScoreableCv, _rawText: string, opts: Ext
     ...(workAuth ? { statedWorkAuthorisation: evidenceOf(workAuth) } : {}),
     lines,
     redaction: cv.redaction,
+    // Computed from the deterministic parse and the document, never from the
+    // model: a model that is unreachable must not make a CV look cleaner than
+    // it is, and the model refinement in cvFactsLlm.ts carries this forward
+    // rather than recomputing it.
+    parseQuality: assessParseQuality({
+      rawText,
+      lines,
+      roles,
+      gaps,
+      datedLinesRead: read.datedLinesRead,
+      region: read.region,
+      headingsRecognised: read.headingsRecognised,
+    }),
     source: 'deterministic',
   };
 }

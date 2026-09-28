@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createElement as h } from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { ProfileAsRead } from '../src/components/profile/ProfileAsRead';
-import type { ProfileRead } from '../src/components/profile/profileReadModel';
+import type { ProfileRead, ReadParseFlag } from '../src/components/profile/profileReadModel';
 
 /**
  * Lane 1 as it renders.
@@ -149,5 +149,55 @@ describe('the profile as read', () => {
   it('asks for a resume rather than rendering an empty reading', () => {
     render(h(ProfileAsRead, { read: null, rawText: '' }));
     expect(screen.getByText('No resume has been read yet')).toBeTruthy();
+  });
+});
+
+/**
+ * What the reading could not see.
+ *
+ * The failure: this panel said "1 role read from the CV — nothing flagged"
+ * about a German CV with two jobs on it. Every fact shown was true and the
+ * reading was wrong, and there was nowhere on the page for that to appear.
+ */
+describe('what the reading could not see', () => {
+  const flagged = (flags: readonly ReadParseFlag[]) =>
+    panel({ parseQuality: { readable: true, datedLines: 3, datedLinesRead: 2, flags } });
+
+  it('is above the roles, not buried under them', () => {
+    const { container } = flagged([{
+      code: 'no_current_role_read', severity: 'review',
+      message: 'We could not read a current role from this CV, though a line looks like one that has not ended — check line 9 against the document.',
+      sourceLines: [9],
+    }]);
+    const notices = container.querySelector('.par-notices');
+    const list = container.querySelector('.par-list');
+    expect(notices).toBeTruthy();
+    // Node.DOCUMENT_POSITION_FOLLOWING: the roles come after the notices.
+    expect(notices!.compareDocumentPosition(list!) & 4).toBe(4);
+  });
+
+  it('shows the finding and the line to open', () => {
+    flagged([{
+      code: 'dated_lines_not_read', severity: 'review',
+      message: '1 line carries dates that the reading could not use. Check line 9 against the document.',
+      sourceLines: [9],
+    }]);
+    expect(screen.getByText(/Check line 9 against the document/)).toBeTruthy();
+    expect(screen.getByText('2 of 3 dated lines read.')).toBeTruthy();
+  });
+
+  it('marks it with a word and a rule rather than a tinted banner', () => {
+    const { container } = flagged([{
+      code: 'headings_not_recognised', severity: 'note',
+      message: 'None of this CV\'s section headings were recognised, so the reading worked from the layout instead of the labels. Check the roles below against the document.',
+      sourceLines: [],
+    }]);
+    expect(screen.getByText('[ note ]')).toBeTruthy();
+    expect(container.querySelector('.par-notice-note')).toBeTruthy();
+  });
+
+  it('says nothing at all when the reading has nothing to report', () => {
+    const { container } = panel({ parseQuality: { readable: true, datedLines: 2, datedLinesRead: 2, flags: [] } });
+    expect(container.querySelector('.par-notices')).toBeNull();
   });
 });
