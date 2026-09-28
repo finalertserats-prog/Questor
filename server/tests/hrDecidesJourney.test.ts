@@ -5,6 +5,7 @@ import { prisma } from '../src/db.js';
 import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { finalizeInterview } from '../src/realtime/interviewEngine.js';
 import { readTranscript } from './reviewGateHelpers.js';
+import { READABLE_CV } from './readableCv.js';
 
 /**
  * One candidate, all the way through, with nothing hand-built.
@@ -27,15 +28,6 @@ import { readTranscript } from './reviewGateHelpers.js';
 
 const app = createApp();
 const REASON = 'The evidence on the core competencies was clear and consistent.';
-
-const RESUME = [
-  'Pat Lee',
-  'Senior Data Engineer',
-  '',
-  'Built Airflow and dbt pipelines on Snowflake; owned incident recovery and backfills.',
-  '',
-  'Skills: SQL, Python, Airflow, dbt, Snowflake',
-].join('\n');
 
 const ANSWERS = [
   'I owned the ledger pipeline end to end and made recovery idempotent after a reconciliation incident.',
@@ -61,7 +53,7 @@ async function onboarded(ids: Seeded): Promise<Journey> {
   const created = await request(app).post('/api/candidates').set('Authorization', ids.auth)
     .send({ fullName: 'Pat Lee', email: 'pat.lee@example.test', roleId: ids.roleId });
   const candidateId = created.body.candidate.id as string;
-  await request(app).post(`/api/candidates/${candidateId}/resume`).set('Authorization', ids.auth).send({ text: RESUME });
+  await request(app).post(`/api/candidates/${candidateId}/resume`).set('Authorization', ids.auth).send({ text: READABLE_CV });
   const pipeline = await prisma.candidatePipeline.findFirstOrThrow({ where: { candidateId } });
   return { candidateId, pipelineId: pipeline.id };
 }

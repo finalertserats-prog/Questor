@@ -1059,9 +1059,42 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
   const fit = profile
     ? parseJsonStrict<{ overall?: unknown; provisional?: boolean }>(profile.fitScoreJson, { model: 'CandidateProfileVersion', id: profile.id, field: 'fitScoreJson' })
     : {};
-  const aiSessionIds = pipeline.rounds.filter((r) => r.conductedBy === 'AI' && r.sessionId).map((r) => r.sessionId as string);
+  /**
+   * The candidate's AI interviews for this role, read from the sessions
+   * themselves rather than from the rounds that happen to point at them.
+   *
+   * An AI interview is created at `POST /api/interviews` against a candidate
+   * and a role; booking it as a pipeline round is a separate, optional act
+   * that most teams never perform. Deriving this list from
+   * `pipeline.rounds` therefore found nothing on the ordinary path, and the
+   * Silver stage reported "No assessed AI interview yet" about an interview
+   * that had been conducted, assessed AND read by a reviewer — on the same
+   * screen as the badge that interview had just earned.
+   *
+   * Keyed by tenant, candidate and role, which is the same key
+   * `humanReviewGate.interviewsFor` uses to decide whether a person has read
+   * the candidate's interviews. The two answers are about the same set of
+   * interviews and must not be able to disagree.
+   */
+  const aiSessions = await prisma.interviewSession.findMany({
+    where: { tenantId: pipeline.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId },
+    select: { id: true },
+  });
+  // A round's session is kept in the union as well. It is normally one of the
+  // above, but a round is the only place a session and a stage were ever
+  // linked, and dropping it would be a silent narrowing rather than a fix.
+  const aiSessionIds = [...new Set([
+    ...aiSessions.map((s) => s.id),
+    ...pipeline.rounds.filter((r) => r.conductedBy === 'AI' && r.sessionId).map((r) => r.sessionId as string),
+  ])];
   const assessments = aiSessionIds.length > 0
-    ? await prisma.assessmentVersion.findMany({ where: { sessionId: { in: aiSessionIds } }, orderBy: { version: 'desc' }, select: { id: true, sessionId: true, recommendation: true } })
+    ? await prisma.assessmentVersion.findMany({
+      where: { sessionId: { in: aiSessionIds } },
+      // Newest first across every attempt: a retake's assessment is what the
+      // stage is about, and version alone does not order two sessions.
+      orderBy: [{ createdAt: 'desc' }, { version: 'desc' }],
+      select: { id: true, sessionId: true, recommendation: true },
+    })
     : [];
   // The AI's call is named only to someone the blind-review policy lets see it.
   const visible = await aiConclusionVisible({
@@ -1075,7 +1108,6 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
     r.stageKey === stageKey && r.conductedBy === 'HUMAN' && r.status === 'COMPLETED' && r.notes.trim().length > 0);
 
   const summarise = (stage: PipelineStage): StageSummary => {
-    const rounds = pipeline.rounds.filter((r) => r.stageKey === stage.key);
     const human = humanEvidence(stage.key);
     const alsoHuman = human.length > 0 ? ` ${human.length} completed human round(s) beside it.` : '';
     switch (stage.kind) {
@@ -1094,7 +1126,11 @@ pipelinesRouter.get('/:id/summary', requireCapability('candidate:read'), asyncHa
             }
           : { ...stage, hasEvidence: false, detail: 'No AI profile review yet.' };
       case 'ai_interview': {
-        const assessed = assessments.find((a) => rounds.some((r) => r.sessionId === a.sessionId));
+        // Any assessed AI interview of this candidate's, not only one a round
+        // points at. A stage plan holds at most one AI-conducted stage
+        // (`stagesSchema`), so there is exactly one stage this evidence can
+        // belong to and no ambiguity about which.
+        const assessed = assessments[0];
         if (assessed && !visible.has(assessed.id)) {
           return { ...stage, hasEvidence: true, detail: `AI interview assessed. Record your own verdict to see its recommendation.${alsoHuman}` };
         }

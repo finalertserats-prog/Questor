@@ -6,6 +6,8 @@ import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { finalizeInterview } from '../src/realtime/interviewEngine.js';
 import { readTranscript } from './reviewGateHelpers.js';
 import { parseStoredEvidence } from '../src/services/awardEvidence.js';
+import { AWARD_TIERS } from '../src/domain/candidateAwards.js';
+import { READABLE_CV } from './readableCv.js';
 
 /**
  * The observed defect, walked through the real endpoints.
@@ -32,42 +34,18 @@ import { parseStoredEvidence } from '../src/services/awardEvidence.js';
  * assertion passes vacuously against a candidate who has no pipeline, and a
  * `.not.toContain` passes against an empty list, so the standing is asserted
  * in the same expectation as the tiers rather than trusted.
+ *
+ * The shape of the journey below is the answer to both holes and not only to
+ * the first: no event moves anyone past Bronze any more, and a verdict moves
+ * them exactly one stage. A reviewer's Proceed therefore lands the candidate
+ * ON Silver holding nothing — which is right, because a tier is earned on the
+ * way out of it — and the Silver is struck when a person then moves them to
+ * Gold. Both halves are asserted, because "no badge yet" and "no badge ever"
+ * look identical at the moment of the verdict and only the second is a defect.
  */
 
 const app = createApp();
 const REASON = 'The evidence on the core competencies was clear and consistent.';
-
-/**
- * A CV long enough to be readable against the demo role's scorecard.
- *
- * Bronze is struck only from a fit the product is willing to compare on, and a
- * six-line CV bands as `not_enough_evidence` — correctly. A short fixture would
- * have left this whole file asserting the ladder for a candidate who never got
- * onto the bottom rung, which is the vacuous-pass trap in its purest form.
- */
-const RESUME = [
-  'Pat Lee',
-  'Senior Data Engineer | Bengaluru',
-  'pat.lee@example.test',
-  '',
-  'Experience:',
-  'Senior Data Engineer, Northwind Data (2021 - Present)',
-  '- Owned the analytical data platform on Snowflake serving 200+ internal analysts.',
-  '- Designed dimensional data models and slowly changing dimensions for finance reporting.',
-  '- Built and operated Airflow + dbt pipelines processing 4TB/day; cut pipeline failures by 60% with idempotent recovery and better detection.',
-  '- Led the migration from Redshift to Snowflake, cutting warehouse cost by 35%.',
-  '- Optimized critical SQL, improving key report latency from 90s to under 8s using partitioning and clustering.',
-  '',
-  'Data Engineer, ShopStack (2018 - 2021)',
-  '- Built streaming pipelines with Spark and Kafka for clickstream analytics.',
-  '- Implemented observability and alerting; established on-call runbooks and SLAs.',
-  '- Architected the AWS data platform for changing volume, cost and SLA.',
-  '- Partnered with analysts and product on data governance, security and compliance reviews.',
-  '',
-  'Skills: SQL, Python, Airflow, dbt, Spark, Kafka, Snowflake, Redshift, BigQuery, AWS, data modelling, data governance',
-  '',
-  'Education: B.E. Computer Science, 2018.',
-].join('\n');
 
 const ANSWERS = [
   'I owned the ledger pipeline end to end and made recovery idempotent after a reconciliation incident.',
@@ -93,7 +71,7 @@ async function onboarded(ids: Seeded): Promise<Journey> {
   const created = await request(app).post('/api/candidates').set('Authorization', ids.auth)
     .send({ fullName: 'Pat Lee', email: 'pat.lee@example.test', roleId: ids.roleId });
   const candidateId = created.body.candidate.id as string;
-  await request(app).post(`/api/candidates/${candidateId}/resume`).set('Authorization', ids.auth).send({ text: RESUME });
+  await request(app).post(`/api/candidates/${candidateId}/resume`).set('Authorization', ids.auth).send({ text: READABLE_CV });
   const pipeline = await prisma.candidatePipeline.findFirstOrThrow({ where: { candidateId } });
   return { candidateId, pipelineId: pipeline.id };
 }
@@ -138,6 +116,19 @@ const awardsOf = (candidateId: string) =>
   prisma.candidateAward.findMany({ where: { candidateId }, orderBy: { awardedAt: 'asc' } });
 
 /**
+ * The tiers held, in ladder order rather than in the order they were written.
+ *
+ * Gold and Diamond are struck by ONE move and share its instant exactly, so
+ * ordering by `awardedAt` puts them in whichever order the rows came back —
+ * a test that reads "gold, diamond" on one run and "diamond, gold" on the next
+ * is reporting the query plan, not the product.
+ */
+const tiersOf = async (candidateId: string) => {
+  const held = new Set((await awardsOf(candidateId)).map((a) => a.tier));
+  return AWARD_TIERS.filter((tier) => held.has(tier));
+};
+
+/**
  * The whole journey up to the point a person has read the interview and said
  * Proceed. Shared because every assertion below is about the state it leaves.
  */
@@ -147,6 +138,13 @@ async function reviewedAndProceeded(ids: Seeded) {
   const stageBefore = await stageOf(journey);
   const res = await review(ids, assessmentId);
   return { journey, assessmentId, stageBefore, reviewStatus: res.status };
+}
+
+/** The same, and then the promotion out of Silver that is what earns Silver. */
+async function promotedOutOfSilver(ids: Seeded) {
+  const reviewed = await reviewedAndProceeded(ids);
+  const moved = await advance(ids, reviewed.journey, 'gold');
+  return { ...reviewed, advanceStatus: moved.status };
 }
 
 describe('the Silver a reviewer’s Proceed is supposed to earn', () => {
@@ -160,48 +158,74 @@ describe('the Silver a reviewer’s Proceed is supposed to earn', () => {
     const ids = await seeded();
     const journey = await onboarded(ids);
 
-    expect((await awardsOf(journey.candidateId)).map((a) => a.tier)).toEqual(['bronze']);
+    expect(await tiersOf(journey.candidateId)).toEqual(['bronze']);
   });
 
-  it('strikes Silver for a candidate carried out of Silver by a recorded verdict', async () => {
+  // The assessment moves nobody. This is the first hole stated as a fact
+  // rather than as an absence: if an event ever carries a candidate off the
+  // AI round again, the move will earn a tier nobody was credited with, and
+  // this goes red before the missing badge does.
+  it('is not carried off Bronze by an interview being conducted and assessed', async () => {
+    const ids = await seeded();
+    const journey = await onboarded(ids);
+    await interviewed(ids, journey);
+
+    expect({ stage: await stageOf(journey), tiers: await tiersOf(journey.candidateId) })
+      .toEqual({ stage: 'bronze', tiers: ['bronze'] });
+  });
+
+  it('lands on Silver, holding no Silver, when the reviewer records Proceed', async () => {
     const ids = await seeded();
     const { journey, stageBefore, reviewStatus } = await reviewedAndProceeded(ids);
 
-    const tiers = (await awardsOf(journey.candidateId)).map((a) => a.tier);
+    // One stage, not a vault to Gold: a verdict is about the AI round, and
+    // carrying a candidate past rounds nobody judged would claim judgements
+    // nobody made. Arriving at Silver earns nothing — that is the rule, not
+    // the defect.
+    expect({ reviewStatus, stageBefore, reached: await stageOf(journey), tiers: await tiersOf(journey.candidateId) })
+      .toEqual({ reviewStatus: 201, stageBefore: 'bronze', reached: 'silver', tiers: ['bronze'] });
+  });
+
+  it('strikes Silver on the move out of Silver that the reviewer’s verdict made possible', async () => {
+    const ids = await seeded();
+    const { journey, advanceStatus } = await promotedOutOfSilver(ids);
+
+    const tiers = await tiersOf(journey.candidateId);
 
     // The standing rides in the same expectation as the tiers on purpose: a
     // tiers assertion alone is green for a candidate the fixture never moved.
-    expect({ reviewStatus, stageBefore, reached: await stageOf(journey), tiers }).toEqual({
-      reviewStatus: 201,
-      stageBefore: 'silver',
-      reached: 'gold',
-      tiers: ['bronze', 'silver'],
-    });
+    expect({ advanceStatus, reached: await stageOf(journey), tiers })
+      .toEqual({ advanceStatus: 200, reached: 'gold', tiers: ['bronze', 'silver'] });
   });
 
   it('gives that Silver the frozen evidence and the verification token a certificate is printed from', async () => {
     const ids = await seeded();
-    const { journey } = await reviewedAndProceeded(ids);
+    const { journey } = await promotedOutOfSilver(ids);
 
     const silver = (await awardsOf(journey.candidateId)).find((a) => a.tier === 'silver');
-    const evidence = silver ? parseStoredEvidence(silver.tier, silver.evidenceJson) : null;
+    const read = silver ? parseStoredEvidence(silver.id, silver.evidenceJson) : null;
+    const evidence = read?.kind === 'current' ? read.evidence : null;
 
     expect({
       reference: silver?.reference.startsWith('QS-SLV-') ?? false,
       verifyToken: (silver?.verifyToken.length ?? 0) >= 16,
       awardedBy: silver?.awardedByUserId === ids.userId,
       rows: evidence?.rows.length ?? 0,
-      candidateName: evidence && 'candidateName' in evidence ? evidence.candidateName : null,
-    }).toEqual({ reference: true, verifyToken: true, awardedBy: true, rows: 5, candidateName: 'Pat Lee' });
+      candidateName: evidence?.candidateName ?? null,
+      // Struck at version 2, not the rows-only shape: a Silver written as
+      // version 1 has no name, no role title and no signatures, and every
+      // export of one answers 500.
+      version: read?.kind ?? null,
+    }).toEqual({ reference: true, verifyToken: true, awardedBy: true, rows: 5, candidateName: 'Pat Lee', version: 'current' });
   });
 
   it('names the reviewer who assessed the interview on the Silver it earned', async () => {
     const ids = await seeded();
-    const { journey } = await reviewedAndProceeded(ids);
+    const { journey } = await promotedOutOfSilver(ids);
 
     const silver = (await awardsOf(journey.candidateId)).find((a) => a.tier === 'silver');
-    const evidence = silver ? parseStoredEvidence(silver.tier, silver.evidenceJson) : null;
-    const assessedBy = evidence && 'signatures' in evidence ? evidence.signatures.left : null;
+    const read = silver ? parseStoredEvidence(silver.id, silver.evidenceJson) : null;
+    const assessedBy = read?.kind === 'current' ? read.evidence.signatures.left : null;
 
     // Not "Questor". A Silver struck by a move that happened after a person
     // read the transcript must carry that person, or the certificate claims an
@@ -211,11 +235,13 @@ describe('the Silver a reviewer’s Proceed is supposed to earn', () => {
 
   it('never mints Bronze twice and never mints a Diamond on the way to Gold', async () => {
     const ids = await seeded();
-    const { journey } = await reviewedAndProceeded(ids);
+    const { journey } = await promotedOutOfSilver(ids);
 
-    const tiers = (await awardsOf(journey.candidateId)).map((a) => a.tier);
+    // Rows, not the deduplicated ladder: counting a duplicate Bronze off a set
+    // is a test that cannot see the thing it is named after.
+    const rows = (await awardsOf(journey.candidateId)).map((a) => a.tier);
 
-    expect({ bronze: tiers.filter((t) => t === 'bronze').length, diamond: tiers.includes('diamond'), total: tiers.length })
+    expect({ bronze: rows.filter((t) => t === 'bronze').length, diamond: rows.includes('diamond'), total: rows.length })
       .toEqual({ bronze: 1, diamond: false, total: 2 });
   });
 });
@@ -255,10 +281,10 @@ describe('the tiers a Gold candidate goes on to earn', () => {
 
   it('strikes Gold and Diamond together on the single move out of Gold', async () => {
     const ids = await seeded();
-    const { journey } = await reviewedAndProceeded(ids);
+    const { journey } = await promotedOutOfSilver(ids);
 
     const moved = await advance(ids, journey, 'diamond');
-    const tiers = (await awardsOf(journey.candidateId)).map((a) => a.tier);
+    const tiers = await tiersOf(journey.candidateId);
 
     expect({ status: moved.status, reached: await stageOf(journey), tiers })
       .toEqual({ status: 200, reached: 'diamond', tiers: ['bronze', 'silver', 'gold', 'diamond'] });
