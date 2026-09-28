@@ -1,0 +1,114 @@
+import { describe, expect, it } from 'vitest';
+import { MAX_IMPORT_ROWS, parseCandidateCsv } from '../src/services/candidateImportCsv.js';
+
+/**
+ * The CSV half of bulk import: whatever a spreadsheet saves, read as one row
+ * per person. Nothing in a cell is ever evaluated; it is only text.
+ */
+
+const rowsOf = (text: string) => {
+  const parsed = parseCandidateCsv(text);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return parsed.rows;
+};
+
+const errorOf = (text: string) => {
+  const parsed = parseCandidateCsv(text);
+  return parsed.ok ? null : parsed.error;
+};
+
+describe('parseCandidateCsv headers', () => {
+  it('reads the plain name,email header', () => {
+    expect(rowsOf('name,email\nPriya Sharma,priya@example.com\n')).toEqual([
+      { fullName: 'Priya Sharma', email: 'priya@example.com', phone: '', linkedinUrl: '' },
+    ]);
+  });
+
+  it('accepts header variants in any case, order and spacing', () => {
+    const rows = rowsOf('E-mail Address;Mobile Number;Full Name;LinkedIn Profile\nlee@example.com;+44 7700 900123;Lee Chan;https://www.linkedin.com/in/leechan\n');
+
+    expect(rows[0]).toEqual({ fullName: 'Lee Chan', email: 'lee@example.com', phone: '+44 7700 900123', linkedinUrl: 'https://www.linkedin.com/in/leechan' });
+  });
+
+  it('joins separate first and last name columns', () => {
+    expect(rowsOf('First Name,Last Name,Email\nAna,Lopez,ana@example.com')[0].fullName).toBe('Ana Lopez');
+  });
+
+  it('refuses a file without an email column', () => {
+    expect(errorOf('name,phone\nPriya,123')).toMatch(/email column/i);
+  });
+
+  it('refuses a file without a name column', () => {
+    expect(errorOf('email\npriya@example.com')).toMatch(/name column/i);
+  });
+
+  it('refuses an empty file', () => {
+    expect(errorOf('')).toMatch(/empty/i);
+  });
+
+  it('refuses a header with no people under it', () => {
+    expect(errorOf('name,email\n\n')).toMatch(/no people/i);
+  });
+});
+
+describe('parseCandidateCsv cells', () => {
+  it('strips a UTF-8 byte order mark from the first header', () => {
+    expect(rowsOf('﻿name,email\nA B,ab@example.com')[0].email).toBe('ab@example.com');
+  });
+
+  it('reads quoted fields containing the separator, quotes and line breaks', () => {
+    const rows = rowsOf('name,email\n"Chan, Lee ""LC""",lee@example.com\n"Two\nLines",two@example.com\n');
+
+    expect(rows.map((r) => r.fullName)).toEqual(['Chan, Lee "LC"', 'Two Lines']);
+  });
+
+  it('detects a semicolon separator even when names contain commas', () => {
+    expect(rowsOf('name;email\nChan, Lee;lee@example.com')[0].fullName).toBe('Chan, Lee');
+  });
+
+  it('reads a tab-separated export', () => {
+    expect(rowsOf('name\temail\nLee Chan\tlee@example.com')[0].email).toBe('lee@example.com');
+  });
+
+  it('handles Windows line endings', () => {
+    expect(rowsOf('name,email\r\nA One,a@example.com\r\nB Two,b@example.com\r\n')).toHaveLength(2);
+  });
+
+  it('skips blank lines between people', () => {
+    expect(rowsOf('name,email\nA One,a@example.com\n,\n\nB Two,b@example.com')).toHaveLength(2);
+  });
+
+  it('keeps a formula-looking cell as inert text with its trigger removed', () => {
+    expect(rowsOf('name,email\n=HYPERLINK("http://x"),a@example.com')[0].fullName).toBe('HYPERLINK("http://x")');
+  });
+
+  it('keeps a row whose email cell is missing, for the preview to flag', () => {
+    expect(rowsOf('name,email\nOnly Name')[0]).toEqual({ fullName: 'Only Name', email: '', phone: '', linkedinUrl: '' });
+  });
+
+  it('bounds an over-long cell rather than storing it whole', () => {
+    expect(rowsOf(`name,email\n${'x'.repeat(5000)},a@example.com`)[0].fullName.length).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe('parseCandidateCsv limits', () => {
+  it(`accepts exactly ${MAX_IMPORT_ROWS} people`, () => {
+    const body = Array.from({ length: MAX_IMPORT_ROWS }, (_, i) => `P ${i},p${i}@example.com`).join('\n');
+
+    expect(rowsOf(`name,email\n${body}`)).toHaveLength(MAX_IMPORT_ROWS);
+  });
+
+  it(`refuses more than ${MAX_IMPORT_ROWS} people`, () => {
+    const body = Array.from({ length: MAX_IMPORT_ROWS + 1 }, (_, i) => `P ${i},p${i}@example.com`).join('\n');
+
+    expect(errorOf(`name,email\n${body}`)).toMatch(/at most 200/);
+  });
+
+  it('refuses a file that is not text', () => {
+    expect(errorOf('name,email\nA\u0000B,a@example.com')).toMatch(/not a CSV/i);
+  });
+
+  it('refuses an unterminated quote', () => {
+    expect(errorOf('name,email\n"Open,a@example.com')).toMatch(/quote/i);
+  });
+});

@@ -1,0 +1,205 @@
+/* ==========================================================================
+   Bringing an organisation to Questor, and the areas it hires for.
+   --------------------------------------------------------------------------
+   A chosen area is marked at its edge and by its weight — a rail and a colour
+   on the label — never by a tinted fill behind it. An area that is out of
+   reach because the limit is full is dimmed and disabled, not reddened: it is
+   not an error, it is simply not available yet.
+
+   Everything below holds at 375px: the list is a single column until there is
+   room for two, and the long catalog summaries wrap rather than push the page
+   sideways.
+   ========================================================================== */
+
+/* Doubled up to beat `.public-body`'s own max-width, which is set for prose a
+   reader scans and is far too wide for a form someone fills in: at 980px the
+   fields ran the width of a desktop window and the eye lost the column. */
+.public-body.onboard-body {
+  max-width: 720px;
+}
+
+.onboard-card {
+  padding: 22px;
+}
+
+.onboard-card h1 {
+  margin-top: 0;
+}
+
+.onboard-section {
+  margin: 22px 0 0;
+  padding: 0;
+  border: 0;
+  border-top: var(--hair) solid var(--rule);
+}
+
+.onboard-section legend {
+  padding: 0;
+  margin: 0;
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+/* The legend sits on the rule above it, so the first field needs the air back. */
+.onboard-section > label:first-of-type {
+  margin-top: 14px;
+}
+
+.onboard-count {
+  margin: 12px 0 8px;
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+.onboard-areas {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 620px) {
+  .onboard-areas {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.onboard-area {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  height: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: var(--hair) solid var(--rule);
+  border-left-width: var(--rail);
+  border-left-color: var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.4;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.onboard-area:hover {
+  border-color: var(--rule-strong);
+  border-left-color: var(--rule-strong);
+}
+
+/* Marked at the edge, not filled. */
+.onboard-area.is-chosen {
+  border-color: var(--accent-edge);
+  border-left-color: var(--accent);
+}
+
+.onboard-area.is-full {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.onboard-area.is-full:hover {
+  border-color: var(--rule);
+  border-left-color: var(--rule);
+}
+
+.onboard-area input[type='checkbox'] {
+  grid-row: 1 / span 2;
+  width: auto;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.onboard-area-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.onboard-area.is-chosen .onboard-area-name {
+  color: var(--accent);
+}
+
+.onboard-area-detail {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.onboard-area:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.onboard-submit {
+  width: 100%;
+  margin-top: 22px;
+}
+
+/* --------------------------------------------------------------------------
+   The request's own details, beside it in the owner's queue.
+   One row per fact, on rules — the same shape the decision page already uses.
+   -------------------------------------------------------------------------- */
+
+.onboard-request {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.onboard-request-row {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr);
+  gap: 10px;
+  font-size: 12.5px;
+}
+
+/* On a phone the queue is a scrolling table inside its own region, and this
+   column is narrow. Two columns inside it left the area names breaking one
+   word to a line; stacked, each fact gets the whole width. */
+@media (max-width: 640px) {
+  .onboard-request-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+
+.onboard-request-label {
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+.onboard-request-value {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* Areas read as a list of names on one line, wrapping, separated by rules
+   rather than by chips — a chip is a fill, and these are not states. */
+.onboard-areas-read {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+
+.onboard-areas-read > span + span {
+  padding-left: 10px;
+  border-left: var(--hair) solid var(--rule);
+}

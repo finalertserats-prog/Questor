@@ -1,0 +1,157 @@
+/* The platform owner's question-library screen. State is marked with rules
+   and brackets, never with tinted fills: the worker's state carries a rule on
+   its leading edge, a pool's health is a bracketed word, a thin pool's row has
+   a rule at its edge. */
+
+.library-admin .card + .card {
+  margin-top: 16px;
+}
+.library-section-title {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+.library-subtitle {
+  margin: 14px 0 6px;
+  font-size: 0.95rem;
+}
+
+.library-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px 24px;
+  align-items: start;
+}
+.library-state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 3px solid var(--rule-strong);
+  padding-left: 12px;
+}
+.library-state.is-ok { border-left-color: var(--accent); }
+.library-state.is-warn { border-left-color: var(--warn, #b7791f); }
+.library-state.is-stop { border-left-color: var(--stop); }
+.library-state.is-muted { border-left-color: var(--rule); }
+.library-state-label {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.library-facts {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+}
+.library-facts > div {
+  display: contents;
+}
+.library-facts dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.library-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.library-budget {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.library-budget-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+.library-budget-bar {
+  height: 6px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.library-budget-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.library-last-error {
+  border-left: 3px solid var(--stop);
+  padding-left: 10px;
+  overflow-wrap: anywhere;
+}
+
+.library-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.library-entry {
+  border-top: 1px solid var(--rule);
+  padding: 12px 0;
+}
+.library-entry-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+.library-entry-meta {
+  overflow-wrap: anywhere;
+}
+.library-entry-question {
+  margin: 6px 0;
+  font-weight: 600;
+  max-width: 80ch;
+}
+.library-entry-anchors {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+  max-width: 80ch;
+}
+.library-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.library-entry-editor {
+  border-left: 3px solid var(--accent);
+  padding: 4px 0 4px 12px;
+  margin-top: 6px;
+}
+.library-entry-editor textarea,
+.library-entry-editor input {
+  width: 100%;
+  max-width: 80ch;
+}
+
+.library-pools td,
+.library-strata td {
+  vertical-align: top;
+}
+.library-pools tr.is-stop > td:first-child,
+.library-pools tr.is-warn > td:first-child {
+  box-shadow: inset 3px 0 0 var(--rule-strong);
+}
+.library-pools tr.is-stop > td:first-child {
+  box-shadow: inset 3px 0 0 var(--stop);
+}
+.library-pool-role {
+  font-weight: 600;
+}
+.library-health::before { content: '['; }
+.library-health::after { content: ']'; }
+.library-health.is-ok { color: var(--accent); }
+.library-health.is-stop { color: var(--stop); }
+
+.library-detail {
+  border-left: 3px solid var(--accent);
+}
+.library-history {
+  margin: 0;
+  padding-left: 18px;
+}

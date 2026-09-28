@@ -1,0 +1,289 @@
+/* ==========================================================================
+   Asking for an account, and deciding on one.
+   --------------------------------------------------------------------------
+   Nothing here fills a block with colour to mark it. The chosen mode is marked
+   by a rail and a weight, the way the sidebar marks its current page and the
+   banner marks its kind; the caution beside a request is a rule and a word.
+   ========================================================================== */
+
+/* Said before the field it governs, so it reads as a rule rather than a
+   complaint. Sits tight under the label it belongs to. */
+.field-hint {
+  margin: 0 0 6px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.signup-modes {
+  display: grid;
+  gap: 8px;
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.signup-modes legend {
+  padding: 0;
+  margin-bottom: 8px;
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+.signup-mode {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 2px;
+  align-items: start;
+  margin: 0;
+  padding: 10px 12px;
+  border: var(--hair) solid var(--rule);
+  border-left-width: var(--rail);
+  border-left-color: var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.4;
+  text-transform: none;
+  cursor: pointer;
+}
+
+.signup-mode:hover {
+  border-color: var(--rule-strong);
+  border-left-color: var(--rule-strong);
+}
+
+/* The chosen one is marked at its edge, not filled. */
+.signup-mode.is-chosen {
+  border-color: var(--accent-edge);
+  border-left-color: var(--accent);
+}
+
+.signup-mode input[type='radio'] {
+  grid-row: 1 / span 2;
+  width: auto;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.signup-mode-title {
+  font-weight: 600;
+}
+.signup-mode.is-chosen .signup-mode-title {
+  color: var(--accent);
+}
+
+.signup-mode-detail {
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+.signup-mode:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Organisation picker
+   -------------------------------------------------------------------------- */
+
+.org-picker {
+  position: relative;
+}
+
+.org-picker-list {
+  display: grid;
+  gap: 0;
+  margin: 8px 0 0;
+  padding: 4px 0;
+  border: var(--hair) solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  box-shadow: var(--shadow-pop);
+  list-style: none;
+}
+
+.org-picker-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px 9px 10px;
+  border-left: var(--rail) solid transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.org-picker-option:hover,
+.org-picker-option.is-active {
+  border-left-color: var(--accent);
+  outline: var(--hair) solid var(--accent-edge);
+  outline-offset: calc(-1 * var(--hair));
+}
+
+.org-picker-empty {
+  margin-top: 8px;
+}
+
+.chosen-org {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 10px 0 10px 12px;
+  border-left: var(--rail) solid var(--accent);
+  border-top: var(--hair) solid var(--rule);
+  border-bottom: var(--hair) solid var(--rule);
+}
+
+.chosen-org .field-hint {
+  display: block;
+  margin: 0 0 2px;
+}
+
+/* --------------------------------------------------------------------------
+   Who is asking, on the operator's decision page
+   -------------------------------------------------------------------------- */
+
+.signup-facts {
+  margin: 16px 0;
+  border-top: var(--hair) solid var(--rule);
+}
+
+.signup-facts > div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: var(--hair) solid var(--rule);
+}
+
+.signup-facts dt {
+  color: var(--ink-3);
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  letter-spacing: var(--type-micro-track);
+  text-transform: uppercase;
+}
+
+.signup-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13.5px;
+  overflow-wrap: anywhere;
+}
+
+.signup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 18px;
+}
+.signup-actions .btn {
+  flex: 1;
+}
+
+/* --------------------------------------------------------------------------
+   The caution beside a request whose address does not fit its organisation
+   -------------------------------------------------------------------------- */
+
+.signup-flag {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  padding-left: 8px;
+  border-left: var(--rail) solid var(--hold);
+  color: var(--hold);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.signup-flag .icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.signup-who {
+  font-weight: 600;
+}
+
+/* Who enters a sign-in code (Admin → Organisation).
+   The chosen option is marked by a rail down its leading edge and by weight,
+   exactly as the signup modes above are. Nothing here fills a block with
+   colour: a tinted panel would read as a warning about the choice rather than
+   as the choice being made. */
+.policy-choices {
+  border: 0;
+  margin: 14px 0 0;
+  padding: 0;
+}
+.policy-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  /* These are <label>s, and a bare label in this design system is a mono
+     uppercase micro-label — which turned three sentences of explanation into
+     three lines of shouting. Reset the same way .check-row does. */
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.45;
+  text-transform: none;
+  color: var(--ink);
+  padding: 12px 12px 12px 10px;
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid transparent;
+  border-radius: var(--radius-xs);
+  background: var(--sheet);
+  cursor: pointer;
+  margin-top: 8px;
+}
+.policy-choice.is-chosen {
+  border-color: var(--accent-edge);
+  border-left-color: var(--accent);
+}
+.policy-choice > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.policy-choice-label {
+  font-weight: 600;
+  color: var(--ink);
+}
+.policy-choice.is-chosen .policy-choice-label {
+  color: var(--accent);
+}
+.policy-choice input {
+  width: auto;
+  margin-top: 3px;
+  flex: 0 0 auto;
+}
+
+/* "Sign-in codes are off" (Admin → Organisation).
+   A note that explains what turning it on will do, marked by a rule down its
+   leading edge like every other note here — never a tinted block, which would
+   read as a warning about a setting that is simply not on yet. */
+.signin-off-note {
+  margin-top: 12px;
+  padding: 10px 0 10px 12px;
+  border-left: var(--rail) solid var(--accent-edge);
+}
+.signin-off-note p {
+  margin: 0 0 6px;
+}
+.signin-off-note p:last-child {
+  margin-bottom: 0;
+}

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Questor — The intelligence behind every hire</title>
+    <meta name="description" content="Questor turns a job description into an agreed scorecard, runs the first interview round, schedules the human rounds around it, and ties every rating back to what the candidate actually said." />
+    <!-- The SVG is the icon; the .ico and PNGs are for browsers that cannot draw
+         an SVG favicon. The SVG comes last and the .ico is not sizes="any":
+         given an "any" .ico, Chrome picks it over the SVG. -->
+    <link rel="icon" href="/brand/favicon.ico" sizes="32x32" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/brand/favicon-16.png" />
+    <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/apple-touch-icon.png" />
+    <link rel="manifest" href="/brand/site.webmanifest" />
+    <!-- The page background (--desk in styles/app.css) for each theme. The media
+         queries are only the first guess: the product ignores the OS preference,
+         so the script below and ThemeProvider rewrite both to the chosen theme. -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f4f8" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121218" />
+    <script>
+      // Runs before first paint so the console never flashes the wrong theme.
+      // A stored choice wins; otherwise the page is light.
+      (function () {
+        try {
+          // Light unless the person chose dark. The OS preference is not
+          // consulted — consulting it meant every reviewer on a dark-themed
+          // desktop got a dark console despite light being the default. Must
+          // stay in step with resolveInitialTheme() in components/theme.tsx;
+          // if the two disagree the page repaints on load.
+          var stored = localStorage.getItem('questor-theme');
+          var theme = stored === 'dark' || stored === 'light' ? stored : 'light';
+          applyTheme(theme);
+        } catch (e) {
+          applyTheme('light');
+        }
+        // The browser chrome takes the chosen theme's page colour too, not the
+        // OS guess the theme-color media queries above make. Same values as
+        // browserThemeColor() in components/brandLogoModel.ts.
+        function applyTheme(theme) {
+          document.documentElement.setAttribute('data-theme', theme);
+          var colour = theme === 'dark' ? '#121218' : '#f5f4f8';
+          var metas = document.querySelectorAll('meta[name="theme-color"]');
+          for (var i = 0; i < metas.length; i++) metas[i].setAttribute('content', colour);
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

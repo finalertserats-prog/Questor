@@ -1,0 +1,203 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it } from 'vitest';
+import { createElement as h } from 'react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { ProfileAsRead } from '../src/components/profile/ProfileAsRead';
+import type { ProfileRead, ReadParseFlag } from '../src/components/profile/profileReadModel';
+
+/**
+ * Lane 1 as it renders.
+ *
+ * The screen's one job is to make checking a parsed fact cost a glance. That is
+ * the source tag: press it and the line from the document the candidate
+ * uploaded appears — not our parsed quote, which is the redacted version and
+ * would prove nothing about whether the parse was right.
+ */
+
+const CV = [
+  'Meera Iyer',                                       // 1
+  'meera@example.com',                                // 2
+  '',                                                 // 3
+  'EXPERIENCE',                                       // 4
+  'Senior Data Engineer, Northwind (2021 - Present)', // 5
+  'Rebuilt the nightly ETL on Airflow.',              // 6
+].join('\n');
+
+const ev = (sourceLine: number | undefined, section = 'experience', quote = 'Senior Data Engineer, Northwind') =>
+  ({ line: 0, sourceLine, quote, section });
+
+const READ: ProfileRead = {
+  roles: [{
+    title: 'Senior Data Engineer', employer: 'Northwind', startYear: 2021, current: true,
+    months: 54, evidence: ev(5), bullets: [],
+  }],
+  technologies: [{ name: 'Airflow', firstYear: 2021, lastYear: 2025, evidence: [ev(6)] }],
+  qualifications: [],
+  scope: [],
+  gaps: [],
+  tenure: { roleCount: 1 },
+  redaction: { linesRemoved: 2, kinds: ['name', 'contact'], injectionLines: [] },
+  source: 'deterministic',
+};
+
+const panel = (over: Partial<ProfileRead> = {}, rawText = CV) =>
+  render(h(ProfileAsRead, { read: { ...READ, ...over }, rawText }));
+
+afterEach(cleanup);
+
+describe('the profile as read', () => {
+  it('opens with what the CV says, not with a score', () => {
+    panel();
+    expect(screen.getByText('Senior Data Engineer · Northwind')).toBeTruthy();
+  });
+
+  it('shows the real line of the document when the source tag is pressed', () => {
+    panel();
+    // Nothing of the document is on screen until it is asked for.
+    expect(screen.queryByText(/Senior Data Engineer, Northwind \(2021 - Present\)/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'line 5' }));
+
+    expect(screen.getByText(/Senior Data Engineer, Northwind \(2021 - Present\)/)).toBeTruthy();
+  });
+
+  it('shows the document text, not the parsed quote', () => {
+    // The stored quote is the redacted reading. Showing it back would prove the
+    // parser agrees with itself and nothing about whether it read the CV right.
+    panel({
+      roles: [{
+        title: 'Senior Data Engineer', employer: 'Northwind', startYear: 2021, current: true,
+        evidence: ev(5, 'experience', 'a quote that is not what the document says'), bullets: [],
+      }],
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'line 5' }));
+
+    expect(screen.getByText(/Senior Data Engineer, Northwind \(2021 - Present\)/)).toBeTruthy();
+  });
+
+  it('offers nothing to press when the line was never recorded', () => {
+    panel({
+      roles: [{
+        title: 'Senior Data Engineer', employer: 'Northwind', startYear: 2021, current: true,
+        evidence: ev(undefined), bullets: [],
+      }],
+    });
+
+    const tag = screen.getByRole('button', { name: 'source not recorded' });
+    expect((tag as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('marks a role whose end date could not be read, and says why', () => {
+    panel({
+      roles: [{
+        title: 'Analyst', employer: 'Orbit', startYear: 2016, current: false,
+        evidence: ev(5), bullets: [],
+      }],
+    });
+
+    expect(screen.getByText(/No end date could be read/)).toBeTruthy();
+  });
+
+  it('separates a skills-list claim from experience in a role', () => {
+    panel({ technologies: [{ name: 'Kafka', evidence: [ev(20, 'skills', 'Skills: Kafka')] }] });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Technologies/ }));
+
+    expect(screen.getByText('Named in a skills list, not in any role described.')).toBeTruthy();
+  });
+
+  it('says what was taken out, so an empty section is never read as an empty CV', () => {
+    panel();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Not read/ }));
+
+    expect(screen.getByText(/2 lines removed/)).toBeTruthy();
+  });
+
+  it('names an injection attempt as found but never acted on', () => {
+    panel({ redaction: { linesRemoved: 0, kinds: [], injectionLines: [30] } });
+
+    fireEvent.click(screen.getByRole('tab', { name: /Not read/ }));
+
+    expect(screen.getByText(/never scored/)).toBeTruthy();
+  });
+
+  it('says the opened line is the document as uploaded, not the redacted reading', () => {
+    // The scorer never sees contact details, an institution or a graduation
+    // year; a recruiter reading the CV does. Which of the two this panel is
+    // showing has to be on the screen, not only in a comment.
+    panel();
+    fireEvent.click(screen.getByRole('button', { name: 'line 5' }));
+    expect(screen.getByText(/as uploaded, including anything the reading left out/)).toBeTruthy();
+  });
+
+  it('does not claim a profile is old when it is the CV text that is missing', () => {
+    panel({}, '');
+    const tag = screen.getByRole('button', { name: 'line 5' });
+    expect([(tag as HTMLButtonElement).disabled, tag.getAttribute('title')])
+      .toEqual([true, 'The CV text is not available on this screen, so the line cannot be shown.']);
+  });
+
+  it('never puts a score, a band or a percentage anywhere on the screen', () => {
+    // The whole premise of Lane 1: a judgement needs a role to be judged
+    // against, and this screen has not been told one.
+    const { container } = panel();
+    expect(container.textContent).not.toMatch(/\d+\s*%|\bscore\b|\bband\b|\bfit\b/i);
+  });
+
+  it('asks for a resume rather than rendering an empty reading', () => {
+    render(h(ProfileAsRead, { read: null, rawText: '' }));
+    expect(screen.getByText('No resume has been read yet')).toBeTruthy();
+  });
+});
+
+/**
+ * What the reading could not see.
+ *
+ * The failure: this panel said "1 role read from the CV — nothing flagged"
+ * about a German CV with two jobs on it. Every fact shown was true and the
+ * reading was wrong, and there was nowhere on the page for that to appear.
+ */
+describe('what the reading could not see', () => {
+  const flagged = (flags: readonly ReadParseFlag[]) =>
+    panel({ parseQuality: { readable: true, datedLines: 3, datedLinesRead: 2, flags } });
+
+  it('is above the roles, not buried under them', () => {
+    const { container } = flagged([{
+      code: 'no_current_role_read', severity: 'review',
+      message: 'We could not read a current role from this CV, though a line looks like one that has not ended — check line 9 against the document.',
+      sourceLines: [9],
+    }]);
+    const notices = container.querySelector('.par-notices');
+    const list = container.querySelector('.par-list');
+    expect(notices).toBeTruthy();
+    // Node.DOCUMENT_POSITION_FOLLOWING: the roles come after the notices.
+    expect(notices!.compareDocumentPosition(list!) & 4).toBe(4);
+  });
+
+  it('shows the finding and the line to open', () => {
+    flagged([{
+      code: 'dated_lines_not_read', severity: 'review',
+      message: '1 line carries dates that the reading could not use. Check line 9 against the document.',
+      sourceLines: [9],
+    }]);
+    expect(screen.getByText(/Check line 9 against the document/)).toBeTruthy();
+    expect(screen.getByText('2 of 3 dated lines read.')).toBeTruthy();
+  });
+
+  it('marks it with a word and a rule rather than a tinted banner', () => {
+    const { container } = flagged([{
+      code: 'headings_not_recognised', severity: 'note',
+      message: 'None of this CV\'s section headings were recognised, so the reading worked from the layout instead of the labels. Check the roles below against the document.',
+      sourceLines: [],
+    }]);
+    expect(screen.getByText('[ note ]')).toBeTruthy();
+    expect(container.querySelector('.par-notice-note')).toBeTruthy();
+  });
+
+  it('says nothing at all when the reading has nothing to report', () => {
+    const { container } = panel({ parseQuality: { readable: true, datedLines: 2, datedLinesRead: 2, flags: [] } });
+    expect(container.querySelector('.par-notices')).toBeNull();
+  });
+});

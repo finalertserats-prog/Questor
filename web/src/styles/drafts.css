@@ -1,0 +1,202 @@
+/* ==========================================================================
+   AI-drafted suggestions (components/drafts/*)
+
+   A draft is REAL text under the field, at ordinary reading contrast — never
+   a placeholder attribute, which is grey by definition and cannot carry
+   something a person is meant to read and judge.
+
+   Marked, like everything else in this product, with a rule, a bracket and an
+   icon rather than a tinted fill.
+   ========================================================================== */
+
+.sug {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hair) solid var(--accent-edge);
+  border-left: var(--rail) solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--sheet);
+}
+.sug-h {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+}
+.sug-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+/* The keyboard shortcut, drawn as a key rather than said in prose. */
+.sug-key {
+  font-family: var(--font-data);
+  font-size: 11px;
+  color: var(--ink-3);
+  border: var(--hair) solid var(--rule-strong);
+  border-radius: var(--radius-xs);
+  padding: 0 5px;
+}
+/* --ink, not --ink-3: this is text a person reads and decides on. */
+.sug-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sug-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+}
+.sug-foot {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* The quiet states: loading, nothing to show, dismissed. Never an error box —
+   a field with no suggestion is just a field. */
+.sug-quiet {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: var(--space-2) 0 0;
+  padding: 4px 0 4px var(--space-3);
+  font-size: 12.5px;
+  color: var(--ink-3);
+  border-left: var(--hair) dashed var(--rule-strong);
+}
+
+.sug-taken {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-3);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  border-left: var(--rail) solid var(--pass);
+}
+.sug-taken-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--pass);
+}
+
+/* Why no draft is offered. The spark rule, because it is the one note on the
+   page that is about the product's own limits rather than the candidate. */
+.no-draft {
+  display: grid;
+  gap: 3px;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: var(--hair) solid var(--rule);
+  border-left: var(--rail) solid var(--spark);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+}
+.no-draft-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--spark);
+}
+
+/* --- before and after ---------------------------------------------------- */
+
+.tidy {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: var(--hair) solid var(--accent-edge);
+  border-left: var(--rail) solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--sheet);
+}
+.tidy-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+.tidy-col {
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  padding-left: var(--space-3);
+  border-left: var(--rail) solid var(--rule-strong);
+  min-width: 0;
+}
+.tidy-col.is-after {
+  border-left-color: var(--accent);
+}
+.tidy-micro {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: var(--type-micro-size);
+  line-height: var(--type-micro-line);
+  letter-spacing: var(--type-micro-track);
+  font-weight: var(--type-micro-weight);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tidy-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+/* A removal is struck through and a sign is set against it; an addition is
+   underlined and carries weight. Colour is the last thing saying which. */
+.tidy-removed {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  color: var(--ink-3);
+}
+.tidy-added {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-weight: 650;
+  color: var(--ink);
+}
+.tidy-sign {
+  font-family: var(--font-data);
+  font-size: 11px;
+  font-weight: 700;
+  border: var(--hair) solid currentColor;
+  border-radius: 2px;
+  padding: 0 3px;
+  margin-right: 3px;
+  text-decoration: none;
+  display: inline-block;
+}

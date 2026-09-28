@@ -1,0 +1,177 @@
+import { useCallback, useEffect, useState } from 'react';
+import { api, ApiError } from '../api/client';
+import { Banner } from './ui';
+import { Icon } from './Icon';
+import { formatDateTime } from './dateFormat';
+import { feedbackEmailSummary, type FeedbackEmailState } from './feedbackEmailModel';
+import { useToast } from './Toast';
+
+/**
+ * The candidate's automatic feedback email, on the assessment page: whether it
+ * went and when, the exact text behind "View", and "Send feedback now" for a
+ * completed interview whose feedback has not gone. The send asks first,
+ * showing the email as the candidate will receive it.
+ *
+ * A HELD email (the interview could not be relied on) lists why, and offers
+ * whoever may decide "Send it anyway" — through the same preview — or "Keep
+ * holding".
+ */
+
+interface Preview { to: string; subject: string; text: string }
+
+type Busy = 'preview' | 'send' | 'hold' | null;
+
+export function FeedbackEmailPanel({ assessmentId }: { assessmentId: string }) {
+  const [state, setState] = useState<FeedbackEmailState | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [busy, setBusy] = useState<Busy>(null);
+  const [error, setError] = useState('');
+  const toast = useToast();
+  // The second copy is asked for in its own step, naming the risk, so nobody
+  // sends one by pressing the same button they pressed a moment ago.
+  const [confirmDuplicate, setConfirmDuplicate] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setState(await api.get<FeedbackEmailState>(`/assessments/${assessmentId}/feedback-email`));
+    } catch (err: unknown) {
+      // Hidden rather than shown as an error for someone who may not read it.
+      if (err instanceof ApiError && err.status === 403) { setHidden(true); return; }
+      setError(err instanceof Error ? err.message : 'Could not load the feedback email.');
+    }
+  }, [assessmentId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const askToSend = async () => {
+    setBusy('preview');
+    setError('');
+    try {
+      const r = await api.post<{ preview: Preview }>(`/assessments/${assessmentId}/feedback-email/preview`, {});
+      setPreview(r.preview);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not prepare the email.');
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const confirmSend = async (confirmPossibleDuplicate = false) => {
+    setBusy('send');
+    setError('');
+    try {
+      const next = await api.post<FeedbackEmailState>(
+        `/assessments/${assessmentId}/feedback-email/send`,
+        confirmPossibleDuplicate ? { confirmPossibleDuplicate: true } : {},
+      );
+      setState(next);
+      setPreview(null);
+      setConfirmDuplicate(false);
+      if (next.email?.status === 'SENT') toast.show('Feedback sent to the candidate.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'The feedback email could not be sent.');
+      setPreview(null);
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const keepHolding = async () => {
+    setBusy('hold');
+    setError('');
+    try {
+      setState(await api.post<FeedbackEmailState>(`/assessments/${assessmentId}/feedback-email/hold`, {}));
+      toast.show('The feedback email will stay on hold. You can still send it later.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not keep the email on hold.');
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (hidden) return null;
+  if (!state) return error ? <div className="card"><Banner kind="error">{error}</Banner></div> : null;
+
+  const summary = feedbackEmailSummary(state, formatDateTime);
+  const email = state.email;
+
+  return (
+    <div className="card" data-testid="feedback-email">
+      <h2 className="card-title"><Icon name="mail" />Feedback email to the candidate</h2>
+      <p data-testid="feedback-email-status" style={{ marginBottom: 4 }}><strong>{summary.headline}</strong></p>
+      {summary.detail && <p className="muted small">{summary.detail}</p>}
+      {summary.holdReasons.length > 0 && (
+        <ul className="small" data-testid="feedback-email-hold-reasons" style={{ marginTop: 4 }}>
+          {summary.holdReasons.map((reason) => <li key={reason}>{reason}</li>)}
+        </ul>
+      )}
+
+      {summary.showText && email && (
+        <details style={{ marginTop: 8 }}>
+          <summary>View</summary>
+          <p className="muted small" style={{ marginTop: 8 }}>Subject: {email.subject}</p>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{email.bodyText}</p>
+        </details>
+      )}
+
+      {error && <Banner kind="error">{error}</Banner>}
+
+      {preview ? (
+        <div role="dialog" aria-labelledby="feedback-email-confirm-title" className="card" style={{ marginTop: 12 }}>
+          <h3 id="feedback-email-confirm-title" style={{ marginTop: 0 }}>Send this email to {preview.to}?</h3>
+          <p className="muted small">Subject: {preview.subject}</p>
+          <p style={{ whiteSpace: 'pre-wrap' }}>{preview.text}</p>
+          <div className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn" onClick={() => void confirmSend()} disabled={busy !== null}>
+              <Icon name={busy === 'send' ? 'hourglass' : 'send'} size={16} />
+              {busy === 'send' ? 'Sending…' : 'Send it'}
+            </button>
+            <button type="button" className="btn secondary" onClick={() => setPreview(null)} disabled={busy !== null}>Cancel</button>
+          </div>
+        </div>
+      ) : summary.canRelease ? (
+        <div className="row" style={{ gap: 8, marginTop: 8 }} data-testid="feedback-email-hold-actions">
+          <button type="button" className="btn secondary" onClick={() => void askToSend()} disabled={busy !== null}>
+            <Icon name={busy === 'preview' ? 'hourglass' : 'send'} size={16} />
+            {busy === 'preview' ? 'Preparing…' : 'Send it anyway'}
+          </button>
+          {summary.canKeepHolding && (
+            <button type="button" className="btn ghost" onClick={() => void keepHolding()} disabled={busy !== null}>
+              {busy === 'hold' ? 'Saving…' : 'Keep holding'}
+            </button>
+          )}
+        </div>
+      ) : summary.canSendNow ? (
+        <button type="button" className="btn secondary" style={{ marginTop: 8 }} onClick={() => void askToSend()} disabled={busy !== null}>
+          <Icon name={busy === 'preview' ? 'hourglass' : 'send'} size={16} />
+          {busy === 'preview' ? 'Preparing…' : 'Send feedback now'}
+        </button>
+      ) : summary.needsDuplicateConfirmation && (
+        confirmDuplicate ? (
+          <div role="dialog" aria-labelledby="feedback-email-duplicate-title" className="card" style={{ marginTop: 12 }}>
+            <h3 id="feedback-email-duplicate-title" style={{ marginTop: 0 }}>Send this feedback a second time?</h3>
+            <p className="muted small">
+              The first send reached the mail provider but could not be confirmed, so the candidate may already have
+              this email. Sending again may give them a second copy of the same feedback.
+            </p>
+            <div className="row" style={{ gap: 8 }}>
+              <button type="button" className="btn" onClick={() => void confirmSend(true)} disabled={busy !== null}>
+                <Icon name={busy === 'send' ? 'hourglass' : 'send'} size={16} />
+                {busy === 'send' ? 'Sending…' : 'Send it again anyway'}
+              </button>
+              <button type="button" className="btn secondary" onClick={() => setConfirmDuplicate(false)} disabled={busy !== null}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <button type="button" className="btn ghost" style={{ marginTop: 8 }} onClick={() => setConfirmDuplicate(true)} disabled={busy !== null}>
+            <Icon name="send" size={16} />Send it again anyway…
+          </button>
+        )
+      )}
+    </div>
+  );
+}

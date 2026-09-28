@@ -1,0 +1,14 @@
+{
+  // Typecheck-only config for the simulation harness. The harness is dev
+  // tooling run through tsx, so it lives outside src/ and the build config
+  // never emits it; this config exists so `npm run lint` still checks it
+  // against the src/ modules it imports.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".."
+  },
+  // src's ambient declarations (untyped modules) are not reachable by import,
+  // so they have to be listed for the src files the harness pulls in.
+  "include": ["./**/*.ts", "../src/**/*.d.ts"]
+}

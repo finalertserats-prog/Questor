@@ -1,0 +1,22 @@
+Camille Béranger
+14 rue des Lilas, 75011 Paris
+camille.beranger@exemple.fr
+
+Profil
+Ingénieure logiciel, neuf ans d'expérience sur des plateformes de données.
+
+Expérience professionnelle
+
+Septembre 2020 – aujourd'hui, Ingénieure logiciel senior, Atelier Données SAS, Paris
+- Responsable de la qualité des données et du monitoring
+- Conception de pipelines en Python et Airflow
+
+Janvier 2017 – août 2020, Ingénieure logiciel, Groupe Normandie
+- Développement d'API REST en Java
+- Mise en place de tableaux de bord Tableau
+
+Formation
+Master en informatique, Université de Lyon, 2016
+
+Compétences
+Python, Java, SQL, Airflow, Tableau, Docker

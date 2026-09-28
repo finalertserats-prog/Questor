@@ -1,0 +1,433 @@
+/*
+ * The role page's candidate comparison: the table, the skills grid and the
+ * side-by-side.
+ *
+ * Nothing here is marked with a flat tinted fill. A level's standing against
+ * what the role asks for is carried by weight, a rule and a row of small
+ * marks; the sorted column by weight and a caret; a withheld row by words. A
+ * wash of green behind a cell reads as a judgement the data has not made, and
+ * it disappears entirely for a reader who cannot separate the hues.
+ *
+ * Every class here is prefixed `cmp-` so it owns its names outright (see
+ * web/tests/cssClassOwnership.test.ts).
+ */
+
+.cmp {
+  margin-top: 18px;
+}
+
+.cmp-head {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* ---- View switch: table or skills grid ---- */
+
+.cmp-views {
+  display: inline-flex;
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cmp-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  background: none;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  cursor: pointer;
+}
+
+.cmp-view:last-child {
+  border-right: 0;
+}
+
+.cmp-view:hover {
+  color: var(--ink);
+}
+
+/* The chosen view is marked by weight and a rule under it, not a filled tab. */
+.cmp-view[aria-pressed='true'] {
+  color: var(--ink);
+  font-weight: 640;
+  box-shadow: inset 0 -2px 0 0 var(--ink-2);
+}
+
+.cmp-view:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* ---- The shortlist bar ---- */
+
+.cmp-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.cmp-tick {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.cmp-tick-word {
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.cmp-tick input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.cmp-tick input:disabled {
+  cursor: not-allowed;
+}
+
+.cmp-pick {
+  width: 34px;
+}
+
+/* ---- The candidates table ---- */
+
+.cmp-table {
+  width: 100%;
+}
+
+/* A shortlisted row is marked on its leading edge, so the row itself stays readable. */
+.cmp-table tr.is-shortlisted td:first-child {
+  box-shadow: inset 3px 0 0 0 var(--ink-2);
+}
+
+.cmp-th.is-sorted .cmp-sort {
+  font-weight: 680;
+  color: var(--ink);
+}
+
+.cmp-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The direction as a caret the stylesheet draws; the heading also says it in words. */
+.cmp-sort[data-dir]::after {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+}
+
+.cmp-sort[data-dir='desc']::after {
+  border-top: 5px solid currentColor;
+}
+
+.cmp-sort[data-dir='asc']::after {
+  border-bottom: 5px solid currentColor;
+}
+
+/* ---- "These two figures were not produced the same way" ---- */
+
+.cmp-caveat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--ink-3);
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 6px;
+  cursor: help;
+}
+
+/* ---- The skills grid ---- */
+
+.cmp-legend {
+  margin: 8px 0 10px;
+}
+
+.cmp-grid {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cmp-grid th,
+.cmp-grid td {
+  border-bottom: 1px solid var(--rule);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.cmp-grid thead th {
+  border-bottom: 1px solid var(--rule-strong);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: normal;
+  min-width: 110px;
+}
+
+.cmp-col-name {
+  display: block;
+}
+
+.cmp-col-need {
+  display: block;
+  font-weight: 400;
+}
+
+.cmp-rowhead {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.cmp-source {
+  display: block;
+  font-weight: 400;
+}
+
+.cmp-cell {
+  min-width: 78px;
+}
+
+/* At or above what the role asks for: heavier, and underlined by a rule.
+   Below it: the ordinary weight, with no rule. The numeral is the signal. */
+.cmp-cell.is-above .cmp-level,
+.cmp-cell.is-meets .cmp-level {
+  font-weight: 700;
+  border-bottom: 2px solid var(--ink-2);
+}
+
+.cmp-cell.is-below .cmp-level {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+.cmp-level {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+/* One mark per point of the scale, filled up to the level. */
+.cmp-ticks {
+  display: flex;
+  gap: 2px;
+  margin-top: 5px;
+}
+
+.cmp-ticks i {
+  width: 8px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--rule-strong);
+}
+
+.cmp-ticks i.is-on {
+  background: var(--ink-2);
+}
+
+/* "No evidence" and "Not assessed" are words, never a zero and never a colour. */
+.cmp-cell-word {
+  font-size: 12.5px;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+.cmp-cell.is-none .cmp-cell-word {
+  border-left: 2px solid var(--rule-strong);
+  padding-left: 6px;
+  font-style: normal;
+}
+
+.cmp-withheld {
+  display: table-cell;
+}
+
+.cmp-withheld .link-action {
+  margin-left: 8px;
+}
+
+/* ---- The skills grid on a phone: one block per candidate ---- */
+
+.cmp-phone {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.cmp-phone-card {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.cmp-phone-top {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.cmp-phone-list {
+  margin: 0;
+}
+
+.cmp-phone-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.cmp-phone-line dt {
+  font-weight: 400;
+  color: var(--ink-2);
+  font-size: 13.5px;
+}
+
+.cmp-phone-line dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cmp-phone-line dd.is-above,
+.cmp-phone-line dd.is-meets {
+  font-weight: 700;
+}
+
+.cmp-phone-line dd.is-below {
+  color: var(--ink-2);
+}
+
+.cmp-phone-line dd.is-word {
+  font-size: 12.5px;
+  color: var(--ink-3);
+}
+
+/* ---- Side by side ---- */
+
+.cmp-sbs {
+  margin-top: 14px;
+  border: 1px solid var(--rule-strong);
+}
+
+.cmp-sbs-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.cmp-sbs-table th,
+.cmp-sbs-table td {
+  border-bottom: 1px solid var(--rule);
+  border-left: 1px solid var(--rule);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+  min-width: 170px;
+}
+
+.cmp-sbs-table th:first-child,
+.cmp-sbs-table td:first-child {
+  border-left: 0;
+  min-width: 150px;
+}
+
+.cmp-sbs-table thead th {
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.cmp-sbs-summary th,
+.cmp-sbs-summary td {
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.cmp-sbs-verdict {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.cmp-sbs-score {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cmp-sbs-level {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.cmp-sbs-cell.is-above .cmp-level,
+.cmp-sbs-cell.is-meets .cmp-level {
+  font-weight: 700;
+  border-bottom: 2px solid var(--ink-2);
+}
+
+.cmp-sbs-cell.is-below .cmp-level {
+  font-weight: 400;
+  color: var(--ink-2);
+}
+
+/* A quote is marked as borrowed speech by a rule, not by a coloured panel. */
+.cmp-quote {
+  margin: 6px 0 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--rule-strong);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+
+.cmp-quote a {
+  color: inherit;
+}
+
+.cmp-quote a:hover {
+  color: var(--ink);
+}
+
+@media (max-width: 640px) {
+  .cmp-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cmp-views {
+    width: 100%;
+  }
+
+  .cmp-view {
+    flex: 1;
+    justify-content: center;
+  }
+}

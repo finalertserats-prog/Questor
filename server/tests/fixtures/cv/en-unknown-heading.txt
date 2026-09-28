@@ -1,0 +1,21 @@
+Tom Escher
+tom.escher@example.com | Bristol
+
+What I Do
+Data platform engineer, eight years in.
+
+Where I've Worked
+
+Lead Data Engineer, Wessex Water Analytics — Jan 2020 - Present
+- Owned the ingestion platform, 4TB/day
+- Built the warehouse on Snowflake and dbt
+
+Data Engineer, Southgate Logistics — Aug 2016 - Dec 2019
+- Wrote Spark jobs in Scala
+- Ran Airflow for 300 daily pipelines
+
+Schooling
+BSc in Mathematics, University of Bath, 2016
+
+What I Know
+Snowflake, dbt, Spark, Scala, Airflow, Python

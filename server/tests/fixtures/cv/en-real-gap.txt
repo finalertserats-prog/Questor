@@ -1,0 +1,24 @@
+Sarah Delacroix
+sarah.delacroix@example.com | Dublin
+
+Career History
+
+Engineering Manager, Liffey Software — Feb 2022 - Present
+- Manage a team of 11 engineers across two squads
+- Own the platform roadmap and the on-call rota
+
+Senior Engineer, Liffey Software — Mar 2020 - Jan 2022
+- Rebuilt the billing service in Go
+- Introduced Prometheus and Grafana for monitoring
+
+Career break, full-time carer — Apr 2017 - Feb 2020
+
+Software Engineer, Shannon Digital — Sep 2012 - Mar 2017
+- Built internal tooling in Ruby on Rails
+- Maintained the MySQL reporting replica
+
+Education
+BSc in Computer Science, Trinity College Dublin, 2012
+
+Skills
+Go, Ruby on Rails, MySQL, Prometheus, Grafana, Docker

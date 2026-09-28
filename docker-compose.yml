@@ -1,0 +1,27 @@
+# Optional Postgres connector for Questor. The app itself runs fine on SQLite
+# with `npm run dev`; use this when you want the Postgres data plane (BRD §19.1).
+#
+#   docker compose up -d db
+#   # then in server/.env set:
+#   #   DATABASE_URL="postgresql://questor:questor@localhost:5432/questor?schema=public"
+#   # and switch schema.prisma provider to "postgresql", then:
+#   npm run db:push -w server && npm run db:seed -w server
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: questor
+      POSTGRES_PASSWORD: questor
+      POSTGRES_DB: questor
+    ports:
+      - '5432:5432'
+    volumes:
+      - questor_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U questor']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  questor_pg:

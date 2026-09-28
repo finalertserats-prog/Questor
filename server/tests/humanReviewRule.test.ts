@@ -1,0 +1,229 @@
+import { describe, it, expect } from 'vitest';
+import {
+  CLOSE_OUT_STATES, firstUnreviewed, humanReviewRefusal, moveNeedsHumanReview, outcomeNeedsHumanReview,
+  reviewRequirementFor, type ConductedInterview,
+} from '../src/domain/humanReviewRule.js';
+import { DEFAULT_STAGES, type PipelineStage } from '../src/domain/pipelineStages.js';
+import { awardsForPromotion } from '../src/domain/candidateAwards.js';
+import { EXCEPTION_STATES, SESSION_STATES } from '../src/domain/stateMachine.js';
+
+/**
+ * The rule behind the sentence on the candidate's consent screen: "A person on
+ * the hiring team reviews the interview."
+ *
+ * What is tested here is which interviews the promise covers, because that is
+ * where a rule like this goes wrong. Too narrow and the promise is decorative;
+ * too broad and a candidate who withdrew is stuck in a pipeline nobody can
+ * close, which is a worse failure than the one it set out to fix.
+ */
+
+const INTERVIEW: ConductedInterview = {
+  sessionId: 'session-1',
+  state: 'REVIEW_READY',
+  humanReviewRequired: true,
+  assessmentId: 'assessment-1',
+  retaken: false,
+  reviewed: false,
+};
+
+const one = (over: Partial<ConductedInterview> = {}): ConductedInterview => ({ ...INTERVIEW, ...over });
+
+describe('when the promise applies', () => {
+  it('requires a review of an assessed AI interview whose consent recorded it', () => {
+    expect(reviewRequirementFor(one())).toMatchObject({ required: true, satisfied: false, assessmentId: 'assessment-1' });
+  });
+
+  it('is satisfied once a completed review claims the assessment', () => {
+    expect(reviewRequirementFor(one({ reviewed: true }))).toMatchObject({ required: true, satisfied: true });
+  });
+
+  it('names the session as well as the assessment, so the refusal can point at the interview', () => {
+    expect(reviewRequirementFor(one())).toMatchObject({ sessionId: 'session-1' });
+  });
+});
+
+describe('when it does not', () => {
+  // The whole point of the flag: an interview consented before this rule
+  // existed made no such promise, and inventing one retroactively would
+  // refuse to close out candidates nobody ever owed a review.
+  it('treats a consent record with no flag as not required', () => {
+    expect(reviewRequirementFor(one({ humanReviewRequired: undefined }))).toEqual({ required: false, because: 'not_recorded' });
+  });
+
+  it('honours an interview created with human review turned off', () => {
+    expect(reviewRequirementFor(one({ humanReviewRequired: false }))).toEqual({ required: false, because: 'turned_off' });
+  });
+
+  it('requires nothing of an interview that produced no assessment', () => {
+    expect(reviewRequirementFor(one({ assessmentId: null }))).toEqual({ required: false, because: 'no_assessment' });
+  });
+
+  it('requires nothing of the attempt a retake replaced', () => {
+    expect(reviewRequirementFor(one({ retaken: true }))).toEqual({ required: false, because: 'retaken' });
+  });
+
+  it.each(CLOSE_OUT_STATES)('lets a person close out an interview in %s', (state) => {
+    expect(reviewRequirementFor(one({ state }))).toEqual({ required: false, because: 'closed_out' });
+  });
+
+  // The exemption list is written out rather than imported, so the rule does
+  // not drag the state machine (and Express, through it) into the domain. This
+  // is what keeps the copy honest: every state an interview can END in without
+  // having happened is a state a person must be able to close out from, so a
+  // new exception state added upstream and not added here fails right here
+  // rather than silently stranding candidates.
+  it('exempts exactly the states an interview can fail into', () => {
+    expect([...CLOSE_OUT_STATES].sort()).toEqual([...EXCEPTION_STATES].sort());
+  });
+
+  // The mirror of the above: a state the interview passes THROUGH on its way to
+  // being reviewable must never become an exemption.
+  it('exempts none of the states a real interview passes through', () => {
+    const exempt = SESSION_STATES.filter((state) => CLOSE_OUT_STATES.includes(state));
+    expect(exempt).toEqual([]);
+  });
+
+  // Ordering matters for the record, not just the answer: a candidate who
+  // withdrew should be exempt for having withdrawn, not for the incidental
+  // reason that their abandoned interview was never scored.
+  it('exempts a withdrawn candidate for withdrawing, even when an assessment exists', () => {
+    expect(reviewRequirementFor(one({ state: 'CANDIDATE_WITHDREW' }))).toEqual({ required: false, because: 'closed_out' });
+  });
+});
+
+describe('across a candidate history', () => {
+  it('finds nothing to answer for a candidate with no AI interview at all', () => {
+    expect(firstUnreviewed([])).toBeNull();
+  });
+
+  it('reports the first interview that still owes a review', () => {
+    const missing = firstUnreviewed([one({ reviewed: true }), one({ sessionId: 'session-2', assessmentId: 'assessment-2' })]);
+    expect(missing).toMatchObject({ assessmentId: 'assessment-2' });
+  });
+
+  // A second interview that has not been assessed yet must not excuse the
+  // first one nobody read — otherwise scheduling a retake is the way round.
+  it('does not let a later unassessed interview excuse an earlier unreviewed one', () => {
+    const missing = firstUnreviewed([one(), one({ sessionId: 'session-2', assessmentId: null })]);
+    expect(missing).toMatchObject({ assessmentId: 'assessment-1' });
+  });
+
+  it('is satisfied when every covered interview has been reviewed', () => {
+    expect(firstUnreviewed([one({ reviewed: true }), one({ sessionId: 'session-2', humanReviewRequired: undefined })])).toBeNull();
+  });
+});
+
+describe('which outcomes the promise gates', () => {
+  it('gates an approval', () => {
+    expect(outcomeNeedsHumanReview('APPROVED')).toBe(true);
+  });
+
+  it('gates a rejection', () => {
+    expect(outcomeNeedsHumanReview('REJECTED')).toBe(true);
+  });
+
+  // A withdrawal is the candidate leaving, not a judgement about them.
+  // Requiring a review first would keep someone in a pipeline they asked out of.
+  it('does not gate a withdrawal', () => {
+    expect(outcomeNeedsHumanReview('WITHDRAWN')).toBe(false);
+  });
+});
+
+
+/**
+ * Which stage moves the promise gates.
+ *
+ * The distinction is between a move that says something about the interview
+ * and a move that does not. Walking a candidate TO the AI round says nothing
+ * about a conversation that has not happened; moving them OUT of it says the
+ * round went well enough to go on, and strikes the credential for it.
+ */
+describe('the moves the promise covers', () => {
+  /**
+   * A plan a recruiter can create through PUT /api/roles/:id/pipeline-stages,
+   * which is held to `role:edit_scorecard` — a capability recruiters hold.
+   *
+   * It reuses the award engine's keys with a kind the first version of this
+   * rule looked for, and has no AI-conducted stage at all. That combination is
+   * what made the proxy version answer "no interview round here" while the
+   * award engine answered "strike Silver".
+   */
+  const KEYS_WITHOUT_AN_AI_ROUND: readonly PipelineStage[] = [
+    { key: 'participation', label: 'Participation', kind: 'intake' },
+    { key: 'silver', label: 'Silver', kind: 'human_interview' },
+    { key: 'gold', label: 'Gold', kind: 'human_interview' },
+    { key: 'diamond', label: 'Diamond', kind: 'human_interview' },
+  ];
+
+  it('gates the move that mints the tier the candidate is leaving', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'silver', 'gold')).toBe(true);
+  });
+
+  it('gates the move that mints two at once', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'diamond')).toBe(true);
+  });
+
+  // No tier is struck by arriving at the AI round, so nothing is refused — and
+  // that is the point rather than an oversight. A conversation that has not
+  // happened cannot have gone unread, and gating it would strand every
+  // candidate interviewed before anybody touched their pipeline.
+  it('leaves the walk towards that round alone, because it mints nothing', () => {
+    expect([
+      moveNeedsHumanReview(DEFAULT_STAGES, 'participation', 'bronze'),
+      moveNeedsHumanReview(DEFAULT_STAGES, 'bronze', 'silver'),
+    ]).toEqual([false, false]);
+  });
+
+  // The hole the proxy version left. Kind says "no AI round"; the award engine
+  // says "strike Silver". Asking what the move earns makes the two agree by
+  // construction.
+  it('gates a plan that mints Silver without calling any stage an AI round', () => {
+    expect(moveNeedsHumanReview(KEYS_WITHOUT_AN_AI_ROUND, 'silver', 'gold')).toBe(true);
+  });
+
+  it('gates nothing for a stage the plan does not contain', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'platinum', 'silver')).toBe(false);
+  });
+
+  it('gates nothing for a move that goes nowhere', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'silver')).toBe(false);
+  });
+
+  /**
+   * A plan that simply renamed its stages, which the other clause misses.
+   *
+   * `awardsForPromotion` fires on the literal keys `silver` and `gold`, so a
+   * plan calling them anything else earns nothing on the way out of the AI
+   * round. Asking only "would this mint?" therefore let a renamed plan carry a
+   * candidate off a round nobody had read — weaker than the code that existed
+   * before any of this, which refused every non-withdrawal outcome while a
+   * review was owed.
+   */
+  const RENAMED: readonly PipelineStage[] = [
+    { key: 'apply', label: 'Apply', kind: 'intake' },
+    { key: 'screen', label: 'Screen', kind: 'profile_review' },
+    { key: 'ai_round', label: 'AI round', kind: 'ai_interview' },
+    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+    { key: 'offer', label: 'Offer', kind: 'human_interview' },
+  ];
+
+  it('gates the move off a renamed AI round, which mints nothing', () => {
+    expect([
+      awardsForPromotion(RENAMED, 'ai_round', 'panel').length,
+      moveNeedsHumanReview(RENAMED, 'ai_round', 'panel'),
+    ]).toEqual([0, true]);
+  });
+
+  it('still leaves the walk towards a renamed AI round alone', () => {
+    expect(moveNeedsHumanReview(RENAMED, 'screen', 'ai_round')).toBe(false);
+  });
+});
+
+describe('the refusal', () => {
+  it('says what was promised and links to the review that is missing', () => {
+    const missing = firstUnreviewed([one()]);
+    const text = humanReviewRefusal(missing!);
+    expect(text).toContain('a person on the hiring team would review their interview');
+    expect(text).toContain('/assessments/assessment-1');
+  });
+});

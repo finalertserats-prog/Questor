@@ -1,0 +1,80 @@
+/* The platform owner's catalog review page. State is marked with rules and
+   brackets, never with tinted fills: a selected row carries an accent rule on
+   its leading edge, the bulk bar sits between two rules. */
+
+.catalog-review-table td {
+  vertical-align: top;
+}
+.catalog-review-table th.col-select,
+.catalog-review-table td.col-select {
+  width: 36px;
+}
+.catalog-review-table tr.is-selected > td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.catalog-review-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.catalog-review-summary {
+  max-width: 48ch;
+}
+.catalog-review-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.catalog-review-sources a {
+  overflow-wrap: anywhere;
+}
+.catalog-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The inline editor opens as its own row under the proposal. */
+.catalog-review-editor {
+  border-left: 3px solid var(--accent);
+  padding: 4px 0 4px 12px;
+}
+.catalog-review-editor textarea {
+  min-height: 72px;
+}
+
+.catalog-bulk-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  border-top: 1px solid var(--rule-strong);
+  border-bottom: 1px solid var(--rule-strong);
+  padding: 10px 0;
+  margin: 12px 0;
+}
+
+.catalog-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 12px;
+}
+
+.catalog-run-latest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.catalog-run-error {
+  border-left: 3px solid var(--stop);
+  padding-left: 10px;
+  overflow-wrap: anywhere;
+}
+
+.catalog-attribution {
+  margin-top: 20px;
+  border-top: 1px solid var(--rule);
+  padding-top: 10px;
+}

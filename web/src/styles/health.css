@@ -1,0 +1,258 @@
+/* ==========================================================================
+   System health: the Admin console's first tab, and the console's tab strip.
+   --------------------------------------------------------------------------
+   A check's state is marked three ways, none of which is a tinted block: the
+   word ("Problem" / "Watch" / "Healthy" / "Note"), the badge's own shape from
+   app.css, and a left rule on the row — the same rail the banners use. So the
+   panel reads the same in greyscale, and a healthy system is a page of plain
+   sheets rather than a traffic light.
+
+   Colours come only from tokens in app.css, so both themes follow.
+   ========================================================================== */
+
+.health-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.health-headline h2 {
+  margin: 0;
+}
+
+/* The verdict. Heavier than body text because it is the one line most visits
+   read, and nothing else in the panel competes with it. */
+.health-overall {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  font-size: 15.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.health-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.health-checked {
+  margin: 0;
+  font-family: var(--font-data);
+  font-size: 12.5px;
+  color: var(--ink-2);
+  text-align: right;
+}
+/* The mono micro-label stays on the label, not on the timestamp beside it. */
+.health-checked .field-label {
+  margin: 0 0 2px;
+}
+
+.health-error {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: var(--rail) solid var(--stop);
+  color: var(--ink);
+  font-size: 13.5px;
+}
+
+.health-section {
+  margin-top: var(--section-gap-tight);
+}
+.health-section h3 {
+  margin: 0 0 var(--space-2);
+  font-family: var(--font-ui);
+  font-size: var(--type-section-size);
+  font-weight: var(--type-section-weight);
+  letter-spacing: var(--type-section-track);
+  line-height: var(--type-section-line);
+}
+
+.health-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* The row: a rule on the left, the sheet underneath left alone. */
+.health-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-2) var(--space-3);
+  border-left: var(--rail) solid var(--rule);
+}
+.health-row[data-status='fail'] {
+  border-left-color: var(--stop);
+}
+.health-row[data-status='warn'] {
+  border-left-color: var(--hold);
+}
+.health-row[data-status='ok'] {
+  border-left-color: var(--pass);
+}
+.health-row[data-status='info'] {
+  border-left-color: var(--rule-strong);
+}
+
+/* A fixed column for the word, so labels line up down the panel and the eye
+   can run down the states on their own. */
+.health-word {
+  flex: none;
+  min-width: 78px;
+  justify-content: center;
+}
+
+.health-text {
+  min-width: 0;
+}
+
+.health-label {
+  display: block;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.health-summary {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 13.5px;
+}
+
+.health-detail {
+  margin: 2px 0 0;
+  color: var(--ink-3);
+  font-size: 13px;
+}
+
+/* What to do about it, set apart by a small rail rather than a fill. */
+.health-action {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-2);
+  border-left: var(--hair) solid var(--rule-strong);
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.health-healthy {
+  margin-top: var(--space-2);
+}
+.health-healthy > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  width: fit-content;
+}
+.health-healthy > summary:hover {
+  color: var(--accent-hover);
+}
+.health-healthy > .health-list {
+  margin-top: var(--space-2);
+}
+
+.health-scope {
+  margin: var(--section-gap-tight) 0 0;
+  padding-top: var(--space-3);
+  border-top: var(--hair) solid var(--rule);
+}
+
+/* A phone: the refresh button and the timestamp stop sharing a line with the
+   heading, and the status word moves above the label rather than squeezing it. */
+@media (max-width: 520px) {
+  .health-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .health-meta {
+    justify-content: space-between;
+  }
+  .health-checked {
+    text-align: left;
+  }
+  .health-row {
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+  .health-word {
+    min-width: 0;
+    align-self: flex-start;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Admin console tabs. One section per tab, so nothing is found by scrolling.
+   The open tab is marked by a rule under it and the weight of its name, not
+   by a filled block.
+   -------------------------------------------------------------------------- */
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  border-bottom: var(--hair) solid var(--rule);
+  margin: 4px 0 var(--space-3);
+}
+
+.admin-tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-bottom: var(--rail) solid transparent;
+  margin-bottom: calc(-1 * var(--hair));
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+  padding: 10px 2px;
+}
+
+.admin-tab:hover {
+  color: var(--ink);
+  border-bottom-color: var(--rule-strong);
+}
+
+.admin-tab[aria-selected='true'] {
+  color: var(--ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.admin-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* "Problem" / "Watch" / "Unknown" beside the System health tab: a word in the
+   status colour with a rule before it, readable from any tab. */
+.admin-tab-flag {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding-left: 6px;
+  border-left: var(--rail) solid currentColor;
+  line-height: 1.2;
+}
+
+.admin-panel:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.admin-tab-flag[data-status='fail'] {
+  color: var(--stop);
+}
+.admin-tab-flag[data-status='warn'] {
+  color: var(--hold);
+}
+.admin-tab-flag[data-status='unavailable'] {
+  color: var(--ink-3);
+}

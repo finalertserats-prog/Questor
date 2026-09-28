@@ -1,0 +1,133 @@
+/* ==========================================================================
+   AI observer on human rounds: the room, the candidate's consent page, and
+   the round record. State is marked with rules and a dot, never a tinted
+   fill, matching the banners.
+   ========================================================================== */
+
+.observer-live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border: var(--hair) solid var(--rule);
+  border-left-width: var(--rail);
+  border-radius: var(--radius);
+  background: var(--sheet);
+  color: var(--ink-3);
+  font-weight: 600;
+}
+
+.observer-live.is-live {
+  border-color: var(--stop-edge);
+  border-left-color: var(--stop);
+  color: var(--ink);
+}
+
+.observer-dot {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--ink-3);
+}
+
+.observer-live.is-live .observer-dot {
+  border-color: var(--stop);
+  background: var(--stop);
+  animation: observer-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes observer-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .observer-live.is-live .observer-dot { animation: none; }
+}
+
+.observer-note {
+  margin: 0 0 12px;
+  padding-left: 10px;
+  border-left: var(--rail) solid var(--rule);
+}
+
+.observer-link-input {
+  flex: 1 1 280px;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.observer-framing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding-left: 10px;
+  border-left: var(--rail) solid var(--accent);
+}
+
+.observer-competency h4 {
+  margin: 14px 0 6px;
+}
+
+.observer-competency ul,
+.observer-transcript {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.observer-competency li,
+.observer-transcript li {
+  display: flex;
+  gap: 12px;
+  padding: 6px 0;
+  border-top: var(--hair) solid var(--rule);
+  line-height: 1.5;
+}
+
+.observer-transcript li.is-gap {
+  border-left: var(--rail) solid var(--stop-edge);
+  padding-left: 8px;
+}
+
+.observer-time {
+  flex: none;
+  min-width: 52px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.observer-record {
+  display: grid;
+  gap: 16px;
+}
+
+/* A round that cannot go ahead. Marked with a rule down the left, like the
+   gaps in a transcript and the live indicator above — never a tinted fill,
+   which would read as decoration on a card that is telling somebody their
+   interview is not happening. */
+.observer-blocked {
+  border-left: var(--rail) solid var(--stop);
+}
+
+.observer-next-steps {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--ink-2);
+  line-height: 1.6;
+}
+
+/* The optional "why" beside a stop. Set apart with space rather than a fill,
+   so it reads as part of the decision and not as a form to be completed. */
+.observer-reason {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.observer-reason p {
+  margin: 0;
+}
