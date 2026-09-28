@@ -108,3 +108,59 @@ export function candidateClockSentence(at: Date, statedZone: string, candidateZo
   if (!candidateZone || !isKnownTimeZone(candidateZone) || candidateZone === statedZone) return null;
   return `That is ${formatRoundTime(at, candidateZone)}, on your own clock.`;
 }
+
+/**
+ * Where the zone a time is stated in came from. The same four cases
+ * services/scheduleZone.ts distinguishes, and for the same reason: an
+ * organisation that chose Asia/Kolkata and one that chose nothing both work in
+ * IST, but only the first has been asked.
+ */
+export type StatedZoneSource = 'booked' | 'candidate' | 'org' | 'org_default';
+
+/**
+ * The line under a booked time that says whose clock it is on.
+ *
+ * A time zone is the one fact in an invitation that can be wrong while looking
+ * completely right: "14:30" reads as the reader's own 14:30 unless something
+ * says otherwise, and a candidate who reads a Kolkata booking as a London one
+ * misses their interview and never learns why. So there is always a second
+ * line, and it always names a zone:
+ *
+ *   - their zone is known and different — the same instant on their clock;
+ *   - their zone is known and is the one already stated — said so, because
+ *     silence there is indistinguishable from the case below;
+ *   - their zone is not known — the absence is reported rather than papered
+ *     over, and the zone actually used is named, attributed only as far as the
+ *     truth goes. Nobody chose `org_default`; claiming it is the
+ *     organisation's would invent a decision they never made.
+ */
+export function secondClockLine(o: {
+  readonly at: Date;
+  readonly statedZone: string;
+  readonly candidateZone: string | null | undefined;
+  readonly source: StatedZoneSource;
+  readonly companyName: string;
+}): string {
+  const theirs = candidateClockSentence(o.at, o.statedZone, o.candidateZone);
+  if (theirs) return theirs;
+  if (o.candidateZone && isKnownTimeZone(o.candidateZone)) {
+    return `The time above is in ${o.statedZone}, which is your own time zone.`;
+  }
+  const whose = whoseZone(o.source, o.statedZone, o.companyName);
+  return `We do not have your time zone, so the time above is written in ${whose}. Please check it against your own clock.`;
+}
+
+function whoseZone(source: StatedZoneSource, zone: string, companyName: string): string {
+  const company = companyName.trim();
+  switch (source) {
+    case 'booked': return `${zone}, the zone this interview was booked in`;
+    // Reached only from the branch above, which is the branch that has just
+    // said we do not have the reader's zone. Attributing it to them in the
+    // same sentence would contradict it, so it is named and left alone — the
+    // stored value is not the one in front of the reader either way.
+    case 'candidate': return zone;
+    case 'org': return company ? `${zone}, ${company}'s time zone` : `${zone}, the organisation's time zone`;
+    // Nobody chose it. It is named and left unattributed on purpose.
+    case 'org_default': return zone;
+  }
+}

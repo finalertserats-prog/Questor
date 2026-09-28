@@ -157,18 +157,23 @@ describe('Tone is independent of the interviewer', () => {
 });
 
 describe('invitation and retake', () => {
-  // The invitation reads as a note from the hiring team. The AI disclosure is
-  // made on the page the link opens, before the interview and before consent.
-  it('does not describe the interview as AI-led in the invitation email', async () => {
+  // REVERSED 2026-09-28, on the owner's instruction. The invitation used to
+  // say nothing about AI, because the disclosure is made on the page the link
+  // opens, before the interview and before consent — which it still is. The
+  // owner asked for the interviewer to be named in the letter, and naming
+  // them means saying what they are. A candidate should be able to decide
+  // whether to click knowing who is on the other side.
+  it('names the interviewer the session was given, in the invitation email', async () => {
     const created = await createInterview({ interviewer: 'elena' });
     await request(app).post(`/api/interviews/${created.body.session.id}/invite`).set('Authorization', bearer).send({});
-    expect(/\bAI\b/.test(sent.messages.at(-1)?.text ?? '')).toBe(false);
+    expect(sent.messages.at(-1)?.text ?? '').toContain('Elena');
   });
 
-  it('does not describe the interview as AI-led in the HTML invitation either', async () => {
+  it('says that interviewer is an AI, in both bodies', async () => {
     const created = await createInterview({ interviewer: 'elena' });
     await request(app).post(`/api/interviews/${created.body.session.id}/invite`).set('Authorization', bearer).send({});
-    expect(/\bAI\b/.test(sent.messages.at(-1)?.html ?? '')).toBe(false);
+    const message = sent.messages.at(-1);
+    expect([/an AI interviewer/.test(message?.text ?? ''), /an AI interviewer/.test(message?.html ?? '')]).toEqual([true, true]);
   });
 
   it('keeps the original interviewer on a retake', async () => {
