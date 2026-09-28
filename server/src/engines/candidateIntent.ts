@@ -433,6 +433,60 @@ function answersAfterQuestion(raw: string, t: string): boolean {
   return words(normalise(raw.slice(at + 1))).length >= ANSWER_AFTER_QUESTION_WORDS;
 }
 
+
+/**
+ * How much of a turn the intent patterns are allowed to read.
+ *
+ * One candidate answering with four thousand characters froze the whole
+ * server for thirty-five seconds — measured end to end, with `/api/health`
+ * blocked for 34.8 s of it. Node is single-threaded, so that is every other
+ * tenant's live interview, every page load and the health check a load
+ * balancer polls, all stopped by one person typing. The portal's turn limit
+ * is 120 an hour per token, so a single invitation buys roughly an hour of
+ * stall per hour. It is not a slow path; it is an outage anyone holding an
+ * invitation can cause on demand.
+ *
+ * The cost is catastrophic backtracking in the `whole()` family — `^PAD(core)
+ * TAIL$` with nested quantifiers, over a long string that will never match.
+ *
+ * Two bounds, and neither changes what the patterns MEAN:
+ *
+ *  - A `whole()` pattern asks "is this message nothing but this, padded?". A
+ *    message of four thousand characters is definitionally not that, so the
+ *    question is not worth asking. The longest genuine one on record — every
+ *    filler word this product knows, stacked — is well under this.
+ *
+ *  - A phrase pattern looks for a cue, and a person puts their cue at the
+ *    start of a turn or at the end of it: "can we stop", "…sorry, I have to
+ *    go." Nobody buries "I need to leave" in the middle of paragraph three.
+ *    So the phrases read the two ends and not the middle.
+ *
+ * The transcript itself is untouched. This bounds what the READER of a turn
+ * looks at, never what the candidate said or what is stored and scored.
+ */
+const WHOLE_MESSAGE_MAX_CHARS = 240;
+const INTENT_EDGE_CHARS = 600;
+
+/**
+ * The ends of a long turn, SEPARATELY.
+ *
+ * Never joined. Concatenating them puts two pieces of text side by side that
+ * the candidate never said next to each other, and a pattern can then match
+ * across the seam: a turn ending its first 600 characters with "I need to"
+ * and opening its last 600 with "stop working on the payroll migration"
+ * contains "i need to stop" in the join and nowhere in the answer. That reads
+ * as a request to end the interview, and ending a live interview on something
+ * nobody said is the worst failure this file has.
+ *
+ * So each end is searched on its own, and a cue has to be really in one of
+ * them. A phrase genuinely straddling the 600-character mark is missed — it
+ * was missed before this change too, because the middle was never read.
+ */
+function intentEnds(text: string): readonly string[] {
+  if (text.length <= INTENT_EDGE_CHARS * 2) return [text];
+  return [text.slice(0, INTENT_EDGE_CHARS), text.slice(-INTENT_EDGE_CHARS)];
+}
+
 /**
  * Read the candidate's turn. Pure and synchronous: the same text always gives
  * the same reading, so the director can recompute it from the transcript
@@ -443,17 +497,35 @@ export function detectCandidateIntent(text: string): IntentReading {
   const t = normalise(raw);
   if (!t) return { intent: 'non_answer', rule: 'empty' };
 
+  // Bounded from here down; see WHOLE_MESSAGE_MAX_CHARS and intentEnds.
+  const ends = intentEnds(t);
+  const rawEnds = intentEnds(raw);
+  const whole = t.length <= WHOLE_MESSAGE_MAX_CHARS;
+  /** True when any END matches — never the two ends concatenated. */
+  const anyEnd = (re: RegExp) => ends.some((part) => re.test(part));
+  const anyRawEnd = (read: (part: string) => boolean) => rawEnds.some(read);
+  /**
+   * A phrase counts only where reported speech does not cover it, and both
+   * questions have to be asked of the SAME end: "the client asked us to stop"
+   * in one half must not excuse a real "can we stop" in the other.
+   */
+  const phraseInAnEnd = (patterns: readonly RegExp[]) =>
+    ends.some((part) => !isReportedRequest(part) && patterns.some((re) => re.test(part)));
+
   // TIER 1, CLEARLY ENDING: acted on immediately, with no model and no
   // confirming question.
-  const postpone = POSTPONE_WHOLE.test(t) || (!isReportedRequest(t) && POSTPONE_PHRASES.some((re) => re.test(t)));
-  const stop = STOP_WHOLE.test(t) || STOP_PHRASES.some((re) => re.test(t)) || MUST_GO.test(t) || detectWithdrawal(raw);
-  const distress = detectDistress(raw);
+  const postpone = (whole && POSTPONE_WHOLE.test(t)) || phraseInAnEnd(POSTPONE_PHRASES);
+  const stop = (whole && STOP_WHOLE.test(t)) || ends.some((part) => STOP_PHRASES.some((re) => re.test(part)))
+    || anyEnd(MUST_GO) || anyRawEnd(detectWithdrawal);
+  const distress = anyRawEnd(detectDistress);
   // Asked for a person. Read before the two ways of ending, because it is the
   // more precise reading of the same turn: "I'd rather not carry on with this,
   // can someone from your team pick it up?" is a stop AND a request, and only
   // the request says what has to happen next. Not read from an injected turn:
   // instruction-like text must never be able to steer the ending either.
-  const humanRequest = !isReportedRequest(t) && !detectInjection(raw).injection && detectHumanRequest(raw);
+  const humanRequest = ends.some((part) => !isReportedRequest(part))
+    && !anyRawEnd((part) => detectInjection(part).injection)
+    && anyRawEnd(detectHumanRequest);
 
   // A request to do it later is also a request to stop now; the difference is
   // only what happens next, and "later" is the more precise of the two. Distress
@@ -464,25 +536,25 @@ export function detectCandidateIntent(text: string): IntentReading {
   if (stop) return { intent: 'stop', rule: 'stop' };
   if (distress) return { intent: 'distress', rule: 'distress' };
 
-  if (PAUSE_WHOLE.test(t) || PAUSE_PHRASES.some((re) => re.test(t))) return { intent: 'pause', rule: 'pause' };
-  if (SKIP_WHOLE.test(t)) return { intent: 'skip', rule: 'skip' };
-  if (RESUME_WHOLE.test(t)) return { intent: 'resume', rule: 'resume' };
-  if (CORRECTION_PHRASES.some((re) => re.test(t))) return { intent: 'correction', rule: 'correction' };
-  if (REPEAT_WHOLE.test(t) || detectRepeatRequest(raw)) return { intent: 'repeat', rule: 'repeat' };
+  if ((whole && PAUSE_WHOLE.test(t)) || ends.some((part) => PAUSE_PHRASES.some((re) => re.test(part)))) return { intent: 'pause', rule: 'pause' };
+  if (whole && SKIP_WHOLE.test(t)) return { intent: 'skip', rule: 'skip' };
+  if (whole && RESUME_WHOLE.test(t)) return { intent: 'resume', rule: 'resume' };
+  if (ends.some((part) => CORRECTION_PHRASES.some((re) => re.test(part)))) return { intent: 'correction', rule: 'correction' };
+  if ((whole && REPEAT_WHOLE.test(t)) || anyRawEnd(detectRepeatRequest)) return { intent: 'repeat', rule: 'repeat' };
   // Only when that is all they said. "Are you an AI? Anyway, I built…" is an
   // answer with a question attached; the identity answer is prefixed to the
   // reply either way (conversationRuntime nextUtterance).
-  if (detectAiIdentityQuestion(raw) && !answersAfterQuestion(raw, t)) return { intent: 'ai_identity', rule: 'ai_identity' };
-  if (isQuestionToInterviewer(raw, t)) return { intent: 'question', rule: 'question' };
-  if (NON_ANSWER_WHOLE.test(t)) return { intent: 'non_answer', rule: 'non_answer' };
+  if (anyRawEnd(detectAiIdentityQuestion) && !answersAfterQuestion(rawEnds[0], ends[0])) return { intent: 'ai_identity', rule: 'ai_identity' };
+  if (isQuestionToInterviewer(rawEnds[0], ends[0])) return { intent: 'question', rule: 'question' };
+  if (whole && NON_ANSWER_WHOLE.test(t)) return { intent: 'non_answer', rule: 'non_answer' };
   // Nothing but punctuation, or a single stray syllable.
   if (!/[a-z0-9]{2,}/.test(t)) return { intent: 'non_answer', rule: 'no_words' };
 
   // TIER 2 / TIER 3. An answer that carries a hedged ending is still an answer
   // — it usually has content worth scoring — but the interviewer asks about it
   // before choosing the next question.
-  if (!isClearlyAboutTheWork(t)) {
-    const cue = unclearCue(t);
+  if (!ends.some(isClearlyAboutTheWork)) {
+    const cue = ends.map(unclearCue).find(Boolean);
     if (cue) return { intent: 'answer', rule: `unclear_${cue}`, unclear: cue };
   }
   return { intent: 'answer', rule: 'answer' };
