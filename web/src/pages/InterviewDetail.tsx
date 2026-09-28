@@ -16,7 +16,7 @@ import { useCandidateTimeZone } from '../components/useCandidateTimeZone';
 import { orgTimeZoneLoadNotice } from '../components/orgTimeZone';
 import { humanise } from '../components/statusModel';
 import { isCurrentResponse, type LoadTicket } from '../components/roleDetailModel';
-import { invitationPanel } from '../components/invitationPanelModel';
+import { invitationPanel, sendOutcome, type SendOutcome, type SendReport } from '../components/invitationPanelModel';
 import { useToast } from '../components/Toast';
 
 interface Block { competencyId: string; competencyName: string; intent: string; targetMinutes: number; module?: string; }
@@ -66,6 +66,8 @@ const RECOVERY_HINTS: Record<string, string> = {
 
 /** What POST /interviews/:id/schedule says about a send it was asked for. */
 interface ScheduleResp { delivery?: { sent: boolean; note: string } }
+/** No token: the link is all the page needs, and `invitation` carries the send's verdict. */
+interface InviteResp { invitation?: SendReport }
 
 export function InterviewDetail() {
   const { id } = useParams();
@@ -162,7 +164,18 @@ export function InterviewDetail() {
     }
   };
 
-  const invite = () => doAction('invite', () => api.post(`/interviews/${id}/invite`, {}), 'Invitation created.');
+  // The server says whether the email actually went, and when it did not, what
+  // to do instead. Both are reported as it reported them — a fixed "Invitation
+  // created." over an undelivered invitation is how a candidate never hears
+  // about their interview and nobody finds out.
+  const report = (outcome: SendOutcome) => {
+    if (outcome.kind === 'error') setError(outcome.message);
+    else toast.show(outcome.message);
+  };
+  const invite = () => doAction('invite', async () => {
+    const resp = await api.post<InviteResp>(`/interviews/${id}/invite`, {});
+    report(sendOutcome(resp.invitation, 'Invitation created.'));
+  });
   const resend = () => doAction('resend', () => api.post(`/interviews/${id}/resend`, {}), 'Invitation email sent again.');
   // The date, time and zone go to the server as picked; it converts, so the
   // time never passes through this browser's clock.

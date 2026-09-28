@@ -40,6 +40,42 @@ export type InvitationPanel =
   | { readonly kind: 'not-started'; readonly canResend: true; readonly showNotOpenedHint: boolean }
   | { readonly kind: 'status'; readonly text: string; readonly assessmentId: string | null };
 
+/**
+ * What the server said about a send it has just done.
+ *
+ * `delivered` is the verdict and `deliveryNote` is the sentence written for the
+ * recruiter — including, when the provider does not deliver, an explicit
+ * instruction to copy the link and send it themselves.
+ */
+export interface SendReport {
+  readonly delivered?: boolean;
+  readonly deliveryNote?: string;
+}
+
+/** A green toast, or a banner the recruiter has to deal with. */
+export type SendOutcome =
+  | { readonly kind: 'toast'; readonly message: string }
+  | { readonly kind: 'error'; readonly message: string };
+
+const CANNOT_CONFIRM = 'The invitation link was created, but we could not confirm the email was sent. Copy the link and send it yourself.';
+const UNDELIVERED = 'The invitation link was created, but the email was not sent. Copy the link and send it yourself.';
+
+/**
+ * Report a send exactly as the server reported it.
+ *
+ * Pressing Invite used to toast a hardcoded "Invitation created." whatever came
+ * back, so an undelivered invitation read as a success and nobody found out
+ * until someone asked why the candidate had gone quiet. Anything short of an
+ * explicit `delivered: true` is raised rather than toasted: a reply with no
+ * verdict is not a verdict of success, and a silent failure here costs a
+ * candidate their interview.
+ */
+export function sendOutcome(report: SendReport | null | undefined, fallback: string): SendOutcome {
+  if (report?.delivered === true) return { kind: 'toast', message: report.deliveryNote?.trim() || fallback };
+  const unknown = report?.delivered === undefined;
+  return { kind: 'error', message: report?.deliveryNote?.trim() || (unknown ? CANNOT_CONFIRM : UNDELIVERED) };
+}
+
 export function invitationPanel(input: InvitationPanelInput, formatDate: (iso: string) => string): InvitationPanel {
   if (RESENDABLE_STATES.includes(input.state)) {
     return { kind: 'not-started', canResend: true, showNotOpenedHint: Boolean(input.sentAt) && !input.openedAt };
