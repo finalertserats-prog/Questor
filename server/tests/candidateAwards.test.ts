@@ -1,8 +1,15 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { config } from '../src/config.js';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { prisma } from '../src/db.js';
 import { createDemoData, wipe, DEMO_RESUME } from '../src/seed/demoData.js';
+
+// These exercise the feature, not the deployment gate. The public verification
+// page is off by default so that a deployment without it cannot hand anybody a
+// link to it — least of all by email to a candidate. See
+// awardVerifyPageGate.test.ts for the refusals that default produces.
+config.awards.publicVerifyPage = true;
 
 /**
  * The award engine, end to end.

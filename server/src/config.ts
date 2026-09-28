@@ -546,6 +546,23 @@ export const config = {
     /** The shared, anonymised calibration. Off here closes it for every organisation at once. */
     globalEnabled: parseBooleanSetting('CALIBRATION_GLOBAL_ENABLED', process.env.CALIBRATION_GLOBAL_ENABLED, false),
   },
+  awards: {
+    /**
+     * Whether the PUBLIC credential page at /v/<token> is deployed.
+     *
+     * Off until it is. The in-app viewer previews and downloads a badge or a
+     * certificate without it — those are the bytes we already hold — but
+     * "copy verification link" and "send to candidate" both hand somebody a
+     * /v/<token> URL, and a URL to a page that is not there is worse than no
+     * button. The send one is worse again: an email to a real candidate is
+     * not recoverable, and a link that 404s, or that quietly shows the wrong
+     * thing, is the kind of mistake they tell other people about.
+     *
+     * Flip this on in the same release that deploys the page, not before.
+     */
+    publicVerifyPage: parseBooleanSetting('AWARD_PUBLIC_VERIFY_PAGE', process.env.AWARD_PUBLIC_VERIFY_PAGE, false),
+  },
+
   library: {
     /** Tenant-facing read API (select, entries) and the admin screen. */
     enabled: parseBooleanSetting('LIBRARY_ENABLED', process.env.LIBRARY_ENABLED, false),

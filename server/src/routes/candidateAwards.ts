@@ -9,6 +9,7 @@ import { rateLimit } from '../middleware/rateLimit.js';
 import { logAudit } from '../services/audit.js';
 import { getEmail } from '../providers/email/index.js';
 import { logger } from '../logger.js';
+import { config } from '../config.js';
 import { assertCanAccessAward, badgeFilename, certificateFilename, readTier, verifyDisplayUrl, verifyLinkUrl } from '../services/awardAccess.js';
 import { AwardEvidenceError, AwardEvidenceNotReadyError, NO_DIAMOND_CERTIFICATE, certificateEvidence, hasCertificate } from '../services/awardEvidence.js';
 import { certificatePdf, issuedOn } from '../services/certificatePdf.js';
@@ -41,14 +42,19 @@ function exportPaths(candidateId: string, tier: AwardTier) {
   // Diamond records what an employer decided, which is theirs to announce:
   // no certificate, and so no public page to link to and nothing to send.
   const printed = tierHasCertificate(tier);
+  // Both of these hand somebody a /v/<token> URL, so both wait on that page
+  // being deployed. A path that is null offers no button, which is the honest
+  // state while the page does not exist: a link that 404s is worse than no
+  // link, and an email to a candidate carrying one cannot be taken back.
+  const shareable = printed && config.awards.publicVerifyPage;
   return {
     badgeSvg: `${base}/badge.svg`,
     badgePng: `${base}/badge.png`,
     certificatePdf: printed ? `${base}/certificate.pdf` : null,
-    verifyLink: printed ? `${base}/verify-link` : null,
+    verifyLink: shareable ? `${base}/verify-link` : null,
     // Bronze is the hiring team's and is never issued to the candidate; the
     // send route refuses it, and a row that carries no path offers no button.
-    certificateSend: printed && tier !== 'bronze' ? `${base}/certificate/send` : null,
+    certificateSend: shareable && tier !== 'bronze' ? `${base}/certificate/send` : null,
   };
 }
 
@@ -267,6 +273,7 @@ candidateAwardsRouter.get(
     const tier = readTier(req.params.tier);
     const award = await assertCanAccessAward(req.auth!, req.params.id, tier);
     if (!hasCertificate(tier)) throw new HttpError(409, NO_DIAMOND_CERTIFICATE, 'no_public_page_for_tier');
+    assertPublicPageExists();
 
     await logAudit({
       tenantId: req.auth!.tenantId,
@@ -281,6 +288,21 @@ candidateAwardsRouter.get(
     res.json({ verifyUrl: verifyLinkUrl(award.verifyToken), reference: award.reference });
   }),
 );
+
+const NO_PUBLIC_PAGE =
+  'The public verification page is not available on this deployment, so there is no link to share yet.';
+
+/**
+ * A hidden button is not a closed door.
+ *
+ * `exportPaths` stops offering these while the public page is undeployed, but
+ * anything that already knows the URL — a stale tab, a saved request, a script
+ * — can still call them. The one that matters is the send: it puts a link in
+ * front of a real candidate, and a 404 they were emailed cannot be recalled.
+ */
+function assertPublicPageExists(): void {
+  if (!config.awards.publicVerifyPage) throw new HttpError(409, NO_PUBLIC_PAGE, 'public_verify_page_unavailable');
+}
 
 // ------------------------------------------------------------------ badges
 
@@ -371,6 +393,10 @@ candidateAwardsRouter.post(
     const tier = readTier(req.params.tier);
     const award = await assertCanAccessAward(req.auth!, req.params.id, tier);
     if (!hasCertificate(tier)) throw new HttpError(409, NO_DIAMOND_CERTIFICATE, 'no_certificate_for_tier');
+    // The letter carries a /v/<token> link. Refused outright while that page
+    // is not deployed: this is the one action in the product that puts a URL
+    // in front of a candidate, and an email cannot be taken back.
+    assertPublicPageExists();
     if (tier === 'bronze') {
       throw new HttpError(
         409,

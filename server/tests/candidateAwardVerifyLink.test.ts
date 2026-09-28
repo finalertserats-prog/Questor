@@ -9,6 +9,12 @@ import { _resetRateLimits } from '../src/middleware/rateLimit.js';
 import { serialiseEvidence, type AwardFacts, type AwardTier } from '../src/domain/candidateAwards.js';
 import { DEFAULT_STAGES } from '../src/domain/pipelineStages.js';
 
+// These exercise the feature, not the deployment gate. The public verification
+// page is off by default so that a deployment without it cannot hand anybody a
+// link to it — least of all by email to a candidate. See
+// awardVerifyPageGate.test.ts for the refusals that default produces.
+config.awards.publicVerifyPage = true;
+
 /**
  * Sharing a credential from the viewer.
  *
