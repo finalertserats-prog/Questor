@@ -793,9 +793,10 @@ assessmentsRouter.post('/:id/review', requireCapability('assessment:review'), as
     // Read here rather than passed in: this runs on the replay path too,
     // which returns long before the fresh path's snapshot is taken.
     const before = await journeyStanding(a.session.candidateId, a.session.roleId);
-    // A reviewed interview is an assessed one: Gold, if the finalisation had
-    // not already got there. This is a fact about the interview rather than
-    // the verdict, so "Just record it" does not suppress it.
+    // A reviewed interview is an assessed one, and that is all this records:
+    // it is a fact about the interview rather than the verdict, so "Just
+    // record it" does not suppress it, and it moves nobody either way. What
+    // moves the candidate is the decision below.
     await notePipelineEvent({ tenantId: req.auth!.tenantId, candidateId: a.session.candidateId, roleId: a.session.roleId, event: 'interview.assessed', trigger: 'review.completed' });
     // And the verdict is the decision on that round: Proceed keeps them
     // moving, Do not progress ends their journey, Consider waits for a person.

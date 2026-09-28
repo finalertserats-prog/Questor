@@ -1,4 +1,6 @@
 import type { DecisionOutcome } from './pipelineAutonomy.js';
+import type { PipelineStage } from './pipelineStages.js';
+import { awardsForPromotion } from './candidateAwards.js';
 
 /**
  * The promise on the candidate's consent screen — "A person on the hiring team
@@ -11,6 +13,13 @@ import type { DecisionOutcome } from './pipelineAutonomy.js';
  * whether the promise applies to it and whether it has been kept; the database
  * work is in services/humanReviewGate.ts and the pure arithmetic is here so it
  * can be tested without a session, an assessment or a reviewer.
+ *
+ * WHICH ACTS IT COVERS is a separate question from whether it has been kept,
+ * and it is answered by two functions below rather than assumed to be "all of
+ * them": `outcomeNeedsHumanReview` for the outcome a person records, and
+ * `moveNeedsHumanReview` for the move it causes. Neither says "every pipeline
+ * write" — a withdrawal is exempt, and so is a move that neither judges the
+ * AI round nor mints anything.
  *
  * Two things this rule deliberately does NOT do:
  *
@@ -120,17 +129,75 @@ export function firstUnreviewed(interviews: readonly ConductedInterview[]): Unre
 }
 
 /**
- * Which outcomes the promise gates.
+ * Which outcomes the promise can gate at all.
  *
- * Approving and rejecting are judgements ABOUT the interview, and recording one
- * without reading it is precisely what the candidate was promised would not
- * happen. A withdrawal is not a judgement: the candidate has left, or the
- * requisition has, and making somebody read an interview before they can honour
- * that would keep a person in a pipeline they asked to leave. So withdrawal is
- * always allowed — explicitly, and recorded as the exemption it is.
+ * Approving and rejecting are judgements, and recording one without reading the
+ * interview is precisely what the candidate was promised would not happen. A
+ * withdrawal is not a judgement: the candidate has left, or the requisition
+ * has, and making somebody read an interview before they can honour that would
+ * keep a person in a pipeline they asked to leave. So withdrawal is always
+ * allowed — explicitly, and recorded as the exemption it is.
+ *
+ * "Can gate", not "does": this is one half of the question. An approval also
+ * has to reach `moveNeedsHumanReview` or end the journey before it is actually
+ * refused (services/pipelineAutonomy.ts, decidePipeline), because an approval
+ * that walks a candidate TOWARDS an interview judges nothing. A rejection ends
+ * the journey wherever it is recorded, so it is always refused while a review
+ * is owed.
  */
 export function outcomeNeedsHumanReview(outcome: DecisionOutcome): boolean {
   return outcome !== 'WITHDRAWN';
+}
+
+/**
+ * Which stage moves the promise gates: two clauses, and it needs both.
+ *
+ * The promise protects two different things, and each clause protects one:
+ *
+ *  1. A move that would MINT a credential. That is the move which puts the
+ *     presser's name on a certificate, so it must not be made on a
+ *     conversation nobody read.
+ *  2. A move OFF the round the AI conducted. That is the move which says the
+ *     round went well enough to go on — a judgement about the interview,
+ *     whatever it happens to earn.
+ *
+ * NEITHER IS ENOUGH ALONE, and both single-clause versions shipped before this
+ * one. Each was defeated by the same lever: `PUT /api/roles/:id/pipeline-stages`
+ * is held to `role:edit_scorecard`, which a RECRUITER holds, and `stagesSchema`
+ * lets stage keys be free text.
+ *
+ *  - Kind alone missed the mint. A plan reusing the key `silver` with kind
+ *    `human_interview` and no AI-conducted stage answered "not an AI round"
+ *    while the award engine answered "strike Silver".
+ *  - Minting alone missed the judgement. `awardsForPromotion` fires on the
+ *    literal keys `silver` and `gold`, so a plan that simply RENAMED its
+ *    stages — `ai_round`, `panel` — earns nothing on the way out of the AI
+ *    round, and the gate never ran. That was weaker than the code it replaced:
+ *    before any of this, `decidePipeline` refused every non-withdrawal outcome
+ *    while a review was missing, and a renamed plan quietly removed it.
+ *
+ * Over-gating is harmless here and under-gating is not, which is why the union
+ * is the right shape rather than a cleverer single predicate. A candidate with
+ * no AI interview passes `humanReviewCheck` anyway, so a gate that fires on a
+ * move it did not need to refuses nothing.
+ *
+ * There is deliberately no case for a move TOWARDS the AI round, and the next
+ * reader should not add one. Such a move earns no tier and leaves a stage that
+ * is not the AI round, so both clauses are false — which is right, because a
+ * conversation that has not happened cannot have gone unread, and gating it
+ * would strand every candidate interviewed before anybody touched their
+ * pipeline.
+ *
+ * This exists because `POST /pipelines/:id/advance` had no check at all, and
+ * the "Needs you" queue then made that endpoint the ordinary way a candidate is
+ * promoted. A recruiter holds `interview:create` and deliberately holds neither
+ * `assessment:review` nor the right to decide or finalise — and one press of
+ * Move to Gold was striking a Silver credential, in their name, on an interview
+ * nobody had opened.
+ */
+export function moveNeedsHumanReview(stages: readonly PipelineStage[], fromStageKey: string, toStageKey: string): boolean {
+  if (awardsForPromotion(stages, fromStageKey, toStageKey).length > 0) return true;
+  return stages.find((stage) => stage.key === fromStageKey)?.kind === 'ai_interview';
 }
 
 /**

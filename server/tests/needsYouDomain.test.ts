@@ -10,11 +10,11 @@ const kindsFor = (role: string, extra: { operator?: boolean; platformOperator?: 
 
 describe('needs-you gating', () => {
   it('gives a hiring manager reviews but not invitation chores it cannot do', () => {
-    expect(kindsFor('manager')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'feedback_held', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
+    expect(kindsFor('manager')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'stage_decision', 'feedback_held', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
   });
 
   it('gives a recruiter the invitation chores and the reviews that landed on their candidates', () => {
-    expect(kindsFor('recruiter')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
+    expect(kindsFor('recruiter')).toEqual(['round_starting', 'human_request', 'accommodation', 'review', 'stage_decision', 'invitation_expiring', 'stalled', 'identity_code_stuck', 'round_not_recordable']);
   });
 
   it('does not let the recruiter sign a review off, only see it', () => {
@@ -37,6 +37,26 @@ describe('needs-you gating', () => {
 
   it('gives a reviewer only reviews and people asking for someone', () => {
     expect(kindsFor('reviewer')).toEqual(['round_starting', 'human_request', 'review', 'feedback_held']);
+  });
+
+  // A reviewer records the verdict on the AI round; moving a candidate between
+  // stages is the hiring team's own act, gated on `interview:create` the same
+  // way POST /pipelines/:id/advance is. So the prompt to move somebody reaches
+  // the people who can press the button, and nobody else.
+  it('asks only the people who may move a pipeline to decide a stage', () => {
+    expect(['recruiter', 'manager', 'admin'].map((role) => maySee('stage_decision', ctxFor(role)))).toEqual([true, true, true]);
+  });
+
+  it('never asks a reviewer, an expert or an auditor to move anyone', () => {
+    expect(['reviewer', 'sme', 'auditor'].map((role) => maySee('stage_decision', ctxFor(role)))).toEqual([false, false, false]);
+  });
+
+  it('lets whoever is shown a stage decision act on it', () => {
+    expect(mayActOn('stage_decision', ctxFor('recruiter'))).toBe(true);
+  });
+
+  it('leaves a stage decision off the urgent lane: it waits on the team\u2019s own time', () => {
+    expect(isUrgent('stage_decision')).toBe(false);
   });
 
   it('gives an auditor nothing', () => {
@@ -102,6 +122,12 @@ describe('needs-you ordering', () => {
 });
 
 describe('needs-you actions', () => {
+  it('sends a stage decision to the candidate, where the pipeline is', () => {
+    expect(actionFor('stage_decision', { candidateId: 'c1' }))
+      .toEqual({ label: 'Decide their next stage', to: '/candidates/c1' });
+  });
+
+
   it('sends a review to its assessment', () => {
     expect(actionFor('review', { sessionId: 's1', assessmentId: 'a1' })).toEqual({ label: 'Review', to: '/assessments/a1' });
   });

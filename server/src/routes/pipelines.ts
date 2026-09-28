@@ -37,8 +37,9 @@ import {
 import { invitationSecretColumns, mintInvitationToken } from '../services/invitations.js';
 import { scorecardForFit } from '../services/scorecards.js';
 import { DECISION_OUTCOMES, resolveTransition } from '../domain/pipelineAutonomy.js';
-import { decidePipeline } from '../services/pipelineAutonomy.js';
+import { advancePipeline, decidePipeline } from '../services/pipelineAutonomy.js';
 import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from '../services/candidateAwards.js';
+import { awardsForPromotion, tierHasCertificate, TIER_LABELS } from '../domain/candidateAwards.js';
 import { humanReviewCheck } from '../services/humanReviewGate.js';
 import { candidateOwnZone } from '../services/scheduleZone.js';
 import { humanReviewRefusal, HUMAN_REVIEW_REQUIRED } from '../domain/humanReviewRule.js';
@@ -233,12 +234,40 @@ export function presentRound(round: RoundRow, viewer: RoundViewer) {
   };
 }
 
+/**
+ * What the next move would strike, so the page can say it before anybody
+ * presses anything.
+ *
+ * Worked out here, from `awardsForPromotion`, and never in the browser. The
+ * web's own awards model says so in as many words: a view that inferred
+ * "earned" from a stage or a date would be the second place that rule lives
+ * and the first place it drifts. The page is handed the answer instead.
+ *
+ * Empty at the last stage, and empty for a move that earns nothing — walking a
+ * candidate from Bronze to Silver mints no credential, and a button that
+ * claimed otherwise would be promising a certificate that never arrives.
+ */
+function nextMoveEarns(stages: readonly PipelineStage[], pipeline: CandidatePipeline) {
+  if (pipeline.status !== 'ACTIVE') return [];
+  const next = nextStageKey(stages, pipeline.currentStageKey);
+  if (!next) return [];
+  return awardsForPromotion(stages, pipeline.currentStageKey, next).map((tier) => ({
+    tier,
+    label: TIER_LABELS[tier],
+    // Diamond records what an employer decided, which is theirs to announce;
+    // the other three record what a candidate did (domain/candidateAwards.ts).
+    certificate: tierHasCertificate(tier),
+  }));
+}
+
 function presentPipeline(pipeline: PipelineWithRounds, viewer: RoundViewer) {
+  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
   return {
     id: pipeline.id,
     candidateId: pipeline.candidateId,
     roleId: pipeline.roleId,
-    stages: parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }),
+    stages,
+    nextMoveEarns: nextMoveEarns(stages, pipeline),
     currentStageKey: pipeline.currentStageKey,
     status: pipeline.status,
     decision: pipeline.decision,
@@ -404,41 +433,36 @@ pipelinesRouter.get('/:id', requireCapability('candidate:read'), asyncHandler(as
 pipelinesRouter.post('/:id/advance', requireCapability('interview:create'), asyncHandler(async (req, res) => {
   const { toStageKey } = z.object({ toStageKey: z.string().min(1) }).parse(req.body);
   const pipeline = await loadPipeline(req, req.params.id);
-  if (pipeline.status !== 'ACTIVE') throw new HttpError(409, DECIDED);
 
-  const stages = parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' });
-  const next = nextStageKey(stages, pipeline.currentStageKey);
-  if (!next) throw new HttpError(409, 'This candidate is already at the final stage.');
-  if (toStageKey !== next) throw new HttpError(409, `Stages run in order; the next stage is ${labelOf(stages, next)}.`);
-
-  // The move and the badges it earns commit together or not at all. A journey
-  // showing a candidate at Gold with no Silver badge, or a Silver badge for a
-  // move that rolled back, is a record that contradicts itself with nothing to
-  // say which half is right.
-  const awards = await moveAndAward(async (tx) => {
-    // Conditional on the stage we read, so two people advancing at once cannot both succeed.
-    const moved = await tx.candidatePipeline.updateMany({
-      where: { id: pipeline.id, status: 'ACTIVE', currentStageKey: pipeline.currentStageKey },
-      data: { currentStageKey: next },
-    });
-    if (moved.count !== 1) throw new HttpError(409, MOVED_UNDER_YOU);
-    return awardOnPromotion(tx, {
-      tenantId: req.auth!.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId,
-      stages, fromStageKey: pipeline.currentStageKey, toStageKey: next, actorId: req.auth!.userId,
-    });
+  // The move itself, and the badges it earns, are in services/pipelineAutonomy.ts
+  // beside the decision that does the same job — the demo sandbox stages its
+  // candidates through it too, so a prospect is shown the product's own
+  // arithmetic rather than a tableau assembled behind its back. What stays here
+  // is what is the route's: turning each refusal into a sentence the person
+  // reading it can act on.
+  const moved = await advancePipeline(pipeline, {
+    tenantId: req.auth!.tenantId, toStageKey, actorId: req.auth!.userId, trigger: 'pipeline.advance',
   });
+  if (!moved.applied) {
+    if (moved.because === 'already_decided') throw new HttpError(409, DECIDED);
+    if (moved.because === 'at_last_stage') throw new HttpError(409, 'This candidate is already at the final stage.');
+    if (moved.because === 'not_next') throw new HttpError(409, `Stages run in order; the next stage is ${moved.next.label}.`);
+    if (moved.because === 'human_review_required') {
+      // Recorded before the refusal, the way /finalize records its own: a
+      // promotion turned down for this reason is a fact about how the promise
+      // held, and it is worth as much to an auditor as one that went through.
+      await logAudit({
+        tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
+        action: 'pipeline.advance_refused', entityType: 'CandidatePipeline', entityId: pipeline.id,
+        after: { stage: pipeline.currentStageKey, because: HUMAN_REVIEW_REQUIRED, assessmentId: moved.missing.assessmentId },
+      });
+      throw new HttpError(409, humanReviewRefusal(moved.missing), HUMAN_REVIEW_REQUIRED);
+    }
+    throw new HttpError(409, MOVED_UNDER_YOU);
+  }
 
-  await logAudit({
-    tenantId: req.auth!.tenantId, actorType: 'user', actorId: req.auth!.userId,
-    action: 'pipeline.advanced', entityType: 'CandidatePipeline', entityId: pipeline.id,
-    // What this move struck is not repeated here: each badge writes its own
-    // award.struck event, with the reference a holder would quote. Two records
-    // of one fact is two things to keep in step.
-    before: { stage: pipeline.currentStageKey }, after: { stage: next },
-  });
-  await noteAwards({ tenantId: req.auth!.tenantId, actorId: req.auth!.userId, candidateId: pipeline.candidateId, awards });
   const fresh = await reload(pipeline.id);
-  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), awards: awards.map(presentAward) });
+  res.json({ pipeline: presentPipeline(fresh, await roundViewer(req, fresh)), awards: moved.awards.map(presentAward) });
 }));
 
 interface SchedulingNotice {

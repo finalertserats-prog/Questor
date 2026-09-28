@@ -7,11 +7,13 @@ import { createDemoData, wipe } from '../src/seed/demoData.js';
 import { finalizeInterview } from '../src/realtime/interviewEngine.js';
 
 /**
- * Decisions drive the pipeline. A person approves, rejects or records a
- * withdrawal — on the pipeline itself, or as the verdict on an assessment
- * review — and the candidate's pipeline and journey follow without a second
- * action: approval moves them to the next stage (Silver → Gold, Gold →
- * Diamond); rejection and withdrawal close the pipeline with that outcome.
+ * Decisions drive the pipeline, and past Bronze they are the ONLY thing that
+ * does. A person approves, rejects or records a withdrawal — on the pipeline
+ * itself, or as the verdict on an assessment review — and the candidate's
+ * pipeline and journey follow without a second action: approval moves them to
+ * the next stage (Silver → Gold, Gold → Diamond), and that move is what
+ * strikes the tier they are leaving; rejection and withdrawal close the
+ * pipeline with that outcome, at the stage the candidate actually stands at.
  * Nothing here moves anyone backwards, and a decided pipeline stays decided.
  */
 
@@ -253,15 +255,24 @@ describe('rejecting or withdrawing on the pipeline', () => {
   });
 });
 
-/** An assessed AI interview: Gold by the time a person comes to review it. */
+/**
+ * An assessed AI interview, with the candidate standing at the round it was
+ * conducted for.
+ *
+ * Walking them to Silver is a person's decision now and nothing else will make
+ * it (domain/pipelineAutonomy.ts), so this presses Advance the way a recruiter
+ * has to. Without it the candidate sits at Participation through their own
+ * interview, and every verdict below would be judging a round the pipeline
+ * says they never reached.
+ */
 async function assessedInterview(ids: Seeded) {
+  const walked = await pipelineAt(ids, 'silver');
   await request(app).post(`/api/portal/${ids.token}/consent`).send({ recordingConsent: true, accepted: true });
   await request(app).post(`/api/portal/${ids.token}/start`).send({});
   for (const text of ANSWERS) await request(app).post(`/api/portal/${ids.token}/turn`).send({ text });
   await finalizeInterview(ids.sessionId);
   const assessment = await prisma.assessmentVersion.findFirstOrThrow({ where: { sessionId: ids.sessionId }, orderBy: { version: 'desc' } });
-  const pipeline = await prisma.candidatePipeline.findFirstOrThrow({ where: { candidateId: ids.candidateId } });
-  return { assessmentId: assessment.id, pipelineId: pipeline.id };
+  return { assessmentId: assessment.id, pipelineId: walked.id };
 }
 
 async function review(ids: Seeded, assessmentId: string, disposition: string, extra: Record<string, unknown> = {}) {
@@ -284,14 +295,19 @@ describe('the verdict on an assessment review', () => {
     expect(await stored(pipelineId)).toMatchObject({ status: 'ACTIVE', currentStageKey: 'gold' });
   });
 
-  it('PROCEED catches up a candidate whose pipeline had not reached Gold', async () => {
+  // Nothing carries a candidate to Silver by itself any more, so one can be
+  // interviewed while their pipeline still says Bronze. Proceed brings them up
+  // to the round that was judged and no further: carrying them to Gold would
+  // skip Silver, and a tier nobody is promoted out of is a tier nobody is ever
+  // struck.
+  it('PROCEED brings a candidate the pipeline left behind up to Silver, and no further', async () => {
     const ids = await seeded();
     const { assessmentId, pipelineId } = await assessedInterview(ids);
-    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'silver' } });
+    await prisma.candidatePipeline.update({ where: { id: pipelineId }, data: { currentStageKey: 'bronze' } });
 
     await review(ids, assessmentId, 'PROCEED');
 
-    expect((await stored(pipelineId)).currentStageKey).toBe('gold');
+    expect((await stored(pipelineId)).currentStageKey).toBe('silver');
   });
 
   it('PROCEED never moves a candidate past Gold: the human rounds are still to come', async () => {
@@ -300,8 +316,10 @@ describe('the verdict on an assessment review', () => {
 
     await review(ids, assessmentId, 'PROCEED');
 
+    // The walk to Silver was pressed by a person too, so the trail holds those
+    // moves as well; what this is about is where the verdict left them.
     const advances = (await audits(pipelineId, 'pipeline.advanced')).map((a) => JSON.parse(a.afterJson).stage as string);
-    expect([advances, await audits(pipelineId, 'pipeline.finalized')]).toEqual([[], []]);
+    expect([advances[advances.length - 1], await audits(pipelineId, 'pipeline.finalized')]).toEqual(['gold', []]);
   });
 
   it('DO_NOT_PROGRESS closes the pipeline as rejected with the reviewer\'s reason', async () => {
@@ -325,7 +343,10 @@ describe('the verdict on an assessment review', () => {
         actorType: 'user', actorId: ids.userId,
         // The interview this verdict is about was read: that is what the
         // candidate's consent screen promised, and it is on the decision.
-        after: { decision: 'REJECTED', stage: 'gold', about: 'silver', source: 'review', trigger: 'review.completed', reasonRecorded: true, humanReview: { required: true, satisfiedBy: [assessmentId] } },
+        // Closed at Silver, which is where the candidate actually stands: the
+        // assessment no longer carries anyone to Gold, and a journey must not
+        // end at a stage nobody moved them to.
+        after: { decision: 'REJECTED', stage: 'silver', about: 'silver', source: 'review', trigger: 'review.completed', reasonRecorded: true, humanReview: { required: true, satisfiedBy: [assessmentId] } },
       });
   });
 
@@ -335,7 +356,7 @@ describe('the verdict on an assessment review', () => {
 
     const res = await review(ids, assessmentId, 'DO_NOT_PROGRESS');
 
-    expect(res.body.journey).toMatchObject({ fromStageKey: 'gold', toStageKey: 'gold', moves: false, closes: 'REJECTED' });
+    expect(res.body.journey).toMatchObject({ fromStageKey: 'silver', toStageKey: 'silver', moves: false, closes: 'REJECTED' });
   });
 
   it('CONSIDER decides nothing', async () => {
@@ -355,7 +376,7 @@ describe('the verdict on an assessment review', () => {
     const res = await review(ids, assessmentId, 'PROCEED', { supersede: { reason: 'A second reviewer read the transcript differently.' } });
 
     expect([res.status, (await stored(pipelineId)).decision]).toEqual([201, 'REJECTED']);
-    expect(res.body.journey).toMatchObject({ toStageKey: 'gold', moves: false, closes: null });
+    expect(res.body.journey).toMatchObject({ toStageKey: 'silver', moves: false, closes: null });
   });
 
   it('still records the review when the pipeline plan is corrupt', async () => {
