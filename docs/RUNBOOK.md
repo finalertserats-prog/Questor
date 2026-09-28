@@ -201,6 +201,49 @@ until you have taken and drilled a backup made after the rotation.
 - Erasure, the retention sweep and legal holds are unaffected: they delete and
   count rows without reading the content.
 
+## Repairing credentials the ladder owes
+
+A tier is earned when a person promotes a candidate OUT of it. Before "HR
+decides every move past Bronze", two paths moved candidates without asking the
+award engine anything: the automatic `interview.assessed` move carried people
+out of Silver and struck nothing, and a verdict could vault a candidate from
+Bronze to Gold, which earns nothing because the tier read is the one being
+left. Candidates moved that way stand at Gold or beyond holding only Bronze.
+
+```bash
+npm run awards:backfill -w server                 # reports; writes nothing
+npm run awards:backfill -w server -- --tenant <id>
+npm run awards:backfill -w server -- --apply      # writes
+```
+
+**A dry run is the default, and read the whole report before `--apply`.** A
+credential is an external artifact a person may hand to an employer; a wrong
+one, a duplicate or one with the wrong date is not cleanly revocable. Decide
+per organisation if the list is long.
+
+It replays each recorded move through the product's own rule rather than
+reading the candidate's current stage — a finalisation from Silver earns Silver
+and Diamond and NOT Gold, and inferring from the stage would mint a Gold
+certificate claiming rounds that never happened. A non-finalising move that
+skipped stages is expanded into the one-stage steps the product takes today, so
+a historical Bronze → Gold decision recovers its Silver.
+
+Every award goes through `awardOnPromotion`, the writer a live promotion uses,
+so each carries frozen evidence, a printed reference and a verification token.
+Safe to run twice: a tier already held is never re-struck. It never mints
+Bronze, which is the hiring team's reading and is not issued to candidates, and
+Diamond is badge-only so no Diamond certificate exists to mint.
+
+It credits the person the promotion rode on — whoever made the move, or, for
+an automatic move, the reviewer who had read the AI interview by the time of
+that move. Where it can name nobody it prints `BLOCKED` and leaves the tier
+alone, because a credential minted for an interview no person opened is what
+the human-review gate exists to prevent.
+
+Each award is dated the move that earned it, not the day the job ran. Check
+those dates in the report against the trail before `--apply`: the date is the
+one field a reader of the certificate can see and cannot verify.
+
 ## Rotating secrets
 
 - `ARTIFACT_ENCRYPTION_KEY`: see "Encryption of candidate content at rest" above. Never rotate it without putting the old key in `ARTIFACT_ENCRYPTION_KEYS_PREVIOUS` first — rows sealed under a key you no longer hold cannot be opened by anyone, including us.

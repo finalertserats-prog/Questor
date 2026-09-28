@@ -129,10 +129,49 @@ describe('the seeded hiring story', () => {
     expect(invited.map((s) => s.candidateId)).toEqual([visitor.id]);
   });
 
-  it('places Priya at Gold after her assessed interview and the visitor at Silver', async () => {
+  /**
+   * Both stand at Silver, and a person put them there.
+   *
+   * The sandbox used to stage Priya at Gold by replaying `interview.assessed`,
+   * which was a dead end twice over: she arrived by an event, so no badge was
+   * ever struck for the round she had done, and there was nothing left for the
+   * visitor to promote her to but Diamond. Nothing carries anybody past Bronze
+   * on its own now (domain/pipelineAutonomy.ts), so the sandbox records the
+   * move a recruiter would record instead — which is also what makes this
+   * assertion worth having: it goes red if that path changes, rather than the
+   * demo quietly staging a prospect's candidates at the wrong tier.
+   */
+  it('stands both demo candidates at Silver, moved by the sandbox owner rather than by an event', async () => {
     const pipelines = await prisma.candidatePipeline.findMany({ where: { tenantId: sandbox.tenantId }, include: { candidate: true } });
     const byName = Object.fromEntries(pipelines.map((p) => [p.candidate.fullName, p.currentStageKey]));
-    expect(byName).toEqual({ 'Priya Sharma': 'gold', [VISITOR.name]: 'silver' });
+    expect(byName).toEqual({ 'Priya Sharma': 'silver', [VISITOR.name]: 'silver' });
+  });
+
+  it('records that move as a person\u2019s, so the trail does not credit the system with it', async () => {
+    const advances = await prisma.auditEvent.findMany({
+      where: { tenantId: sandbox.tenantId, action: 'pipeline.advanced' },
+      select: { actorType: true, actorId: true },
+    });
+
+    expect([advances.length, [...new Set(advances.map((a) => a.actorType))], [...new Set(advances.map((a) => a.actorId))]])
+      .toEqual([2, ['user'], [sandbox.userId]]);
+  });
+
+  /**
+   * The one thing waiting on the visitor when they walk in.
+   *
+   * Priya's interview is assessed and nobody has read it, so the queue asks for
+   * the read — and recording that verdict is what carries her to Gold and
+   * strikes her Silver certificate. That is the whole product in one click, and
+   * it is only there because nothing promoted her behind the visitor's back.
+   */
+  it('leaves Priya\u2019s assessment waiting to be read', async () => {
+    const session = await prisma.interviewSession.findFirstOrThrow({
+      where: { tenantId: sandbox.tenantId, candidate: { email: DEMO_STORY_CANDIDATE_EMAIL } },
+      select: { state: true, assessments: { select: { id: true } } },
+    });
+
+    expect([session.state, session.assessments.length > 0]).toEqual(['REVIEW_READY', true]);
   });
 
   it('refuses in the demo\'s own voice, never as an error', async () => {

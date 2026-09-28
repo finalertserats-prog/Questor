@@ -110,14 +110,20 @@ describe('"Just record it"', () => {
     expect(copy.offersRecordOnly).toBe(false);
   });
 
-  // Reviewing the interview is what assesses it, so the move happens anyway.
-  // The note says so rather than letting the label imply otherwise.
-  it('admits that it cannot stop a move the review itself causes', () => {
+  /**
+   * It used to admit the opposite, and had to: reviewing an interview assessed
+   * it, and an assessed interview carried its candidate to the human round
+   * whatever the verdict said, so "Just record it" could not hold the move
+   * back. Nothing moves a candidate but a person's decision now, and the
+   * decision is exactly what this action withholds — so the note names the
+   * stage they stay at instead of the one they were going to.
+   */
+  it('says the candidate stays where they are, because now they do', () => {
     const copy = consequenceCopy({
       verdict: 'PROCEED', candidate: CANDIDATE, letterWaiting: false,
-      consequence: consequence({ toStageLabel: 'Gold', moves: true }),
+      consequence: consequence({ fromStageLabel: 'Silver', toStageLabel: 'Gold', moves: true }),
     });
-    expect(copy.recordOnlyNote).toContain('still counts as assessed');
+    expect(copy.recordOnlyNote).toBe('Writes your verdict and leaves the decision on the round unrecorded. They stay at Silver until someone records it.');
   });
 });
 

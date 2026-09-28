@@ -320,6 +320,19 @@ export interface PromotionAwardInput extends AwardTarget {
   readonly toStageKey: string;
   /** The person who moved them. Their id is what lands on every tier this move earns. */
   readonly actorId: string;
+  /**
+   * When the move happened. Omitted — which is every live promotion — it is
+   * the moment this runs.
+   *
+   * It exists for `services/awardBackfill.ts`, which strikes credentials for
+   * moves that happened months ago. Stamping those with today's date would put
+   * a date on a certificate that contradicts the audit trail behind it, and a
+   * certificate is read for years by people who cannot check either. The
+   * option is on the writer rather than solved by an INSERT in the backfill,
+   * because an award written any other way carries no evidence, no reference
+   * and no verification token.
+   */
+  readonly awardedAt?: Date;
 }
 
 /**
@@ -336,8 +349,10 @@ export async function awardOnPromotion(tx: Prisma.TransactionClient, o: Promotio
   const actor = await tx.user.findFirst({ where: { id: o.actorId, tenantId: o.tenantId }, select: { name: true } });
   const identity = await readIdentity(tx, o);
   // Stamped only now that everything the certificate names has been read, so
-  // the award cannot claim a title that became true after this instant.
-  const awardedAt = new Date();
+  // the award cannot claim a title that became true after this instant. A
+  // caller-supplied instant is the backfill's, and is the date the move it is
+  // repairing actually happened.
+  const awardedAt = o.awardedAt ?? new Date();
   const toLabel = o.stages.find((stage) => stage.key === o.toStageKey)?.label ?? o.toStageKey;
 
   const struck: StruckAward[] = [];

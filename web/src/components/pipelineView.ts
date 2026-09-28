@@ -88,3 +88,52 @@ export function pipelineOutcome(stages: readonly PipelineStageView[], pipeline: 
   if (current?.kind === 'human_interview') return { final: false, text: `Progressing to the next round: ${label}.` };
   return { final: false, text: `In progress: ${label}.` };
 }
+
+/**
+ * What the next move will strike, as the server worked it out.
+ *
+ * `tier`/`label`/`certificate` come from GET /api/pipelines/:id — never
+ * re-derived here. A tier is earned by the move that LEAVES its stage, and
+ * candidateAwardsModel.ts is explicit that a view inferring "earned" from a
+ * stage would be the second place that rule lives and the first place it
+ * drifts. The same applies to predicting one.
+ */
+export interface MoveEarns {
+  readonly tier: string;
+  readonly label: string;
+  readonly certificate: boolean;
+}
+
+/**
+ * The confirm line under "Move to X": where they go, and what it mints.
+ *
+ * Saying only where they go is how this button came to strike most of the
+ * product's credentials without ever mentioning one. The assessment page
+ * states what each verdict will do before it does it; the button that promotes
+ * a candidate owes the same.
+ *
+ * Silent when the move earns nothing — Bronze to Silver mints no credential,
+ * and a sentence promising a certificate that never arrives is worse than no
+ * sentence at all.
+ */
+export function advanceConfirmLine(candidateName: string, toLabel: string, earns: readonly MoveEarns[]): string {
+  const move = `${candidateName} moves to ${toLabel}.`;
+  if (earns.length === 0) return move;
+  const names = earns.map((e) => e.label);
+  const badges = `${listOf(names)} ${names.length === 1 ? 'badge' : 'badges'}`;
+
+  // Diamond is badge-only, so one move can earn two tiers and one certificate.
+  // Named rather than glossed: "badges and certificates" for a Gold-and-Diamond
+  // promotion would promise a Diamond certificate that is never struck.
+  const paper = earns.filter((e) => e.certificate).map((e) => e.label);
+  if (paper.length === 0) return `${move} That earns their ${badges}.`;
+  if (paper.length === names.length) {
+    return `${move} That earns their ${badges} and ${paper.length === 1 ? 'certificate' : 'certificates'}.`;
+  }
+  return `${move} That earns their ${badges}, with a certificate for ${listOf(paper)}.`;
+}
+
+function listOf(names: readonly string[]): string {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}

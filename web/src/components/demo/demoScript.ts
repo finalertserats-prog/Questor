@@ -73,7 +73,7 @@ export const DEMO_BEATS: readonly DemoBeat[] = [
   },
   {
     id: 'B10', title: 'The path', route: '/candidates/{candidateId}?tab=journey', anchor: 'candidate-pipeline', needsStory: true,
-    body: 'Every candidate walks the same path: Participation; Bronze, the profile review; Silver, the AI interview; Gold, the human rounds, where the AI only listens and transcribes; Diamond, decided. Questor moves her forward on its own. The call that matters, it leaves to a person.',
+    body: 'Every candidate walks the same path: Participation; Bronze, the profile review; Silver, the AI interview; Gold, the human rounds, where the AI only listens and transcribes; Diamond, decided. Questor takes her as far as Bronze on its own — she exists, and her CV has been read. Every step after that is yours to take, and Questor tells you when one is waiting.',
   },
   {
     id: 'B11', title: 'Setting up the interview', route: '/candidates/{candidateId}?tab=journey', anchor: 'candidate-setup-interview', needsStory: true,
@@ -97,7 +97,7 @@ export const DEMO_BEATS: readonly DemoBeat[] = [
   },
   {
     id: 'B16', title: 'The decision', route: '/assessments/{assessmentId}', anchor: 'assessment-verdict', needsStory: true,
-    body: 'A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence.',
+    body: 'A verdict moves Priya on: to the human rounds, or to a decision with a feedback letter drafted for her — because a candidate who gave you half an hour deserves more than silence. Moving her on is also what earns her Silver — a badge and a certificate for the round she has just finished, in her name, that anyone she shows it to can verify.',
   },
   {
     id: 'B18', title: 'Yours to explore', route: '/?tab=home', closing: 'explore',

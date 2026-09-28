@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
-  CLOSE_OUT_STATES, firstUnreviewed, humanReviewRefusal, outcomeNeedsHumanReview, reviewRequirementFor,
-  type ConductedInterview,
+  CLOSE_OUT_STATES, firstUnreviewed, humanReviewRefusal, moveNeedsHumanReview, outcomeNeedsHumanReview,
+  reviewRequirementFor, type ConductedInterview,
 } from '../src/domain/humanReviewRule.js';
+import { DEFAULT_STAGES, type PipelineStage } from '../src/domain/pipelineStages.js';
+import { awardsForPromotion } from '../src/domain/candidateAwards.js';
 import { EXCEPTION_STATES, SESSION_STATES } from '../src/domain/stateMachine.js';
 
 /**
@@ -124,6 +126,96 @@ describe('which outcomes the promise gates', () => {
   // Requiring a review first would keep someone in a pipeline they asked out of.
   it('does not gate a withdrawal', () => {
     expect(outcomeNeedsHumanReview('WITHDRAWN')).toBe(false);
+  });
+});
+
+
+/**
+ * Which stage moves the promise gates.
+ *
+ * The distinction is between a move that says something about the interview
+ * and a move that does not. Walking a candidate TO the AI round says nothing
+ * about a conversation that has not happened; moving them OUT of it says the
+ * round went well enough to go on, and strikes the credential for it.
+ */
+describe('the moves the promise covers', () => {
+  /**
+   * A plan a recruiter can create through PUT /api/roles/:id/pipeline-stages,
+   * which is held to `role:edit_scorecard` — a capability recruiters hold.
+   *
+   * It reuses the award engine's keys with a kind the first version of this
+   * rule looked for, and has no AI-conducted stage at all. That combination is
+   * what made the proxy version answer "no interview round here" while the
+   * award engine answered "strike Silver".
+   */
+  const KEYS_WITHOUT_AN_AI_ROUND: readonly PipelineStage[] = [
+    { key: 'participation', label: 'Participation', kind: 'intake' },
+    { key: 'silver', label: 'Silver', kind: 'human_interview' },
+    { key: 'gold', label: 'Gold', kind: 'human_interview' },
+    { key: 'diamond', label: 'Diamond', kind: 'human_interview' },
+  ];
+
+  it('gates the move that mints the tier the candidate is leaving', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'silver', 'gold')).toBe(true);
+  });
+
+  it('gates the move that mints two at once', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'diamond')).toBe(true);
+  });
+
+  // No tier is struck by arriving at the AI round, so nothing is refused — and
+  // that is the point rather than an oversight. A conversation that has not
+  // happened cannot have gone unread, and gating it would strand every
+  // candidate interviewed before anybody touched their pipeline.
+  it('leaves the walk towards that round alone, because it mints nothing', () => {
+    expect([
+      moveNeedsHumanReview(DEFAULT_STAGES, 'participation', 'bronze'),
+      moveNeedsHumanReview(DEFAULT_STAGES, 'bronze', 'silver'),
+    ]).toEqual([false, false]);
+  });
+
+  // The hole the proxy version left. Kind says "no AI round"; the award engine
+  // says "strike Silver". Asking what the move earns makes the two agree by
+  // construction.
+  it('gates a plan that mints Silver without calling any stage an AI round', () => {
+    expect(moveNeedsHumanReview(KEYS_WITHOUT_AN_AI_ROUND, 'silver', 'gold')).toBe(true);
+  });
+
+  it('gates nothing for a stage the plan does not contain', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'platinum', 'silver')).toBe(false);
+  });
+
+  it('gates nothing for a move that goes nowhere', () => {
+    expect(moveNeedsHumanReview(DEFAULT_STAGES, 'gold', 'silver')).toBe(false);
+  });
+
+  /**
+   * A plan that simply renamed its stages, which the other clause misses.
+   *
+   * `awardsForPromotion` fires on the literal keys `silver` and `gold`, so a
+   * plan calling them anything else earns nothing on the way out of the AI
+   * round. Asking only "would this mint?" therefore let a renamed plan carry a
+   * candidate off a round nobody had read — weaker than the code that existed
+   * before any of this, which refused every non-withdrawal outcome while a
+   * review was owed.
+   */
+  const RENAMED: readonly PipelineStage[] = [
+    { key: 'apply', label: 'Apply', kind: 'intake' },
+    { key: 'screen', label: 'Screen', kind: 'profile_review' },
+    { key: 'ai_round', label: 'AI round', kind: 'ai_interview' },
+    { key: 'panel', label: 'Panel', kind: 'human_interview' },
+    { key: 'offer', label: 'Offer', kind: 'human_interview' },
+  ];
+
+  it('gates the move off a renamed AI round, which mints nothing', () => {
+    expect([
+      awardsForPromotion(RENAMED, 'ai_round', 'panel').length,
+      moveNeedsHumanReview(RENAMED, 'ai_round', 'panel'),
+    ]).toEqual([0, true]);
+  });
+
+  it('still leaves the walk towards a renamed AI round alone', () => {
+    expect(moveNeedsHumanReview(RENAMED, 'screen', 'ai_round')).toBe(false);
   });
 });
 

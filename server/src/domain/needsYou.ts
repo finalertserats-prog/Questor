@@ -19,6 +19,21 @@ export const NEEDS_YOU_KINDS = [
   'human_request',
   'accommodation',
   'review',
+  // A candidate who is ready to move and can only be moved by a person.
+  //
+  // It exists because the moves that used to happen by themselves stopped: an
+  // interview being scheduled no longer carries anyone to Silver and an
+  // assessment no longer carries anyone to Gold, because a tier is struck by
+  // the person who promotes a candidate out of it and an autonomous move
+  // struck nothing (domain/pipelineAutonomy.ts). `POST /pipelines/:id/advance`
+  // was always there; nothing ever asked anybody to press it, which is finding
+  // G-9 of this codebase's own journeys audit — "Bronze to Silver has no
+  // trigger, no prompt, and no queue kind".
+  //
+  // Held to a candidate who is ready NOW, never to every candidate with a
+  // pipeline: the row must be one a person can clear the moment they see it
+  // (services/needsYouRows.ts says what "ready" means and why).
+  'stage_decision',
   'feedback_held',
   'invitation_expiring',
   'stalled',
@@ -70,6 +85,16 @@ export const KIND_GATE: Readonly<Record<NeedsYouKind, NeedsYouGate>> = {
   // Seen by everyone who may read the assessment, signed off by fewer; see
   // KIND_ACTION_GATE.
   review: { capability: 'assessment:read' },
+  // Moving a candidate between stages is POST /pipelines/:id/advance, which is
+  // held to `interview:create`. Gated on the same capability so the row only
+  // ever reaches somebody who can press the button it offers.
+  //
+  // Not `assessment:review`, although a Proceed verdict also moves a candidate.
+  // A reviewer's job is the judgement on the round; running the pipeline is the
+  // hiring team's, and the capability map is explicit that `interview:create`
+  // is one of the ways a candidate moves between stages and that an expert must
+  // never hold it (domain/capabilities.ts).
+  stage_decision: { capability: 'interview:create' },
   // Sending or keeping a held letter is POST /assessments/:id/feedback-email/*.
   feedback_held: { capability: 'assessment:review' },
   // Resending is POST /interviews/:id/resend.
@@ -184,6 +209,12 @@ export function actionFor(kind: NeedsYouKind, target: ActionTarget, canAct: bool
       return { label: 'Read the request', to: interview };
     case 'review':
       return canAct ? { label: 'Review', to: assessment } : { label: 'Open the assessment', to: assessment };
+    // The candidate's own page, because that is where the pipeline is: the
+    // stage they are at, the evidence behind it and the button that moves them
+    // are all on one screen, and the decision is about the person rather than
+    // about one interview of theirs.
+    case 'stage_decision':
+      return { label: 'Decide their next stage', to: target.candidateId ? `/candidates/${target.candidateId}` : null };
     case 'feedback_held':
       return { label: 'Read and decide', to: assessment };
     case 'invitation_expiring':
@@ -220,6 +251,7 @@ export const KIND_LABEL: Readonly<Record<NeedsYouKind, string>> = {
   human_request: 'Asked to talk to a person',
   accommodation: 'Asked for an adjustment',
   review: 'Review ready',
+  stage_decision: 'Ready for your decision on their next stage',
   feedback_held: 'Feedback email held for you',
   invitation_expiring: 'Invitation closes soon',
   stalled: 'Interview stopped part-way',

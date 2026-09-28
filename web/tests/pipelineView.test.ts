@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stageStates, stageCaption, nextStage, finalStage, pipelineOutcome } from '../src/components/pipelineView';
+import { stageStates, stageCaption, nextStage, finalStage, pipelineOutcome, advanceConfirmLine } from '../src/components/pipelineView';
 
 const STAGES = [
   { key: 'participation', label: 'Participation', kind: 'intake' },
@@ -91,5 +91,41 @@ describe('pipelineOutcome', () => {
 
   it('shows the raw key rather than nothing when the stage is not in the plan', () => {
     expect(pipelineOutcome(FIVE, active('platinum')).text).toBe('In progress: platinum.');
+  });
+});
+
+/**
+ * The sentence under "Move to X", which is the button that now strikes most of
+ * the product's credentials. It used to say only where the candidate was
+ * going, which is how it came to mint them without ever mentioning one.
+ *
+ * What it earns is never worked out here — the server sends it, because a tier
+ * is earned by the move that leaves its stage and that rule lives in one place.
+ */
+describe('the confirm line under Move to', () => {
+  it('says only where they go when the move earns nothing', () => {
+    expect(advanceConfirmLine('Pat Lee', 'Silver', [])).toBe('Pat Lee moves to Silver.');
+  });
+
+  it('names the credential the move mints', () => {
+    expect(advanceConfirmLine('Pat Lee', 'Gold', [{ tier: 'silver', label: 'Silver', certificate: true }]))
+      .toBe('Pat Lee moves to Gold. That earns their Silver badge and certificate.');
+  });
+
+  // Diamond records what an employer decided, which is theirs to announce, so
+  // it carries no certificate; promising one would promise a document that
+  // never arrives.
+  it('promises no certificate for a tier that has none', () => {
+    expect(advanceConfirmLine('Pat Lee', 'Diamond', [{ tier: 'diamond', label: 'Diamond', certificate: false }]))
+      .toBe('Pat Lee moves to Diamond. That earns their Diamond badge.');
+  });
+
+  // Diamond is badge-only, so "badges and certificates" would promise a
+  // Diamond certificate that is never struck.
+  it('names which of two tiers the certificate is for', () => {
+    expect(advanceConfirmLine('Pat Lee', 'Diamond', [
+      { tier: 'gold', label: 'Gold', certificate: true },
+      { tier: 'diamond', label: 'Diamond', certificate: false },
+    ])).toBe('Pat Lee moves to Diamond. That earns their Gold and Diamond badges, with a certificate for Gold.');
   });
 });

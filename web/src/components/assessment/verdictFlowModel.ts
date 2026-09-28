@@ -61,14 +61,20 @@ export interface ConsequenceCopy {
 const RECORD = 'Record the verdict';
 
 /**
- * A reviewed interview is an assessed one whatever the verdict says, so a
- * move the reviewer is about to cause is not something "Just record it" can
- * prevent. Saying so is the difference between an honest secondary action and
- * one that quietly does less than its label claims.
+ * "Just record it" now holds back everything there is to hold back.
+ *
+ * It used to be unable to keep a candidate still: reviewing an interview
+ * assessed it, and an assessed interview carried its candidate to the human
+ * round whatever the verdict said — so this note had to admit that the move
+ * would happen anyway. Nothing moves a candidate but a person's decision now
+ * (domain/pipelineAutonomy.ts), and the decision is exactly what this action
+ * withholds, so the candidate stays where they are. Promising the old move
+ * would be this lane's own rule broken: each choice says what it will do
+ * before it does it.
  */
 function recordOnlyNote(c: ConsequenceView): string {
   const base = 'Writes your verdict and leaves the decision on the round unrecorded.';
-  return c.moves ? `${base} The interview still counts as assessed, so ${c.toStageLabel} is where they land either way.` : base;
+  return c.moves ? `${base} They stay at ${c.fromStageLabel} until someone records it.` : base;
 }
 
 export function consequenceCopy(o: {

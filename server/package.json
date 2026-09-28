@@ -28,6 +28,7 @@
     "jd:bench": "tsx bench/jd/run.ts",
     "library:seed-export": "tsx src/library/seedExportMain.ts",
     "artifacts:encrypt": "tsx src/services/artifactBackfillMain.ts",
+    "awards:backfill": "tsx src/services/awardBackfillMain.ts",
     "library:seed-import": "tsx src/library/seedImportMain.ts",
     "library:seed-generate": "tsx scripts/library-seed/main.ts",
     "lint": "node ../scripts/lint-with-diagnosis.mjs"

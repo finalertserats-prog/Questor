@@ -130,6 +130,56 @@ export async function humanReviewCheck(
 }
 
 /**
+ * Which of these candidates still owe a review, asked about many at once.
+ *
+ * The same question `humanReviewCheck` answers for one, over the same rule and
+ * the same two queries — not a cheaper approximation of it. That matters
+ * because the caller is the "Needs you" queue (services/needsYouRows.ts), which
+ * must not list a candidate whose promotion the server would then refuse: a row
+ * offering a button that 409s is the defect the queue's own gating exists to
+ * avoid. Asking "does a completed review exist?" would have been that
+ * approximation — a candidate with two conducted interviews, one read and one
+ * not, has a completed review and still owes one.
+ *
+ * Keyed by candidate AND role, as the single-candidate check is, so a candidate
+ * holding pipelines for two roles is answered for each separately.
+ */
+export async function candidatesOwingReview(
+  o: { readonly tenantId: string; readonly of: readonly { readonly candidateId: string; readonly roleId: string }[] },
+): Promise<ReadonlySet<string>> {
+  if (o.of.length === 0) return new Set();
+  const sessions = await prisma.interviewSession.findMany({
+    where: {
+      tenantId: o.tenantId,
+      candidateId: { in: [...new Set(o.of.map((k) => k.candidateId))] },
+      roleId: { in: [...new Set(o.of.map((k) => k.roleId))] },
+    },
+    // Oldest first, which is what makes the answer point at the earliest
+    // interview still owed rather than an arbitrary one.
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true, candidateId: true, roleId: true, state: true, consentJson: true,
+      assessments: { orderBy: [{ version: 'desc' }, { createdAt: 'desc' }], take: 1, select: { id: true } },
+      retakes: { take: 1, select: { id: true } },
+    },
+  });
+  // `withReviewState` preserves the order it is given, so the rows and their
+  // review states line up by index and each keeps the candidate it came from.
+  const states = await withReviewState(sessions);
+  const byPair = new Map<string, ConductedInterview[]>();
+  sessions.forEach((session, index) => {
+    if (!session.roleId) return;
+    const key = `${session.candidateId}:${session.roleId}`;
+    byPair.set(key, [...(byPair.get(key) ?? []), states[index]]);
+  });
+  const owing = new Set<string>();
+  for (const [key, interviews] of byPair) {
+    if (firstUnreviewed(interviews)) owing.add(key);
+  }
+  return owing;
+}
+
+/**
  * The same question about one assessment, for the paths that already know
  * which interview they are acting on (the ATS export).
  */

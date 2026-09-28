@@ -2,23 +2,29 @@ import type { CandidatePipeline, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
 import { logAudit } from './audit.js';
-import { DEFAULT_STAGES, parseStages, parseStagesStrict, type StageKind } from '../domain/pipelineStages.js';
+import { DEFAULT_STAGES, nextStageKey, parseStages, parseStagesStrict, type StageKind } from '../domain/pipelineStages.js';
 import {
   resolveDecision, resolveTransition,
   type DecisionEffect, type DecisionOutcome, type PipelineEvent, type StageTransition,
 } from '../domain/pipelineAutonomy.js';
 import { decisionOfVerdict, type Verdict } from '../domain/verdict.js';
-import { outcomeNeedsHumanReview, type UnreviewedInterview } from '../domain/humanReviewRule.js';
+import { moveNeedsHumanReview, outcomeNeedsHumanReview, type UnreviewedInterview } from '../domain/humanReviewRule.js';
 import { humanReviewCheck, type HumanReviewRecord } from './humanReviewGate.js';
 import { awardOnPromotion, isAwardConflict, noteAwards, type StruckAward } from './candidateAwards.js';
 
 /**
- * Applies the autonomous journey (domain/pipelineAutonomy.ts) to the database.
+ * Applies the candidate journey (domain/pipelineAutonomy.ts) to the database:
+ * the part that still happens by itself, and the decisions a person records.
  *
  * Called from the places where the events actually happen — candidate
  * creation, resume analysis, interview creation and scheduling, assessment —
  * never from a timer. The primary write has already committed by then, so a
  * failure here is logged and never turns a created interview into a 500.
+ *
+ * Most of those events no longer move anybody, and are still called: they
+ * start a pipeline for a candidate who has none, which is what keeps an
+ * interview booked before anyone touched the pipeline from having nowhere to
+ * belong.
  */
 
 export interface PipelineEventInput {
@@ -67,8 +73,8 @@ async function ensurePipeline(o: { readonly tenantId: string; readonly candidate
  *
  * The update is conditional on the stage that was read, so two events landing
  * together cannot both apply: the loser re-reads and resolves again from the
- * stage the winner left, which is how a Silver and a Gold event arriving at
- * once still end at Gold whichever commits first.
+ * stage the winner left, so two events arriving at once end at the further of
+ * the two whichever commits first.
  */
 export async function applyPipelineEvent(o: PipelineEventInput): Promise<StageTransition | null> {
   if (!o.roleId) return null;
@@ -133,6 +139,115 @@ async function runMoveAndAward(run: (tx: Prisma.TransactionClient) => Promise<Mo
     if (isAwardConflict(err)) return null;
     throw err;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The Advance button
+// ---------------------------------------------------------------------------
+
+export interface PipelineAdvanceInput {
+  readonly tenantId: string;
+  /** Where the caller means to move them. It must be the stage after the one they are at. */
+  readonly toStageKey: string;
+  /** The person moving them. The system never advances anybody. */
+  readonly actorId: string;
+  readonly trigger: string;
+}
+
+/** The stage a refused advance would have gone to, so a caller can name it. */
+export interface NextStage {
+  readonly key: string;
+  readonly label: string;
+}
+
+export type AdvanceResult =
+  | { readonly applied: true; readonly transition: StageTransition; readonly awards: readonly StruckAward[] }
+  | { readonly applied: false; readonly because: 'already_decided' | 'at_last_stage' | 'contended' }
+  | { readonly applied: false; readonly because: 'not_next'; readonly next: NextStage }
+  // The candidate was promised a person would read their interview, and this
+  // move is the judgement that promise is about. Reported, not thrown, so the
+  // route can offer the reviewer the assessment instead of an error.
+  | { readonly applied: false; readonly because: 'human_review_required'; readonly missing: UnreviewedInterview };
+
+/**
+ * Move a candidate on one stage, because a person said so.
+ *
+ * Here rather than in the route because it is not only the route's any more.
+ * Since the assessment stopped moving anybody (domain/pipelineAutonomy.ts),
+ * this is the move that gets a candidate to the AI round — the one the "Needs
+ * you" queue asks for — and the demo sandbox stages its candidates with it
+ * too, so that what a prospect is shown is the product's own arithmetic rather
+ * than a tableau assembled behind its back.
+ *
+ * The move and the badges it earns commit together or not at all. A journey
+ * showing a candidate at Gold with no Silver badge, or a Silver badge for a
+ * move that rolled back, is a record that contradicts itself with nothing to
+ * say which half is right.
+ *
+ * Refusals are returned rather than thrown, so each caller answers them in its
+ * own terms: the route turns them into a message the person can act on, and
+ * the sandbox logs one loudly.
+ */
+export async function advancePipeline(loaded: CandidatePipeline, o: PipelineAdvanceInput): Promise<AdvanceResult> {
+  if (loaded.status !== 'ACTIVE') return { applied: false, because: 'already_decided' };
+  const stages = parseStagesStrict(loaded.stagesJson, { model: 'CandidatePipeline', id: loaded.id, field: 'stagesJson' });
+  const next = nextStageKey(stages, loaded.currentStageKey);
+  if (!next) return { applied: false, because: 'at_last_stage' };
+  if (o.toStageKey !== next) {
+    return { applied: false, because: 'not_next', next: { key: next, label: stages.find((s) => s.key === next)?.label ?? next } };
+  }
+
+  // The promise, on the move that is a judgement about the interview.
+  //
+  // This endpoint had no check at all, which was survivable while it was a
+  // manual override and the assessment moved everybody by itself. It is not
+  // survivable now: the "Needs you" queue points at this button, so it is the
+  // ordinary way a candidate is promoted — and the Silver → Gold press is what
+  // strikes the Silver credential, in the presser's name. Without this, a
+  // recruiter who deliberately holds neither `assessment:review` nor the right
+  // to decide or finalise could mint one on an interview nobody had opened.
+  //
+  // Only on the moves that would mint something (domain/humanReviewRule.ts).
+  // Walking a candidate TO the AI round earns no tier and is not gated, which
+  // is right: a conversation that has not happened cannot have gone unread, and
+  // refusing it would strand every candidate whose interview was conducted
+  // before anyone touched their pipeline.
+  if (moveNeedsHumanReview(stages, loaded.currentStageKey, next)) {
+    const review = await humanReviewCheck({ tenantId: o.tenantId, candidateId: loaded.candidateId, roleId: loaded.roleId });
+    if (review.missing) return { applied: false, because: 'human_review_required', missing: review.missing };
+  }
+
+  const outcome = await runMoveAndAward(async (tx) => {
+    // Conditional on the stage that was read, so two people advancing at once
+    // cannot both succeed.
+    const written = await tx.candidatePipeline.updateMany({
+      where: { id: loaded.id, status: 'ACTIVE', currentStageKey: loaded.currentStageKey },
+      data: { currentStageKey: next },
+    });
+    if (written.count !== 1) return { written, awards: [] as StruckAward[] };
+    return {
+      written,
+      awards: await awardOnPromotion(tx, {
+        tenantId: o.tenantId, candidateId: loaded.candidateId, roleId: loaded.roleId,
+        stages, fromStageKey: loaded.currentStageKey, toStageKey: next, actorId: o.actorId,
+      }),
+    };
+  });
+  // A tier struck under us means another move landed first, which is the same
+  // answer the conditional update gives.
+  if (!outcome || outcome.written.count !== 1) return { applied: false, because: 'contended' };
+
+  await logAudit({
+    tenantId: o.tenantId, actorType: 'user', actorId: o.actorId,
+    action: 'pipeline.advanced', entityType: 'CandidatePipeline', entityId: loaded.id,
+    // What this move struck is not repeated here: each badge writes its own
+    // award.struck event, with the reference a holder would quote. Two records
+    // of one fact is two things to keep in step.
+    before: { stage: loaded.currentStageKey }, after: { stage: next },
+  });
+  // After the commit, so the trail can never claim a badge that rolled back.
+  await noteAwards({ tenantId: o.tenantId, actorId: o.actorId, candidateId: loaded.candidateId, awards: outcome.awards });
+  return { applied: true, transition: { from: loaded.currentStageKey, to: next }, awards: outcome.awards };
 }
 
 export interface PipelineDecisionInput {
@@ -206,9 +321,38 @@ export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecis
   // contended stage move, and re-reading the candidate's whole interview
   // history on every attempt would pay for a fact we already have.
   const review = await humanReviewCheck({ tenantId: o.tenantId, candidateId: pipeline.candidateId, roleId: pipeline.roleId });
-  if (review.missing && outcomeNeedsHumanReview(o.outcome)) {
-    return { applied: false, because: 'human_review_required', missing: review.missing };
-  }
+  /**
+   * Whether the promise gates THIS decision, once its effect is known.
+   *
+   * Two things are gated, for two different reasons.
+   *
+   * A decision that ENDS the journey is gated wherever the candidate stands.
+   * Rejecting somebody on an interview nobody read is the thing the promise is
+   * about, and it is no less so at Bronze than at Gold — a closed pipeline is
+   * the last word on that person. An approval at the final stage closes the
+   * journey too, and counts the same.
+   *
+   * A decision that MOVES them is gated only when the move would mint a
+   * credential, which is the same rule the Advance button follows
+   * (domain/humanReviewRule.ts). Before this the two disagreed: the button said
+   * yes to a Bronze → Silver move and the decision form answered 409 on the
+   * same pipeline, which is exactly the disagreement between two person-paths
+   * that `resolveDecision` was tightened to prevent, only inverted. Moving
+   * somebody TOWARDS an interview says nothing about a conversation that has
+   * not happened.
+   *
+   * `outcomeNeedsHumanReview` still exempts a withdrawal from all of it: the
+   * candidate has left, and making somebody read an interview first would keep
+   * a person in a pipeline they asked to leave.
+   */
+  const gatedBy = (effect: DecisionEffect): boolean => {
+    if (!outcomeNeedsHumanReview(o.outcome)) return false;
+    if (effect.kind === 'close') return true;
+    return moveNeedsHumanReview(
+      parseStagesStrict(pipeline.stagesJson, { model: 'CandidatePipeline', id: pipeline.id, field: 'stagesJson' }),
+      effect.from, effect.to,
+    );
+  };
   // A withdrawal is recorded whatever the review says, and the record says so:
   // "the promise applied, and this decision was exempt from it" is a different
   // fact from "the promise was kept", and a year from now only one of them is
@@ -230,6 +374,13 @@ export async function decidePipeline(loaded: CandidatePipeline, o: PipelineDecis
     const about = 'stageKey' in wanted ? wanted.stageKey : stages.find((s) => s.kind === wanted.stageKind)?.key;
     const effect = about ? resolveDecision(stages, pipeline.currentStageKey, o.outcome, about) : null;
     if (!effect || !about) return { applied: false, because: 'nothing_to_do' };
+
+    // The promise, now that the effect is known. Checked before anything is
+    // written, and before the retry, so a decision that must not be recorded
+    // never reaches the transaction whatever the contention does.
+    if (review.missing && gatedBy(effect)) {
+      return { applied: false, because: 'human_review_required', missing: review.missing };
+    }
 
     // An approval that advances a candidate is a person moving them, so it
     // earns whatever tiers that move earns — Silver → Gold strikes Silver, and

@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { StatusBadge } from './StatusBadge';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from './Skeleton';
-import { finalStage, nextStage, pipelineOutcome, stageCaption, stageStates, type PipelineStageView, type StageState } from './pipelineView';
+import { advanceConfirmLine, finalStage, nextStage, pipelineOutcome, stageCaption, stageStates, type MoveEarns, type PipelineStageView, type StageState } from './pipelineView';
 import { decisionStatus, interviewStatus } from './statusModel';
 import { sessionOptionLabels } from './roleLabelModel';
 import { interviewerName } from './candidateJourney';
@@ -126,6 +126,8 @@ interface Pipeline {
   id: string;
   candidateId: string;
   stages: PipelineStageView[];
+  /** What the move to the next stage would strike, worked out by the server. */
+  nextMoveEarns?: MoveEarns[];
   currentStageKey: string;
   status: 'ACTIVE' | 'DECIDED';
   decision: string | null;
@@ -270,9 +272,10 @@ function StageBadge({ stageKey }: { stageKey: string }) {
  * showing the same data elsewhere — the candidate journey board — refreshes
  * with it rather than sitting on a stale copy until someone reloads.
  *
- * `refreshKey` works the other way: the server moves candidates on its own
- * (an analysed resume, a scheduled interview), so when the page re-reads for
- * any reason the panel re-reads too and never shows a stage already left.
+ * `refreshKey` works the other way: a candidate can move without this panel
+ * doing it — an analysed resume reaches Bronze on its own, and a reviewer's
+ * verdict elsewhere decides the round — so when the page re-reads for any
+ * reason the panel re-reads too and never shows a stage already left.
  */
 export function PipelinePanel(
   { candidateId, candidateName, interviews, onChanged, refreshKey = 0 }:
@@ -679,7 +682,7 @@ export function PipelinePanel(
                 </button>
                 {pendingAdvance === next.key && (
                   <p className="muted small" style={{ marginTop: 6 }}>
-                    {candidateName} moves to {next.label}.{' '}
+                    {advanceConfirmLine(candidateName, next.label, pipeline.nextMoveEarns ?? [])}{' '}
                     <button type="button" className="btn ghost sm" onClick={() => setPendingAdvance(null)}>Not yet</button>
                   </p>
                 )}
