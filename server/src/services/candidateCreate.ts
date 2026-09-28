@@ -1,6 +1,8 @@
 import type { Candidate, Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { logger } from '../logger.js';
+import { HttpError } from '../middleware/index.js';
+import { cvReadability, unreadableCvMessage } from '../domain/cvReadability.js';
 import { assertCanAccessRole, assignCandidate } from './access.js';
 import { assertDemoCreationCap } from './demoAccess.js';
 import { assertRoleOpen } from './roleOpen.js';
@@ -101,6 +103,23 @@ export async function attachResume(
   resume: ResumeInput,
   opts: AttachResumeOptions = {},
 ) {
+  // Fail closed BEFORE anything is computed from it. A document of rules,
+  // bullets and spacing has text — punctuation is text — so it cleared the
+  // upload guard, reached the scorer, and came back as 22 out of 100 with
+  // "Move to Silver" underneath. A number built from nothing is worse than no
+  // number, because it sits in the same column as the real ones and is
+  // indistinguishable from them. Refusing here covers every way a CV arrives:
+  // the upload, the pasted text, the bulk import and the reuse path all come
+  // through this function, and the bulk import records the refusal against the
+  // row so a person reads the file.
+  //
+  // `prose` and not `readable`: the length floor belongs on the upload path,
+  // where a near-empty file means the extraction failed. A recruiter who
+  // pastes four lines has decided that is the CV, and refusing it would be us
+  // overruling them about their own candidate.
+  const readability = cvReadability(resume.rawText);
+  if (!readability.prose) throw new HttpError(422, unreadableCvMessage(readability.reason));
+
   const scoring = await resumeScoringFor(candidate.roleId);
   // Reading the CV can call the configured model; it happens here, before the
   // transaction, so a slow provider cannot hold a write transaction open.

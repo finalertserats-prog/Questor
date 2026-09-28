@@ -1,4 +1,5 @@
 import type { TechLevel } from './techStack.js';
+import type { CvParseQuality } from './cvParseQuality.js';
 
 /**
  * What a CV actually says, as facts that each carry the line they came from.
@@ -149,6 +150,15 @@ export interface CvFacts {
   /** The lines the scorer may read, in order. */
   readonly lines: readonly CvLine[];
   readonly redaction: RedactionReport;
+  /**
+   * What the reading could not see: whether this is a CV at all, how many
+   * dated lines it left unread, and one sentence per finding for HR.
+   *
+   * Optional only because rows parsed before it existed do not carry it; a
+   * re-analysis fills it in, and readers treat its absence as "nothing was
+   * assessed", never as "nothing was wrong". See domain/cvParseQuality.ts.
+   */
+  readonly parseQuality?: CvParseQuality;
   /** Whether the configured model refined the deterministic parse, or it stood alone. */
   readonly source: 'deterministic' | 'model_assisted';
   /** Present when a model was asked and did not answer usefully. */

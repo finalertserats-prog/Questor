@@ -1,4 +1,4 @@
-import { mentionsTechnology, stackItemsFor, type TechStackItem } from '../domain/techStack.js';
+import { mentionsTechnologyInProse, stackItemsFor, type TechStackItem } from '../domain/techStack.js';
 import type { Competency } from '../domain/types.js';
 import type { CvEvidence, CvFacts, CvLine, CvTechnologyUse } from '../domain/cvFacts.js';
 import type { FitStrength } from '../domain/fitVocabulary.js';
@@ -226,7 +226,7 @@ export function hitsFor(vocab: CompetencyVocabulary, lines: readonly CvLine[]): 
     const lower = line.text.toLowerCase();
     const evidence: CvEvidence = { line: line.index, quote: line.text, section: line.section };
 
-    const tech = vocab.technologies.find((t) => spellingsOf(t).some((s) => mentionsTechnology(line.text, s)));
+    const tech = vocab.technologies.find((t) => spellingsOf(t).some((s) => mentionsTechnologyInProse(line.text, s)));
     if (tech) {
       strong.push({ evidence, kind: 'technology', matched: [tech] });
       continue;
@@ -337,7 +337,7 @@ export function readTechnologies(stack: readonly TechStackItem[], facts: CvFacts
       };
     }
     const spellings = spellingsOf(item.name);
-    const hits = lines.filter((l) => spellings.some((s) => mentionsTechnology(l.text, s))).slice(0, 3);
+    const hits = lines.filter((l) => spellings.some((s) => mentionsTechnologyInProse(l.text, s))).slice(0, 3);
     return {
       item,
       strength: hits.length === 0 ? 'not_evidenced' : hits.some((h) => h.section === 'experience' || h.section === 'projects') ? 'evidenced' : 'partial',

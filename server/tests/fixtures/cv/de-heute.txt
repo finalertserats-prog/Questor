@@ -1,0 +1,23 @@
+Lena Hoffmann
+Musterstraße 12, 80333 München
+lena.hoffmann@beispiel.de | +49 89 1234567
+
+Profil
+Senior Data Engineer mit acht Jahren Erfahrung im Aufbau von Datenplattformen.
+
+Berufserfahrung
+
+01.03.2021 – heute, Senior Data Engineer, Beispiel Analytik GmbH, München
+- Verantwortlich für Datenqualität und Monitoring
+- Aufbau von Datenpipelines mit Apache Airflow und Python
+- Migration des Data Warehouse nach Snowflake
+
+15.08.2017 – 28.02.2021, Data Engineer, Nordwind Daten AG
+- Entwicklung von ETL-Strecken in SQL und Python
+- Betrieb von Kafka für Echtzeitdaten
+
+Ausbildung
+M.Sc. Informatik, Technische Universität München, 2017
+
+Kenntnisse
+Python, SQL, Apache Airflow, Kafka, Snowflake, Terraform

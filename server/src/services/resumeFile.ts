@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { HttpError } from '../middleware/index.js';
 import { extractResumeText } from '../engines/resumeParser.js';
+import { cvReadability, unreadableCvMessage } from '../domain/cvReadability.js';
 
 /**
  * One uploaded resume file, read the same way wherever it arrives: the single
@@ -17,13 +18,6 @@ const UNREADABLE = 'Could not read the uploaded file. Please upload a text-based
  * digits, not hundreds: a scanned PDF extracts as a handful of newlines.
  */
 const MIN_RESUME_CHARS = 120;
-
-const SCANNED =
-  'This file has no text in it — it looks like a scan or a photo of the CV rather than a text document. '
-  + 'Upload a PDF or DOCX saved from a word processor, or paste the CV text instead.';
-
-const TOO_SHORT =
-  'There was very little text in that file. Check it is the right document, or paste the CV text instead.';
 
 /**
  * The stored filename is echoed back into the reviewer's browser, so strip any
@@ -51,6 +45,16 @@ export function sanitizeFilename(original: string, fallback = 'resume.txt'): str
  * candidate with no skills, no history and a fit score built from nothing,
  * while the one fact that would help — that this file is a picture — is the
  * one thing nobody is told.
+ *
+ * The same silence has a second door, one rung up. A file with no text at all
+ * was caught here; a file whose text is rules, bullets, bars and spacing was
+ * not, because punctuation is text and 120 characters of it clears a length
+ * check. That document reached the scorer and came back as 22 out of 100 with
+ * a promotion offered underneath. So the question is no longer "is there
+ * anything here" but "is any of it words" — `domain/cvReadability.ts`, the
+ * same measure `attachResume` applies to pasted text and to a bulk import, so
+ * the three cannot drift apart and let a file in through whichever door still
+ * has the old rule on it.
  */
 export async function readResumeFile(file: { readonly buffer: Buffer; readonly mimetype: string }): Promise<string> {
   let text: string;
@@ -61,7 +65,11 @@ export async function readResumeFile(file: { readonly buffer: Buffer; readonly m
     throw new HttpError(422, UNREADABLE);
   }
   const trimmed = text.trim();
-  if (!trimmed) throw new HttpError(422, SCANNED);
-  if (trimmed.length < MIN_RESUME_CHARS) throw new HttpError(422, TOO_SHORT);
+  const readability = cvReadability(trimmed);
+  if (!readability.readable) throw new HttpError(422, unreadableCvMessage(readability.reason));
+  // A document that IS words but has barely any of them. Kept as a separate
+  // rule with its own message: "too little text" and "no text" send the
+  // uploader to different places.
+  if (trimmed.length < MIN_RESUME_CHARS) throw new HttpError(422, unreadableCvMessage('too_few_words'));
   return text;
 }
